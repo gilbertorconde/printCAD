@@ -98,7 +98,7 @@ impl PrintCadApp {
     pub(crate) fn insert_linked(&mut self, path: PathBuf) {
         app_log::info(format!("Reading {} to link its parts…", path.display()));
         let answer = read(path.clone());
-        self.session.links.loads.push(LinkLoad {
+        self.session.jobs.links.loads.push(LinkLoad {
             path,
             insert: true,
             answer,
@@ -111,10 +111,10 @@ impl PrintCadApp {
         let awaiting = self.session.document.links_awaiting_geometry();
         for (body, link) in &awaiting {
             let path = PathBuf::from(&link.path);
-            let loading = self.session.links.loads.iter().any(|l| l.path == path);
-            if !loading && !self.session.links.failed.contains(body) {
+            let loading = self.session.jobs.links.loads.iter().any(|l| l.path == path);
+            if !loading && !self.session.jobs.links.failed.contains(body) {
                 let answer = read(path.clone());
-                self.session.links.loads.push(LinkLoad {
+                self.session.jobs.links.loads.push(LinkLoad {
                     path,
                     insert: false,
                     answer,
@@ -122,7 +122,7 @@ impl PrintCadApp {
             }
         }
         let mut done = Vec::new();
-        for (i, load) in self.session.links.loads.iter().enumerate() {
+        for (i, load) in self.session.jobs.links.loads.iter().enumerate() {
             match load.answer.try_recv() {
                 Ok(answer) => done.push((i, Some(answer))),
                 Err(TryRecvError::Disconnected) => done.push((i, None)),
@@ -130,7 +130,7 @@ impl PrintCadApp {
             }
         }
         for (i, answer) in done.into_iter().rev() {
-            let load = self.session.links.loads.remove(i);
+            let load = self.session.jobs.links.loads.remove(i);
             match answer {
                 Some(Ok(source)) => self.land_link(&load, &source),
                 Some(Err(why)) => {
@@ -142,11 +142,12 @@ impl PrintCadApp {
         }
         let due = self
             .session
+            .jobs
             .links
             .checked
             .is_none_or(|t| t.elapsed() >= CHECK_EVERY);
         if due {
-            self.session.links.checked = Some(std::time::Instant::now());
+            self.session.jobs.links.checked = Some(std::time::Instant::now());
             let linked: Vec<(BodyId, FileLink)> = self
                 .session
                 .document
@@ -154,14 +155,14 @@ impl PrintCadApp {
                 .iter()
                 .filter_map(|b| Some((b.id, b.link.clone()?)))
                 .collect();
-            self.session.links.read_only.clear();
+            self.session.jobs.links.read_only.clear();
             for (body, link) in linked {
                 let now = stamp(Path::new(&link.path));
                 self.session
                     .document
                     .set_link_stale(body, now != link.stamp);
                 if crate::platform::read_only(Path::new(&link.path)) {
-                    self.session.links.read_only.push(body);
+                    self.session.jobs.links.read_only.push(body);
                 }
             }
         }
@@ -171,7 +172,7 @@ impl PrintCadApp {
     fn fail_links_to(&mut self, path: &Path) {
         for (body, link) in self.session.document.links_awaiting_geometry() {
             if Path::new(&link.path) == path {
-                self.session.links.failed.insert(body);
+                self.session.jobs.links.failed.insert(body);
             }
         }
     }
@@ -232,7 +233,7 @@ impl PrintCadApp {
                         load.path.display(),
                         self.body_name(body)
                     ));
-                    self.session.links.failed.insert(body);
+                    self.session.jobs.links.failed.insert(body);
                 }
             }
         }
@@ -248,7 +249,7 @@ impl PrintCadApp {
         else {
             return;
         };
-        self.session.links.failed.remove(&body);
+        self.session.jobs.links.failed.remove(&body);
         let now = stamp(Path::new(&link.path));
         if self.session.document.reload_link(body, now) {
             self.session.journal.label_next("Reload linked part");

@@ -49,7 +49,7 @@ impl crate::PrintCadApp {
     /// Take in the histories built, and start a build for each body whose
     /// plan changed.
     pub(crate) fn drive_mesh_histories(&mut self) {
-        let histories = &mut self.session.mesh_histories;
+        let histories = &mut self.session.jobs.mesh_histories;
         let mut landed = Vec::new();
         if let Some((_, rx)) = &histories.channel {
             while let Ok(done) = rx.try_recv() {
@@ -57,7 +57,7 @@ impl crate::PrintCadApp {
             }
         }
         for done in landed {
-            let histories = &mut self.session.mesh_histories;
+            let histories = &mut self.session.jobs.mesh_histories;
             if histories.making.get(&done.body) != Some(&done.key) {
                 continue;
             }
@@ -73,6 +73,7 @@ impl crate::PrintCadApp {
                 continue;
             }
             self.session
+                .jobs
                 .mesh_histories
                 .built
                 .insert(done.body, done.key);
@@ -85,7 +86,7 @@ impl crate::PrintCadApp {
                 continue;
             };
             let key = key_of(start, &plan);
-            let histories = &mut self.session.mesh_histories;
+            let histories = &mut self.session.jobs.mesh_histories;
             if histories.built.get(&plan.body) == Some(&key)
                 || histories.making.get(&plan.body) == Some(&key)
             {
@@ -115,7 +116,7 @@ impl crate::PrintCadApp {
             });
             if let Err(err) = spawned {
                 crate::log_panel::warn(format!("A mesh history could not start: {err}"));
-                self.session.mesh_histories.making.remove(&body);
+                self.session.jobs.mesh_histories.making.remove(&body);
             }
         }
     }

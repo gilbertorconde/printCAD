@@ -52,7 +52,7 @@ impl crate::PrintCadApp {
         let path = std::path::PathBuf::from(a.string("path")?);
         let document = &self.session.document;
         let mut reports = self.registry.reports(document);
-        if let Some(maps) = maps_report(document, &self.session.shown_maps) {
+        if let Some(maps) = maps_report(document, &self.session.drawn.shown_maps) {
             reports.push(maps);
         }
         if reports.is_empty() {

@@ -151,21 +151,22 @@ impl PrintCadApp {
                 safety.writer_words()
             ));
         }
-        self.session.file_safety = safety;
+        self.session.file.safety = safety;
     }
 
     /// The file the tab is saved to was just written by this build.
     pub(crate) fn note_saved_file(&mut self) {
-        self.session.file_safety = FileSafety::default();
+        self.session.file.safety = FileSafety::default();
     }
 
     /// Whether the tab's own file cannot be written in place, as it was
     /// found when opened or as it stands now.
     pub(crate) fn current_file_read_only(&self) -> bool {
-        self.session.file_safety.read_only
+        self.session.file.safety.read_only
             || self
                 .session
-                .current_file
+                .file
+                .path
                 .as_deref()
                 .is_some_and(crate::platform::read_only)
     }
@@ -173,11 +174,12 @@ impl PrintCadApp {
     /// Save to `path`, picked by Save or Save As: over the tab's own file
     /// from another version, once the user says so.
     pub(crate) fn save_document_asking(&mut self, path: PathBuf) {
-        let own_file = self.session.current_file.as_deref() == Some(path.as_path());
+        let own_file = self.session.file.path.as_deref() == Some(path.as_path());
         if own_file
             && self
                 .session
-                .file_safety
+                .file
+                .safety
                 .asks_before_saving(self.user_settings.files.ask_before_saving_older)
         {
             self.questions.save_over = Some(SaveOver {
@@ -199,7 +201,7 @@ impl PrintCadApp {
         if asking.tab != self.session.tab {
             return None;
         }
-        let safety = &self.session.file_safety;
+        let safety = &self.session.file.safety;
         Some(SaveOverQuestion {
             name: self.session.document.name().to_string(),
             writer: safety.writer_words(),

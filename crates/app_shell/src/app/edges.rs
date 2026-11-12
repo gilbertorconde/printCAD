@@ -67,13 +67,13 @@ impl PrintCadApp {
             .as_ref()
             .map_or(1.0, |g| g.window.scale_factor() as f32);
         let reach = scale
-            * if self.session.hovered_world_pos.is_some() {
+            * if self.session.hover.world_pos.is_some() {
                 EDGE_REACH_ON_SURFACE_PT
             } else {
                 EDGE_REACH_PT
             };
         let cursor = Vec2::new(cx, cy);
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         // The view's matrix is built once, not per point: the search
         // projects both ends of every outline segment it reaches.
         let view_proj = camera.view_projection();
@@ -87,7 +87,7 @@ impl PrintCadApp {
         // The surface under the cursor hides every edge deeper than it by
         // more than the surface itself can fall away across the pick
         // radius; the allowance scales with what a pixel spans there.
-        let hidden_beyond = self.session.hovered_world_pos.map(|p| {
+        let hidden_beyond = self.session.hover.world_pos.map(|p| {
             let p = Vec3::from_array(p);
             let mm_per_px = mm_per_px_at(project, p, forward);
             depth_of(p) + occlusion_slack(mm_per_px, reach)
@@ -96,12 +96,14 @@ impl PrintCadApp {
         // of the view on screen.
         let window = self
             .session
+            .hover
             .pick_depths
             .as_ref()
             .filter(|w| w.view_proj == view_proj);
         let mm_per_px = self
             .session
-            .hovered_world_pos
+            .hover
+            .world_pos
             .map(|p| mm_per_px_at(project, Vec3::from_array(p), forward))
             .unwrap_or(1.0);
         let shows = |at: Vec2, depth: f32| {
@@ -208,19 +210,14 @@ impl PrintCadApp {
         (!out.positions.is_empty()).then_some(out)
     }
 
-    /// Every picked face as the benches see them, in the order picked: the
-    /// ones Ctrl added, then the last.
-    pub(crate) fn selected_face_refs(&self) -> Vec<core_document::FaceRef> {
-        self.session.selected_face_refs()
-    }
-
     /// The faces selected in the view, as their body's mesh numbers them,
     /// in the order picked: what the Appearance and texture tasks take.
     pub(crate) fn picked_face_ids(&self) -> Vec<(core_document::BodyId, u32)> {
         let Some(body) = self
             .session
-            .selected_body
-            .filter(|_| self.session.face_highlight.is_some())
+            .selection
+            .body
+            .filter(|_| self.session.selection.face_highlight.is_some())
             .map(core_document::BodyId)
         else {
             return Vec::new();
@@ -229,42 +226,22 @@ impl PrintCadApp {
             return Vec::new();
         };
         let points: Vec<[f32; 3]> = self
-            .selected_face_refs()
+            .session
+            .selection
+            .face_refs()
             .into_iter()
             .map(|face| face.point)
             .collect();
         self.session
-            .picked_face_ids
+            .selection
+            .face_ids
             .of(body, &geometry.mesh, geometry.revision, &points)
     }
 
-    /// The view's picks in words when there are several ("3 faces, 2
-    /// edges"); `None` for one pick or none.
-    pub(crate) fn picks_summary(&self) -> Option<String> {
-        let faces = self.selected_face_refs().len();
-        let edges = self.session.selected_edges.len();
-        if faces + edges < 2 {
-            return None;
-        }
-        let count = |n: usize, one: &str, many: &str| match n {
-            0 => None,
-            1 => Some(format!("1 {one}")),
-            n => Some(format!("{n} {many}")),
-        };
-        Some(
-            [count(faces, "face", "faces"), count(edges, "edge", "edges")]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-    }
-
-    /// The selected edges as the benches see them.
     /// The end of the edge under the cursor nearest it, when within
     /// [`VERTEX_REACH_PT`] of it on screen.
     pub(crate) fn vertex_under_cursor(&self) -> Option<core_document::VertexRef> {
-        let hit = self.session.hovered_edge?;
+        let hit = self.session.hover.edge?;
         let (cx, cy) = self.input.cursor_in_viewport?;
         let scale = self
             .gfx
@@ -275,7 +252,7 @@ impl PrintCadApp {
             .document
             .imported_geometry(core_document::BodyId(hit.body))?;
         let cursor = Vec2::new(cx, cy);
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         edge_ends(&geometry.mesh, hit.edge)
             .into_iter()
             .filter_map(|(end, _)| {
@@ -288,14 +265,6 @@ impl PrintCadApp {
                 point: end.to_array(),
                 body: hit.body,
             })
-    }
-
-    pub(crate) fn selected_edge_refs(&self) -> Vec<EdgeRef> {
-        self.session
-            .selected_edges
-            .iter()
-            .map(EdgeHit::as_ref)
-            .collect()
     }
 }
 

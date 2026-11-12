@@ -508,6 +508,7 @@ impl PrintCadApp {
         }
         let size = window.inner_size();
         self.session
+            .view
             .camera
             .update_viewport((0, 0), (size.width.max(1), size.height.max(1)));
         let window_id = window.id();

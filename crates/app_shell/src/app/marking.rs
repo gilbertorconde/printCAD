@@ -246,18 +246,24 @@ impl PrintCadApp {
         self.settle_marking();
         let document = &self.session.document;
         let mesh = Arc::clone(&document.imported_geometry(body)?.mesh);
-        if self.session.marking.as_ref().is_none_or(|m| m.body != body) {
+        if self
+            .session
+            .tools
+            .marking
+            .as_ref()
+            .is_none_or(|m| m.body != body)
+        {
             let (local, _) = document.local_geometry(body)?;
             let revision = document.imported_geometry(body)?.revision;
-            self.session.marking = Some(Marking::new(body, local, revision));
+            self.session.tools.marking = Some(Marking::new(body, local, revision));
         }
-        Some((self.session.marking.as_mut()?, mesh))
+        Some((self.session.tools.marking.as_mut()?, mesh))
     }
 
     /// Bring the tab's marking up to its scan: dropped when the scan has a
     /// new mesh or is gone, drawn again where it sits when only moved.
     pub(crate) fn settle_marking(&mut self) {
-        let Some(marking) = self.session.marking.as_mut() else {
+        let Some(marking) = self.session.tools.marking.as_mut() else {
             return;
         };
         let document = &self.session.document;
@@ -271,7 +277,7 @@ impl PrintCadApp {
                 }
             }
             _ => {
-                self.session.marking = None;
+                self.session.tools.marking = None;
                 self.redraw_needed = true;
             }
         }
@@ -295,14 +301,16 @@ impl PrintCadApp {
 
     /// The gesture's release marks (or rubs out) what it covered.
     pub(crate) fn mark_release(&mut self) {
-        let (Some(gesture), Some(arm)) = (self.session.gestures.take_mark(), self.session.mark_arm)
-        else {
+        let (Some(gesture), Some(arm)) = (
+            self.session.gestures.take_mark(),
+            self.session.tools.mark_arm,
+        ) else {
             return;
         };
         let Some(cover) = self.mark_cover(&gesture, &arm) else {
             return;
         };
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         let project = |p: Vec3| camera.world_to_viewport(p).map(|(x, y)| Vec2::new(x, y));
         let view = crate::app::scene_guides::GuideView::of(camera);
         let eye = matches!(
@@ -346,7 +354,7 @@ impl PrintCadApp {
                     .mesh
                     .bounds()?;
                 let middle = (Vec3::from_array(lo) + Vec3::from_array(hi)) / 2.0;
-                let view = crate::app::scene_guides::GuideView::of(&self.session.camera);
+                let view = crate::app::scene_guides::GuideView::of(&self.session.view.camera);
                 Cover::Brush {
                     centres: gesture.points.clone(),
                     radius: arm.brush_mm / 2.0 / view.world_per_px_at(middle).max(1e-6),
@@ -356,7 +364,7 @@ impl PrintCadApp {
     }
 
     pub(crate) fn mark_edit(&mut self, edit: MarkEdit) {
-        let Some(arm) = self.session.mark_arm else {
+        let Some(arm) = self.session.tools.mark_arm else {
             return;
         };
         if let Some((marking, mesh)) = self.marking_for(arm.body) {
@@ -370,7 +378,7 @@ impl PrintCadApp {
 
     /// The tab's marking as the benches see it, while anything is marked.
     pub(crate) fn marked_surface(&self) -> Option<core_document::MarkedSurface> {
-        let marking = self.session.marking.as_ref()?;
+        let marking = self.session.tools.marking.as_ref()?;
         let document = &self.session.document;
         (marking.any && marking.holds(document)).then(|| core_document::MarkedSurface {
             body: marking.body,
@@ -383,9 +391,10 @@ impl PrintCadApp {
 
     /// The marked and total counts of the armed scan, for its task.
     pub(crate) fn marking_counts(&self) -> Option<(usize, usize)> {
-        let arm = self.session.mark_arm?;
+        let arm = self.session.tools.mark_arm?;
         let marking = self
             .session
+            .tools
             .marking
             .as_ref()
             .filter(|m| m.body == arm.body && m.holds(&self.session.document))?;
@@ -396,7 +405,8 @@ impl PrintCadApp {
     /// The gesture's outline over the view: the window, the lasso's path,
     /// the brush's ring at the pointer.
     pub(crate) fn mark_outline(&self, color: [f32; 3]) -> Vec<core_document::ScreenSpaceOverlay> {
-        let (Some(gesture), Some(arm)) = (self.session.gestures.mark(), self.session.mark_arm)
+        let (Some(gesture), Some(arm)) =
+            (self.session.gestures.mark(), self.session.tools.mark_arm)
         else {
             return Vec::new();
         };

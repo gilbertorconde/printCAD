@@ -111,7 +111,7 @@ impl Handle {
 
 impl PrintCadApp {
     fn eye_and_forward(&self) -> (Vec3, Vec3) {
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         let eye = Vec3::from_array(camera.position());
         (
             eye,
@@ -121,9 +121,9 @@ impl PrintCadApp {
 
     /// What the clip pill or the toggle asked for.
     pub(crate) fn set_section(&mut self, toggle: Option<SectionToggle>) {
-        let bounds = self.session.camera.scene_bounds();
+        let bounds = self.session.view.camera.scene_bounds();
         let (eye, forward) = self.eye_and_forward();
-        self.session.section_pick = None;
+        self.session.view.section_pick = None;
         if self
             .session
             .gestures
@@ -133,17 +133,17 @@ impl PrintCadApp {
             self.session.gestures.held = None;
         }
         let Some(toggle) = toggle else {
-            self.session.section = None;
+            self.session.view.section = None;
             return;
         };
         let plane = match toggle {
             SectionToggle::On => SectionPlane::facing(forward, bounds),
             SectionToggle::Set(plane) => {
-                self.session.section = Some(plane);
+                self.session.view.section = Some(plane);
                 return;
             }
             SectionToggle::Wedge(way) => {
-                if let Some(plane) = self.session.section.as_mut() {
+                if let Some(plane) = self.session.view.section.as_mut() {
                     plane.wedge = way.map(|way| plane.wedge_at(way, bounds, Some(eye)));
                 }
                 return;
@@ -158,9 +158,9 @@ impl PrintCadApp {
                 {
                     plane
                 } else {
-                    self.session.section_pick = Some(pick);
-                    if self.session.section.is_none() {
-                        self.session.section = Some(SectionPlane::facing(forward, bounds));
+                    self.session.view.section_pick = Some(pick);
+                    if self.session.view.section.is_none() {
+                        self.session.view.section = Some(SectionPlane::facing(forward, bounds));
                     }
                     return;
                 }
@@ -174,11 +174,12 @@ impl PrintCadApp {
     fn aim_section(&mut self, plane: SectionPlane) {
         let uncut = self
             .session
+            .view
             .section
             .as_ref()
             .map(|old| old.uncut.clone())
             .unwrap_or_default();
-        self.session.section = Some(SectionPlane { uncut, ..plane });
+        self.session.view.section = Some(SectionPlane { uncut, ..plane });
     }
 
     /// What the scene is cut with, as the renderer has it.
@@ -196,12 +197,16 @@ impl PrintCadApp {
         &self,
         body: core_document::BodyId,
     ) -> Option<crate::camera::section::Clip> {
-        crate::camera::section::clip_for(self.scene_clip(), self.session.section.as_ref(), body)
+        crate::camera::section::clip_for(
+            self.scene_clip(),
+            self.session.view.section.as_ref(),
+            body,
+        )
     }
 
     /// The plane of a flat face or a datum plane the selection holds.
     fn selected_section_plane(&self, eye: Vec3) -> Option<SectionPlane> {
-        if let Some((_, face)) = &self.session.last_face_hit
+        if let Some((_, face)) = &self.session.selection.last_face_hit
             && let Some(kernel_api::FaceSurface::Plane { origin, normal }) = face.surface
         {
             return SectionPlane::through(
@@ -211,7 +216,7 @@ impl PrintCadApp {
                 eye,
             );
         }
-        let Some(crate::ui::TreeItemId::Feature(id)) = self.session.tree_selection else {
+        let Some(crate::ui::TreeItemId::Feature(id)) = self.session.selection.tree else {
             return None;
         };
         let (origin, normal) = self.datum_plane(id)?;
@@ -233,19 +238,19 @@ impl PrintCadApp {
     /// a datum plane aims it there, a point joins the three it waits for.
     /// Whether it took the click.
     pub(crate) fn section_pick_click(&mut self) -> bool {
-        let Some(pick) = self.session.section_pick.clone() else {
+        let Some(pick) = self.session.view.section_pick.clone() else {
             return false;
         };
         let (eye, _) = self.eye_and_forward();
         let datum = self.datum_under_cursor();
-        let edge = self.session.hovered_edge.map(|edge| MeasurePick::Edge {
+        let edge = self.session.hover.edge.map(|edge| MeasurePick::Edge {
             point: edge.point,
             direction: edge.direction,
             length: edge.length_mm,
             circle: edge.circle,
             body: None,
         });
-        let mesh = self.session.hovered_body.and_then(|body| {
+        let mesh = self.session.hover.body.and_then(|body| {
             self.session
                 .document
                 .imported_geometry(core_document::BodyId(body))
@@ -254,7 +259,7 @@ impl PrintCadApp {
             crate::app::measure::pick_at(
                 None,
                 mesh.map(|geometry| &*geometry.mesh),
-                self.session.hovered_world_pos,
+                self.session.hover.world_pos,
             )
         };
         match pick {
@@ -293,7 +298,7 @@ impl PrintCadApp {
                 };
                 if let Some(plane) = plane {
                     self.aim_section(plane);
-                    self.session.section_pick = None;
+                    self.session.view.section_pick = None;
                 }
             }
             SectionPick::Points(mut points) => {
@@ -309,18 +314,18 @@ impl PrintCadApp {
                     match SectionPlane::through_points([a, b, c], eye) {
                         Some(plane) => {
                             self.aim_section(plane);
-                            self.session.section_pick = None;
+                            self.session.view.section_pick = None;
                         }
                         None => {
                             crate::app_log::info(
                                 "Those three points stand in a line: pick the third again",
                             );
                             points.pop();
-                            self.session.section_pick = Some(SectionPick::Points(points));
+                            self.session.view.section_pick = Some(SectionPick::Points(points));
                         }
                     }
                 } else {
-                    self.session.section_pick = Some(SectionPick::Points(points));
+                    self.session.view.section_pick = Some(SectionPick::Points(points));
                 }
             }
         }
@@ -330,7 +335,7 @@ impl PrintCadApp {
     /// The offset as its formula reads it, so the plane follows the
     /// variables it names; a formula that fails leaves the offset be.
     pub(crate) fn follow_section_formula(&mut self) {
-        let Some(plane) = self.session.section.as_mut() else {
+        let Some(plane) = self.session.view.section.as_mut() else {
             return;
         };
         let Some(formula) = &plane.formula else {
@@ -352,13 +357,13 @@ impl PrintCadApp {
     /// The clipping plane's handle, where it stands now; none while a pick
     /// aims the plane or a bench cuts the scene its own way.
     pub(crate) fn section_handle(&self) -> Option<Handle> {
-        let plane = self.session.section.as_ref()?;
-        if self.session.section_pick.is_some()
+        let plane = self.session.view.section.as_ref()?;
+        if self.session.view.section_pick.is_some()
             || self.frame_submission.clip_plane != Some(plane.equation())
         {
             return None;
         }
-        handle(&self.session.camera, plane)
+        handle(&self.session.view.camera, plane)
     }
 
     pub(crate) fn section_handle_hot(&self, handle: &Handle) -> bool {
@@ -380,7 +385,7 @@ impl PrintCadApp {
         formula: Option<String>,
         cancel: bool,
     ) {
-        if let Some(plane) = self.session.section.as_mut() {
+        if let Some(plane) = self.session.view.section.as_mut() {
             plane.offset = offset;
             plane.formula = if cancel { formula } else { None };
         }
@@ -420,7 +425,7 @@ impl PrintCadApp {
                     _ => crate::camera::section::SectionAxis::Z,
                 };
                 let (_, forward) = self.eye_and_forward();
-                let bounds = self.session.camera.scene_bounds();
+                let bounds = self.session.view.camera.scene_bounds();
                 SectionToggle::Set(SectionPlane::facing(forward, bounds).on_axis(axis, bounds))
             }
             _ => {
@@ -447,7 +452,7 @@ impl PrintCadApp {
             }
         };
         self.set_section(Some(toggle));
-        if let Some(plane) = self.session.section.as_mut() {
+        if let Some(plane) = self.session.view.section.as_mut() {
             if let Some(offset) = offset {
                 plane.offset = offset;
             }
@@ -467,7 +472,7 @@ impl PrintCadApp {
             self.set_section(Some(SectionToggle::Wedge(wedge)));
         }
         self.redraw_needed = true;
-        tracing::info!(target: "printcad.frame", "bench section {:?}", self.session.section);
+        tracing::info!(target: "printcad.frame", "bench section {:?}", self.session.view.section);
     }
 }
 

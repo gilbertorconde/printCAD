@@ -58,7 +58,9 @@ impl PrintCadApp {
     /// redo restoring a pre-tessellation placeholder whose response was
     /// already consumed). Block it; imports finish within moments.
     fn history_jump_allowed(&self) -> bool {
-        if self.kernel_worker.in_flight() > 0 || self.session.server.status().opens_in_flight > 0 {
+        if self.kernel_worker.in_flight() > 0
+            || self.session.connection.server.status().opens_in_flight > 0
+        {
             app_log::warn("Undo/redo unavailable while an import or open is in progress");
             return false;
         }
@@ -78,33 +80,33 @@ impl PrintCadApp {
         {
             self.session.active_body_id = None;
         }
-        if let Some(id) = self.session.selected_body
+        if let Some(id) = self.session.selection.body
             && !body_exists(core_document::BodyId(id))
         {
-            self.session.selected_body = None;
+            self.session.selection.body = None;
         }
-        if let Some(id) = self.session.hovered_body
+        if let Some(id) = self.session.hover.body
             && !body_exists(core_document::BodyId(id))
         {
-            self.session.hovered_body = None;
+            self.session.hover.body = None;
         }
-        match self.session.tree_selection {
+        match self.session.selection.tree {
             Some(TreeItemId::Body(id)) if !body_exists(id) => {
-                self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+                self.session.selection.tree = Some(TreeItemId::DocumentRoot);
             }
             Some(TreeItemId::Feature(id)) if !feature_exists(id) => {
-                self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+                self.session.selection.tree = Some(TreeItemId::DocumentRoot);
             }
             Some(TreeItemId::ImportedObject(id)) if doc.imported_object(id).is_none() => {
-                self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+                self.session.selection.tree = Some(TreeItemId::DocumentRoot);
             }
             _ => {}
         }
 
-        self.session.face_highlight = None;
-        self.session.last_face_hit = None;
-        self.session.hovered_feature = None;
-        self.session.hovered_part = None;
+        self.session.selection.face_highlight = None;
+        self.session.selection.last_face_hit = None;
+        self.session.hover.feature = None;
+        self.session.hover.part = None;
 
         let active_object_dangles = self
             .session

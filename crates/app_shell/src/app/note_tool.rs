@@ -67,12 +67,12 @@ impl PrintCadApp {
             self.open_note_card(id);
             return true;
         }
-        let (Some(body), Some(point)) = (self.session.hovered_body, self.session.hovered_world_pos)
+        let (Some(body), Some(point)) = (self.session.hover.body, self.session.hover.world_pos)
         else {
-            return self.session.note_card.take().is_some();
+            return self.session.tools.note_card.take().is_some();
         };
         let body = BodyId(body);
-        let want = match self.session.hovered_edge {
+        let want = match self.session.hover.edge {
             Some(edge) if edge.body == body.0 => NoteWant::Edge(Some(edge.edge)),
             _ => NoteWant::Face,
         };
@@ -83,7 +83,7 @@ impl PrintCadApp {
             Some(point),
             want,
         );
-        self.session.note_card = Some(NoteCard {
+        self.session.tools.note_card = Some(NoteCard {
             body,
             editing: NoteEditing::New(Box::new(note)),
         });
@@ -93,7 +93,7 @@ impl PrintCadApp {
     /// Open the card on note `id`.
     pub(crate) fn open_note_card(&mut self, id: NoteId) {
         if let Some((body, _)) = self.session.document.note(id) {
-            self.session.note_card = Some(NoteCard {
+            self.session.tools.note_card = Some(NoteCard {
                 body,
                 editing: NoteEditing::Existing(id),
             });
@@ -104,7 +104,7 @@ impl PrintCadApp {
     /// question answered with it, or the note reworded. A new note with
     /// nothing to say is not put down.
     pub(crate) fn save_note_card(&mut self, text: String) {
-        let Some(card) = self.session.note_card.take() else {
+        let Some(card) = self.session.tools.note_card.take() else {
             return;
         };
         let text = text.trim().to_string();
@@ -159,7 +159,7 @@ impl PrintCadApp {
     /// What the UI draws of the note card, while it is open on a note that
     /// is there.
     pub(crate) fn note_card_view(&self) -> Option<NoteCardView> {
-        let card = self.session.note_card.as_ref()?;
+        let card = self.session.tools.note_card.as_ref()?;
         let document = &self.session.document;
         let (number, new, note, placed) = match &card.editing {
             NoteEditing::New(note) => (
@@ -191,6 +191,7 @@ impl PrintCadApp {
             from_file: note.from_file,
             at: self
                 .session
+                .view
                 .camera
                 .world_to_viewport(Vec3::from_array(placed.at))
                 .map(|(x, y)| [x, y]),
@@ -203,7 +204,7 @@ impl PrintCadApp {
         let cursor = Vec2::from(self.input.cursor_in_viewport?);
         let reach = REACH * self.pixels_per_point();
         let document = &self.session.document;
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         document
             .notes()
             .filter(|(_, note)| document.note_effective_visible(note.id))
@@ -227,11 +228,11 @@ impl PrintCadApp {
         let Some(geometry) = self.session.document.imported_geometry(body) else {
             return false;
         };
-        self.session.note_occlusions.hidden(
+        self.session.drawn.note_occlusions.hidden(
             note,
             &geometry.mesh,
             geometry.revision,
-            self.session.camera.view_projection(),
+            self.session.view.camera.view_projection(),
             at,
         )
     }

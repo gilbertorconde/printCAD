@@ -129,7 +129,7 @@ impl PrintCadApp {
             ..
         } = &response
         {
-            self.session.build_times.insert(*body_id, *elapsed);
+            self.session.builds.times.insert(*body_id, *elapsed);
         }
         // Whether the build landing stopped at the edited feature, which
         // feature it previews and whether a newer plan waits behind it,
@@ -142,18 +142,18 @@ impl PrintCadApp {
         if let KernelResponse::SolidBuilt { body_id, .. }
         | KernelResponse::SolidFailed { body_id, .. } = &response
         {
-            partial = self.session.partial_out.remove(body_id);
-            let dropped = self.session.dropped_builds.remove(body_id);
+            partial = self.session.builds.partial_out.remove(body_id);
+            let dropped = self.session.builds.dropped.remove(body_id);
             if dropped
                 && let KernelResponse::SolidFailed { error, .. } = &response
                 && Self::is_cancellation(error)
             {
                 // Dropped for the plan that goes now.
-                self.session.stale_builds.remove(body_id);
+                self.session.builds.stale.remove(body_id);
                 self.build_landed(*body_id);
                 return;
             }
-            let stale = self.session.stale_builds.remove(body_id);
+            let stale = self.session.builds.stale.remove(body_id);
             landed = self.build_landed(*body_id);
             // Built from a history that is not the body's current one.
             if stale {
@@ -169,7 +169,8 @@ impl PrintCadApp {
                     detail,
                     elapsed,
                 } => {
-                    if let Some(route) = self.session.remote_import_routes.remove(&path) {
+                    if let Some(route) = self.session.connection.remote_import_routes.remove(&path)
+                    {
                         // A peer's import, re-derived locally: the bodies
                         // already exist (their ImportModel op made them);
                         // only the derived geometry lands here.
@@ -235,8 +236,8 @@ impl PrintCadApp {
                     let complete = !partial;
                     let landing = crate::app::recompute::preview_landing(
                         landed,
-                        self.session.preview_feature.map(|f| f.0),
-                        self.session.previews.contains_key(&bid),
+                        self.session.builds.preview_feature.map(|f| f.0),
+                        self.session.builds.previews.contains_key(&bid),
                     );
                     use crate::app::recompute::PreviewLanding;
                     match (result.preview.take(), landing) {
@@ -246,7 +247,7 @@ impl PrintCadApp {
                         // The preview shown stays until the newer plan lands.
                         (Some(_), PreviewLanding::Keep) => {}
                         _ => {
-                            self.session.previews.remove(&bid);
+                            self.session.builds.previews.remove(&bid);
                             crate::app::recompute::store_built_solid(
                                 &mut self.session.document,
                                 bid,
@@ -259,7 +260,7 @@ impl PrintCadApp {
                     match failed {
                         Some(failed) => {
                             self.drop_failed_preview(bid);
-                            self.session.coarse.remove(&body_id);
+                            self.session.builds.coarse.remove(&body_id);
                             if let Some(feature) = failed.feature {
                                 let feature = core_document::FeatureId(feature);
                                 self.session.document.set_feature_failure(
@@ -300,7 +301,7 @@ impl PrintCadApp {
                     elapsed,
                 } => self.apply_mesh_solid(BodyId(body_id), result, elapsed),
                 KernelResponse::MeshSolidFailed { body_id, error } => {
-                    self.session.solids_in_flight.remove(&body_id);
+                    self.session.jobs.solids.remove(&body_id);
                     let name = self.body_name(BodyId(body_id));
                     if Self::is_cancellation(&error) {
                         app_log::info(format!("Conversion of `{name}` cancelled"));
@@ -318,7 +319,7 @@ impl PrintCadApp {
                     from,
                     result,
                 } => {
-                    self.session.mirrors_in_flight.remove(&body_id);
+                    self.session.jobs.mirrors.remove(&body_id);
                     match result {
                         // A source that changed meanwhile asks again.
                         Ok(blob) => {
@@ -327,7 +328,7 @@ impl PrintCadApp {
                                 .set_mirrored_shape(BodyId(body_id), &from, blob);
                         }
                         Err(error) => {
-                            self.session.mirrors_failed.insert(body_id, from);
+                            self.session.jobs.mirrors_failed.insert(body_id, from);
                             app_log::error(format!(
                                 "`{}` could not be mirrored: {error}",
                                 self.body_name(BodyId(body_id))
@@ -338,11 +339,13 @@ impl PrintCadApp {
                 KernelResponse::MinDistance { token, result, .. } => {
                     let quick = self
                         .session
+                        .tools
                         .quick_measure
                         .as_mut()
                         .and_then(|q| q.gap.as_mut());
                     if let Some(gap) = self
                         .session
+                        .tools
                         .measure_gap
                         .as_mut()
                         .into_iter()
@@ -361,10 +364,13 @@ impl PrintCadApp {
                         Ok(props) => crate::ui::Physical::Ready(Box::new(props)),
                         Err(error) => crate::ui::Physical::Failed(error),
                     };
-                    self.session.physical.insert(body_id, (revision, reading));
+                    self.session
+                        .drawn
+                        .physical
+                        .insert(body_id, (revision, reading));
                 }
                 KernelResponse::RepairFailed { body_id, error } => {
-                    self.session.repairs_in_flight.remove(&body_id);
+                    self.session.jobs.repairs.remove(&body_id);
                     let name = self.body_name(BodyId(body_id));
                     if Self::is_cancellation(&error) {
                         app_log::info(format!("Repair of `{name}` cancelled"));
@@ -395,7 +401,7 @@ impl PrintCadApp {
                     }
                     self.drop_failed_preview(BodyId(body_id));
                     // Built again finely, it would fail the same way.
-                    self.session.coarse.remove(&body_id);
+                    self.session.builds.coarse.remove(&body_id);
                     // Pin the failure on the culprit feature; the panel and
                     // tree surface it, and the features after it say they
                     // were left out.
@@ -413,7 +419,7 @@ impl PrintCadApp {
                     // builds, and a shape left from before would be stale.
                     let bid = BodyId(body_id);
                     if nothing_built && !self.session.document.body_solid_is_imported(bid) {
-                        self.session.previews.remove(&bid);
+                        self.session.builds.previews.remove(&bid);
                         self.session.document.remove_imported_geometry(bid);
                     }
                     app_log::error(format!("Rebuild of `{name}` failed: {error}"));
@@ -555,7 +561,7 @@ impl PrintCadApp {
 
         if let Some((aabb_min, aabb_max)) = landed.bounds {
             let (center, radius) = aabb_fit_center_radius(aabb_min, aabb_max);
-            self.session.camera.reset_to_fit(
+            self.session.view.camera.reset_to_fit(
                 center,
                 radius,
                 Some((aabb_min, aabb_max)),
@@ -567,7 +573,7 @@ impl PrintCadApp {
             self.session.active_body_id = Some(body_id);
             // The tree draws imported parts as their own rows and hides the
             // body behind them, so point the selection at the row on screen.
-            self.session.tree_selection = Some(
+            self.session.selection.tree = Some(
                 self.session
                     .document
                     .imported_object_for_body(body_id)
@@ -576,8 +582,8 @@ impl PrintCadApp {
             );
             // No viewport selection: the first click on the model picks a
             // face rather than undoing a selection nobody made.
-            self.session.selected_body = None;
-            self.session.last_select_click = None;
+            self.session.selection.body = None;
+            self.session.selection.last_select_click = None;
         }
 
         if let Some(unit) = landed.unit {

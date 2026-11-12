@@ -115,7 +115,7 @@ impl PrintCadApp {
                 UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true),
                 UiCommand::File(FileCommand::ExportLaidOut) => {
                     self.open_export_dialog();
-                    if let Some(draft) = &mut self.session.export_pending {
+                    if let Some(draft) = &mut self.session.file.export_pending {
                         draft.layout = true;
                         draft.selected_only = false;
                     }
@@ -140,7 +140,7 @@ impl PrintCadApp {
                     }
                 }
                 UiCommand::ConfirmExport => self.confirm_export(),
-                UiCommand::CancelExport => self.session.export_pending = None,
+                UiCommand::CancelExport => self.session.file.export_pending = None,
                 // One dialog a frame, by priority: import > open > save-as
                 // > save.
                 UiCommand::File(FileCommand::ImportStep) => {
@@ -174,18 +174,18 @@ impl PrintCadApp {
                 UiCommand::ToggleGrid => intents.toggle_grid = true,
                 UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
                 UiCommand::ToggleFullscreen => self.toggle_fullscreen(),
-                UiCommand::ToggleSplitView => self.session.split_view = !self.session.split_view,
+                UiCommand::ToggleSplitView => self.session.view.split = !self.session.view.split,
                 UiCommand::ToggleSplitLink => self.toggle_split_link(),
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
                 UiCommand::ToggleNoteTool => {
-                    self.session.note_tool = !self.session.note_tool;
-                    self.session.note_card = None;
-                    if self.session.note_tool {
+                    self.session.tools.note_tool = !self.session.tools.note_tool;
+                    self.session.tools.note_card = None;
+                    if self.session.tools.note_tool {
                         app_log::info("Note: click a face, an edge or a point of a part");
                     }
                 }
                 UiCommand::SaveNoteCard(text) => self.save_note_card(text),
-                UiCommand::CloseNoteCard => self.session.note_card = None,
+                UiCommand::CloseNoteCard => self.session.tools.note_card = None,
                 UiCommand::OpenNoteCard(id) => self.open_note_card(id),
                 UiCommand::ResolveNote { note, resolved } => self.resolve_note(note, resolved),
                 UiCommand::Edit(command) => intents.edit.push(command),
@@ -193,8 +193,8 @@ impl PrintCadApp {
                     intents.body_display.push((body, display));
                 }
                 UiCommand::SetPickFilter(filter) => {
-                    self.session.pick_filter = filter;
-                    self.session.hovered_edge = None;
+                    self.session.view.pick_filter = filter;
+                    self.session.hover.edge = None;
                     app_log::info(format!("Picking: {}", filter.label()));
                 }
                 UiCommand::RepeatLastTool => {
@@ -207,13 +207,13 @@ impl PrintCadApp {
                 }
                 UiCommand::RevealInTree(body) => {
                     self.session.viewport_menu = None;
-                    self.session.reveal_body = Some(body);
+                    self.session.selection.reveal_body = Some(body);
                 }
                 UiCommand::SelectBody(body) => {
                     self.session.viewport_menu = None;
-                    self.session.face_highlight = None;
-                    self.session.last_face_hit = None;
-                    self.session.selected_body = Some(body.0);
+                    self.session.selection.face_highlight = None;
+                    self.session.selection.last_face_hit = None;
+                    self.session.selection.body = Some(body.0);
                     app_log::info(format!("Selected body: {:?}", body.0));
                 }
                 UiCommand::CloseViewportMenu => self.session.viewport_menu = None,
@@ -244,11 +244,13 @@ impl PrintCadApp {
                 }
                 UiCommand::SetFieldOfView { degrees, settled } => {
                     self.session
+                        .view
                         .camera
                         .set_field_of_view(degrees, &self.user_settings.camera);
                     // A later fit frames with the setting, so it follows
                     // the edit at once; the file waits for the edit to end.
-                    self.user_settings.camera.fov_degrees = self.session.camera.field_of_view_deg();
+                    self.user_settings.camera.fov_degrees =
+                        self.session.view.camera.field_of_view_deg();
                     if settled {
                         intents.persist_settings = true;
                     }
@@ -305,7 +307,8 @@ impl PrintCadApp {
                             app_log::warn("Select a body to isolate");
                         } else {
                             self.session
-                                .selected_edges
+                                .selection
+                                .edges
                                 .retain(|e| kept.iter().any(|b| b.0 == e.body));
                             self.session.document.set_isolation(Some(kept));
                         }
@@ -328,7 +331,7 @@ impl PrintCadApp {
                                 self.session.document.set_body_visible(other, false);
                             }
                             self.session.document.set_body_visible(keep, true);
-                            self.session.selected_edges.retain(|e| e.body == keep.0);
+                            self.session.selection.edges.retain(|e| e.body == keep.0);
                             self.session.journal.label_next("Isolate body");
                             self.close_gesture();
                         }
@@ -473,6 +476,7 @@ impl PrintCadApp {
                     if self.input.cursor_in_viewport.is_some()
                         && self
                             .session
+                            .view
                             .camera
                             .pivot_from_key_h(&self.user_settings.camera)
                     {
@@ -495,10 +499,10 @@ impl PrintCadApp {
                     }
                 }
                 UiCommand::ClearMeasure => {
-                    if let Some(picks) = &mut self.session.measure {
+                    if let Some(picks) = &mut self.session.tools.measure {
                         picks.clear();
                     }
-                    self.session.measure_gap = None;
+                    self.session.tools.measure_gap = None;
                 }
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed { outcome, take_back } => {
@@ -584,7 +588,7 @@ impl PrintCadApp {
                         intents.persist_settings = true;
                     }
                 }
-                UiCommand::DismissFileNotice => self.session.file_safety.newer_notice = false,
+                UiCommand::DismissFileNotice => self.session.file.safety.newer_notice = false,
             }
         }
 
@@ -696,6 +700,7 @@ impl PrintCadApp {
             }
             Some(view) => self
                 .session
+                .view
                 .camera
                 .snap_to_view(view, &self.user_settings.camera),
             None => {}
@@ -711,18 +716,20 @@ impl PrintCadApp {
             Some(CubeDrag::Moved(offset)) => {
                 if self
                     .session
+                    .view
                     .camera
                     .orbit_from_cube(offset, &self.user_settings.camera)
                 {
                     self.redraw_needed = true;
                 }
             }
-            Some(CubeDrag::Released) => self.session.camera.release_cube_orbit(),
+            Some(CubeDrag::Released) => self.session.view.camera.release_cube_orbit(),
             None => {}
         }
         if let Some(ref delta) = intents.camera_rotate {
             if !planar_only || delta.axis.keeps_view_direction() {
                 self.session
+                    .view
                     .camera
                     .apply_rotate_delta(delta, &self.user_settings.camera);
             } else {
@@ -769,16 +776,17 @@ impl PrintCadApp {
         }
         if intents.apply_camera_settings {
             self.session
+                .view
                 .camera
                 .sync_with_settings(&self.user_settings.camera);
         }
 
         let mut step_import_to_run = None;
         if intents.confirm_step_import {
-            step_import_to_run = self.session.step_import_pending.take();
+            step_import_to_run = self.session.file.step_import_pending.take();
         }
         if intents.cancel_step_import {
-            self.session.step_import_pending = None;
+            self.session.file.step_import_pending = None;
         }
 
         if intents.fit_view {
@@ -813,7 +821,7 @@ impl PrintCadApp {
         }
 
         if let Some(req) = intents.orient_to_plane {
-            self.session.camera.orient_to_plane(
+            self.session.view.camera.orient_to_plane(
                 Vec3::from_array(req.plane_origin),
                 Vec3::from_array(req.plane_normal),
                 Vec3::from_array(req.plane_up),
@@ -839,11 +847,11 @@ impl PrintCadApp {
             self.run_bench_command(bench, command.id(), core_document::MenuScope::EditMenu);
         }
         if intents.toggle_measure {
-            self.session.measure = match self.session.measure {
+            self.session.tools.measure = match self.session.tools.measure {
                 Some(_) => None,
                 None => Some(Vec::new()),
             };
-            if self.session.measure.is_some() {
+            if self.session.tools.measure.is_some() {
                 app_log::info(
                     "Measure: click a point, an edge or a face, then another to measure between",
                 );
@@ -942,8 +950,8 @@ impl PrintCadApp {
         }
         self.session.active_body_id = Some(body_id);
         self.session.active_document_object = None;
-        self.session.tree_selection = Some(TreeItemId::Body(body_id));
-        self.session.selected_body = Some(body_id.0);
+        self.session.selection.tree = Some(TreeItemId::Body(body_id));
+        self.session.selection.body = Some(body_id.0);
         self.session.journal.label_next("Create body");
         self.close_gesture();
     }
@@ -967,7 +975,7 @@ impl PrintCadApp {
             self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
         }
         self.session.active_document_object = None;
-        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+        self.session.selection.tree = Some(TreeItemId::DocumentRoot);
 
         if let Some(previous) = self.session.return_workbench.take()
             && previous != self.session.active_workbench
@@ -979,9 +987,9 @@ impl PrintCadApp {
             if let Some(id) = edited
                 && self.session.document.get_feature_meta(id).is_some()
             {
-                self.session.tree_selection = Some(TreeItemId::Feature(id));
+                self.session.selection.tree = Some(TreeItemId::Feature(id));
                 self.session.active_document_object = Some(id);
-                self.session.last_select_click = None;
+                self.session.selection.last_select_click = None;
             }
         }
     }
@@ -1055,9 +1063,14 @@ impl PrintCadApp {
     /// View › Link split cameras: unlinked, the side pane starts where the
     /// viewport's camera stands and moves on its own from there.
     pub(crate) fn toggle_split_link(&mut self) {
-        self.session.side_camera = match self.session.side_camera.take() {
+        self.session.view.side_camera = match self.session.view.side_camera.take() {
             Some(_) => None,
-            None => Some(self.session.camera.detached(&self.user_settings.camera)),
+            None => Some(
+                self.session
+                    .view
+                    .camera
+                    .detached(&self.user_settings.camera),
+            ),
         };
         self.redraw_needed = true;
     }
@@ -1067,15 +1080,15 @@ impl PrintCadApp {
     /// body's tip does not move; taking the selected row itself out hands
     /// the selection to the feature added last.
     fn toggle_tree_feature(&mut self, feature: core_document::FeatureId) {
-        let Some(TreeItemId::Feature(primary)) = self.session.tree_selection else {
+        let Some(TreeItemId::Feature(primary)) = self.session.selection.tree else {
             self.apply_tree_selection(TreeItemId::Feature(feature));
             return;
         };
-        let mut also = self.session.tree_also().to_vec();
+        let mut also = self.session.selection.tree_also().to_vec();
         if feature == primary {
             if let Some(next) = also.pop() {
                 self.apply_tree_selection(TreeItemId::Feature(next));
-                self.session.tree_also = Some((TreeItemId::Feature(next), also));
+                self.session.selection.tree_also = Some((TreeItemId::Feature(next), also));
             }
             return;
         }
@@ -1085,7 +1098,7 @@ impl PrintCadApp {
             }
             None => also.push(feature),
         }
-        self.session.tree_also = Some((TreeItemId::Feature(primary), also));
+        self.session.selection.tree_also = Some((TreeItemId::Feature(primary), also));
     }
 
     /// Suppress or unsuppress every feature of the tree's selection, as one
@@ -1108,22 +1121,22 @@ impl PrintCadApp {
 
     pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {
         // A row is the whole feature, never parts of it.
-        self.session.picked_parts = None;
-        self.session.tree_selection = Some(selection);
-        self.session.tree_also = None;
+        self.session.selection.parts = None;
+        self.session.selection.tree = Some(selection);
+        self.session.selection.tree_also = None;
         // A selection made here is not a viewport click, so the next click
         // on that body picks a face instead of undoing this.
-        self.session.last_select_click = None;
+        self.session.selection.last_select_click = None;
         match selection {
             TreeItemId::DocumentRoot => {
                 self.session.active_document_object = None;
                 self.session.active_body_id = None;
-                self.session.selected_body = None;
+                self.session.selection.body = None;
             }
             TreeItemId::Body(id) => {
                 self.session.active_body_id = Some(id);
                 self.session.active_document_object = None;
-                self.session.selected_body = Some(id.0);
+                self.session.selection.body = Some(id.0);
             }
             TreeItemId::Feature(id) => {
                 if self.session.active_document_object != Some(id) {
@@ -1136,24 +1149,24 @@ impl PrintCadApp {
                 self.session.active_document_object = None;
                 self.session.active_body_id =
                     self.session.document.body_of_imported_object(node_id);
-                self.session.selected_body = self.session.active_body_id.map(|id| id.0);
+                self.session.selection.body = self.session.active_body_id.map(|id| id.0);
             }
             TreeItemId::Component(_) | TreeItemId::Array(_) => {
                 self.session.active_document_object = None;
                 self.session.active_body_id = None;
-                self.session.selected_body = None;
+                self.session.selection.body = None;
             }
             // A note draws in the selection paint itself; its body stays
             // the target without its overlay.
             TreeItemId::Notes(body) => {
                 self.session.active_document_object = None;
                 self.session.active_body_id = Some(body);
-                self.session.selected_body = None;
+                self.session.selection.body = None;
             }
             TreeItemId::Note(id) => {
                 self.session.active_document_object = None;
                 self.session.active_body_id = self.session.document.note(id).map(|(b, _)| b);
-                self.session.selected_body = None;
+                self.session.selection.body = None;
             }
         }
     }
@@ -1334,7 +1347,7 @@ impl PrintCadApp {
             self.session.active_document_object = None;
         }
         if !matches!(item, TreeItemId::Feature(_)) {
-            self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+            self.session.selection.tree = Some(TreeItemId::DocumentRoot);
         }
         self.session.journal.label_next(deleted.label);
         self.close_gesture();
@@ -1363,7 +1376,7 @@ impl PrintCadApp {
             &args,
             &mut self.session.document,
             &self.registry,
-            self.session.current_file.as_deref(),
+            self.session.file.path.as_deref(),
         );
         let result = match answer {
             Some(Ok(result)) => result,
@@ -1386,7 +1399,7 @@ impl PrintCadApp {
             }
             BodyEdit::LinkedCopy => {
                 if let Some(copy) = result.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
-                    self.session.tree_selection =
+                    self.session.selection.tree =
                         Some(TreeItemId::Body(core_document::BodyId(copy)));
                 }
                 "Linked copy"
@@ -1468,7 +1481,7 @@ impl PrintCadApp {
             &args,
             &mut self.session.document,
             &self.registry,
-            self.session.current_file.as_deref(),
+            self.session.file.path.as_deref(),
         );
         match answer {
             Some(Ok(result)) => {
@@ -1645,7 +1658,7 @@ impl PrintCadApp {
         // The blank document first: it may be a new tab, and the bench
         // switch below belongs to that tab.
         self.reset_to_new_document();
-        self.session.export_when_ready = walkthrough;
+        self.session.file.export_when_ready = walkthrough;
         let part = self.landing_workbench();
         if self.session.active_workbench != part {
             let old = self.session.active_workbench.0.clone();
@@ -1722,7 +1735,7 @@ impl PrintCadApp {
         if self.session.active_document_object != before
             && let Some(feature) = self.session.active_document_object
         {
-            self.session.tree_selection = Some(TreeItemId::Feature(feature));
+            self.session.selection.tree = Some(TreeItemId::Feature(feature));
         }
     }
 }
@@ -1733,24 +1746,25 @@ impl PrintCadApp {
     /// the features Ctrl-clicked beside it).
     fn bodies_to_isolate(&self) -> Vec<core_document::BodyId> {
         use crate::ui::TreeItemId;
-        if self.session.selected_body.is_some() {
+        if self.session.selection.body.is_some() {
             let mut bodies: Vec<core_document::BodyId> = self
                 .session
+                .selection
                 .earlier_bodies
                 .iter()
                 .copied()
-                .chain(self.session.selected_body)
+                .chain(self.session.selection.body)
                 .map(core_document::BodyId)
                 .collect();
             bodies.dedup();
             return bodies;
         }
         let document = &self.session.document;
-        let mut bodies = match self.session.tree_selection {
+        let mut bodies = match self.session.selection.tree {
             Some(TreeItemId::Component(id)) => document.component_bodies(id),
             _ => self.selected_body_for_isolate().into_iter().collect(),
         };
-        for feature in self.session.tree_also.iter().flat_map(|(_, f)| f) {
+        for feature in self.session.selection.tree_also.iter().flat_map(|(_, f)| f) {
             if let Some(body) = document.get_feature_meta(*feature).and_then(|n| n.body)
                 && !bodies.contains(&body)
             {
@@ -1764,10 +1778,10 @@ impl PrintCadApp {
     /// body of the tree's selection.
     fn selected_body_for_isolate(&self) -> Option<core_document::BodyId> {
         use crate::ui::TreeItemId;
-        if let Some(body) = self.session.selected_body {
+        if let Some(body) = self.session.selection.body {
             return Some(core_document::BodyId(body));
         }
-        match self.session.tree_selection? {
+        match self.session.selection.tree? {
             TreeItemId::Body(body) => Some(body),
             TreeItemId::Feature(f) => self.session.document.get_feature_meta(f)?.body,
             TreeItemId::ImportedObject(id) => self.session.document.body_of_imported_object(id),

@@ -389,7 +389,7 @@ impl PrintCadApp {
             return;
         };
         let id = uuid::Uuid::new_v4().to_string();
-        let folder = working_folder(self.session.current_file.as_deref());
+        let folder = working_folder(self.session.file.path.as_deref());
         let session = self.start_agent(&config, &id, None, &folder);
         let number = self.agents.chats_made + 1;
         self.agents.chats_made = number;
@@ -463,7 +463,7 @@ impl PrintCadApp {
     /// Bring back the chats kept with the file of the document on screen,
     /// resting until each is shown.
     pub(crate) fn restore_chats(&mut self) {
-        let Some(file) = self.session.current_file.clone() else {
+        let Some(file) = self.session.file.path.clone() else {
             return;
         };
         let tab = self.session.tab;
@@ -563,7 +563,7 @@ impl PrintCadApp {
     pub(crate) fn persist_chats(&self) {
         let files: Vec<(uuid::Uuid, PathBuf)> = self
             .sessions()
-            .filter_map(|s| Some((s.tab, s.current_file.clone()?)))
+            .filter_map(|s| Some((s.tab, s.file.path.clone()?)))
             .collect();
         for (tab, file) in files {
             let kept: Vec<crate::app::chat_store::SavedChat> = self

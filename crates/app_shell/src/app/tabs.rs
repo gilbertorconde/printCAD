@@ -42,7 +42,7 @@ impl PrintCadApp {
     /// The file of every open tab that has one.
     pub(crate) fn open_files(&self) -> Vec<std::path::PathBuf> {
         self.sessions()
-            .filter_map(|session| session.current_file.clone())
+            .filter_map(|session| session.file.path.clone())
             .collect()
     }
 
@@ -55,7 +55,7 @@ impl PrintCadApp {
                 dirty: session.document.metadata().dirty(),
                 active: session.tab == self.session.tab,
                 blank: self.tab_is_blank(session),
-                read_only: session.file_safety.read_only,
+                read_only: session.file.safety.read_only,
             })
             .collect()
     }
@@ -80,7 +80,7 @@ impl PrintCadApp {
     /// The tab that has this file open.
     pub(crate) fn tab_index_of_file(&self, path: &Path) -> Option<usize> {
         self.sessions()
-            .position(|session| session.current_file.as_deref() == Some(path))
+            .position(|session| session.file.path.as_deref() == Some(path))
     }
 
     /// Whether any tab has work on its way through a worker or the server.
@@ -146,9 +146,7 @@ impl PrintCadApp {
     /// still there.
     pub(crate) fn reopen_closed_tab(&mut self) {
         while let Some(file) = self.files.closed_files.pop() {
-            let open = self
-                .sessions()
-                .any(|s| s.current_file.as_ref() == Some(&file));
+            let open = self.sessions().any(|s| s.file.path.as_ref() == Some(&file));
             if !open && file.exists() {
                 self.open_document_at(file);
                 return;
@@ -195,8 +193,8 @@ impl PrintCadApp {
         self.autosave.saved.remove(&closing.tab);
         crate::app::recovery::forget(closing.tab);
         crate::app::crash::forget(closing.tab);
-        if let Some(file) = &closing.current_file {
-            if let Some(view) = closing.view_to_keep() {
+        if let Some(file) = &closing.file.path {
+            if let Some(view) = closing.view.to_keep() {
                 crate::app::session_store::keep_views(vec![(file.clone(), view)]);
             }
             self.files.closed_files.retain(|f| f != file);
@@ -206,7 +204,7 @@ impl PrintCadApp {
             }
         }
         closing.send_outbox();
-        closing.server.flush();
+        closing.connection.server.flush();
         drop(closing);
         self.tabs.remove(index);
         if self.tabs.is_empty() {
@@ -264,8 +262,9 @@ impl PrintCadApp {
     /// The viewport is the window's, not the tab's: a session coming on
     /// screen takes the outgoing one's.
     fn carry_viewport_from(&mut self, outgoing: &DocumentSession) {
-        let vp = outgoing.camera.viewport_info();
+        let vp = outgoing.view.camera.viewport_info();
         self.session
+            .view
             .camera
             .update_viewport((vp.0 as u32, vp.1 as u32), (vp.2, vp.3));
     }

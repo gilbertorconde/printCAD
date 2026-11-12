@@ -132,7 +132,7 @@ impl PrintCadApp {
     fn tree_hovered_body(&self) -> Option<core_document::BodyId> {
         use crate::ui::TreeItemId;
         let document = &self.session.document;
-        let body = match self.session.tree_hovered? {
+        let body = match self.session.hover.tree? {
             TreeItemId::Body(id) => Some(id),
             TreeItemId::ImportedObject(node) => document.body_of_imported_object(node),
             TreeItemId::Feature(id) => document.get_feature_meta(id).and_then(|node| {
@@ -183,7 +183,7 @@ impl PrintCadApp {
     fn async_work_pending(&self, capture_pending: bool) -> bool {
         capture_pending
             || self.texture_previews_pending()
-            || self.session.mesh_histories.pending()
+            || self.session.jobs.mesh_histories.pending()
             || self.files.picture.is_some()
             || self.kernel_worker.in_flight() > 0
             || self.any_tab_busy()
@@ -199,9 +199,10 @@ impl PrintCadApp {
     /// Whether the view moves on its own: a camera tween in either pane,
     /// or a bench hook that keeps frames coming.
     fn animating(&self) -> bool {
-        self.session.camera.is_animating()
+        self.session.view.camera.is_animating()
             || self
                 .session
+                .view
                 .side_camera
                 .as_ref()
                 .is_some_and(|c| c.is_animating())
@@ -264,7 +265,7 @@ impl PrintCadApp {
         crate::app::crash::sync(
             self.session.tab,
             &mut self.session.document,
-            self.session.current_file.as_deref(),
+            self.session.file.path.as_deref(),
         );
         // Optional FPS cap from settings (0 = uncapped). Timing and FPS
         // advance only on a frame that is rendered.
@@ -347,7 +348,7 @@ impl PrintCadApp {
             return;
         }
 
-        let server_status = self.session.server.status();
+        let server_status = self.session.connection.server.status();
         let ui_repaint_delay;
         let capture_pending;
 
@@ -361,11 +362,11 @@ impl PrintCadApp {
         // screen.
         // The workspace drawn last frame laid the viewport out: the opened
         // document is framed in it once its bodies have geometry.
-        if self.session.fit_on_layout
+        if self.session.view.fit_on_layout
             && self.session.screen == crate::ui::Screen::Workspace
             && crate::app::view_fit::document_imported_aabb(&self.session.document).is_some()
         {
-            self.session.fit_on_layout = false;
+            self.session.view.fit_on_layout = false;
             self.frame_scene();
             self.redraw_needed = true;
         }
@@ -427,7 +428,7 @@ impl PrintCadApp {
         } = viewport_data;
         let planar_view_lock = self.sketch_editing_active();
         let hover_card = self.hover_card();
-        let picks = self.picks_summary();
+        let picks = self.session.selection.summary();
         let picked_faces = self.picked_face_ids();
         let dimensions = self.selection_dimensions();
         let quick_measure = self.drive_quick_measure();
@@ -437,20 +438,25 @@ impl PrintCadApp {
         let inertia_references = self.inertia_references();
         let host_params = ui::HostCtxParams {
             pixels_per_point: self.pixels_per_point(),
-            camera_position: self.session.camera.position(),
-            camera_target: self.session.camera.target(),
+            camera_position: self.session.view.camera.position(),
+            camera_target: self.session.view.camera.target(),
             viewport: self
                 .frame_submission
                 .viewport_rect
                 .map(|r| (r.x, r.y, r.width, r.height))
                 .unwrap_or((0, 0, 1, 1)),
-            view_proj: Some(self.session.camera.view_projection()),
+            view_proj: Some(self.session.view.camera.view_projection()),
             selected_body_id: self.session.active_body_id.map(|id| id.0),
-            selected_face: self.session.last_face_hit.as_ref().map(|(_, f)| *f),
-            selected_faces: self.selected_face_refs(),
-            selected_edges: self.selected_edge_refs(),
+            selected_face: self
+                .session
+                .selection
+                .last_face_hit
+                .as_ref()
+                .map(|(_, f)| *f),
+            selected_faces: self.session.selection.face_refs(),
+            selected_edges: self.session.selection.edge_refs(),
             selected_parts: self.session.selected_parts(),
-            selected_features: self.session.selected_features(),
+            selected_features: self.session.selection.features(),
             bought_kinds: self.registry.bought_kinds(),
             undo_entry: self.session.journal.undo_entry_id(),
         };
@@ -485,27 +491,28 @@ impl PrintCadApp {
 
             {
                 let orientation_input = OrientationCubeInput {
-                    camera_orientation: self.session.camera.orientation(),
-                    axis_system: self.session.camera.axis_system(),
+                    camera_orientation: self.session.view.camera.orientation(),
+                    axis_system: self.session.view.camera.axis_system(),
                 };
 
-                let pivot_screen_pos = self
-                    .session
-                    .camera
-                    .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
+                let pivot_screen_pos =
+                    self.session.view.camera.rotation_pivot_indicator_screen_px(
+                        self.user_settings.camera.orbit_pivot_pick,
+                    );
 
-                let tree_also = self.session.tree_also().to_vec();
+                let tree_also = self.session.selection.tree_also().to_vec();
                 // The feature that made the face picked in the view.
                 let face_maker = self
                     .session
+                    .selection
                     .last_face_hit
-                    .filter(|_| self.session.face_highlight.is_some())
+                    .filter(|_| self.session.selection.face_highlight.is_some())
                     .and_then(|(body, face)| {
                         self.session
                             .document
                             .face_maker(core_document::BodyId(body), face.name)
                     });
-                let measure_bar = self.session.measure.as_ref().map(|picks| {
+                let measure_bar = self.session.tools.measure.as_ref().map(|picks| {
                     crate::ui::view_toolbar::MeasureBar {
                         unit: self.session.document.measure_unit(),
                         document_unit: self.session.document.display_unit(),
@@ -517,14 +524,14 @@ impl PrintCadApp {
                     window,
                     ui::UiFrameInputs {
                         screen: self.session.screen,
-                        split_view: self.session.split_view
+                        split_view: self.session.view.split
                             && self
                                 .session
                                 .document
                                 .bodies()
                                 .iter()
                                 .any(|b| self.session.document.body_scan(b.id).is_some()),
-                        split_linked: self.session.side_camera.is_none(),
+                        split_linked: self.session.view.side_camera.is_none(),
                         recent: &self.files.recent.files,
                         recoverable: &self.autosave.recoverable,
                         unsaved_question,
@@ -541,10 +548,10 @@ impl PrintCadApp {
                         gpu_name: self.gpu.name.as_deref(),
                         graphics_api: self.gpu.api,
                         gpus: &self.gpu.available,
-                        hovered_point: self.session.hovered_world_pos,
+                        hovered_point: self.session.hover.world_pos,
                         pivot_screen_pos,
-                        axis_system: self.session.camera.axis_system(),
-                        tree_selection: self.session.tree_selection,
+                        axis_system: self.session.view.camera.axis_system(),
+                        tree_selection: self.session.selection.tree,
                         tree_also: &tree_also,
                         active_document_object: self.session.active_document_object,
                         editing_feature,
@@ -559,16 +566,17 @@ impl PrintCadApp {
                         selection_mass,
                         physical,
                         inertia_references,
-                        field_of_view_deg: self.session.camera.field_of_view_deg(),
-                        projection: self.session.camera.projection(),
-                        section: self.session.section.clone(),
+                        field_of_view_deg: self.session.view.camera.field_of_view_deg(),
+                        projection: self.session.view.camera.projection(),
+                        section: self.session.view.section.clone(),
                         section_prompt: self
                             .session
+                            .view
                             .section_pick
                             .as_ref()
                             .map(|pick| pick.prompt()),
-                        pick_filter: self.session.pick_filter,
-                        scene_bounds: self.session.camera.scene_bounds(),
+                        pick_filter: self.session.view.pick_filter,
+                        scene_bounds: self.session.view.camera.scene_bounds(),
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_polygons: &screen_space_polygons,
                         screen_space_images: &screen_space_images,
@@ -577,7 +585,7 @@ impl PrintCadApp {
                         pending_imports: self.kernel_worker.in_flight(),
                         pending_document_open: server_status.opens_in_flight
                             + server_status.saves_in_flight
-                            + u32::from(self.session.document_open_rx.is_some()),
+                            + u32::from(self.session.file.open_rx.is_some()),
                         kernel_status: {
                             let status = self.kernel_worker.status();
                             self.stats.note_status(&status);
@@ -587,19 +595,24 @@ impl PrintCadApp {
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
                         // Field reads, not `&self` methods: `gfx` is borrowed
                         // for the whole block.
-                        document_saving: self.session.document_save_rx.is_some()
+                        document_saving: self.session.file.save_rx.is_some()
                             || server_status.saves_in_flight > 0,
-                        save_progress: self.session.save_progress.as_ref().and_then(|p| p.read()),
+                        save_progress: self
+                            .session
+                            .file
+                            .save_progress
+                            .as_ref()
+                            .and_then(|p| p.read()),
                         server: crate::ui::status_bar::ServerBadge {
-                            name: self.session.server.name().to_string(),
-                            standalone: self.session.server.standalone(),
+                            name: self.session.connection.server.name().to_string(),
+                            standalone: self.session.connection.server.standalone(),
                             connected: server_status.connected,
                             peers: server_status.peers,
                         },
                         tabs,
-                        measuring: self.session.measure.is_some(),
+                        measuring: self.session.tools.measure.is_some(),
                         radial: self.session.gestures.radial.as_ref().map(|radial| {
-                            let scale = self.session.camera.pixels_per_point();
+                            let scale = self.session.view.camera.pixels_per_point();
                             let cursor = self
                                 .input
                                 .cursor_in_viewport
@@ -615,23 +628,26 @@ impl PrintCadApp {
                             }
                         }),
                         measure_bar,
-                        note_tool: self.session.note_tool,
+                        note_tool: self.session.tools.note_tool,
                         note_card,
-                        reveal_body: self.session.reveal_body.take(),
+                        reveal_body: self.session.selection.reveal_body.take(),
                         face_maker,
-                        reveal_face_maker: std::mem::take(&mut self.session.reveal_face_maker),
+                        reveal_face_maker: std::mem::take(
+                            &mut self.session.selection.reveal_face_maker,
+                        ),
                         viewport_menu: self.session.viewport_menu.clone(),
                         picked_faces,
                         picked_edges: self
                             .session
-                            .selected_edges
+                            .selection
+                            .edges
                             .iter()
                             .map(|e| (core_document::BodyId(e.body), e.point))
                             .collect(),
                         nav_device: self.nav_device.device_name(),
                         nav_buttons: self.nav_device.button_count(),
-                        step_import_pending: self.session.step_import_pending.as_mut(),
-                        export_pending: self.session.export_pending.as_mut(),
+                        step_import_pending: self.session.file.step_import_pending.as_mut(),
+                        export_pending: self.session.file.export_pending.as_mut(),
                         scripts: &self.scripting.library,
                         packages: &self.packages.installed,
                         release: &self.packages.release_check,
@@ -645,18 +661,19 @@ impl PrintCadApp {
                         mentions,
                         assistant_attention: std::mem::take(&mut self.agents.assistant_attention),
                         paste_pressed: std::mem::take(&mut self.input.paste_pressed),
-                        print_layout: self.session.print_layout.as_ref().map(|s| &s.layout),
+                        print_layout: self.session.tools.print_layout.as_ref().map(|s| &s.layout),
                         marking,
                         file: crate::ui::FileMarks {
                             read_only: read_only_file,
-                            read_only_links: &self.session.links.read_only,
+                            read_only_links: &self.session.jobs.links.read_only,
                             newer_notice: self
                                 .session
-                                .file_safety
+                                .file
+                                .safety
                                 .newer_notice
-                                .then(|| self.session.file_safety.newer_text()),
+                                .then(|| self.session.file.safety.newer_text()),
                             save_over,
-                            mesh_units: self.session.mesh_units_pending.as_ref().map(|path| {
+                            mesh_units: self.session.file.mesh_units_pending.as_ref().map(|path| {
                                 (
                                     path.file_name().map_or_else(
                                         || path.display().to_string(),
@@ -684,12 +701,12 @@ impl PrintCadApp {
                 self.session.active_workbench = ui_result.active_workbench;
                 self.session.task_open = ui_result.task_open;
                 card_shown = ui_result.card;
-                self.session.print_layout_shown = ui_result.print_layout_open;
-                if self.session.mark_arm != ui_result.mark_arm {
-                    self.session.mark_arm = ui_result.mark_arm;
+                self.session.tools.print_layout_shown = ui_result.print_layout_open;
+                if self.session.tools.mark_arm != ui_result.mark_arm {
+                    self.session.tools.mark_arm = ui_result.mark_arm;
                     self.session.gestures.take_mark();
                 }
-                self.session.tree_hovered = ui_result.tree_hovered;
+                self.session.hover.tree = ui_result.tree_hovered;
 
                 // The window title follows the document and its dirty state.
                 let title = if self.session.screen == crate::ui::Screen::Start {
@@ -713,17 +730,18 @@ impl PrintCadApp {
                 // The pane beside the viewport shows every body but the
                 // scans, and the selection and hover paints drawn for them,
                 // with the viewport's camera or its own.
-                self.session.side_rect = ui_result
+                self.session.view.side_rect = ui_result
                     .side_viewport
                     .map(|r| (r.x, r.y, r.width.max(1), r.height.max(1)));
-                if let (Some(camera), Some((x, y, w, h))) =
-                    (self.session.side_camera.as_mut(), self.session.side_rect)
-                {
+                if let (Some(camera), Some((x, y, w, h))) = (
+                    self.session.view.side_camera.as_mut(),
+                    self.session.view.side_rect,
+                ) {
                     camera.update_viewport((x, y), (w, h));
                 }
                 let document = &self.session.document;
-                let side_camera = self.session.side_camera.as_ref();
-                let overlays = &self.session.overlay_bodies;
+                let side_camera = self.session.view.side_camera.as_ref();
+                let overlays = &self.session.drawn.overlay_bodies;
                 self.frame_submission.side_pane = ui_result.side_viewport.map(|r| {
                     let mut bodies: Vec<Uuid> = document
                         .bodies()
@@ -752,7 +770,7 @@ impl PrintCadApp {
                         }),
                     }
                 });
-                self.session.camera.update_viewport(
+                self.session.view.camera.update_viewport(
                     (ui_result.viewport.x, ui_result.viewport.y),
                     (
                         ui_result.viewport.width.max(1),
@@ -810,18 +828,18 @@ impl PrintCadApp {
                 || self.input.cursor_in_side.is_some())
                 && !ui_layer.pointer_over_floating_ui();
             let pick_result = renderer.latest_pick_result();
-            self.session.hovered_body = pick_result.body_id.filter(|_| over_scene);
-            self.session.hovered_world_pos = pick_result.world_position.filter(|_| over_scene);
-            self.session.hovered_triangle = pick_result
+            self.session.hover.body = pick_result.body_id.filter(|_| over_scene);
+            self.session.hover.world_pos = pick_result.world_position.filter(|_| over_scene);
+            self.session.hover.triangle = pick_result
                 .triangle
-                .zip(self.session.hovered_body)
+                .zip(self.session.hover.body)
                 .and_then(|(triangle, body)| {
                     crate::app::input::document_triangle(
                         triangle,
-                        self.session.drawn_meshes.get(&body).copied(),
+                        self.session.drawn.meshes.get(&body).copied(),
                     )
                 });
-            self.session.pick_depths = pick_result.depth_window;
+            self.session.hover.pick_depths = pick_result.depth_window;
         }
         // Render on demand: another frame is scheduled only while
         // something is moving, pending, or animating. A short tail after
@@ -866,28 +884,29 @@ impl PrintCadApp {
         }
 
         let hovered_plane = self.base_plane_under_cursor().filter(|_| over_scene);
-        if hovered_plane != self.session.hovered_base_plane {
-            self.session.hovered_base_plane = hovered_plane;
+        if hovered_plane != self.session.hover.base_plane {
+            self.session.hover.base_plane = hovered_plane;
             self.redraw_needed = true;
         }
         // The edge under the cursor, on the body the pick found; an edge
         // takes the hover from the face it borders.
         let hovered_edge = self
             .edge_under_cursor()
-            .filter(|_| over_scene && self.session.pick_filter.edges());
-        if hovered_edge != self.session.hovered_edge {
-            self.session.hovered_edge = hovered_edge;
+            .filter(|_| over_scene && self.session.view.pick_filter.edges());
+        if hovered_edge != self.session.hover.edge {
+            self.session.hover.edge = hovered_edge;
             self.redraw_needed = true;
         }
         if self.refresh_hovered_face() {
             self.redraw_needed = true;
         }
-        self.session.hovered_face_ref = self
+        self.session.hover.face_ref = self
             .session
-            .hovered_body
+            .hover
+            .body
             .filter(|_| over_scene)
             .and_then(|body| self.face_ref_under_cursor(body));
-        self.session.hovered_vertex = self.vertex_under_cursor();
+        self.session.hover.vertex = self.vertex_under_cursor();
 
         // Apply this frame's UI actions now that the renderer borrow is over.
         self.follow_card(card_shown);
@@ -943,11 +962,12 @@ impl PrintCadApp {
             return None;
         }
         let (origin, dir) = self.cursor_ray()?;
-        let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.camera));
+        let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.view.camera));
         let (plane, t) = scene_guides::origin_plane_hit(origin, dir, half)?;
         let in_front = self
             .session
-            .hovered_world_pos
+            .hover
+            .world_pos
             .is_some_and(|p| (glam::Vec3::from_array(p) - origin).dot(dir) < t);
         (!in_front).then_some(plane)
     }
@@ -966,15 +986,19 @@ impl PrintCadApp {
         }
         self.session.plane_session_open = editing;
         let pixels_per_point = self.pixels_per_point();
-        self.session.camera.set_pixels_per_point(pixels_per_point);
-        self.session.camera.set_orbit_lock(editing);
         self.session
+            .view
+            .camera
+            .set_pixels_per_point(pixels_per_point);
+        self.session.view.camera.set_orbit_lock(editing);
+        self.session
+            .view
             .camera
             .flush_pending_wheel(&self.user_settings.camera);
         // Before the clip planes, so they are computed for the pose this
         // frame actually shows.
         let device_motion = self.nav_device.motion();
-        self.session.camera.apply_device_motion(
+        self.session.view.camera.apply_device_motion(
             device_motion.axis_readings(),
             dt_secs,
             &self.user_settings.camera,
@@ -991,25 +1015,26 @@ impl PrintCadApp {
             .and_then(|wb| wb.editing_feature());
         // Faces Ctrl added stand only beside a last face, on the body that
         // is still selected; whatever dropped that face drops them.
-        let picking_faces = self.session.face_highlight.is_some()
+        let picking_faces = self.session.selection.face_highlight.is_some()
             && self
                 .session
+                .selection
                 .last_face_hit
-                .is_some_and(|(body, _)| self.session.selected_body == Some(body));
+                .is_some_and(|(body, _)| self.session.selection.body == Some(body));
         if !picking_faces {
-            self.session.earlier_faces.clear();
+            self.session.selection.earlier_faces.clear();
         }
         // Bodies a box took stand only beside a body picked whole, and only
         // while each is still drawn.
-        if self.session.selected_body.is_none()
-            || self.session.face_highlight.is_some()
-            || !self.session.selected_edges.is_empty()
+        if self.session.selection.body.is_none()
+            || self.session.selection.face_highlight.is_some()
+            || !self.session.selection.edges.is_empty()
         {
-            self.session.earlier_bodies.clear();
+            self.session.selection.earlier_bodies.clear();
         }
         let document = &self.session.document;
-        let selected = self.session.selected_body;
-        self.session.earlier_bodies.retain(|body| {
+        let selected = self.session.selection.body;
+        self.session.selection.earlier_bodies.retain(|body| {
             Some(*body) != selected
                 && document
                     .imported_geometry(core_document::BodyId(*body))
@@ -1023,14 +1048,16 @@ impl PrintCadApp {
         // features drawn beside them and the print bed, never a box kept
         // from the last fit, which a later import or a longer pad outgrows.
         let scene = self.scene_bounds(&sketch_meshes);
-        self.session.camera.set_scene_bounds(scene);
+        self.session.view.camera.set_scene_bounds(scene);
         self.session
+            .view
             .camera
             .apply_auto_clip_planes(&self.user_settings.camera);
         self.session
+            .view
             .camera
             .update(dt_secs, &self.user_settings.camera);
-        if let Some(side) = self.session.side_camera.as_mut() {
+        if let Some(side) = self.session.view.side_camera.as_mut() {
             let settings = &self.user_settings.camera;
             side.set_pixels_per_point(pixels_per_point);
             side.flush_pending_wheel(settings);
@@ -1154,11 +1181,12 @@ impl PrintCadApp {
                 none: map.none,
             });
             self.session
-                .drawn_meshes
+                .drawn
+                .meshes
                 .insert(body.id, (body.revision, geometry.revision));
             true
         });
-        self.session.shown_maps.clone_from(&data.scalar_maps);
+        self.session.drawn.shown_maps.clone_from(&data.scalar_maps);
         // What the bench asks to see past draws faded, still pickable.
         for body in imported_meshes.iter_mut() {
             if data.faded.iter().any(|f| f.0 == body.id) {
@@ -1174,7 +1202,7 @@ impl PrintCadApp {
         // What the feature being edited adds or takes: its tool in the
         // preview colour, faces see-through and edges whole.
         let rendering = &self.user_settings.rendering;
-        for (body, preview) in &self.session.previews {
+        for (body, preview) in &self.session.builds.previews {
             if !self.session.document.imported_body_effective_visible(*body) {
                 continue;
             }
@@ -1202,7 +1230,7 @@ impl PrintCadApp {
 
         // A scan's marked surface, over it while it shows.
         self.settle_marking();
-        if let Some(marking) = &self.session.marking
+        if let Some(marking) = &self.session.tools.marking
             && !marking.drawn.indices.is_empty()
             && self
                 .session
@@ -1233,7 +1261,7 @@ impl PrintCadApp {
         self.selection_paints(&mut all_meshes);
 
         // The print layout's plates, each the build volume's outline.
-        if let Some(shown) = &self.session.print_layout {
+        if let Some(shown) = &self.session.tools.print_layout {
             all_meshes.push(BodySubmission {
                 scalar: None,
                 id: self.overlay_ids.print_bed,
@@ -1298,7 +1326,7 @@ impl PrintCadApp {
         // The ground grid and the origin's planes, out of the way while an
         // edit session holds the view; a bench's own grid in the scene
         // grid's place while it hands one.
-        let guides = GuideView::of(&self.session.camera);
+        let guides = GuideView::of(&self.session.view.camera);
         let rendering = &self.user_settings.rendering;
         self.frame_submission.grids.clear();
         if let Some(grid) = &data.view_grid {
@@ -1310,9 +1338,9 @@ impl PrintCadApp {
             if rendering.show_grid && data.view_grid.is_none() {
                 self.frame_submission
                     .grids
-                    .push(self.session.grid_plane.grid(
+                    .push(self.session.view.grid_plane.grid(
                         &guides,
-                        &self.session.camera.axis_system(),
+                        &self.session.view.camera.axis_system(),
                         rendering.grid_plane,
                         rendering,
                     ));
@@ -1321,7 +1349,7 @@ impl PrintCadApp {
             if rendering.show_origin_planes || self.bench_shows_origin_planes() {
                 all_meshes.extend(self.scene_meshes.origin_planes.bodies(
                     scene_guides::origin_plane_half(&guides),
-                    self.session.hovered_base_plane,
+                    self.session.hover.base_plane,
                 ));
             }
         }
@@ -1330,14 +1358,14 @@ impl PrintCadApp {
         self.frame_submission.draw_edges = draw_style == settings::DrawStyle::ShadedEdges;
         // A bench's cut stands in for the toolbar's while it asks for one.
         // A bench's own plane has no wedge.
-        let section_clip = self.session.section.as_ref().map(|plane| plane.clip());
+        let section_clip = self.session.view.section.as_ref().map(|plane| plane.clip());
         self.frame_submission.clip_plane = data.clip_plane.or(section_clip.map(|c| c.plane));
         self.frame_submission.clip_wedge = match data.clip_plane {
             Some(_) => None,
             None => section_clip.and_then(|c| c.wedge),
         };
-        self.frame_submission.view_proj = self.session.camera.view_projection();
-        self.frame_submission.camera_pos = self.session.camera.position();
+        self.frame_submission.view_proj = self.session.view.camera.view_projection();
+        self.frame_submission.camera_pos = self.session.view.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
 
         data
@@ -1380,7 +1408,7 @@ impl PrintCadApp {
             lo = lo.min(Vec3::from_array(a));
             hi = hi.max(Vec3::from_array(b));
         };
-        if let Some(shown) = &self.session.print_layout {
+        if let Some(shown) = &self.session.tools.print_layout {
             for mesh in std::iter::once(&shown.beds).chain(shown.preview.iter().map(|(_, m)| m)) {
                 if let Some(bounds) = mesh.bounds() {
                     add(bounds);
@@ -1397,14 +1425,14 @@ impl PrintCadApp {
             }
         }
         if self.user_settings.rendering.show_origin_planes && !self.sketch_editing_active() {
-            let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.camera));
+            let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.view.camera));
             add(([-half; 3], [half; 3]));
         }
         let rendering = &self.user_settings.rendering;
         if rendering.show_grid && !self.sketch_editing_active() {
-            let camera = &self.session.camera;
+            let camera = &self.session.view.camera;
             let (_, screen_up) = camera.view_basis();
-            if let Some(ends) = self.session.grid_plane.orthographic_reach(
+            if let Some(ends) = self.session.view.grid_plane.orthographic_reach(
                 &GuideView::of(camera),
                 screen_up.normalize_or_zero(),
                 &camera.axis_system(),
@@ -1434,15 +1462,17 @@ impl PrintCadApp {
     fn refresh_hovered_face(&mut self) -> bool {
         let probe = self
             .session
-            .hovered_body
-            .zip(self.session.hovered_world_pos)
+            .hover
+            .body
+            .zip(self.session.hover.world_pos)
             .filter(|_| !self.sketch_editing_active() && self.input.mouse_buttons_down == 0);
         let Some((body, point)) = probe else {
-            return self.session.hovered_face.take().is_some();
+            return self.session.hover.face.take().is_some();
         };
         if self
             .session
-            .hovered_face
+            .hover
+            .face
             .as_ref()
             .is_some_and(|h| h.body == body && h.probe == point)
         {
@@ -1456,10 +1486,10 @@ impl PrintCadApp {
                 let face = crate::app::input::face_id_at_pick(
                     &geometry.mesh,
                     geometry.revision,
-                    self.session.hovered_triangle,
+                    self.session.hover.triangle,
                     point,
                 )?;
-                if let Some(h) = &self.session.hovered_face
+                if let Some(h) = &self.session.hover.face
                     && h.body == body
                     && h.face == face
                     && h.revision == geometry.revision
@@ -1482,12 +1512,12 @@ impl PrintCadApp {
                     probe: point,
                 })
             });
-        let changed = match (&self.session.hovered_face, &resolved) {
+        let changed = match (&self.session.hover.face, &resolved) {
             (Some(a), Some(b)) => a.body != b.body || a.face != b.face,
             (None, None) => false,
             _ => true,
         };
-        self.session.hovered_face = resolved;
+        self.session.hover.face = resolved;
         changed
     }
 
@@ -1503,11 +1533,11 @@ impl PrintCadApp {
         }
         // An edge hovered from just outside a silhouette has no surface
         // under the cursor; the card then speaks for the edge's body.
-        let (body, point_mm) = match self.session.hovered_edge {
+        let (body, point_mm) = match self.session.hover.edge {
             Some(edge) => (core_document::BodyId(edge.body), edge.point),
             None => (
-                core_document::BodyId(self.session.hovered_body?),
-                self.session.hovered_world_pos?,
+                core_document::BodyId(self.session.hover.body?),
+                self.session.hover.world_pos?,
             ),
         };
         let body_name = self.session.document.body(body).map(|b| b.name.clone())?;
@@ -1515,7 +1545,8 @@ impl PrintCadApp {
         // the body is named after the last feature that shaped its solid.
         let maker = self
             .session
-            .hovered_face_ref
+            .hover
+            .face_ref
             .as_ref()
             .and_then(|face| self.session.document.face_maker(body, face.name))
             .and_then(|id| self.session.document.get_feature_meta(id))
@@ -1533,7 +1564,7 @@ impl PrintCadApp {
                 .max_by_key(|(seq, id, _)| (*seq, *id))
                 .map(|(_, _, kind)| kind.to_string())
         });
-        let title = match (&self.session.hovered_edge, feature) {
+        let title = match (&self.session.hover.edge, feature) {
             (Some(edge), _) => format!(
                 "{body_name} · edge {}",
                 core_document::format_length_mm(
@@ -1552,7 +1583,8 @@ impl PrintCadApp {
     fn selection_dimensions(&mut self) -> Option<String> {
         let body = self
             .session
-            .selected_body
+            .selection
+            .body
             .map(core_document::BodyId)
             .or(self.session.active_body_id)?;
         let geometry = self.session.document.imported_geometry(body)?;
@@ -1560,7 +1592,7 @@ impl PrintCadApp {
             Some(bounds) => bounds,
             None => {
                 // The mesh scan is linear; keep it per revision.
-                match self.session.dimension_cache {
+                match self.session.drawn.dimension_cache {
                     Some((cached_body, revision, bounds))
                         if cached_body == body && revision == geometry.revision =>
                     {
@@ -1568,7 +1600,8 @@ impl PrintCadApp {
                     }
                     _ => {
                         let bounds = geometry.mesh.bounds()?;
-                        self.session.dimension_cache = Some((body, geometry.revision, bounds));
+                        self.session.drawn.dimension_cache =
+                            Some((body, geometry.revision, bounds));
                         bounds
                     }
                 }

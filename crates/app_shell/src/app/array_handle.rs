@@ -125,7 +125,7 @@ impl PrintCadApp {
         let (array, direction, spacing) = self.gfx.as_ref()?.ui_layer.array_row()?;
         handle(
             &self.session.document,
-            &self.session.camera,
+            &self.session.view.camera,
             array,
             direction,
             spacing,

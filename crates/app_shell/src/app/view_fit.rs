@@ -49,14 +49,14 @@ impl PrintCadApp {
             return;
         };
         let (centre, normal) = frame;
-        let (forward, up) = self.session.camera.view_basis();
+        let (forward, up) = self.session.view.camera.view_basis();
         // Looking straight along the view's up, the view's forward is up.
         let up = if up.dot(normal).abs() > 0.99 {
             forward
         } else {
             up
         };
-        self.session.camera.orient_to_plane(
+        self.session.view.camera.orient_to_plane(
             centre,
             normal,
             up,
@@ -73,7 +73,8 @@ impl PrintCadApp {
         }
         let body = self
             .session
-            .selected_body
+            .selection
+            .body
             .map(core_document::BodyId)
             .or(self.session.active_body_id);
         let aabb = body.and_then(|body| {
@@ -87,6 +88,7 @@ impl PrintCadApp {
         let (mn, mx) = (Vec3::from_array(mn), Vec3::from_array(mx));
         let (center, radius) = aabb_fit_center_radius(mn, mx);
         self.session
+            .view
             .camera
             .reset_to_fit(center, radius, None, &self.user_settings.camera);
     }
@@ -119,11 +121,13 @@ impl PrintCadApp {
         let (center, radius) =
             match edited.or_else(|| document_imported_aabb(&self.session.document)) {
                 Some((mn, mx)) => aabb_fit_center_radius(mn, mx),
-                None => (self.session.camera.focal_point_world(), 50.0),
+                None => (self.session.view.camera.focal_point_world(), 50.0),
             };
-        self.session
-            .camera
-            .fit_keeping_orientation(center, radius, &self.user_settings.camera);
+        self.session.view.camera.fit_keeping_orientation(
+            center,
+            radius,
+            &self.user_settings.camera,
+        );
         true
     }
 
@@ -134,7 +138,9 @@ impl PrintCadApp {
         // The split view's side pane, with a camera of its own, is framed
         // alike.
         let session = &mut self.session;
-        for camera in std::iter::once(&mut session.camera).chain(session.side_camera.as_mut()) {
+        for camera in
+            std::iter::once(&mut session.view.camera).chain(session.view.side_camera.as_mut())
+        {
             if let Some(aabb) = aabb {
                 let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
                 camera.reset_to_fit(center, radius, Some(aabb), settings);
@@ -150,6 +156,7 @@ impl PrintCadApp {
     fn drawn_bodies_aabb(&self) -> Option<(Vec3, Vec3)> {
         let previews = self
             .session
+            .builds
             .previews
             .iter()
             .filter(|(body, _)| {
@@ -174,6 +181,7 @@ impl PrintCadApp {
                 aabb_fit_center_radius(mn, mx)
             });
         self.session
+            .view
             .camera
             .fly_to_fit(view, center, radius, &self.user_settings.camera);
     }

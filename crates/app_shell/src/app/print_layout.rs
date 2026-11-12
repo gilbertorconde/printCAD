@@ -26,8 +26,8 @@ impl crate::PrintCadApp {
     /// while the Print layout task is open, and drop it once it closes. A
     /// layout shown for the first time frames the view on the plates.
     pub(crate) fn drive_print_layout(&mut self) {
-        if !self.session.print_layout_shown {
-            self.session.print_layout = None;
+        if !self.session.tools.print_layout_shown {
+            self.session.tools.print_layout = None;
             return;
         }
         let document = &self.session.document;
@@ -36,13 +36,14 @@ impl crate::PrintCadApp {
         let key = layout_key(document, &parts, &settings);
         if self
             .session
+            .tools
             .print_layout
             .as_ref()
             .is_some_and(|shown| shown.key == key)
         {
             return;
         }
-        let first = self.session.print_layout.is_none();
+        let first = self.session.tools.print_layout.is_none();
         let layout = lay_out(document, &parts, &settings);
         let preview = layout
             .pieces
@@ -54,7 +55,7 @@ impl crate::PrintCadApp {
             layout.plates,
             settings.plate_step(),
         ));
-        self.session.print_layout = Some(ShownLayout {
+        self.session.tools.print_layout = Some(ShownLayout {
             key,
             layout,
             preview,
@@ -69,6 +70,7 @@ impl crate::PrintCadApp {
     fn frame_print_layout(&mut self) {
         let Some((lo, hi)) = self
             .session
+            .tools
             .print_layout
             .as_ref()
             .and_then(|shown| shown.beds.bounds())
@@ -77,8 +79,11 @@ impl crate::PrintCadApp {
         };
         let aabb = (Vec3::from_array(lo), Vec3::from_array(hi));
         let (center, radius) = crate::app::view_fit::aabb_fit_center_radius(aabb.0, aabb.1);
-        self.session
-            .camera
-            .reset_to_fit(center, radius, Some(aabb), &self.user_settings.camera);
+        self.session.view.camera.reset_to_fit(
+            center,
+            radius,
+            Some(aabb),
+            &self.user_settings.camera,
+        );
     }
 }

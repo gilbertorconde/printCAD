@@ -86,9 +86,9 @@ impl PrintCadApp {
             TaskOutcome::Accepted { label } => {
                 // The faces and edges the task took are used: the next
                 // picks start afresh. A cancelled task leaves them picked.
-                let body = self.session.selected_body;
+                let body = self.session.selection.body;
                 self.clear_view_selection();
-                self.session.selected_body = body;
+                self.session.selection.body = body;
                 Some(label.clone())
             }
             TaskOutcome::Cancelled | TaskOutcome::Open => None,

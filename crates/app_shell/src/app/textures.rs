@@ -194,7 +194,7 @@ impl crate::PrintCadApp {
     /// its shape: take in what the threads made, and start one for each
     /// key wanted that is neither made nor being made.
     pub(crate) fn drive_texture_previews(&mut self) {
-        let pressed = &mut self.session.texture_meshes;
+        let pressed = &mut self.session.drawn.texture_meshes;
         if let Some(rx) = &pressed.rx {
             while let Ok(made) = rx.try_recv() {
                 pressed.making.remove(&made.key);
@@ -212,19 +212,21 @@ impl crate::PrintCadApp {
             .map(|b| b.id)
             .collect();
         self.session
+            .drawn
             .textured
             .retain(|body, _| bodies.contains(body));
         for body in bodies {
             let document = &self.session.document;
-            let Some(pressing) = Pressing::of(document, body, &mut self.session.texture_pictures)
+            let Some(pressing) =
+                Pressing::of(document, body, &mut self.session.drawn.texture_pictures)
             else {
                 continue;
             };
             let Some(key) = preview_key(document, body, &pressing) else {
                 continue;
             };
-            let pressed = &mut self.session.texture_meshes;
-            let preview = self.session.textured.entry(body).or_default();
+            let pressed = &mut self.session.drawn.texture_meshes;
+            let preview = self.session.drawn.textured.entry(body).or_default();
             preview.wanted = key;
             if let Some(mesh) = pressed.made.get(&key) {
                 preview.made = Some((key, Arc::clone(mesh)));
@@ -251,13 +253,19 @@ impl crate::PrintCadApp {
             });
             if let Err(err) = spawned {
                 crate::log_panel::warn(format!("The texture preview could not start: {err}"));
-                self.session.texture_meshes.making.remove(&key);
+                self.session.drawn.texture_meshes.making.remove(&key);
             }
         }
         // A mesh no body wants or draws any more is let go.
-        let kept: std::collections::HashSet<u64> =
-            self.session.textured.values().map(|p| p.wanted).collect();
+        let kept: std::collections::HashSet<u64> = self
+            .session
+            .drawn
+            .textured
+            .values()
+            .map(|p| p.wanted)
+            .collect();
         self.session
+            .drawn
             .texture_meshes
             .made
             .retain(|key, _| kept.contains(key));
@@ -266,7 +274,7 @@ impl crate::PrintCadApp {
     /// Whether a texture preview is being made: frames keep coming until
     /// it lands.
     pub(crate) fn texture_previews_pending(&self) -> bool {
-        self.session.texture_meshes.pending()
+        self.session.drawn.texture_meshes.pending()
     }
 }
 

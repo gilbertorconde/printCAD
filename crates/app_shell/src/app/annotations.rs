@@ -24,7 +24,7 @@ impl PrintCadApp {
     /// Add the shown annotations to this frame's overlays and labels.
     pub(crate) fn annotation_overlays(&self, data: &mut ViewportData) {
         // The note tool shows the notes it places, whatever the switch.
-        if self.session.note_tool || self.user_settings.rendering.show_annotations {
+        if self.session.tools.note_tool || self.user_settings.rendering.show_annotations {
             self.note_overlays(data);
         }
         if !self.user_settings.rendering.show_annotations {
@@ -36,13 +36,13 @@ impl PrintCadApp {
         if annotations.is_empty() {
             return;
         }
-        let selected = match self.session.tree_selection {
+        let selected = match self.session.selection.tree {
             Some(TreeItemId::ImportedObject(id)) => Some(id),
             _ => None,
         };
         let ink = ui_kit::tokens::ANNOTATION.to_normalized_gamma_f32();
         let ink = [ink[0], ink[1], ink[2]];
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         for (node, annotation) in annotations {
             if !document.imported_annotation_effective_visible(node.id) {
                 continue;
@@ -97,7 +97,7 @@ impl PrintCadApp {
     /// dashed, so it is not taken for the face in front of it.
     fn note_overlays(&self, data: &mut ViewportData) {
         let document = &self.session.document;
-        let selected = match self.session.tree_selection {
+        let selected = match self.session.selection.tree {
             Some(TreeItemId::Note(id)) => Some(id),
             _ => None,
         };
@@ -109,6 +109,7 @@ impl PrintCadApp {
         let ink = tone(ui_kit::tokens::ANNOTATION);
         let card_new = self
             .session
+            .tools
             .note_card
             .as_ref()
             .and_then(|card| match &card.editing {
@@ -147,14 +148,14 @@ impl PrintCadApp {
             let hidden = self.hidden_by_part(note.id, body, placed.at);
             self.leader(data, (placed.at, placed.label), text, color, hidden);
         }
-        self.session.note_occlusions.retain(&drawn);
+        self.session.drawn.note_occlusions.retain(&drawn);
     }
 
     /// A callout of each cosmetic thread: a leader from its bore's rim to
     /// its designation.
     fn thread_overlays(&self, data: &mut ViewportData) {
         let document = &self.session.document;
-        let selected = match self.session.tree_selection {
+        let selected = match self.session.selection.tree {
             Some(TreeItemId::Feature(id)) => Some(id),
             _ => None,
         };
@@ -196,7 +197,7 @@ impl PrintCadApp {
         color: [f32; 3],
         hidden: bool,
     ) {
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         let project = |p: [f32; 3]| camera.world_to_viewport(Vec3::from_array(p));
         let (Some(from), Some(to)) = (project(at), project(label)) else {
             return;
