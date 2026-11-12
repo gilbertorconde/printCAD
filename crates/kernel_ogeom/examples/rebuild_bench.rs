@@ -17,9 +17,11 @@
 //! body's base, a boss beside it whose height is edited: the history is short,
 //! the solid large and curved, so meshing is most of a build. Then a pocket
 //! cut down through that part's middle and widened: a small edit the
-//! boolean must still make against the whole solid. Last, plates with a
+//! boolean must still make against the whole solid. Then plates with a
 //! growing grid of holes, one more added at a corner: what a small edit
-//! costs as the solid grows.
+//! costs as the solid grows. Last, the same grids made by patterning one
+//! hole and refined, up to a thousand faces: the faces of a pattern and
+//! a refine are named by where they lie, which grows with the solid.
 
 use core_document::{
     CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, FeatureId,
@@ -215,6 +217,89 @@ fn main() {
 
     imported_part(&detail, before);
     holed_plate(&detail, before);
+    patterned_plate(&detail, before);
+}
+
+/// A plate with one hole patterned into a grid, refined as Design refines
+/// what it cuts: the pattern's spacing edited, then a hole cut at a corner
+/// after it. Both rebuild a solid of hundreds of faces through ops whose
+/// faces are named by where they lie rather than by the kernel's history.
+fn patterned_plate(detail: &TessellationSettings, before: bool) {
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let hole = |x: f64, y: f64| SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 1.5,
+            height: 20.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            origin: [x, y, -5.0],
+            ..Placement::default()
+        },
+        op: BooleanOp::Cut,
+    };
+    println!();
+    for n in [16usize, 24, 32] {
+        let size = 10.0 * n as f64 + 10.0;
+        let pattern = |step: f64| SolidOp::Transform {
+            transforms: (0..n * n)
+                .skip(1)
+                .map(|k| {
+                    let (i, j) = ((k % n) as f64, (k / n) as f64);
+                    [
+                        [1.0, 0.0, 0.0, step * i],
+                        [0.0, 1.0, 0.0, step * j],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ]
+                })
+                .collect(),
+            originals: vec![1],
+        };
+        let mut ops = vec![
+            SolidOp::Primitive {
+                kind: PrimitiveKind::Box {
+                    length: size,
+                    width: size,
+                    height: 10.0,
+                },
+                placement: Placement::default(),
+                op: BooleanOp::NewSolid,
+            },
+            hole(10.0, 10.0),
+            SolidOp::Refine,
+            pattern(10.0),
+            SolidOp::Refine,
+        ];
+        let tags: Vec<u64> = (1..=ops.len() as u64 + 2).collect();
+        let mut cache = ChainCache::default();
+        let run = |ops: &[SolidOp], cache: &mut ChainCache, label: &str| {
+            let started = std::time::Instant::now();
+            let built = OgeomKernel::new()
+                .execute_solid_chain(
+                    kernel_ogeom::ChainRequest::new(ops, detail)
+                        .tags(&tags[..ops.len()])
+                        .cache((!before).then_some(cache)),
+                )
+                .unwrap();
+            let mut faces = built.mesh.faces.clone();
+            faces.sort_unstable();
+            faces.dedup();
+            println!(
+                "{:<38} {:>2} ops, {:>2} kept  {:>8.1} ms",
+                format!("{} faces, {label}", faces.len()),
+                ops.len(),
+                cache.resumed(),
+                started.elapsed().as_secs_f64() * 1000.0,
+            );
+        };
+        run(&ops, &mut cache, "patterned");
+        ops[3] = pattern(9.5);
+        run(&ops, &mut cache, "the pattern's spacing edited");
+        ops.push(hole(5.0, 5.0));
+        ops.push(SolidOp::Refine);
+        run(&ops, &mut cache, "a corner hole added");
+    }
 }
 
 /// A plate with a grid of holes, one more hole added at a corner: the edit
