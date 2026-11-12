@@ -276,6 +276,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("groove", include_str!("../icons/groove.svg")),
     ("heptagon", include_str!("../icons/heptagon.svg")),
     ("hexagon", include_str!("../icons/hexagon.svg")),
+    ("history", include_str!("../icons/history.svg")),
     ("hole", include_str!("../icons/hole.svg")),
     ("home", include_str!("../icons/home.svg")),
     ("info", include_str!("../icons/info.svg")),

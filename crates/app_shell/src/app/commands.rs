@@ -306,6 +306,9 @@ impl PrintCadApp {
             UiCommand::ResumeChatQueue(chat) => self.resume_chat_queue(&chat),
             UiCommand::WakeChat(chat) => self.wake_chat(&chat),
             UiCommand::CloseChat(chat) => self.close_chat(&chat),
+            UiCommand::ShowChatHistory => self.refresh_chat_history(),
+            UiCommand::ReopenChat { file, session } => self.reopen_chat(file, &session),
+            UiCommand::ForgetChat { file, session } => self.forget_chat(file, &session),
             UiCommand::AnswerPermission {
                 chat,
                 entry,

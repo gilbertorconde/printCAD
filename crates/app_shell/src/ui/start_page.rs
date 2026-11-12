@@ -93,7 +93,7 @@ const CARD_GAP: f32 = 14.0;
 
 /// "2 hours ago", "Yesterday", "3 days ago", "Last week", "2 weeks ago",
 /// "Last month" or the date's year-month.
-fn humanize_age(then_ms: u64, now_ms: u64) -> String {
+pub(crate) fn humanize_age(then_ms: u64, now_ms: u64) -> String {
     let secs = now_ms.saturating_sub(then_ms) / 1000;
     let minutes = secs / 60;
     let hours = minutes / 60;

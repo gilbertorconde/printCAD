@@ -15,6 +15,7 @@ use agents::acp::{
 use serde_json::Value;
 
 use crate::PrintCadApp;
+use crate::app::chat_store::{self, SavedChat};
 use crate::app::mentions::{self, Mention, MentionOption};
 
 /// Where a chat stands.
@@ -136,8 +137,24 @@ pub(crate) struct Chat {
     /// sessions by the folder it ran in, so a resumed session must start
     /// there again, wherever the document has since been saved.
     pub folder: PathBuf,
+    /// When the chat was last opened or sent a message, in milliseconds
+    /// since the epoch: the history lists the newest first.
+    pub used: u64,
     /// The running agent; `None` while the chat rests.
     session: Option<AgentChat>,
+}
+
+/// A closed chat the assistant's history offers to reopen.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PastChat {
+    /// The store's key of the file it was kept with; `None` for a chat of
+    /// a document not saved, which is kept for the run only.
+    pub file: Option<String>,
+    /// The tab of the document not saved it was closed on.
+    pub tab: Option<uuid::Uuid>,
+    pub chat: SavedChat,
+    /// Kept with the document on screen.
+    pub here: bool,
 }
 
 /// A message waiting for the agent's turn to end.
@@ -151,6 +168,57 @@ pub(crate) struct Queued {
 }
 
 impl Chat {
+    /// A chat kept with a document, resting on `tab` until it is shown;
+    /// a chat kept without its folder resumes in `folder`.
+    fn resting(kept: SavedChat, tab: uuid::Uuid, ask: bool, folder: PathBuf) -> Self {
+        Chat {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: kept.title,
+            naming: if kept.named {
+                Naming::User
+            } else {
+                Naming::Asked
+            },
+            titling: false,
+            titling_asked: false,
+            titled_once: true,
+            agent: kept.agent,
+            status: ChatStatus::Resting,
+            ask,
+            entries: Vec::new(),
+            options: Vec::new(),
+            attachments: Vec::new(),
+            mentions: Vec::new(),
+            queued: Vec::new(),
+            held: false,
+            chose: false,
+            choices_left: Vec::new(),
+            stderr: Vec::new(),
+            // The conversation already began: no word on where it is,
+            // but the rules go again with the next prompt, in case they
+            // changed since.
+            prompts: 1,
+            rules_sent: String::new(),
+            tab,
+            session_id: Some(kept.session),
+            folder: kept.folder.unwrap_or(folder),
+            used: kept.used.unwrap_or(0),
+            session: None,
+        }
+    }
+
+    /// What the store keeps of the chat, once its agent named a session.
+    fn saved(&self) -> Option<SavedChat> {
+        Some(SavedChat {
+            agent: self.agent.clone(),
+            session: self.session_id.clone()?,
+            title: self.title.clone(),
+            named: self.naming == Naming::User,
+            folder: Some(self.folder.clone()),
+            used: Some(self.used),
+        })
+    }
+
     fn send(&self, command: ChatCommand) {
         if let Some(session) = &self.session {
             session.send(command);
@@ -372,6 +440,7 @@ impl PrintCadApp {
             tab,
             session_id: None,
             folder: PathBuf::new(),
+            used: chat_store::now_ms(),
             session: None,
         });
         if let Some(chat) = self.agents.chats.last_mut() {
@@ -417,6 +486,7 @@ impl PrintCadApp {
             tab: self.session.tab,
             session_id: None,
             folder,
+            used: chat_store::now_ms(),
             session: Some(session),
         });
     }
@@ -467,7 +537,7 @@ impl PrintCadApp {
             return;
         };
         let tab = self.session.tab;
-        let saved = crate::app::chat_store::chats_of(&file);
+        let saved = chat_store::chats_of(&file);
         let mut restored = false;
         for kept in saved {
             if self
@@ -478,41 +548,11 @@ impl PrintCadApp {
             {
                 continue;
             }
-            self.agents.chats.push(Chat {
-                id: uuid::Uuid::new_v4().to_string(),
-                title: kept.title,
-                naming: if kept.named {
-                    Naming::User
-                } else {
-                    Naming::Asked
-                },
-                titling: false,
-                titling_asked: false,
-                titled_once: true,
-                agent: kept.agent,
-                status: ChatStatus::Resting,
-                ask: self.user_settings.ai.ask_before_changes,
-                entries: Vec::new(),
-                options: Vec::new(),
-                attachments: Vec::new(),
-                mentions: Vec::new(),
-                queued: Vec::new(),
-                held: false,
-                chose: false,
-                choices_left: Vec::new(),
-                stderr: Vec::new(),
-                // The conversation already began: no word on where it is,
-                // but the rules go again with the next prompt, in case they
-                // changed since.
-                prompts: 1,
-                rules_sent: String::new(),
-                tab,
-                session_id: Some(kept.session),
-                folder: kept
-                    .folder
-                    .unwrap_or_else(|| working_folder(Some(file.as_path()))),
-                session: None,
-            });
+            let folder = working_folder(Some(file.as_path()));
+            let ask = self.user_settings.ai.ask_before_changes;
+            self.agents
+                .chats
+                .push(Chat::resting(kept, tab, ask, folder));
             restored = true;
         }
         if restored {
@@ -559,30 +599,146 @@ impl PrintCadApp {
     }
 
     /// Keep each document's chats with its file, for the next time it is
-    /// opened: the chats of every tab that has a file and a session.
-    pub(crate) fn persist_chats(&self) {
+    /// opened: the chats of every tab that has a file and a session. A
+    /// document saved for the first time takes the chats closed on it
+    /// before into its history.
+    pub(crate) fn persist_chats(&mut self) {
         let files: Vec<(uuid::Uuid, PathBuf)> = self
             .sessions()
             .filter_map(|s| Some((s.tab, s.file.path.clone()?)))
             .collect();
         for (tab, file) in files {
-            let kept: Vec<crate::app::chat_store::SavedChat> = self
+            let (closed, rest) = std::mem::take(&mut self.agents.closed_unsaved)
+                .into_iter()
+                .partition(|(on, _)| *on == tab);
+            self.agents.closed_unsaved = rest;
+            for (_, chat) in closed {
+                chat_store::close(&file, chat);
+            }
+            let kept: Vec<SavedChat> = self
                 .agents
                 .chats
                 .iter()
                 .filter(|c| c.tab == tab)
-                .filter_map(|c| {
-                    Some(crate::app::chat_store::SavedChat {
-                        agent: c.agent.clone(),
-                        session: c.session_id.clone()?,
-                        title: c.title.clone(),
-                        named: c.naming == Naming::User,
-                        folder: Some(c.folder.clone()),
-                    })
-                })
+                .filter_map(Chat::saved)
                 .collect();
-            crate::app::chat_store::keep(&file, kept);
+            chat_store::keep(&file, kept);
         }
+    }
+
+    /// The tab `tab` closes: the chats of a document not saved stay in
+    /// the history for the rest of the run; a file's stay kept with it.
+    pub(crate) fn let_go_of_tab_chats(&mut self, tab: uuid::Uuid, saved: bool) {
+        let chats = std::mem::take(&mut self.agents.chats);
+        let (going, staying): (Vec<Chat>, Vec<Chat>) =
+            chats.into_iter().partition(|c| c.tab == tab);
+        self.agents.chats = staying;
+        if !saved {
+            self.agents
+                .closed_unsaved
+                .extend(going.iter().filter_map(|c| Some((tab, c.saved()?))));
+        }
+        self.refresh_chat_history();
+    }
+
+    /// Read the closed chats again for the assistant's history: every
+    /// file's from the store and those of documents not saved, newest
+    /// first.
+    pub(crate) fn refresh_chat_history(&mut self) {
+        let mut past: Vec<PastChat> = chat_store::history()
+            .into_iter()
+            .map(|c| PastChat {
+                file: Some(c.file),
+                tab: None,
+                chat: c.chat,
+                here: false,
+            })
+            .chain(
+                self.agents
+                    .closed_unsaved
+                    .iter()
+                    .map(|(tab, chat)| PastChat {
+                        file: None,
+                        tab: Some(*tab),
+                        chat: chat.clone(),
+                        here: false,
+                    }),
+            )
+            .collect();
+        past.sort_by_key(|a| std::cmp::Reverse(a.chat.used));
+        self.agents.history = past;
+    }
+
+    /// The history with the chats kept with the document on screen marked.
+    pub(crate) fn chat_history(&self) -> Vec<PastChat> {
+        if self.agents.history.is_empty() {
+            return Vec::new();
+        }
+        let here = self.session.file.path.as_deref().map(chat_store::key);
+        let tab = self.session.tab;
+        self.agents
+            .history
+            .iter()
+            .map(|p| PastChat {
+                here: match &p.file {
+                    Some(file) => here.as_deref() == Some(file.as_str()),
+                    None => p.tab == Some(tab),
+                },
+                ..p.clone()
+            })
+            .collect()
+    }
+
+    /// Reopen a closed chat as a tab of the assistant, on the document on
+    /// screen whatever file it was kept with, and kept with this one from
+    /// now on. It rests until shown, then resumes its session.
+    pub(crate) fn reopen_chat(&mut self, file: Option<String>, session: &str) {
+        let found = match &file {
+            Some(file) => self
+                .agents
+                .history
+                .iter()
+                .find(|p| p.file.as_ref() == Some(file) && p.chat.session == session)
+                .map(|p| p.chat.clone()),
+            None => self
+                .agents
+                .closed_unsaved
+                .iter()
+                .find(|(_, c)| c.session == session)
+                .map(|(_, c)| c.clone()),
+        };
+        let Some(mut kept) = found else {
+            return;
+        };
+        self.forget_chat(file, session);
+        if self
+            .agents
+            .chats
+            .iter()
+            .any(|c| c.session_id.as_deref() == Some(session))
+        {
+            return;
+        }
+        kept.used = Some(chat_store::now_ms());
+        let folder = working_folder(self.session.file.path.as_deref());
+        let ask = self.user_settings.ai.ask_before_changes;
+        let tab = self.session.tab;
+        self.agents
+            .chats
+            .push(Chat::resting(kept, tab, ask, folder));
+        self.persist_chats();
+    }
+
+    /// Take a closed chat out of the history and the store for good.
+    pub(crate) fn forget_chat(&mut self, file: Option<String>, session: &str) {
+        match &file {
+            Some(file) => chat_store::forget(file, session),
+            None => self
+                .agents
+                .closed_unsaved
+                .retain(|(_, c)| c.session != session),
+        }
+        self.refresh_chat_history();
     }
 
     /// Name the chat as the user typed it; an empty name changes nothing.
@@ -620,6 +776,7 @@ impl PrintCadApp {
         self.wake_chat(id);
         if let Some(chat) = self.chat_mut(id) {
             chat.enqueue(text);
+            chat.used = chat_store::now_ms();
         }
         self.send_queued(id);
     }
@@ -746,11 +903,26 @@ impl PrintCadApp {
         }
     }
 
-    /// Close a chat: its agent's program ends with it.
+    /// Close a chat: its agent's program ends with it, and the chat goes
+    /// to the history, from which it can be reopened.
     pub(crate) fn close_chat(&mut self, id: &str) {
         self.cancel_chat(id);
-        self.agents.chats.retain(|c| c.id != id);
+        let Some(index) = self.agents.chats.iter().position(|c| c.id == id) else {
+            return;
+        };
+        let chat = self.agents.chats.remove(index);
+        if let Some(saved) = chat.saved() {
+            let file = self
+                .sessions()
+                .find(|s| s.tab == chat.tab)
+                .and_then(|s| s.file.path.clone());
+            match file {
+                Some(file) => chat_store::close(&file, saved),
+                None => self.agents.closed_unsaved.push((chat.tab, saved)),
+            }
+        }
         self.persist_chats();
+        self.refresh_chat_history();
     }
 
     pub(crate) fn answer_permission(&mut self, id: &str, entry: usize, option: Option<String>) {
@@ -937,6 +1109,7 @@ impl Chat {
             tab: uuid::Uuid::nil(),
             session_id: None,
             folder: PathBuf::new(),
+            used: 0,
             session: Some(AgentChat::over(
                 ours.try_clone().unwrap(),
                 ours,
@@ -1352,6 +1525,35 @@ mod tests {
         );
         put_choices(&mut c);
         assert!(c.choices_left.is_empty(), "the large model takes it");
+    }
+
+    /// A closed chat goes to the history and, reopened from it, rests on
+    /// the tab on screen in the same session, which waking resumes.
+    #[test]
+    fn a_closed_chat_reopens_in_its_session() {
+        let dir = std::env::temp_dir().join(format!("printcad-reopen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("chats.json");
+        let mut c = chat();
+        c.session_id = Some("s1".into());
+        c.title = "Bracket".into();
+        c.naming = Naming::User;
+        c.folder = dir.clone();
+        c.used = 7;
+        chat_store::close_in(&store, "/x/a.prtcad", c.saved().unwrap());
+        let past = chat_store::history_in(&store).remove(0);
+        let tab = uuid::Uuid::new_v4();
+        let again = Chat::resting(past.chat, tab, true, PathBuf::from("/elsewhere"));
+        assert_eq!(again.session_id.as_deref(), Some("s1"));
+        assert_eq!(
+            (again.title.as_str(), again.naming),
+            ("Bracket", Naming::User)
+        );
+        assert_eq!(
+            (again.status, again.tab, again.folder),
+            (ChatStatus::Resting, tab, dir.clone())
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

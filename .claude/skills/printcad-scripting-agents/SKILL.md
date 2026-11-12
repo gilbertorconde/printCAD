@@ -156,11 +156,22 @@ printCAD's own tools draws as `agent_context::tool_label` (the call's
 or the script it runs), from the arguments ACP sends as `rawInput`. A chat belongs
 to the tab it started in (`Chat::tab`; its tool calls run there through
 `submit_script_in`), and once it has a session id and the tab a file,
-`persist_chats` keeps `{agent, session, title}` with the file in the
+`persist_chats` keeps `{agent, session, title, folder, used}` with the file in the
 app's `chats.json` (`app/chat_store.rs`); opening the file
 (`restore_chats`) brings them back `Resting`, and the first time one is
 shown `wake_chat` starts its agent with `session/load`
-(`AgentChat::start`'s `resume`), which replays the conversation. The agent's
+(`AgentChat::start`'s `resume`), which replays the conversation.
+`chats.json` holds `documents` (open chats by file) and `closed` (by
+file, each with `used`, milliseconds since the epoch); `close_chat`
+moves a chat to `closed` (`chat_store::close`), and the history button
+beside the chat tabs (`ui/assistant.rs::history_list`, rows from
+`PrintCadApp::chat_history` over `Agents.history`, read again by
+`refresh_chat_history`) reopens one on the tab on screen
+(`reopen_chat`, `Chat::resting`, kept with that tab's file from then
+on) or forgets it (`forget_chat`). Chats of a tab with no file stay in
+`Agents.closed_unsaved` for the run (closed ones, and open ones whose
+tab closes, `let_go_of_tab_chats`) and `persist_chats` moves them into
+the store at the first save. The agent's
 session options (`acp::SessionOption`: `configOptions`, or the older
 `modes`/`models`) draw as the bar under the input; a change shows at once
 and is put back if the agent refuses, an answer an agent-side update has

@@ -10,20 +10,22 @@
 //! text that Backspace or Delete takes away whole. The
 //! agent's messages are markdown; each message copies from a button shown
 //! on hover, and the header (or Alt+Up and Alt+Down) jumps between the
-//! user's own messages.
+//! user's own messages. The history button beside the tabs lists the
+//! chats closed before, this file's first and newest first, to search,
+//! reopen as a tab or remove for good.
 
 use egui::RichText;
 use ui_kit::completion::{Candidate, Completer, Completion, cursor_of, nearest, place_cursor};
 use ui_kit::markdown;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Card, Tab, icon_button, primary_button, secondary_button, small_secondary_button, tab_plus,
-    toggle,
+    Card, RowLook, Tab, filter_field, icon_button, list_row_with, overline, primary_button,
+    row_detail, secondary_button, small_secondary_button, tab_plus, toggle,
 };
 use ui_kit::{mono, sans, sans_medium};
 
 use super::UiCommand;
-use crate::app::chats::{Chat, ChatEntry, ChatStatus};
+use crate::app::chats::{Chat, ChatEntry, ChatStatus, PastChat};
 use crate::app::mcp::Approval;
 use crate::app::mentions::{Mention, MentionOption, find_tokens};
 use agents::acp::{OptionValue, SessionOption};
@@ -45,6 +47,16 @@ pub struct AssistantState {
     renaming: Option<(String, String, bool)>,
     /// Where each chat's conversation was scrolled to, last frame.
     scroll: std::collections::HashMap<String, ChatScroll>,
+    /// The history of closed chats, while it is open.
+    history: Option<HistoryView>,
+}
+
+/// The history list's own state: the search typed and whether every
+/// file's chats show, not only the document on screen's.
+#[derive(Debug, Default)]
+struct HistoryView {
+    query: String,
+    every_file: bool,
 }
 
 /// A conversation's scroll as last drawn: where the user's messages sit in
@@ -118,6 +130,8 @@ pub struct AssistantInputs<'a> {
     pub paste_pressed: bool,
     /// What the `@` list offers a chat, by the tab it works on.
     pub mentions: &'a [(uuid::Uuid, Vec<MentionOption>)],
+    /// The closed chats the history offers, newest first.
+    pub past_chats: &'a [PastChat],
 }
 
 /// What the panel asked for beyond commands.
@@ -145,6 +159,7 @@ pub fn draw_assistant(
         document_rules,
         paste_pressed,
         mentions,
+        past_chats,
     } = inputs;
     // A chat opened since last frame takes the screen; one closed gives it
     // back to the last.
@@ -180,6 +195,7 @@ pub fn draw_assistant(
                 take_dropped_files(ui, panel, chat, commands);
             }
             tab_strip(ui, state, chats, &agents, commands, &mut result);
+            history_list(ui, state, past_chats, commands);
             rename_row(ui, state, chats, commands);
             rules_editor(ui, state, document_name, document_rules, commands);
             ui.separator();
@@ -272,6 +288,11 @@ pub fn draw_assistant(
 }
 
 const CHAT_TAB_MIN: f32 = 80.0;
+/// What the buttons after the chat tabs take: New chat, the history and
+/// Rules.
+const HEADER_BUTTONS: f32 = 110.0;
+/// The most the history list takes before it scrolls.
+const HISTORY_HEIGHT: f32 = 260.0;
 const CHAT_TAB_MAX: f32 = 160.0;
 const MIN_PANEL_WIDTH: f32 = 320.0;
 const MAX_PANEL_WIDTH: f32 = 720.0;
@@ -330,7 +351,8 @@ fn tab_strip(
     // The same tabs as the open documents'.
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        let available = ui.available_width() - 32.0;
+        // Room is left for New chat, the history and Rules after the tabs.
+        let available = ui.available_width() - HEADER_BUTTONS;
         let width = (available / chats.len().max(1) as f32).clamp(CHAT_TAB_MIN, CHAT_TAB_MAX);
         for chat in chats {
             let on = state.active.as_deref() == Some(chat.id.as_str());
@@ -389,6 +411,15 @@ fn tab_strip(
             tab.response.on_hover_text(hover);
         }
         let plus = tab_plus(ui, TAB_BAR - 8.0).on_hover_text("New chat");
+        if icon_button(ui, "history", "Past chats").clicked() {
+            state.history = match state.history {
+                Some(_) => None,
+                None => {
+                    commands.push(UiCommand::ShowChatHistory);
+                    Some(HistoryView::default())
+                }
+            };
+        }
         let rules = ui
             .add(egui::Button::new(RichText::new("Rules").font(sans(FONT_XS))).small())
             .on_hover_text("What agents keep to in this document");
@@ -403,6 +434,124 @@ fn tab_strip(
             new_chat_items(ui, agents, commands, result);
         });
     });
+}
+
+/// The past chats the history shows for `query`: the document on
+/// screen's, and every file's after them when `every_file`, each group
+/// newest first. Every word of the query is in the title, the agent's name
+/// or the file's.
+fn shown_past<'a>(past: &'a [PastChat], query: &str, every_file: bool) -> Vec<&'a PastChat> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let mut shown: Vec<&PastChat> = past
+        .iter()
+        .filter(|p| p.here || every_file)
+        .filter(|p| {
+            let text = format!("{} {} {}", p.chat.title, p.chat.agent, file_name(p)).to_lowercase();
+            words.iter().all(|w| text.contains(w.as_str()))
+        })
+        .collect();
+    shown.sort_by(|a, b| b.here.cmp(&a.here).then(b.chat.used.cmp(&a.chat.used)));
+    shown
+}
+
+/// The name of the file a past chat was kept with.
+fn file_name(past: &PastChat) -> String {
+    match &past.file {
+        Some(file) => std::path::Path::new(file)
+            .file_name()
+            .map_or_else(|| file.clone(), |n| n.to_string_lossy().into_owned()),
+        None => "Unsaved document".to_string(),
+    }
+}
+
+/// The history of closed chats, under the tabs while it is open: a row
+/// reopens its chat as a tab, its bin removes it for good, Escape puts the
+/// list away.
+fn history_list(
+    ui: &mut egui::Ui,
+    state: &mut AssistantState,
+    past: &[PastChat],
+    commands: &mut Vec<UiCommand>,
+) {
+    let Some(view) = state.history.as_mut() else {
+        return;
+    };
+    // Escape is the rename field's while a chat is being renamed.
+    let mut close = state.renaming.is_none()
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    let now = crate::app::chat_store::now_ms();
+    Card::new().padding(SPACE_2).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            overline(ui, "Past chats");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close |= icon_button(ui, "close", "Put the list away").clicked();
+                toggle(ui, &mut view.every_file, "Every file's chats")
+                    .on_hover_text("List the chats of every file, not only this one's");
+                ui.label(RichText::new("All files").font(sans(FONT_XS)).color(TEXT2));
+            });
+        });
+        ui.add_space(SPACE_1);
+        filter_field(ui, &mut view.query, "Search past chats", |_| {});
+        ui.add_space(SPACE_1);
+        let shown = shown_past(past, &view.query, view.every_file);
+        if shown.is_empty() {
+            let why = if past.is_empty() {
+                "No chats closed yet"
+            } else {
+                "No past chat matches"
+            };
+            ui.label(RichText::new(why).font(sans(FONT_SM)).color(TEXT3));
+            return;
+        }
+        egui::ScrollArea::vertical()
+            .max_height(HISTORY_HEIGHT)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let mut group = None;
+                for p in shown {
+                    if view.every_file && group != Some(p.here) {
+                        group = Some(p.here);
+                        overline(ui, if p.here { "This file" } else { "Other files" });
+                    }
+                    let mut detail = vec![p.chat.agent.clone()];
+                    if !p.here {
+                        detail.insert(0, file_name(p));
+                    }
+                    if let Some(used) = p.chat.used {
+                        detail.push(super::start_page::humanize_age(used, now));
+                    }
+                    let mut forget = false;
+                    let row = list_row_with(
+                        ui,
+                        ("past_chat", &p.file, &p.chat.session),
+                        RowLook::default(),
+                        ("assistant", TEXT2),
+                        &p.chat.title,
+                        |ui| row_detail(ui, &detail.join(" · ")),
+                        |ui| {
+                            forget = icon_button(ui, "delete", "Remove from the history for good")
+                                .clicked();
+                        },
+                    );
+                    if forget {
+                        commands.push(UiCommand::ForgetChat {
+                            file: p.file.clone(),
+                            session: p.chat.session.clone(),
+                        });
+                    } else if row.on_hover_text("Reopen the chat").clicked() {
+                        commands.push(UiCommand::ReopenChat {
+                            file: p.file.clone(),
+                            session: p.chat.session.clone(),
+                        });
+                        close = true;
+                    }
+                }
+            });
+    });
+    if close {
+        state.history = None;
+    }
 }
 
 /// The name of the chat being renamed, typed under the tabs: Enter keeps
@@ -1578,6 +1727,39 @@ fn stop_button(ui: &mut egui::Ui) -> egui::Response {
 mod tests {
     use super::*;
 
+    /// The history lists this file's chats first, each group newest first,
+    /// and searches titles, agents and files alike.
+    #[test]
+    fn past_chats_list_this_files_first_newest_first() {
+        let past = |title: &str, file: &str, here: bool, used: u64| PastChat {
+            file: Some(file.into()),
+            tab: None,
+            chat: crate::app::chat_store::SavedChat {
+                agent: "Claude".into(),
+                session: title.into(),
+                title: title.into(),
+                named: false,
+                folder: None,
+                used: Some(used),
+            },
+            here,
+        };
+        let all = [
+            past("old here", "/x/a.prtcad", true, 1),
+            past("new there", "/x/b.prtcad", false, 9),
+            past("new here", "/x/a.prtcad", true, 5),
+        ];
+        let titles = |query: &str, every: bool| -> Vec<&str> {
+            shown_past(&all, query, every)
+                .iter()
+                .map(|p| p.chat.title.as_str())
+                .collect()
+        };
+        assert_eq!(titles("", false), ["new here", "old here"]);
+        assert_eq!(titles("", true), ["new here", "old here", "new there"]);
+        assert_eq!(titles("b.prtcad NEW", true), ["new there"]);
+    }
+
     /// A select option of a chat's agent, with these choices.
     fn select(id: &str, category: &str, choices: &[&str]) -> agents::acp::SessionOption {
         agents::acp::SessionOption {
@@ -1670,6 +1852,7 @@ mod tests {
                         document_rules: "",
                         paste_pressed: false,
                         mentions: &[],
+                        past_chats: &[],
                     },
                     &mut Vec::new(),
                 );
@@ -1748,6 +1931,7 @@ mod tests {
                     document_rules: "",
                     paste_pressed: false,
                     mentions: &mentions,
+                    past_chats: &[],
                 },
                 &mut commands,
             );

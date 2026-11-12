@@ -74,6 +74,7 @@ const LOCAL = new Set([
   "log",
   "chevrons-down",
   "home",
+  "history",
   "workbench-surface",
   "surface-extrude",
   "surface-revolve",

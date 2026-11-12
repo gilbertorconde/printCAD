@@ -100,10 +100,28 @@ is on screen. Once the document has a file, its chats are kept with it:
 open the file again and they come back, and the first time one is shown
 its agent starts in the same session, the conversation replayed, so it
 continues where it left off. (The agent must be able to reload sessions;
-Claude can. One that cannot starts a new chat and says so.) Closing a
-chat's tab forgets it for the file; closing the document's tab keeps
-them. They are kept in the application's own folder, not in the file, so
-a document you pass on carries no conversations.
+Claude can. One that cannot, or that refuses, keeps the chat's title,
+says so in the chat and starts a new conversation.) Closing the
+document's tab keeps its chats. They are kept in the application's own
+folder, not in the file, so a document you pass on carries no
+conversations.
+
+## Past chats
+
+Closing a chat's tab ends its agent but keeps the chat: the history
+button beside the chat tabs lists the chats closed before, this file's
+first, newest first, with the agent and when each was last used. Type
+to search titles, agents and file names; All files lists every file's
+closed chats after this one's. Click a chat to reopen it as a tab: its
+agent starts in the same session and the conversation comes back, as a
+chat brought back with its file does. A chat reopened from another file
+opens on the document on screen and is kept with it from then on. The
+bin on a row removes the chat from the history for good (the agent's own
+copy of the session is left alone).
+
+Chats of a document not saved yet are kept for as long as printCAD runs:
+closed ones show in the history, and the first save keeps them with the
+new file like any other.
 
 ## What the agent knows
 

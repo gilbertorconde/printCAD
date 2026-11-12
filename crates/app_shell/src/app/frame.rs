@@ -479,6 +479,7 @@ impl PrintCadApp {
                     mentions.push((chat.tab, self.mention_options(chat.tab)));
                 }
             }
+            let past_chats = self.chat_history();
             let Some(gfx) = self.gfx.as_mut() else {
                 return;
             };
@@ -659,6 +660,7 @@ impl PrintCadApp {
                         chats: &self.agents.chats,
                         approvals: &self.agents.approvals,
                         mentions,
+                        past_chats,
                         assistant_attention: std::mem::take(&mut self.agents.assistant_attention),
                         paste_pressed: std::mem::take(&mut self.input.paste_pressed),
                         print_layout: self.session.tools.print_layout.as_ref().map(|s| &s.layout),

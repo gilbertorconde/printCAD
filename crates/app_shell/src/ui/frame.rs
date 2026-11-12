@@ -711,6 +711,7 @@ impl UiLayer {
                 document_rules: inputs.document.agent_rules(),
                 paste_pressed: inputs.paste_pressed,
                 mentions: &inputs.mentions,
+                past_chats: &inputs.past_chats,
             },
             &mut out.commands,
         );
