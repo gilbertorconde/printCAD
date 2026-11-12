@@ -1060,6 +1060,130 @@ endsolid t
         assert!(!document.metadata().dirty(), "building it again is no edit");
     }
 
+    /// Evaluating after each edit, which takes what the last evaluation
+    /// settled where the input is the same, comes to what evaluating the
+    /// document afresh does: over a seeded run of edits to variables,
+    /// formulas, a configuration, sketch dimensions and a datum a sketch
+    /// stands on, every feature's values and formula results agree, and
+    /// every built feature whose values moved is marked for rebuilding.
+    #[test]
+    fn evaluating_after_each_edit_agrees_with_evaluating_afresh() {
+        let mut registry = registry();
+        let made = r#"
+            pc.var.new{name = "Size"}
+            pc.var.set{set = "Size", name = "w", formula = "30 mm"}
+            pc.var.set{set = "Size", name = "t", formula = "Size.w / 10"}
+            local body = pc.doc.new_body{name = "Part"}
+            local s = pc.sketch.new{body = body, plane = "XY", name = "Base"}
+            local sides = pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+            local wide = pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[1]}, value = 10}[1]
+            local deep = pc.sketch.constrain{sketch = s, kind = "distance", items = {sides[2]}, value = 10}[1]
+            pc.doc.set_formula{id = s, parameter = wide, formula = "Size.w"}
+            local pad = pc.design.pad{sketch = s}
+            pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.t"}
+            local pad_name = "`" .. pc.doc.feature{id = pad}.name .. "`"
+            local datum = pc.design.datum{kind = "plane", body = body}
+            pc.doc.set_formula{id = datum, parameter = "offset_z", formula = pad_name .. ".length"}
+            local top = pc.sketch.new{body = body, on = datum, name = "Top"}
+            pc.sketch.circle{sketch = top, x = 5, y = 5, radius = 2}
+            local pad2 = pc.design.pad{sketch = top, length = 2}
+            pc.doc.set_formula{id = pad2, parameter = "length", formula = pad_name .. ".length * 2"}
+            pc.config.add_variable{variable = "Size.w"}
+            pc.config.new{name = "Small"}
+            pc.config.set{name = "Small", variable = "Size.w", value = "20 mm"}
+            return {s = s, deep = deep, pad = pad, datum = datum, pad2 = pad2, name = pad_name}
+            "#;
+        let (mut document, ids) = run_in_document(&mut registry, Document::new("t"), made, "made");
+        let ids = ids.unwrap().unwrap();
+        let id = |key: &str| ids[key].as_str().unwrap().to_string();
+        let (s, deep, pad, datum, pad2, name) = (
+            id("s"),
+            id("deep"),
+            id("pad"),
+            id("datum"),
+            id("pad2"),
+            id("name"),
+        );
+        let state = |doc: &Document| {
+            let mut out: Vec<_> = doc
+                .feature_tree()
+                .all_nodes()
+                .map(|(id, _)| {
+                    let results: Vec<_> = doc
+                        .evaluated_slots(*id)
+                        .iter()
+                        .map(|slot| slot.result.clone())
+                        .collect();
+                    (*id, doc.feature_values(*id).cloned(), results)
+                })
+                .collect();
+            out.sort_by_key(|(id, ..)| *id);
+            out
+        };
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        for step in 0..40 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let n = 1.0 + (seed % 37) as f64;
+            let edit = match seed % 7 {
+                0 => format!(
+                    r#"pc.var.set{{set = "Size", name = "w", formula = "{} mm"}}"#,
+                    10.0 + n
+                ),
+                1 => format!(
+                    r#"pc.doc.set_value{{id = "{pad}", parameter = "length", value = {n}}}"#
+                ),
+                2 => format!(
+                    r#"pc.doc.set_formula{{id = "{pad}", parameter = "length", formula = "Size.t"}}"#
+                ),
+                3 => {
+                    format!(r#"pc.doc.set_value{{id = "{s}", parameter = "{deep}", value = {n}}}"#)
+                }
+                4 => format!(
+                    r#"pc.config.activate{{name = {}}}"#,
+                    ["nil", "\"Small\""][step % 2]
+                ),
+                5 => format!(
+                    r#"pc.doc.set_formula{{id = "{pad2}", parameter = "length", formula = "{name}.length + {n} mm"}}"#
+                ),
+                _ => format!(
+                    r#"pc.doc.set_value{{id = "{datum}", parameter = "offset_z", value = {n}}}"#
+                ),
+            };
+            let ids: Vec<_> = document
+                .feature_tree()
+                .all_nodes()
+                .map(|(id, _)| *id)
+                .collect();
+            for id in &ids {
+                document.clear_feature_dirty(*id);
+            }
+            let before = state(&document);
+            let out;
+            (document, out) = run_in_document(&mut registry, document, &edit, "edit");
+            out.unwrap_or_else(|why| panic!("{edit}: {why}"));
+            let after = state(&document);
+            let bytes = document
+                .clone()
+                .save_to_bytes(core_document::Compression::None)
+                .unwrap();
+            let mut fresh =
+                crate::app::doc_io::opened(&registry, Document::load_from_bytes(bytes).unwrap());
+            registry.evaluate(&mut fresh);
+            assert_eq!(after, state(&fresh), "step {step}: {edit}");
+            for ((id, was, _), (_, now, _)) in before.iter().zip(&after) {
+                let node = document.get_feature_meta(*id).unwrap();
+                let built = node.body.is_some();
+                assert!(
+                    was == now || !built || node.dirty,
+                    "step {step}: {edit} moved {}",
+                    node.name
+                );
+            }
+        }
+    }
+
     #[test]
     fn variables_drive_a_pad_and_their_formulas_are_saved() {
         let dir = scratch("vars");
