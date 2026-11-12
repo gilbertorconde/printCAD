@@ -2619,6 +2619,7 @@ assert(math.abs(m.volume - math.pi * 10 ^ 2) < 0.01, m.volume)
 - `construction` (boolean, optional): What it makes is construction geometry
 - `avoid_redundant` (boolean, optional): Drop auto constraints that add nothing (true)
 - `remove_redundant` (boolean, optional): Drop every constraint the tool makes that adds nothing, a shape's own included, keeping what the sketch already held (false)
+- `reuse_lines` (boolean, optional): A line between two points a line of its kind already joins is that line, not a second one; the existing line keeps its constraints (false)
 - `selection` (list, optional): The elements offset, translate, rotate, scale and mirror act on
 - Returns {elements, constraints}: what it made
 

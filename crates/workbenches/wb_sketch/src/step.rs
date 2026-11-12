@@ -30,6 +30,9 @@ pub(crate) struct StepSettings {
     /// the solver calls it redundant, a shape tool's own included: what
     /// the sketch already held stays.
     pub remove_redundant: bool,
+    /// A line the click lays between two points a line of its kind
+    /// already joins is that line ([`crate::reuse`]).
+    pub reuse_lines: bool,
 }
 
 /// What a click did.
@@ -61,14 +64,16 @@ pub(crate) fn click(
     // Which geometry existed, so construction mode flags everything a
     // drawing tool made (an id set: a tool may also remove a point). What
     // an edit makes of existing geometry (a fillet's arc, a trim's halves,
-    // a copy) keeps its own kind.
-    let before: Option<HashSet<Uuid>> = (settings.construction && crate::is_draw_tool(tool))
+    // a copy) keeps its own kind. Reusing lines reads the same set: only
+    // a line held before the click is reused.
+    let before: Option<HashSet<Uuid>> = (crate::is_draw_tool(tool)
+        && (settings.construction || settings.reuse_lines))
         .then(|| sketch.geometry.iter().map(GeometryElement::id).collect());
     let state_before = state.clone();
     let constraints_before: HashSet<Uuid> = sketch.constraints.iter().map(|c| c.id).collect();
     let params = ovp::typed_params(&settings.params, state, typed);
     let effect = tools::handle_click(state, tool, sketch, cursor, tol, &params, selected);
-    if let Some(before) = before {
+    if let Some(before) = before.as_ref().filter(|_| settings.construction) {
         let made: Vec<Uuid> = sketch
             .geometry
             .iter()
@@ -100,6 +105,17 @@ pub(crate) fn click(
         typed,
         constrain,
     );
+    let mut skipped = 0;
+    if let Some(before) = before.as_ref().filter(|_| settings.reuse_lines) {
+        skipped += reuse_lines(
+            state,
+            sketch,
+            before,
+            &constraints_before,
+            &before_typed,
+            tol,
+        );
+    }
     // An auto constraint the solver calls redundant, typed values
     // included, adds nothing the sketch does not already enforce: it goes
     // before it lands. Autos are what a line or polyline infers and what a
@@ -110,7 +126,6 @@ pub(crate) fn click(
     // rectangle drawn onto another's wall repeats that wall's vertical on
     // a second line between the same points.
     let inferring = matches!(tool, "sketch.line" | "sketch.polyline");
-    let mut skipped = 0;
     let autos: Vec<Uuid> = sketch
         .constraints
         .iter()
@@ -149,6 +164,59 @@ pub(crate) fn click(
         skipped,
         log: effect.log,
     }
+}
+
+/// The lines the click made that repeat one the sketch held, `before`,
+/// joined into it ([`crate::reuse::reuse_lines`]), the gesture following
+/// the ids it holds. A constraint the click made that now names one
+/// thing twice goes, and so, one at a time in the order they were made,
+/// does each the click made on what was joined that the solver calls
+/// redundant: the existing line keeps its own. Typed values stay. How
+/// many constraints went.
+fn reuse_lines(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    before: &HashSet<Uuid>,
+    constraints_before: &HashSet<Uuid>,
+    untyped: &HashSet<Uuid>,
+    tol: f64,
+) -> usize {
+    let reused = crate::reuse::reuse_lines(sketch, before, tools::curve_attach_eps(tol));
+    if reused.is_empty() {
+        return 0;
+    }
+    tools::rename_state(state, |id| reused.renamed(id));
+    let count = sketch.constraints.len();
+    sketch.constraints.retain(|c| {
+        let refs = crate::sketch::constraint_refs(&c.kind);
+        let unique: HashSet<&Uuid> = refs.iter().collect();
+        constraints_before.contains(&c.id) || unique.len() == refs.len()
+    });
+    let mut dropped = count - sketch.constraints.len();
+    let kept = reused.kept();
+    let touched: Vec<Uuid> = sketch
+        .constraints
+        .iter()
+        .filter(|c| !constraints_before.contains(&c.id) && untyped.contains(&c.id))
+        .filter(|c| {
+            crate::sketch::constraint_refs(&c.kind)
+                .iter()
+                .any(|r| kept.contains(r))
+        })
+        .map(|c| c.id)
+        .collect();
+    if touched.is_empty() {
+        return dropped;
+    }
+    let mut diagnosis = crate::solver::diagnose(sketch);
+    for id in touched {
+        if diagnosis.redundant.contains(&id) {
+            sketch.constraints.retain(|c| c.id != id);
+            dropped += 1;
+            diagnosis = crate::solver::diagnose(sketch);
+        }
+    }
+    dropped
 }
 
 /// Where a click of `tool` at `cursor` is taken, and the reach the tool

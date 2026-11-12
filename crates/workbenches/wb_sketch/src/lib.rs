@@ -53,6 +53,7 @@ mod registration;
 mod relations;
 pub mod render;
 pub mod repair;
+mod reuse;
 mod scan;
 mod selection;
 #[cfg(feature = "egui")]
@@ -399,6 +400,9 @@ pub struct SketchOptions {
     /// A constraint a constraint tool adds takes away the older ones it
     /// made redundant.
     pub auto_remove_redundant: bool,
+    /// A drawing tool's line between two points a line of its kind
+    /// already joins is that line, not a second one.
+    pub reuse_lines: bool,
     /// The solver runs after every edit; off, it runs on request.
     pub auto_update: bool,
     /// Construction geometry draws over normal geometry while editing;
@@ -465,6 +469,7 @@ impl Default for SketchOptions {
             auto_constraints: true,
             avoid_redundant_auto: true,
             auto_remove_redundant: false,
+            reuse_lines: false,
             auto_update: true,
             construction_on_top: false,
             min_wall: walls::DEFAULT_MINIMUM_MM,
@@ -2020,6 +2025,7 @@ impl SketchWorkbench {
             construction: false,
             avoid_redundant: false,
             remove_redundant: false,
+            reuse_lines: false,
         };
         let (at, tol) = step::land(
             &self.tab.tool_state,

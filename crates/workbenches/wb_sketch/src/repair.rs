@@ -79,7 +79,7 @@ fn rename(value: &mut serde_json::Value, map: &HashMap<Uuid, Uuid>) {
 
 /// The sketch's references renamed through `map`: its curves' points and
 /// its constraints'.
-fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
+pub(crate) fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
     if map.is_empty() {
         return;
     }

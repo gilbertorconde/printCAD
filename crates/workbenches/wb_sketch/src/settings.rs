@@ -11,6 +11,9 @@ use bench_api::{
 use crate::SketchOptions;
 use crate::appearance::GridLines;
 
+/// What the reuse switch does, on the page and the panel alike.
+pub(crate) const REUSE_HINT: &str = "A shape drawn against a line between the same two points uses that line and its constraints instead of drawing a second one";
+
 /// A switch the page shows: its id, words, hint and the option it sets.
 type Switch = (
     &'static str,
@@ -19,7 +22,7 @@ type Switch = (
     fn(&mut SketchOptions) -> &mut bool,
 );
 
-const SOLVER: [Switch; 10] = [
+const SOLVER: [Switch; 11] = [
     (
         "auto_constraints",
         "Auto constraints",
@@ -62,6 +65,9 @@ const SOLVER: [Switch; 10] = [
         "A new constraint takes away the older ones it makes redundant; a drawn shape drops its own constraints the sketch already enforces",
         |o| &mut o.auto_remove_redundant,
     ),
+    ("reuse_lines", "Reuse existing lines", REUSE_HINT, |o| {
+        &mut o.reuse_lines
+    }),
     (
         "ask_dimension_value",
         "Ask for a dimension's value",
@@ -354,6 +360,7 @@ pub(crate) fn widgets(options: &SketchOptions, snap: bool) -> Vec<Widget> {
             "arc_helpers",
             "avoid_redundant_auto",
             "auto_remove_redundant",
+            "reuse_lines",
             "ask_dimension_value",
         ],
     ));

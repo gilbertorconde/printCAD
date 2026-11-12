@@ -1454,6 +1454,12 @@ impl SketchWorkbench {
             toggle("display.grid_snap", "Snap to grid", o.grid_snap, ""),
             toggle("display.snap", "Snap to objects", !self.tab.snap_off, ""),
             toggle(
+                "display.reuse_lines",
+                "Reuse existing lines",
+                o.reuse_lines,
+                crate::settings::REUSE_HINT,
+            ),
+            toggle(
                 "display.avoid_redundant",
                 "Avoid redundant auto constraints",
                 o.avoid_redundant_auto,
@@ -2080,6 +2086,7 @@ impl SketchWorkbench {
             "display.grid_auto" => Some(&mut o.grid_auto),
             "display.grid_snap" => Some(&mut o.grid_snap),
             "display.avoid_redundant" => Some(&mut o.avoid_redundant_auto),
+            "display.reuse_lines" => Some(&mut o.reuse_lines),
             "display.auto_constraints" => Some(&mut o.auto_constraints),
             "display.continue_drawing" => Some(&mut o.continue_drawing),
             "display.continue_constraining" => Some(&mut o.continue_constraining),
