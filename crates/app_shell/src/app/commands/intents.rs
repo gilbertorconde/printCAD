@@ -322,9 +322,13 @@ impl PrintCadApp {
     /// Imports, new and opened documents, the screen, the frame's file
     /// dialog, and the file work that finished away from the window.
     fn apply_file_intents(&mut self, intents: &mut FrameIntents, step_import: Option<StepImport>) {
+        let answered = step_import.is_some() || intents.cancel_step_import;
         if let Some((path, detail)) = step_import {
             self.imports.last_detail = detail.clone();
             self.import_step_at(&path, detail);
+        }
+        if answered {
+            self.import_next_waiting();
         }
 
         // New and Open never discard anything: a tab with edits keeps

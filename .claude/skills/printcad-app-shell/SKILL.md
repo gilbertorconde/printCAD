@@ -59,6 +59,10 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   never by a run a bench hook opened, the files reopened at start
   unless a bench hook or the command line's files open something, as
   `UserSettings.session.reopen_documents` allows; desktop only;
+  the command line's files take a tab each (`open_launch_files`), files
+  dropped import into the tab dropped on (`open_dropped`), and a file
+  arriving while the import dialog or the units question is open waits
+  in `FileState::imports_waiting` for its turn;
   `drive_bench_settings_keeping` writes a bench's settings changed outside
   Preferences, such as the sketcher panel's grid and snap switches, into
   `UserSettings.workbenches` and the settings file, as a Preferences commit

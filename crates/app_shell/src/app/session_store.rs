@@ -360,7 +360,7 @@ impl PrintCadApp {
     pub(crate) fn reopen_at_start(&mut self) {
         if !self.kept.launch_files.is_empty() {
             let files = std::mem::take(&mut self.kept.launch_files);
-            self.open_dropped(files);
+            self.open_launch_files(files);
             return;
         }
         if !self.user_settings.session.reopen_documents {

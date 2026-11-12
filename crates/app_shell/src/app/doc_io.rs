@@ -343,8 +343,12 @@ impl PrintCadApp {
     /// Import a file picked or dropped: an STL after asking its units
     /// (unless Preferences says not to ask), another mesh or a file a
     /// workbench reads at once, a STEP or IGES file through the import
-    /// settings, which its meshing needs.
+    /// settings, which its meshing needs. While either question is open
+    /// for another file, this one waits its turn.
     pub(crate) fn import_picked(&mut self, path: PathBuf) {
+        let Some(path) = self.session.file.import_in_turn(path) else {
+            return;
+        };
         if crate::app::scans::has_no_units(&path) {
             if self.user_settings.files.ask_mesh_units {
                 self.session.file.mesh_units_pending = Some(path);
@@ -359,6 +363,8 @@ impl PrintCadApp {
         {
             self.import_step_at(&path, self.imports.last_detail.clone());
         } else {
+            // The import dialog is drawn on the workspace only.
+            self.session.screen = crate::ui::Screen::Workspace;
             self.session.file.step_import_pending = Some((path, self.imports.last_detail.clone()));
         }
     }
@@ -373,42 +379,106 @@ impl PrintCadApp {
         let Some(path) = self.session.file.mesh_units_pending.take() else {
             return false;
         };
-        let Some((unit, quiet)) = answer else {
-            return false;
-        };
-        let files = &mut self.user_settings.files;
-        let changed = files.mesh_units != unit || (quiet && files.ask_mesh_units);
-        files.mesh_units = unit;
-        files.ask_mesh_units &= !quiet;
-        self.imports.units.insert(path.clone(), unit);
-        self.import_step_at(&path, self.imports.last_detail.clone());
+        let mut changed = false;
+        if let Some((unit, quiet)) = answer {
+            let files = &mut self.user_settings.files;
+            changed = files.mesh_units != unit || (quiet && files.ask_mesh_units);
+            files.mesh_units = unit;
+            files.ask_mesh_units &= !quiet;
+            self.imports.units.insert(path.clone(), unit);
+            self.import_step_at(&path, self.imports.last_detail.clone());
+        }
+        self.import_next_waiting();
         changed
     }
 
-    /// Files dropped on the window: a printCAD document opens in a tab of
-    /// its own, a model file imports as File › Import would take it.
-    pub(crate) fn open_dropped(&mut self, paths: Vec<PathBuf>) {
+    /// With the tab's question answered, the files waiting behind it
+    /// import in order until one asks again. When none is left here, a
+    /// tab whose question is still open comes on screen.
+    pub(crate) fn import_next_waiting(&mut self) {
+        while let Some(path) = self.session.file.next_waiting_import() {
+            self.import_picked(path);
+        }
+        if self.session.file.asking() {
+            return;
+        }
+        let count = self.tabs.len();
+        let asking = (1..count)
+            .map(|step| (self.active_tab + step) % count)
+            .find(|&index| self.session_at(index).is_some_and(|s| s.file.asking()));
+        if let Some(index) = asking {
+            self.switch_tab(index);
+        }
+    }
+
+    /// Files named on the command line: a printCAD document opens in a
+    /// tab of its own, any other file imports into a tab of its own, and
+    /// the first of them ends on screen, so the questions they ask come
+    /// in the order given.
+    pub(crate) fn open_launch_files(&mut self, paths: Vec<PathBuf>) {
+        let mut first = None;
+        for path in paths {
+            if crate::app::step_import::is_document(&path) {
+                self.open_document_at(path);
+            } else if self.imports_or_warns(&path) {
+                self.ensure_fresh_tab();
+                self.import_picked(path);
+            } else {
+                continue;
+            }
+            first.get_or_insert(self.active_tab);
+        }
+        if let Some(index) = first {
+            self.switch_tab(index);
+        }
+    }
+
+    /// Whether `path` is a file printCAD imports; a warning in the log
+    /// when it is not.
+    fn imports_or_warns(&self, path: &std::path::Path) -> bool {
         const MODELS: &[&str] = &[
             "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb", "gltf", "wrl", "vrml",
         ];
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
+        let imports =
+            MODELS.contains(&extension.as_str()) || self.registry.file_import_for(path).is_some();
+        if !imports {
+            app_log::warn(format!(
+                "printCAD neither opens nor imports `{}`",
+                path.display()
+            ));
+        }
+        imports
+    }
+
+    /// Files dropped on the window: a printCAD document opens in a tab of
+    /// its own, every model file imports into the tab dropped on, as
+    /// File › Import would take it, one after another in the order given,
+    /// and that tab ends on screen with the first question it asks.
+    pub(crate) fn open_dropped(&mut self, paths: Vec<PathBuf>) {
+        let tab = self.session.tab;
+        let mut imported = false;
         for path in paths {
-            let extension = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(str::to_ascii_lowercase)
-                .unwrap_or_default();
-            if extension == "prtcad" {
+            if crate::app::step_import::is_document(&path) {
                 self.open_document_at(path);
-            } else if MODELS.contains(&extension.as_str())
-                || self.registry.file_import_for(&path).is_some()
-            {
+            } else if self.imports_or_warns(&path) {
+                self.switch_to_tab(tab);
                 self.import_picked(path);
-            } else {
-                app_log::warn(format!(
-                    "printCAD neither opens nor imports `{}`",
-                    path.display()
-                ));
+                imported = true;
             }
+        }
+        if imported {
+            self.switch_to_tab(tab);
+        }
+    }
+
+    fn switch_to_tab(&mut self, tab: uuid::Uuid) {
+        if let Some(index) = self.tab_index_of(tab) {
+            self.switch_tab(index);
         }
     }
 
