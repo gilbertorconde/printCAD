@@ -7,7 +7,7 @@ description: "Measure a performance problem, profile it, and keep only changes t
 
 Optimize only a measured problem. Keep a change only when comparable
 evidence shows it improves the agreed metric with no broken constraint.
-`CLAUDE.md` says it for imports and edges: measure before optimizing.
+`printcad-kernel` (imports) and `printcad-render-loop` (edges) say it too: measure before optimizing.
 
 ## 1. Define
 

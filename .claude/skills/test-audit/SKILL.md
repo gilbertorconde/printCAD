@@ -43,8 +43,8 @@ behavior-preserving refactoring is asserting implementation, not behavior;
 rewrite it at the owning boundary before landing it.
 
 Geometry tests assert geometric properties (bounds, tangency, closure,
-volume, face count) rather than implementation details, as `CLAUDE.md`
-asks. Bug regression tests must fail on the pre-fix code for the intended
+volume, face count) rather than implementation details, as the
+`printcad-testing` skill asks. Bug regression tests must fail on the pre-fix code for the intended
 reason and pass after the owner-boundary repair. A regression test that
 never demonstrably failed proves the fixture, not the fix. One regression
 at the owner boundary covers the bug; do not replay the same scenario at

@@ -1,7 +1,8 @@
 //! The bench hooks: environment variables a scripted run sets so a
-//! capture or a timing needs no clicks (CLAUDE.md lists them). They are
-//! read once, at start, into [`BenchHooks`]; [`BenchProgress`] keeps which
-//! have fired, and [`PrintCadApp::drive_bench_hooks`] plays them each frame.
+//! capture or a timing needs no clicks (the `printcad-bench-hooks` skill
+//! lists them). They are read once, at start, into [`BenchHooks`];
+//! [`BenchProgress`] keeps which have fired, and
+//! [`PrintCadApp::drive_bench_hooks`] plays them each frame.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
