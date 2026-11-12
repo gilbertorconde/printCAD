@@ -7,7 +7,7 @@ use core_document::{DocumentService, ToolBehavior, ToolDescriptor, WorkbenchId};
 use egui::{Popup, RichText, Vec2};
 use ui_kit::sans;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{ToolButtonState, tool_button, vseparator};
+use ui_kit::widgets::{TOOL_MENU_STRIP, ToolButtonState, tool_button, vseparator};
 use workbenches::REGISTERED_WORKBENCHES;
 
 use super::host_ctx::{HostCtxParams, panel_ctx};
@@ -116,8 +116,54 @@ fn tool_is_active(active_tool: &ActiveTool, tool_id: &str) -> bool {
         .any(|id| core_document::base_tool_id(id) == tool_id)
 }
 
-/// Draw one workbench tool and activate it on click. Compact buttons
-/// offer a variant dropdown; panel pins offer variants in their panel menu.
+/// Whether a button shows the variant arrow: every tool with variants,
+/// unless the button is a pin of one variant (`tool:variant`), which
+/// stands for that variant alone.
+fn shows_variant_arrow(tool: &ToolDescriptor, panel_pin: Option<&str>) -> bool {
+    !tool.variants.is_empty() && !panel_pin.is_some_and(|id| id.contains(':'))
+}
+
+/// The variant a button starts: the one its pin names, else the one its
+/// list last picked.
+fn button_variant(
+    ctx: &egui::Context,
+    tool: &ToolDescriptor,
+    panel_pin: Option<&str>,
+) -> Option<usize> {
+    panel_pin
+        .and_then(|id| id.split_once(':'))
+        .and_then(|(_, id)| tool.variants.iter().position(|v| v.id == id))
+        .or_else(|| remembered_variant(ctx, &tool.id))
+        .filter(|i| *i < tool.variants.len())
+}
+
+/// The id a button starts: its tool, or the variant it shows.
+fn activation_id(tool: &ToolDescriptor, variant: Option<usize>) -> String {
+    match variant {
+        Some(i) => format!("{}:{}", tool.id, tool.variants[i].id),
+        None => tool.id.clone(),
+    }
+}
+
+/// A variant picked from a button's list: it becomes the button's
+/// default and starts when the tool is enabled.
+fn pick_variant(
+    ctx: &egui::Context,
+    active_tool: &mut ActiveTool,
+    tools: &[ToolDescriptor],
+    tool: &ToolDescriptor,
+    index: usize,
+    enabled: bool,
+) {
+    remember_variant(ctx, &tool.id, index);
+    if enabled {
+        activate_tool(active_tool, tools, tool, &activation_id(tool, Some(index)));
+    }
+}
+
+/// Draw one workbench tool and activate it on click. A tool with variants
+/// carries a chevron strip at its end, in the compact rows and the panels
+/// alike, that opens the variant list under the button.
 fn draw_tool(
     ui: &mut egui::Ui,
     tool: &ToolDescriptor,
@@ -127,11 +173,7 @@ fn draw_tool(
     active_tool: &mut ActiveTool,
 ) -> egui::Response {
     let (enabled, toggled) = status;
-    let variant_index = panel_pin
-        .and_then(|id| id.split_once(':'))
-        .and_then(|(_, id)| tool.variants.iter().position(|v| v.id == id))
-        .or_else(|| remembered_variant(ui.ctx(), &tool.id))
-        .filter(|i| *i < tool.variants.len());
+    let variant_index = button_variant(ui.ctx(), tool, panel_pin);
     let (icon, label, planned): (&str, String, Option<&'static str>) = match variant_index {
         Some(i) => {
             let v = &tool.variants[i];
@@ -147,15 +189,20 @@ fn draw_tool(
             tool.planned,
         ),
     };
+    let button_id = panel_pin.unwrap_or(&tool.id);
+    let menu = shows_variant_arrow(tool, panel_pin);
+    let popup_id = ui.id().with(("variants", button_id));
     let state = ToolButtonState {
         enabled,
-        active: if let Some(id) = panel_pin.filter(|id| id.contains(':')) {
-            active_tool.active_ids.contains(id)
-        } else {
-            toggled || tool_is_active(active_tool, &tool.id)
-        },
+        // The button stays lit while its list is open.
+        active: Popup::is_id_open(ui.ctx(), popup_id)
+            || if let Some(id) = panel_pin.filter(|id| id.contains(':')) {
+                active_tool.active_ids.contains(id)
+            } else {
+                toggled || tool_is_active(active_tool, &tool.id)
+            },
         planned,
-        menu: panel_pin.is_none() && !tool.variants.is_empty(),
+        menu,
     };
     let label = with_key(&label, tool.shortcuts.first());
     let label = if !enabled && planned.is_none() {
@@ -169,62 +216,61 @@ fn draw_tool(
         TOOLBAR_BUTTON
     };
     let response = tool_button(ui, icon, &label, size, state);
-    super::widget_map::note(
-        ui.ctx(),
-        || format!("button:{}", panel_pin.unwrap_or(&tool.id)),
-        response.rect,
-    );
+    super::widget_map::note(ui.ctx(), || format!("button:{button_id}"), response.rect);
 
-    let activate_id = match variant_index {
-        Some(i) => format!("{}:{}", tool.id, tool.variants[i].id),
-        None => tool.id.clone(),
-    };
-    if tool.variants.is_empty() || panel_pin.is_some() {
-        if response.clicked() && enabled && planned.is_none() {
-            activate_tool(active_tool, tools, tool, &activate_id);
-        }
+    if response.clicked() && enabled && planned.is_none() {
+        activate_tool(
+            active_tool,
+            tools,
+            tool,
+            &activation_id(tool, variant_index),
+        );
+    }
+    if !menu {
         return response;
     }
 
     // The chevron strip at the button's end opens the variant list; the rest
-    // of the button activates the remembered variant. A right click or a
-    // long press opens the list from anywhere on the button.
+    // of the button activates the remembered variant. On a compact button a
+    // right click or a long press opens the list too; a panel pin keeps
+    // those for its own menu.
     let chevron = egui::Rect::from_min_max(
-        egui::pos2(response.rect.right() - 12.0, response.rect.top()),
+        egui::pos2(response.rect.right() - TOOL_MENU_STRIP, response.rect.top()),
         response.rect.right_bottom(),
     );
-    let chevron_response = ui.interact(chevron, response.id.with("chevron"), egui::Sense::click());
-    let popup_id = response.id.with("variants");
-    if response.clicked() && enabled && planned.is_none() {
-        activate_tool(active_tool, tools, tool, &activate_id);
-    }
-    if response.secondary_clicked() || response.long_touched() {
+    let chevron_response = ui
+        .interact(chevron, response.id.with("chevron"), egui::Sense::click())
+        .on_hover_text(format!("{} variants", tool.label));
+    super::widget_map::note(ui.ctx(), || format!("arrow:{button_id}"), chevron);
+    if panel_pin.is_none() && (response.secondary_clicked() || response.long_touched()) {
         Popup::toggle_id(ui.ctx(), popup_id);
     }
     Popup::menu(&chevron_response).id(popup_id).show(|ui| {
         for (i, variant) in tool.variants.iter().enumerate() {
             let planned = variant.planned.is_some();
+            // The tool's own key starts its first variant.
+            let key = (i == 0)
+                .then(|| tool.shortcuts.first().map(ToString::to_string))
+                .flatten();
             let row = menu_row(
                 ui.ctx(),
                 variant.icon,
                 if planned { TEXT3 } else { TEXT2 },
                 variant.label,
                 if planned { TEXT3 } else { TEXT1 },
-                None,
-            );
+                key,
+            )
+            .selected(variant_index == Some(i));
             let r = ui.add_enabled(!planned, row);
+            super::widget_map::note(
+                ui.ctx(),
+                || format!("variant:{}:{}", tool.id, variant.id),
+                r.rect,
+            );
             if let Some(note) = variant.planned {
                 r.on_disabled_hover_text(format!("{} (planned)\n{note}", variant.label));
             } else if r.clicked() {
-                remember_variant(ui.ctx(), &tool.id, i);
-                if enabled {
-                    activate_tool(
-                        active_tool,
-                        tools,
-                        tool,
-                        &format!("{}:{}", tool.id, variant.id),
-                    );
-                }
+                pick_variant(ui.ctx(), active_tool, tools, tool, i, enabled);
                 ui.close();
             }
         }
@@ -346,8 +392,16 @@ impl ToolPanels<'_> {
             .x
             + SPACE_4
             + SPACE_3;
-        let buttons_width =
-            (pinned.len() as f32 * (TOOL_PANEL_BUTTON + SPACE_1) - SPACE_1).max(0.0);
+        let buttons_width = (pinned
+            .iter()
+            .map(|id| {
+                let (_, tool) = pin_tool(self.tools, id).unwrap();
+                let arrow = shows_variant_arrow(tool, Some(id));
+                TOOL_PANEL_BUTTON + if arrow { TOOL_MENU_STRIP } else { 0.0 } + SPACE_1
+            })
+            .sum::<f32>()
+            - SPACE_1)
+            .max(0.0);
         let width = caption_width.max(buttons_width);
         ui.allocate_ui_with_layout(
             Vec2::new(width, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1),
@@ -1236,6 +1290,34 @@ mod tests {
     }
 
     #[test]
+    fn a_panel_pin_offers_its_variants_and_starts_the_one_picked() {
+        let ctx = egui::Context::default();
+        let rect = tool("rect", "Make", 0).variants(vec![
+            core_document::ToolVariant::new("corners", "Two corners", "rectangle"),
+            core_document::ToolVariant::new("center", "Center and corner", "rectangle"),
+        ]);
+        let tools = vec![rect.clone(), tool("line", "Make", 0)];
+        assert!(shows_variant_arrow(&rect, Some("rect")));
+        assert!(shows_variant_arrow(&rect, None));
+        assert!(!shows_variant_arrow(&rect, Some("rect:corners")));
+        assert!(!shows_variant_arrow(&tools[1], Some("line")));
+
+        let mut active = ActiveTool::default();
+        pick_variant(&ctx, &mut active, &tools, &rect, 1, true);
+        assert!(active.active_ids.contains("rect:center"));
+        // A plain click starts the variant last picked, a variant's pin its own.
+        let plain = button_variant(&ctx, &rect, Some("rect"));
+        assert_eq!(activation_id(&rect, plain), "rect:center");
+        let pinned = button_variant(&ctx, &rect, Some("rect:corners"));
+        assert_eq!(activation_id(&rect, pinned), "rect:corners");
+        // A disabled tool remembers the pick without starting it.
+        let mut idle = ActiveTool::default();
+        pick_variant(&ctx, &mut idle, &tools, &rect, 0, false);
+        assert!(idle.active_ids.is_empty());
+        assert_eq!(button_variant(&ctx, &rect, None), Some(0));
+    }
+
+    #[test]
     fn panels_group_tools_and_resolve_default_or_custom_pins() {
         let mut tools = bench_tools();
         tools.extend([
@@ -1318,7 +1400,7 @@ mod tests {
                         row.rect.height()
                     );
                     assert!(
-                        row.rect.width() < if bench.modal { 980.0 } else { 1920.0 },
+                        row.rect.width() < if bench.modal { 1020.0 } else { 1920.0 },
                         "{}: {:?}",
                         bench.label,
                         row.rect

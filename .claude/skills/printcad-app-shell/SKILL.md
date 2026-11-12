@@ -70,8 +70,11 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   right), `toolbar` (groups: the bench switcher and each run of a bench
   category along `ToolDescriptor.row`; each dragged by its grip along a
   row, to another or to a new one, kept in `UserSettings.toolbars`, a
-  group it does not list placed where its bench puts it; variant
-  dropdowns), `combo_view` (tree +
+  group it does not list placed where its bench puts it; a tool with
+  variants carries a chevron strip at its end, compact or in the tool
+  panels, opening its variant list (icon, name, the tool's key on the
+  first) under it, the pick remembered as the button's default; a pin
+  of one variant has none), `combo_view` (tree +
   `property_panel`), `feature_tree`, `task_panel` (host of the workbench
   task under one header: its title, `TaskInfo::subtitle`, a pill for
   `TaskInfo::status`, Cancel and Done; Enter is Done; Escape stays with
