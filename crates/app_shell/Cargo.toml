@@ -34,9 +34,11 @@ ui_kit = { path = "../ui_kit" }
 glam.workspace = true
 uuid.workspace = true
 axes = { path = "../axes" }
-resvg = "0.48"
-usvg = "0.48"
-tiny-skia = "0.12"
+# The proof's labels and the orientation cube's faces are text; the cube
+# falls back on system fonts.
+resvg = { workspace = true, features = ["text", "system-fonts", "memmap-fonts"] }
+usvg = { workspace = true, features = ["text", "system-fonts", "memmap-fonts"] }
+tiny-skia.workspace = true
 png = "0.18"
 flate2.workspace = true
 gif = "0.14"

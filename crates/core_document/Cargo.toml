@@ -28,7 +28,7 @@ tar.workspace = true
 flate2.workspace = true
 zstd.workspace = true
 # Bodies' meshes in an archive: compact entries beside their shapes.
-rmp-serde = "1"
+rmp-serde.workspace = true
 kernel_api.workspace = true
 bench_api.workspace = true
 

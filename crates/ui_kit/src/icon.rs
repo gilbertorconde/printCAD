@@ -6,7 +6,6 @@
 //! their own colours, and are drawn through [`drawing`].
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use egui::{Color32, ColorImage, Context, Id, Image, Response, TextureHandle, TextureOptions, Ui};
 
@@ -128,15 +127,12 @@ pub fn draw(ui: &mut Ui, name: &str, size: f32, tint: Color32) -> Response {
     }
 }
 
-/// Rasterize an SVG to a square `px` image. No font database is attached:
-/// the icon set is pure geometry, and scanning system fonts costs tens of
-/// milliseconds per call.
+/// Rasterize an SVG to a square `px` image. The icon set is pure geometry:
+/// this crate builds the SVG reader without text, and where another crate
+/// turns text on, the default options' font database is empty, so no
+/// system font is ever scanned.
 pub fn rasterize(source: &str, px: u32) -> Option<ColorImage> {
-    let opt = usvg::Options {
-        fontdb: Arc::new(usvg::fontdb::Database::new()),
-        ..usvg::Options::default()
-    };
-    let tree = usvg::Tree::from_data(source.as_bytes(), &opt).ok()?;
+    let tree = usvg::Tree::from_data(source.as_bytes(), &usvg::Options::default()).ok()?;
     let size = tree.size();
     let scale = px as f32 / size.width().max(size.height());
     let mut pixmap = tiny_skia::Pixmap::new(px, px)?;

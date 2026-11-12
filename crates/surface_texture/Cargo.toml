@@ -10,5 +10,5 @@ kernel_api.workspace = true
 glam.workspace = true
 serde.workspace = true
 uuid.workspace = true
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { workspace = true, features = ["png", "jpeg"] }
 

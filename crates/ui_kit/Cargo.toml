@@ -7,9 +7,9 @@ rust-version.workspace = true
 
 [dependencies]
 egui.workspace = true
-resvg = "0.48"
-usvg = "0.48"
-tiny-skia = "0.12"
+resvg.workspace = true
+usvg.workspace = true
+tiny-skia.workspace = true
 tracing.workspace = true
 # The chat's messages; the GFM extensions are options at run time, so no
 # crate features.
