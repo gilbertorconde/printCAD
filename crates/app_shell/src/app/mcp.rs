@@ -419,7 +419,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                           is drawn, with outlines, painted faces and edges, markers, a \
                           section, see-through bodies and the box's sizes."
                 .into(),
-            input_schema: with_file(crate::proof::schema()),
+            input_schema: with_file(doc_render::proof::schema()),
             read_only: true,
             always_load: true,
         },
@@ -876,7 +876,7 @@ impl PrintCadApp {
     pub(crate) fn view_png(&self, width: u32, height: u32) -> Option<Vec<u8>> {
         let shapes = self.thumbnail_shapes();
         let (forward, up) = self.session.camera.view_basis();
-        crate::thumbnail::render_at(&shapes, forward, up, width, height)
+        doc_render::thumbnail::render_at(&shapes, forward, up, width, height)
     }
 
     /// The `view` tool's picture of the document of `tab`.
@@ -884,7 +884,7 @@ impl PrintCadApp {
         use base64::Engine as _;
         let none = serde_json::Map::new();
         let session = self.session_of(tab);
-        let drawn = crate::proof::parse(args.as_object().unwrap_or(&none))
+        let drawn = doc_render::proof::parse(args.as_object().unwrap_or(&none))
             .and_then(|request| picture_of(session, &request));
         match drawn {
             Ok(png) => ToolAnswer {
@@ -893,7 +893,7 @@ impl PrintCadApp {
                         data: base64::engine::general_purpose::STANDARD.encode(png),
                         mime: "image/png".to_string(),
                     },
-                    Content::Text(crate::proof::LEAVES_OUT.to_string()),
+                    Content::Text(doc_render::proof::LEAVES_OUT.to_string()),
                 ],
                 is_error: false,
             },
@@ -903,7 +903,7 @@ impl PrintCadApp {
 
     /// The picture `request` asks for of the active document, `current`
     /// looking the way the user's view looks.
-    pub(crate) fn picture(&self, request: &crate::proof::Request) -> Result<Vec<u8>, String> {
+    pub(crate) fn picture(&self, request: &doc_render::proof::Request) -> Result<Vec<u8>, String> {
         picture_of(&self.session, request)
     }
 }
@@ -912,15 +912,16 @@ impl PrintCadApp {
 /// looking the way its view looks.
 fn picture_of(
     session: &crate::app::session::DocumentSession,
-    request: &crate::proof::Request,
+    request: &doc_render::proof::Request,
 ) -> Result<Vec<u8>, String> {
     let camera = &session.camera;
-    crate::proof::picture_with_maps(
+    doc_render::proof::picture_with_maps(
         &session.document,
         request,
         Some(camera.view_basis()),
         camera.axis_system(),
         &session.shown_maps,
+        &crate::app::scripts::picture_ink(),
     )
 }
 

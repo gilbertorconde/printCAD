@@ -8,6 +8,7 @@ members = [
   "crates/image_edges",
   "crates/bench_api",
   "crates/doc_server",
+  "crates/doc_render",
   "crates/kernel_api",
   "crates/kernel_ogeom",
   "crates/project_tools",

@@ -9,13 +9,10 @@ mod headless;
 mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
-mod pdf;
 mod platform;
-mod proof;
 mod script_library;
 #[cfg(test)]
 mod test_support;
-mod thumbnail;
 mod ui;
 
 use anyhow::{Context, Result};

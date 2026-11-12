@@ -2,15 +2,35 @@
 
 use core_document::{Args, CommandArgs, CommandError, CommandResult};
 use serde_json::json;
+use ui_kit::tokens;
+
+/// The design's colours and label size, as the pictures of `doc.picture`
+/// and the `view` tool draw in them.
+pub(crate) fn picture_ink() -> doc_render::proof::Ink {
+    let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()].map(|v| f32::from(v) / 255.0);
+    doc_render::proof::Ink {
+        paint: rgb(tokens::WARNING),
+        background: (rgb(tokens::VIEWPORT_TOP), rgb(tokens::VIEWPORT_BOTTOM)),
+        halo: rgb(tokens::BG0),
+        annotation: rgb(tokens::ANNOTATION),
+        axes: [tokens::AXIS_X, tokens::AXIS_Y, tokens::AXIS_Z].map(rgb),
+        marker: rgb(tokens::DANGER),
+        label: rgb(tokens::TEXT1),
+        resolved: rgb(tokens::TEXT3),
+        asks: rgb(tokens::WARNING),
+        note: rgb(tokens::ACCENT),
+        font_size: tokens::FONT_MD,
+    }
+}
 
 /// `doc.picture`: the request in `args` drawn by `draw` and written to
 /// its `path`.
 pub(crate) fn picture_command(
     args: &CommandArgs,
-    draw: impl FnOnce(&crate::proof::Request) -> Result<Vec<u8>, String>,
+    draw: impl FnOnce(&doc_render::proof::Request) -> Result<Vec<u8>, String>,
 ) -> CommandResult {
     let path = std::path::PathBuf::from(Args(args).string("path")?);
-    let request = crate::proof::parse(args).map_err(CommandError::failed)?;
+    let request = doc_render::proof::parse(args).map_err(CommandError::failed)?;
     let png = draw(&request).map_err(CommandError::failed)?;
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| CommandError::failed(e.to_string()))?;
@@ -20,7 +40,7 @@ pub(crate) fn picture_command(
         "path": path.display().to_string(),
         "width": request.size.0,
         "height": request.size.1,
-        "renderer": crate::proof::RENDERER,
+        "renderer": doc_render::proof::RENDERER,
     }))
 }
 
@@ -51,7 +71,7 @@ impl crate::PrintCadApp {
                 json!(bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>()),
             );
             request.insert("size".into(), json!([480, 360]));
-            let request = crate::proof::parse(&request).ok()?;
+            let request = doc_render::proof::parse(&request).ok()?;
             let png = self.picture(&request).ok()?;
             decode_png(&png)
         });
@@ -123,7 +143,7 @@ fn report_document(
     reports: &[core_document::BenchReport],
     draw: impl Fn(&[core_document::BodyId], &str) -> Option<(Vec<u8>, u32, u32)>,
 ) -> (Vec<u8>, usize) {
-    use crate::pdf::{HEIGHT, Pdf, WIDTH, width};
+    use doc_render::pdf::{HEIGHT, Pdf, WIDTH, width};
     const MARGIN: f32 = 40.0;
     let mut pdf = Pdf::default();
     let mut pages = 1;

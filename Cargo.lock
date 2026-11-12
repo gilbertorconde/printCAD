@@ -136,6 +136,7 @@ dependencies = [
  "base64 0.23.1",
  "bench_fixtures",
  "core_document",
+ "doc_render",
  "doc_server",
  "egui",
  "egui-winit",
@@ -1185,6 +1186,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "doc_render"
+version = "0.1.0"
+dependencies = [
+ "axes",
+ "core_document",
+ "flate2",
+ "glam 0.33.7",
+ "printcad-kernel-api",
+ "resvg",
+ "serde_json",
+ "settings",
+ "tiny-skia 0.12.0",
+ "usvg",
+ "uuid",
 ]
 
 [[package]]

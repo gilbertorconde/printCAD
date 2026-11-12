@@ -1,0 +1,20 @@
+[package]
+name = "doc_render"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+core_document = { path = "../core_document" }
+kernel_api.workspace = true
+settings = { path = "../settings" }
+axes = { path = "../axes" }
+glam.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+flate2.workspace = true
+# The pictures' labels: SVG text in the bundled face only, no system fonts.
+resvg = { workspace = true, features = ["text"] }
+usvg = { workspace = true, features = ["text"] }
+tiny-skia.workspace = true

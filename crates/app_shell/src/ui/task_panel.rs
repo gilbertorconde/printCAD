@@ -46,7 +46,7 @@ pub struct TaskPanelInputs<'a> {
     pub picked_edges: &'a [(core_document::BodyId, [f32; 3])],
     pub custom_colors: &'a [[f32; 3]],
     pub printing: &'a settings::PrintingSettings,
-    pub print_layout: Option<&'a crate::app::print_layout::Layout>,
+    pub print_layout: Option<&'a doc_render::print_layout::Layout>,
     pub marking: Option<(usize, usize)>,
 }
 

@@ -13,7 +13,7 @@ use glam::Vec3;
 
 use crate::PrintCadApp;
 use crate::log_panel as app_log;
-use crate::thumbnail::Shape;
+use doc_render::thumbnail::Shape;
 
 /// Frame size, in pixels.
 const WIDTH: u32 = 640;
@@ -58,7 +58,7 @@ impl PrintCadApp {
                             }
                             None => Arc::clone(&document.imported_geometry(*body)?.mesh),
                         };
-                        Some(crate::app::doc_io::preview_shape(document, *body, mesh))
+                        Some(doc_render::thumbnail::preview_shape(document, *body, mesh))
                     })
                     .collect()
             })
@@ -233,7 +233,7 @@ fn frames(animation: &Animation) -> Result<Vec<Vec<u8>>, String> {
         .frames
         .iter()
         .map(|frame| {
-            crate::thumbnail::rasterize_framed(
+            doc_render::thumbnail::rasterize_framed(
                 frame,
                 &framing,
                 animation.forward,

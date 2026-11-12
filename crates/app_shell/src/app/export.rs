@@ -498,8 +498,8 @@ impl PrintCadApp {
 
     /// The print layout as it stands: the one shown, when it is up to
     /// date, else made now.
-    pub(crate) fn current_print_layout(&self) -> crate::app::print_layout::Layout {
-        use crate::app::print_layout::{LayoutSettings, lay_out, layout_key, parts_to_print};
+    pub(crate) fn current_print_layout(&self) -> doc_render::print_layout::Layout {
+        use doc_render::print_layout::{LayoutSettings, lay_out, layout_key, parts_to_print};
         let document = &self.session.document;
         let parts = parts_to_print(document, &self.registry);
         let settings = LayoutSettings::of(&self.user_settings.printing);
@@ -515,7 +515,7 @@ impl PrintCadApp {
 /// puts it, named as the layout names them.
 fn layout_bodies(
     document: &core_document::Document,
-    layout: &crate::app::print_layout::Layout,
+    layout: &doc_render::print_layout::Layout,
     textured: bool,
 ) -> Vec<OwnedBody> {
     let mut pictures = crate::app::textures::Pictures::new();
@@ -688,7 +688,7 @@ pub(crate) fn export_document(
     format: ExportFormat,
     bodies: Option<Vec<core_document::BodyId>>,
     tolerance: Option<f32>,
-    layout: Option<&crate::app::print_layout::Layout>,
+    layout: Option<&doc_render::print_layout::Layout>,
     compensation: Option<&settings::PrintCompensation>,
 ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
     let owned = match layout {
@@ -831,7 +831,7 @@ mod tests {
     fn export(
         doc: &core_document::Document,
         format: ExportFormat,
-        layout: Option<&crate::app::print_layout::Layout>,
+        layout: Option<&doc_render::print_layout::Layout>,
     ) -> kernel_ogeom::export::Exported {
         let path = std::env::temp_dir().join(format!("export-{}", uuid::Uuid::new_v4()));
         let (path, exported) = export_document(
@@ -891,7 +891,7 @@ mod tests {
     /// puts it: three boxes side by side on the bed, the model untouched.
     #[test]
     fn a_layout_export_writes_each_copy_on_the_bed() {
-        use crate::app::print_layout::{LayoutSettings, lay_out};
+        use doc_render::print_layout::{LayoutSettings, lay_out};
         let mut doc = textured_box(false);
         let body = doc.bodies()[0].id;
         doc.set_body_placement(
@@ -974,7 +974,7 @@ mod tests {
     /// whichever of the part's bodies the layout prints.
     #[test]
     fn an_array_of_a_textured_body_exports_every_copy_textured() {
-        use crate::app::print_layout::{LayoutSettings, lay_out};
+        use doc_render::print_layout::{LayoutSettings, lay_out};
         let single = export(&textured_box(true), ExportFormat::Stl, None);
         let mut doc = textured_box(true);
         let body = doc.bodies()[0].id;

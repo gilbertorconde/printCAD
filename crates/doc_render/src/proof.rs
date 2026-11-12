@@ -9,13 +9,11 @@
 
 use std::sync::{Arc, LazyLock};
 
+use crate::thumbnail::{self, Look, Projection, Shape};
 use axes::AxisSystem;
 use core_document::{BodyId, CommandSpec, Document, ParamKind};
 use glam::Vec3;
 use serde_json::{Map, Value, json};
-use ui_kit::tokens;
-
-use crate::thumbnail::{self, Look, Projection, Shape};
 
 /// What drew a picture: the CPU renderer, from the document.
 pub const RENDERER: &str = "cpu";
@@ -461,9 +459,32 @@ pub fn basis(view: &ViewSpec, current: Option<(Vec3, Vec3)>, axes: AxisSystem) -
     }
 }
 
-/// The colours a picture draws in beside the bodies' own.
-fn rgb(colour: egui::Color32) -> [f32; 3] {
-    [colour.r(), colour.g(), colour.b()].map(|c| f32::from(c) / 255.0)
+/// The colours and label size a picture draws in beside the bodies' own,
+/// which the caller takes from the design's tokens.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ink {
+    /// A highlight that names no colour.
+    pub paint: [f32; 3],
+    /// The background's top and bottom.
+    pub background: ([f32; 3], [f32; 3]),
+    /// Round labels and markers, so they read on any shade.
+    pub halo: [f32; 3],
+    /// The box of what is drawn and its sizes.
+    pub annotation: [f32; 3],
+    /// The X, Y and Z axes of the triad.
+    pub axes: [[f32; 3]; 3],
+    /// A marker that names no colour, and a lost note.
+    pub marker: [f32; 3],
+    /// A marker's label.
+    pub label: [f32; 3],
+    /// A note answered or resolved.
+    pub resolved: [f32; 3],
+    /// A note asking a question.
+    pub asks: [f32; 3],
+    /// Any other note.
+    pub note: [f32; 3],
+    /// The labels' font size, in pixels.
+    pub font_size: f32,
 }
 
 fn hex(colour: [f32; 3]) -> String {
@@ -479,8 +500,9 @@ pub fn picture(
     request: &Request,
     current: Option<(Vec3, Vec3)>,
     axes: AxisSystem,
+    ink: &Ink,
 ) -> Result<Vec<u8>, String> {
-    picture_with_maps(document, request, current, axes, &[])
+    picture_with_maps(document, request, current, axes, &[], ink)
 }
 
 /// What a scalar map paints each vertex of its body's mesh, as the view
@@ -496,6 +518,7 @@ pub fn picture_with_maps(
     current: Option<(Vec3, Vec3)>,
     axes: AxisSystem,
     maps: &[core_document::ScalarMap],
+    ink: &Ink,
 ) -> Result<Vec<u8>, String> {
     // The bodies, in a fixed order, so equal depths always fall alike.
     let mut drawn: Vec<(BodyId, Shape)> = match &request.bodies {
@@ -536,7 +559,7 @@ pub fn picture_with_maps(
                     drawn.iter().any(|(id, _)| id == body)
                         && document.note_effective_visible(note.id)
                 })
-                .map(|(body, note)| note_marker(document, body, note)),
+                .map(|(body, note)| note_marker(document, body, note, ink)),
         );
         with_notes = Request {
             markers,
@@ -560,14 +583,14 @@ pub fn picture_with_maps(
         shape.vertex_colours = true;
     }
 
-    let paint_default = rgb(tokens::WARNING);
+    let paint_default = ink.paint;
     let mut look = Look {
         edges: request
             .edges
             .then(|| settings::LightingSettings::default().edge_line_color),
         section: request.section,
         xray: request.xray,
-        background: Some((rgb(tokens::VIEWPORT_TOP), rgb(tokens::VIEWPORT_BOTTOM))),
+        background: Some(ink.background),
         frame_points: request.markers.iter().map(|m| m.point).collect(),
         ..Look::default()
     };
@@ -639,7 +662,7 @@ pub fn picture_with_maps(
         .ok_or("Nothing is visible to draw.")?;
     let mut pixmap =
         thumbnail::pixmap(&picture.rgba, width, height).ok_or("the picture could not be made")?;
-    let overlay = overlay(request, &shapes, &picture.projection);
+    let overlay = overlay(request, &shapes, &picture.projection, ink);
     if !overlay.is_empty() {
         draw_svg(&mut pixmap, width, height, &overlay)?;
     }
@@ -647,7 +670,7 @@ pub fn picture_with_maps(
 }
 
 fn shape_of(document: &Document, id: BodyId, mesh: &Arc<kernel_api::TriMesh>) -> Shape {
-    crate::app::doc_io::preview_shape(document, id, Arc::clone(mesh))
+    thumbnail::preview_shape(document, id, Arc::clone(mesh))
 }
 
 fn find_body(document: &Document, key: &str) -> Result<BodyId, String> {
@@ -673,16 +696,16 @@ fn name_of(document: &Document, id: BodyId) -> String {
 
 /// The markers and annotations as SVG drawn over the picture; empty when
 /// there are none.
-fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> String {
+fn overlay(request: &Request, shapes: &[Shape], projection: &Projection, ink: &Ink) -> String {
     let mut svg = String::new();
     let label = |svg: &mut String, x: f32, y: f32, words: &str, fill: [f32; 3]| {
         svg.push_str(&format!(
             "<text x=\"{x:.1}\" y=\"{y:.1}\" font-size=\"{size}\" fill=\"{fill}\" \
              stroke=\"{halo}\" stroke-width=\"3\" stroke-linejoin=\"round\" \
              paint-order=\"stroke\">{words}</text>",
-            size = tokens::FONT_MD,
+            size = ink.font_size,
             fill = hex(fill),
-            halo = hex(rgb(tokens::BG0)),
+            halo = hex(ink.halo),
             words = escape(words),
         ));
     };
@@ -694,7 +717,7 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
         if let Some(drawn) = kernel_api::Aabb::around(drawn) {
             let corners = drawn.corners().map(Vec3::from);
             let corner = |i: u32| corners[i as usize];
-            let colour = hex(rgb(tokens::ANNOTATION));
+            let colour = hex(ink.annotation);
             for i in 0..8u32 {
                 for bit in [1, 2, 4] {
                     if i & bit == 0 {
@@ -717,14 +740,14 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
                 number(size.y),
                 number(size.z)
             );
-            label(&mut svg, 12.0, 22.0, &words, rgb(tokens::ANNOTATION));
+            label(&mut svg, 12.0, 22.0, &words, ink.annotation);
         }
         // The axis triad, bottom left, the axes leaning away drawn first.
         let origin = (44.0, projection.height as f32 - 44.0);
         let mut axes = [
-            (Vec3::X, "X", rgb(tokens::AXIS_X)),
-            (Vec3::Y, "Y", rgb(tokens::AXIS_Y)),
-            (Vec3::Z, "Z", rgb(tokens::AXIS_Z)),
+            (Vec3::X, "X", ink.axes[0]),
+            (Vec3::Y, "Y", ink.axes[1]),
+            (Vec3::Z, "Z", ink.axes[2]),
         ];
         axes.sort_by(|a, b| {
             b.0.dot(projection.forward)
@@ -753,15 +776,15 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
     }
     for marker in &request.markers {
         let (x, y) = projection.to_pixel(marker.point);
-        let colour = marker.color.unwrap_or(rgb(tokens::DANGER));
+        let colour = marker.color.unwrap_or(ink.marker);
         svg.push_str(&format!(
             "<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"5\" fill=\"{}\" stroke=\"{}\" \
              stroke-width=\"2\"/>",
             hex(colour),
-            hex(rgb(tokens::BG0)),
+            hex(ink.halo),
         ));
         if let Some(words) = &marker.label {
-            label(&mut svg, x + 9.0, y - 7.0, words, rgb(tokens::TEXT1));
+            label(&mut svg, x + 9.0, y - 7.0, words, ink.label);
         }
     }
     svg
@@ -769,7 +792,7 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
 
 /// A note as a marker: its number and the start of what it shows,
 /// coloured as the view draws it.
-fn note_marker(document: &Document, body: BodyId, note: &core_document::Note) -> Marker {
+fn note_marker(document: &Document, body: BodyId, note: &core_document::Note, ink: &Ink) -> Marker {
     let placed = document.note_placed(body, note);
     let shows = document.note_text(note);
     let first = shows.lines().next().unwrap_or_default();
@@ -783,15 +806,15 @@ fn note_marker(document: &Document, body: BodyId, note: &core_document::Note) ->
     Marker {
         point: Vec3::from_array(placed.at),
         label: Some(format!("#{} {ask}{words}{more}", note.number)),
-        color: Some(rgb(if placed.lost {
-            tokens::DANGER
+        color: Some(if placed.lost {
+            ink.marker
         } else if note.resolved.is_some() {
-            tokens::TEXT3
+            ink.resolved
         } else if note.asks {
-            tokens::WARNING
+            ink.asks
         } else {
-            tokens::ACCENT
-        })),
+            ink.note
+        }),
     }
 }
 
@@ -809,11 +832,14 @@ fn escape(words: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// The design's sans face, the file the window's theme bundles.
+const SANS_REGULAR_TTF: &[u8] = include_bytes!("../../ui_kit/fonts/IBMPlexSans-Regular.ttf");
+
 /// The bundled sans face only: no system font scan, and the same glyphs on
 /// every machine.
 static FONTS: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
     let mut fonts = usvg::fontdb::Database::new();
-    fonts.load_font_data(ui_kit::theme::SANS_REGULAR_TTF.to_vec());
+    fonts.load_font_data(SANS_REGULAR_TTF.to_vec());
     Arc::new(fonts)
 });
 
@@ -850,6 +876,21 @@ fn draw_svg(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Colours far apart, so a test tells background from body.
+    const INK: Ink = Ink {
+        paint: [1.0, 0.75, 0.0],
+        background: ([0.1, 0.11, 0.13], [0.2, 0.21, 0.24]),
+        halo: [0.05, 0.05, 0.06],
+        annotation: [0.6, 0.8, 1.0],
+        axes: [[0.9, 0.3, 0.3], [0.4, 0.8, 0.3], [0.3, 0.5, 0.95]],
+        marker: [0.95, 0.3, 0.3],
+        label: [0.95, 0.95, 0.95],
+        resolved: [0.5, 0.5, 0.5],
+        asks: [1.0, 0.75, 0.0],
+        note: [0.3, 0.6, 1.0],
+        font_size: 13.0,
+    };
 
     /// A map paints its body as the view's scale reads: unmeasured grey,
     /// past either end in its caps, between along its ramp, and in bands
@@ -955,7 +996,7 @@ mod tests {
 
     fn draw(document: &Document, request: Value) -> tiny_skia::Pixmap {
         let request = parse(&args(request)).unwrap();
-        let png = picture(document, &request, None, AxisSystem::default()).unwrap();
+        let png = picture(document, &request, None, AxisSystem::default(), &INK).unwrap();
         tiny_skia::Pixmap::decode_png(&png).unwrap()
     }
 
@@ -966,7 +1007,7 @@ mod tests {
     }
 
     fn is_background(pixmap: &tiny_skia::Pixmap, x: u32, y: u32) -> bool {
-        let (top, bottom) = (rgb(tokens::VIEWPORT_TOP), rgb(tokens::VIEWPORT_BOTTOM));
+        let (top, bottom) = INK.background;
         let t = (y as f32 + 0.5) / pixmap.height() as f32;
         let expected = [0, 1, 2].map(|c| ((top[c] + (bottom[c] - top[c]) * t) * 255.0).round());
         at(pixmap, x, y)
@@ -986,8 +1027,8 @@ mod tests {
         })))
         .unwrap();
         let axes = AxisSystem::default();
-        let one = picture(&document, &request, Some((Vec3::X, Vec3::Z)), axes).unwrap();
-        let other = picture(&document, &request, Some((-Vec3::Z, Vec3::Y)), axes).unwrap();
+        let one = picture(&document, &request, Some((Vec3::X, Vec3::Z)), axes, &INK).unwrap();
+        let other = picture(&document, &request, Some((-Vec3::Z, Vec3::Y)), axes, &INK).unwrap();
         assert!(one.starts_with(b"\x89PNG"));
         assert!(one == other, "the same bytes");
         // The user's direction does change a `current` picture: the front
@@ -996,8 +1037,8 @@ mod tests {
             "highlight": [{"body": "Box", "faces": [2]}]
         })))
         .unwrap();
-        let front = picture(&document, &current, Some((Vec3::Y, Vec3::Z)), axes).unwrap();
-        let side = picture(&document, &current, Some((-Vec3::X, Vec3::Z)), axes).unwrap();
+        let front = picture(&document, &current, Some((Vec3::Y, Vec3::Z)), axes, &INK).unwrap();
+        let side = picture(&document, &current, Some((-Vec3::X, Vec3::Z)), axes, &INK).unwrap();
         assert!(
             front != side,
             "the user's direction moves a current picture"
@@ -1029,7 +1070,7 @@ mod tests {
             "highlight": [{"body": body.0.to_string(), "faces": [9]}]
         })))
         .unwrap();
-        assert!(picture(&document, &request, None, AxisSystem::default()).is_err());
+        assert!(picture(&document, &request, None, AxisSystem::default(), &INK).is_err());
     }
 
     #[test]

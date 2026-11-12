@@ -132,7 +132,7 @@ pub(crate) fn print_layout_command(
     registry: &core_document::DocumentService,
     printing: &settings::PrintingSettings,
 ) -> CommandResult {
-    use crate::app::print_layout::{LayoutSettings, lay_out, parts_to_print, piece_mesh};
+    use doc_render::print_layout::{LayoutSettings, lay_out, parts_to_print, piece_mesh};
     let a = Args(args);
     let mut settings = LayoutSettings::of(printing);
     if let Some(gap) = a.opt_number("gap")? {

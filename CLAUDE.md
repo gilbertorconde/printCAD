@@ -333,6 +333,19 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   inside (`framing.rs`, `server::Payload`), since a document as JSON numbers is
   four times its size and overran the frame cap outright, integration-tested against the
   real spawned daemon (`tests/daemon.rs`).
+- `doc_render`: what the app draws and lays out from a document with no
+  window, linking neither the GPU, the window nor egui, so its tests and
+  the save worker run without them: `thumbnail` (the CPU renderer: a
+  save's preview, an animation's frames; `preview_shape`, a body in the
+  colours it shows in), `proof` (the `view` tool's and `doc.picture`'s
+  pictures, in the colours of an `Ink` the app fills from
+  `ui_kit::tokens`, their labels in the bundled Plex face read from
+  `ui_kit/fonts/`), `pdf` (the report writer), `face_pick` (faces picked
+  on a mesh; the GPU pick's `document_triangle` stays in
+  `app/face_pick.rs`) and `print_layout` (the packing and the bed's
+  lines; the task's shown layout stays in the app). The headless
+  commands (`app/scripts/document.rs`, `headless.rs`) are still in
+  app_shell.
 - `local_ipc`: what the app needs of the system to talk to its own
   processes, on every platform: path-named local sockets (`Stream`,
   `Listener`: the standard UNIX sockets, on Windows its AF_UNIX ones; names
@@ -1046,7 +1059,7 @@ Inspection section or fitted plane), which the host hands the active bench
 as `ctx.active_object_plane` for the tree's selected feature, and the
 sketcher's Create sketch takes; `report` is a bench's part of a printed report (`BenchReport`: a title,
 summary lines, `ReportTable`s, bodies to picture), which `doc.report_pdf`
-lays out on A4 with three CPU-drawn views (`app_shell/src/pdf.rs`, a small
+lays out on A4 with three CPU-drawn views (`doc_render::pdf`, a small
 writer with the standard Helvetica faces); `consumed_feature` is the feature an owned feature's row sits under
 (a pad under its sketch; by default its one dependency), every other
 feature at its body's top level in build order; `linked_features` names features of other bodies the tree lists
@@ -1121,13 +1134,13 @@ slicer writes the visible bodies to `$TMPDIR/printcad/slicer/` in the
 format of `PrintingSettings::slicer_format` and runs
 `slicer_command` on it (`{file}` places the path, else it goes last;
 empty uses `xdg-open`). File › Print layout (`app/print_layout.rs`, a
-task) lays each part on its largest face it stands on and packs the
+task, its packing `doc_render::print_layout`) lays each part on its largest face it stands on and packs the
 copies on the bed, plate after plate, without moving the bodies; the
 counts come from `Workbench::print_parts` (the Assembly's parts list),
 and export, the slicer and `doc.print_layout` take the layout. The
 parts list's print counts, volume and filament mass are in
 `docs/PRINTING.md`, with the Hole's nut trap. A save carries a
-CPU-rendered preview (`thumbnail.rs`, in the save worker) as the
+CPU-rendered preview (`doc_render::thumbnail`, in the save worker) as the
 container's first entry, `thumbnail.png`, which
 `Document::read_thumbnail` reads without unpacking the rest; the recent
 cards show it. What's new reads `crates/app_shell/RELEASE_NOTES.md`, and
@@ -1481,11 +1494,11 @@ back out of a replayed message. A new kind of mention is a variant of
 (a path, file name or tab title, `target_tab`) to read another open
 file; there only `read_only` commands run (`RunKind::Agent::elsewhere`,
 checked per call, `changes_elsewhere`). The `view` tool and `doc.picture` (headless too)
-draw through `proof.rs`: a `Request` (view by name, angles or direction
+draw through `doc_render::proof`: a `Request` (view by name, angles or direction
 in the axis preset's frame, bodies, highlight, markers, section, edges,
 xray, size, annotate) over `thumbnail::draw` and its `Look`, framed to
 what is drawn, labels as SVG through usvg with only the bundled Plex
-face (`ui_kit::theme::SANS_REGULAR_TTF`); every view but `current`
+face (the file `ui_kit::theme::SANS_REGULAR_TTF` bundles); every view but `current`
 draws the same bytes whatever the camera. Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide. `docs/ASSEMBLY.md` is the Assembly user guide.
 
 **Variables and formulas.** Any number a bench lists
@@ -2048,7 +2061,7 @@ on the start page (`Screen::Start`); the recent list lives in
 
 - `TriMesh.faces` names the kernel face each triangle was cut from, so a click
   selects a whole face, a bore or a fillet as much as a flat side
-  (`app/face_pick.rs::face_submesh`). A mesh without faces (a sketch, a datum, a
+  (`doc_render::face_pick::face_submesh`). A mesh without faces (a sketch, a datum, a
   document saved before they were recorded) falls back to the plane through
   the hit. References find their faces by name (`kernel_api::naming`):
   the chain names every face as it builds (`kernel_ogeom::naming`: a

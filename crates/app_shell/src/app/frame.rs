@@ -48,37 +48,6 @@ fn shared_mesh(
     Arc::ptr_eq(&own, &theirs).then_some(own)
 }
 
-pub(crate) fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh {
-    let [w, d, h] = printing.bed_mm;
-    let (x0, y0) = if printing.origin_center {
-        (-w / 2.0, -d / 2.0)
-    } else {
-        (0.0, 0.0)
-    };
-    let (x1, y1) = (x0 + w, y0 + d);
-    let positions = vec![
-        [x0, y0, 0.0],
-        [x1, y0, 0.0],
-        [x1, y1, 0.0],
-        [x0, y1, 0.0],
-        [x0, y0, h],
-        [x1, y0, h],
-        [x1, y1, h],
-        [x0, y1, h],
-    ];
-    let edges = vec![
-        0, 1, 1, 2, 2, 3, 3, 0, // bed outline
-        4, 5, 5, 6, 6, 7, 7, 4, // top
-        0, 4, 1, 5, 2, 6, 3, 7, // uprights
-    ];
-    kernel_api::TriMesh {
-        normals: vec![[0.0, 0.0, 1.0]; positions.len()],
-        positions,
-        edges,
-        ..kernel_api::TriMesh::default()
-    }
-}
-
 pub(crate) fn lighting_data_from_settings(user: &UserSettings) -> LightingData {
     let settings = &user.lighting;
     let preset = user.camera.axis_preset;
@@ -1344,7 +1313,10 @@ impl PrintCadApp {
                 .as_ref()
                 .is_none_or(|(rev, _)| *rev != revision)
             {
-                self.print_bed = Some((revision, Arc::new(print_bed_mesh(printing))));
+                self.print_bed = Some((
+                    revision,
+                    Arc::new(doc_render::print_layout::print_bed_mesh(printing)),
+                ));
             }
             if let Some((_, mesh)) = &self.print_bed {
                 all_meshes.push(BodySubmission {

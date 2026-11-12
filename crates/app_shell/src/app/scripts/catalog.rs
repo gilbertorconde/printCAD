@@ -1561,7 +1561,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         )
         .see_also("inspect.report")
         .see_also("doc.picture"),
-        crate::proof::with_arguments(
+        doc_render::proof::with_arguments(
             CommandSpec::new(
                 "doc.picture",
                 "Write a PNG of the bodies, the same for the same arguments whatever the \
