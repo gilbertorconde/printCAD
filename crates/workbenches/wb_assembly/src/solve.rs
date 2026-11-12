@@ -799,7 +799,12 @@ fn path_tangent(
     let (i, q) = line
         .windows(2)
         .enumerate()
-        .map(|(i, w)| (i, crate::shapes::nearest_on_segment(pm, w[0], w[1])))
+        .map(|(i, w)| {
+            (
+                i,
+                core_document::mesh_query::nearest_on_segment(pm, w[0], w[1]),
+            )
+        })
         .min_by(|a, b| a.1.distance(pm).total_cmp(&b.1.distance(pm)))?;
     let closed = line.len() > 2 && line[0].distance(line[line.len() - 1]) < 1e-6;
     let last = line.len() - 2;

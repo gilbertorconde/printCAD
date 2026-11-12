@@ -491,7 +491,6 @@ fn line(
     let (w, h) = (canvas.w, canvas.h);
     let half = width * 0.5;
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let length2 = dx * dx + dy * dy;
     let min_x = (a.0.min(b.0) - half).floor().max(0.0) as i64;
     let max_x = ((a.0.max(b.0) + half).ceil() as i64).min(i64::from(w) - 1);
     let min_y = (a.1.min(b.1) - half).floor().max(0.0) as i64;
@@ -499,11 +498,7 @@ fn line(
     for y in min_y..=max_y {
         for x in min_x..=max_x {
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            let t = if length2 > 1e-12 {
-                (((px - a.0) * dx + (py - a.1) * dy) / length2).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+            let t = kernel_api::nearest::segment_param([px, py], [a.0, a.1], [b.0, b.1]);
             let (cx, cy) = (a.0 + t * dx, a.1 + t * dy);
             if (px - cx).powi(2) + (py - cy).powi(2) > half * half {
                 continue;

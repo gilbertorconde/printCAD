@@ -975,7 +975,7 @@ impl Walk {
         let mut best = (f64::MAX, 0.0);
         for (i, w) in self.points.windows(2).enumerate() {
             let d = w[1] - w[0];
-            let t = ((p - w[0]).dot(d) / d.length_squared().max(1e-18)).clamp(0.0, 1.0);
+            let t = core_document::mesh_query::segment_param(p, w[0], w[1]);
             let gap = p.distance(w[0] + d * t);
             if gap < best.0 {
                 best = (gap, self.along[i] + d.length() * t);

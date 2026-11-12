@@ -7,7 +7,7 @@
 //! lies.
 
 use bench_api::{CosmeticThread, calls};
-use core_document::mesh_query::triangle_distance_sq;
+use core_document::mesh_query::{nearest_on_segment, triangle_distance_sq};
 use core_document::{BodyPlacement, EdgeCircle, WorkbenchRuntimeContext};
 use glam::Vec3;
 use kernel_api::{FaceSurface, ProfilePlane, TriMesh};
@@ -275,9 +275,7 @@ fn edge_faces(mesh: &TriMesh, p: Vec3) -> Option<[u64; 2]> {
     for (pair, id) in mesh.edges.as_chunks::<2>().0.iter().zip(&mesh.edge_ids) {
         let a = Vec3::from(mesh.positions[pair[0] as usize]);
         let b = Vec3::from(mesh.positions[pair[1] as usize]);
-        let ab = b - a;
-        let t = ((p - a).dot(ab) / ab.length_squared().max(f32::MIN_POSITIVE)).clamp(0.0, 1.0);
-        let d = (a + ab * t).distance_squared(p);
+        let d = nearest_on_segment(p, a, b).distance_squared(p);
         if best.is_none_or(|(b, _)| d < b) {
             best = Some((d, *id));
         }

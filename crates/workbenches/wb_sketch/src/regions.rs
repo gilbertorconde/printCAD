@@ -457,14 +457,8 @@ fn project(c: &Curve, samples: &[(f64, [f64; 2])], p: [f64; 2]) -> Option<f64> {
     let mut best = (f64::INFINITY, c.lo);
     for w in samples.windows(2) {
         let ((ta, a), (tb, b)) = (w[0], w[1]);
-        let ab = [b[0] - a[0], b[1] - a[1]];
-        let len2 = ab[0] * ab[0] + ab[1] * ab[1];
-        let f = if len2 > 0.0 {
-            (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let q = [a[0] + ab[0] * f, a[1] + ab[1] * f];
+        let f = kernel_api::nearest::segment_param(p, a, b);
+        let q = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
         let d = dist(p, q);
         if d < best.0 {
             best = (d, ta + (tb - ta) * f);

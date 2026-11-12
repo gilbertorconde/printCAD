@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
+use core_document::mesh_query::nearest_on_segment;
 use glam::DVec2;
 use uuid::Uuid;
 
@@ -410,7 +411,7 @@ impl Shape {
     fn distance(&self, p: DVec2) -> f64 {
         match *self {
             Shape::Point(q) => (q - p).length(),
-            Shape::Prim(Prim::Seg { a, b }) => (p - segment_foot(a, b, p)).length(),
+            Shape::Prim(Prim::Seg { a, b }) => (p - nearest_on_segment(p, a, b)).length(),
             Shape::Prim(Prim::Circle { c, r }) => ((p - c).length() - r).abs(),
             Shape::Prim(Prim::Arc { c, r, s, e }) => {
                 if on_sweep(c, s, e, p) {
@@ -457,7 +458,7 @@ impl Shape {
     fn project(&self, p: DVec2) -> Option<DVec2> {
         match *self {
             Shape::Prim(Prim::Seg { a, b }) => {
-                ((b - a).length_squared() >= 1e-12).then(|| segment_foot(a, b, p))
+                ((b - a).length_squared() >= 1e-12).then(|| nearest_on_segment(p, a, b))
             }
             Shape::Prim(Prim::Circle { c, r }) => {
                 let dir = p - c;
@@ -499,17 +500,6 @@ impl Shape {
             _ => None,
         }
     }
-}
-
-/// The point of the segment from `a` to `b` nearest `p`, or `a` for a
-/// segment with no length.
-fn segment_foot(a: DVec2, b: DVec2, p: DVec2) -> DVec2 {
-    let ab = b - a;
-    let len_sq = ab.length_squared();
-    if len_sq < 1e-12 {
-        return a;
-    }
-    a + ab * ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0)
 }
 
 /// Whether `p` lies within the angles the arc about `c` sweeps from `s` to

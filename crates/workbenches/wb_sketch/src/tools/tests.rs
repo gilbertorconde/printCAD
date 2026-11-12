@@ -2731,11 +2731,7 @@ fn trimming_a_spline_keeps_the_rest_of_the_same_curve() {
     for p in &after {
         let d = before
             .windows(2)
-            .map(|w| {
-                let d = w[1] - w[0];
-                let t = ((*p - w[0]).dot(d) / d.length_squared().max(1e-12)).clamp(0.0, 1.0);
-                (*p - (w[0] + d * t)).length()
-            })
+            .map(|w| core_document::mesh_query::nearest_on_segment(*p, w[0], w[1]).distance(*p))
             .fold(f64::MAX, f64::min);
         assert!(d < 0.05, "{p:?} off the curve by {d}");
     }

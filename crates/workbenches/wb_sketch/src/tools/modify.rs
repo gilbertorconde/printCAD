@@ -1191,7 +1191,7 @@ pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f64) -> ToolEffect 
     match prim {
         Prim::Seg { a, b } => {
             let ab = b - a;
-            let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+            let t = core_document::mesh_query::segment_param(p, a, b);
             if !(SPAN_EPS..=1.0 - SPAN_EPS).contains(&t) {
                 return ToolEffect::log("Too close to an end to split");
             }

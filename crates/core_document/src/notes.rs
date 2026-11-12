@@ -10,7 +10,7 @@
 //! given in order across the document: a note taken away leaves its number
 //! unused, and only undoing the note's adding gives it again.
 
-use crate::mesh_query::closest_on_triangle;
+use crate::mesh_query::{closest_on_triangle, nearest_on_segment};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -329,13 +329,7 @@ fn closest_on_edge(mesh: &TriMesh, edge: u32, p: Vec3) -> Option<Vec3> {
         .filter_map(|(_, [a, b])| {
             let a = Vec3::from(*mesh.positions.get(*a as usize)?);
             let b = Vec3::from(*mesh.positions.get(*b as usize)?);
-            let ab = b - a;
-            let t = if ab.length_squared() > 0.0 {
-                ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            Some(a + ab * t)
+            Some(nearest_on_segment(p, a, b))
         })
         .min_by(|a, b| a.distance_squared(p).total_cmp(&b.distance_squared(p)))
 }

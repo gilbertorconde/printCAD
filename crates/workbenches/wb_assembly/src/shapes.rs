@@ -2,6 +2,7 @@
 //! polyline, a face as triangles, read from the body's mesh in its own
 //! frame, and the nearest point of either to a point.
 
+use core_document::mesh_query::{closest_on_triangle, nearest_on_segment};
 use glam::{DVec3, Vec3};
 use kernel_api::TriMesh;
 
@@ -67,9 +68,8 @@ pub fn face_triangles(mesh: &TriMesh, near: [f32; 3]) -> Option<Vec<[f32; 3]>> {
     let near = near.as_dvec3();
     let wide = |t: usize| corners(t).map(|c| c.as_dvec3());
     let nearest = (0..count).min_by(|&i, &j| {
-        nearest_on_triangle(near, wide(i))
-            .distance(near)
-            .total_cmp(&nearest_on_triangle(near, wide(j)).distance(near))
+        let on = |[a, b, c]: [DVec3; 3]| closest_on_triangle(near, a, b, c).distance(near);
+        on(wide(i)).total_cmp(&on(wide(j)))
     })?;
     let face = mesh.faces.get(nearest).copied();
     Some(
@@ -101,45 +101,12 @@ fn distance_to_segment(p: Vec3, a: Vec3, b: Vec3) -> f32 {
     nearest_on_segment(p.as_dvec3(), a.as_dvec3(), b.as_dvec3()).distance(p.as_dvec3()) as f32
 }
 
-/// The point of the segment `a`–`b` nearest `p`.
-pub fn nearest_on_segment(p: DVec3, a: DVec3, b: DVec3) -> DVec3 {
-    let ab = b - a;
-    let t = if ab.length_squared() > 0.0 {
-        ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    a + ab * t
-}
-
 /// The point of the polyline nearest `p`.
 pub fn nearest_on_polyline(p: DVec3, line: &[DVec3]) -> Option<DVec3> {
     line.windows(2)
         .map(|w| nearest_on_segment(p, w[0], w[1]))
         .min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)))
         .or_else(|| line.first().copied())
-}
-
-/// The point of the triangle `t` nearest `p`.
-pub fn nearest_on_triangle(p: DVec3, t: [DVec3; 3]) -> DVec3 {
-    let [a, b, c] = t;
-    let n = (b - a).cross(c - a);
-    if n.length_squared() > 0.0 {
-        let n = n.normalize();
-        let q = p - n * (p - a).dot(n);
-        // Inside when on the inner side of every edge.
-        let inside = [(a, b), (b, c), (c, a)]
-            .iter()
-            .all(|(u, v)| (*v - *u).cross(q - *u).dot(n) >= 0.0);
-        if inside {
-            return q;
-        }
-    }
-    [(a, b), (b, c), (c, a)]
-        .iter()
-        .map(|(u, v)| nearest_on_segment(p, *u, *v))
-        .min_by(|x, y| x.distance(p).total_cmp(&y.distance(p)))
-        .unwrap_or(a)
 }
 
 /// The nearest point of the triangles (three corners each) to `p`, and
@@ -150,7 +117,7 @@ pub fn nearest_on_triangles(p: DVec3, corners: &[DVec3]) -> Option<(DVec3, DVec3
         .0
         .iter()
         .map(|t| {
-            let q = nearest_on_triangle(p, *t);
+            let q = closest_on_triangle(p, t[0], t[1], t[2]);
             let n = (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero();
             (q, n)
         })

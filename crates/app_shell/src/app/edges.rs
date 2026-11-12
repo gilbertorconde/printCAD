@@ -687,11 +687,7 @@ fn nearest_segment(
         };
         let (pa, pb) = (Vec2::new(pa.0, pa.1), Vec2::new(pb.0, pb.1));
         let ab = pb - pa;
-        let t = if ab.length_squared() < 1e-6 {
-            0.0
-        } else {
-            ((cursor - pa).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-        };
+        let t = core_document::mesh_query::segment_param(cursor, pa, pb);
         let distance_px = (pa + ab * t - cursor).length();
         if distance_px > reach_px {
             continue;
