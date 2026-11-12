@@ -852,7 +852,8 @@ fn dragging_from_a_line_s_end_draws_a_tangent_arc() {
     assert_eq!(h.counts().3, 0);
 }
 
-/// Counts the profiles it is asked to mesh, and meshes each as one triangle.
+/// Counts the profiles it is asked to mesh, and meshes each as one triangle
+/// whose first corner tells the profile it was meshed from.
 struct CountingRegions(std::sync::atomic::AtomicUsize);
 
 static REGIONS: CountingRegions = CountingRegions(std::sync::atomic::AtomicUsize::new(0));
@@ -869,11 +870,15 @@ impl kernel_api::KernelQueries for CountingRegions {
 
     fn profile_mesh(
         &self,
-        _profile: &kernel_api::Profile,
+        profile: &kernel_api::Profile,
     ) -> kernel_api::KernelResult<kernel_api::TriMesh> {
+        use std::hash::{Hash, Hasher};
         self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{profile:?}").hash(&mut hasher);
+        let tag = (hasher.finish() % 1_000_000) as f32;
         Ok(kernel_api::TriMesh {
-            positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            positions: vec![[tag, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             normals: vec![[0.0, 0.0, 1.0]; 3],
             indices: vec![0, 1, 2],
             ..Default::default()
@@ -925,7 +930,9 @@ fn the_drawing_follows_each_change_before_the_next_frame() {
 }
 
 /// A closed outline is shaded while it is edited, meshed once for as long
-/// as it stays the same; an open one is not. Every region shades as the
+/// as it stays the same; an open one is not. A drag keeps the shading of
+/// its start and its release shades the sketch it leaves, as the closed
+/// sketch shades. Every region shades as the
 /// closed sketch's do, in the same colour and strengths: three concentric
 /// circles shade the outer ring and the disc stronger than the ring
 /// between them.
@@ -958,6 +965,33 @@ fn closed_regions_are_shaded_while_editing_as_out_of_it() {
     assert_eq!(shaded(&mut h).len(), 1);
     let asked = kernel.0.load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(asked, 2, "meshed again once the outline moves");
+    let drawn = |meshes: Vec<core_document::OverlayMesh>| -> Vec<_> {
+        meshes
+            .iter()
+            .map(|m| (m.mesh.positions[0][0], m.opacity))
+            .collect()
+    };
+    let before = drawn(shaded(&mut h));
+    h.click(0.0, 5.0, "sketch.select");
+    for step in 1..=3 {
+        h.mouse_move(-f64::from(step), 5.0 - f64::from(step), "sketch.select");
+        assert_eq!(drawn(shaded(&mut h)), before, "the drag's start shaded");
+    }
+    let asked = kernel.0.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(asked, 2, "nothing meshed while the drag moves");
+    h.release(-3.0, 2.0, "sketch.select");
+    let id = h.active_object.unwrap();
+    let node = h.doc.get_feature_meta(id).unwrap();
+    let left = h.wb.passive_geometry(&h.doc, id, node).unwrap().regions;
+    let fresh: Vec<_> = (left.iter())
+        .map(|r| {
+            let mesh = kernel_api::KernelQueries::profile_mesh(kernel, &r.profile).unwrap();
+            (mesh.positions[0][0], r.opacity)
+        })
+        .collect();
+    let released = drawn(shaded(&mut h));
+    assert_ne!(released, before, "the outline moved");
+    assert_eq!(released, fresh, "the release shades the sketch it leaves");
 
     let mut h = Harness::sketching();
     h.edit_sketch(|s| {
