@@ -343,7 +343,8 @@ impl SketchWorkbench {
         if self.tab.activated_tool.take().is_some() {
             self.tab.tool_state = ToolState::Idle;
             self.tab.dim_capture.clear_buffers();
-            self.tab.dim_capture.sync(&self.tab.tool_state, None);
+            let tab = &mut *self.tab;
+            tab.dim_capture.sync(&tab.tool_state, None);
             self.flush_draw_record(ctx);
         }
         let minimum = self.options.min_wall;
@@ -417,11 +418,12 @@ impl SketchWorkbench {
     /// Put the check away once its sketch is no longer edited, or once an
     /// edit has changed its profile.
     pub(crate) fn drop_stale_wall_check(&mut self, ctx: &WorkbenchRuntimeContext) {
-        let Some(check) = &mut self.tab.wall_check else {
+        let tab = &mut *self.tab;
+        let Some(check) = &mut tab.wall_check else {
             return;
         };
-        if Some(check.sketch) != self.tab.active_sketch_id {
-            self.tab.wall_check = None;
+        if Some(check.sketch) != tab.active_sketch_id {
+            tab.wall_check = None;
             return;
         }
         let seq = ctx.document.mutation_seq();
@@ -432,7 +434,7 @@ impl SketchWorkbench {
         let same = stored_sketch(ctx.document, check.sketch)
             .is_some_and(|f| profile::extract_wires(&f.sketch).is_ok_and(|w| w == check.wires));
         if !same {
-            self.tab.wall_check = None;
+            tab.wall_check = None;
         }
     }
 }
@@ -560,7 +562,8 @@ mod wall_thickness {
             tab: crate::Tab {
                 active_sketch_id: Some(sketch),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         (doc, wb, sketch)
