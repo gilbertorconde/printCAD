@@ -10,7 +10,8 @@
 use bench_api::{Flow, PanelEvent, Quantity, Select, Widget, panel};
 
 use crate::tolerance::{Characteristic as C, DatumRef, Material, Tolerance};
-use core_document::{Document, FeatureId, WorkbenchFeature};
+use crate::{InspectionWorkbench, tolerance, tolerance_task};
+use core_document::{Document, FeatureId, WorkbenchFeature, WorkbenchRuntimeContext};
 
 pub(crate) struct Task {
     pub id: FeatureId,
@@ -285,4 +286,63 @@ pub(crate) fn walk(
         );
     }
     w.form.finish()
+}
+
+impl InspectionWorkbench {
+    /// The open tolerance task's panel, as widgets: its settings, then
+    /// what it reads.
+    pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<bench_api::Widget> {
+        let Some((id, mut t)) = self.tolerance_in_task(ctx) else {
+            return Vec::new();
+        };
+        let mut widgets = tolerance_task::walk(ctx.document, &mut t, None);
+        let text = |text: String| bench_api::Widget::Text { text, mono: false };
+        match self
+            .tab
+            .tolerance_readings
+            .read(ctx.document, id, &t, ctx.kernel, false)
+        {
+            Ok(e) => {
+                widgets.push(text(t.label(&e, ctx.document.display_unit())));
+                widgets.extend(e.note.clone().map(text));
+            }
+            Err(why) => widgets.push(text(why)),
+        }
+        vec![
+            bench_api::Stack {
+                children: widgets,
+                tight: true,
+                ..Default::default()
+            }
+            .into(),
+        ]
+    }
+
+    /// A change to the open tolerance task's panel, written to the
+    /// tolerance at once.
+    pub(crate) fn task_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &bench_api::PanelEvent,
+    ) {
+        let Some((id, mut t)) = self.tolerance_in_task(ctx) else {
+            return;
+        };
+        let before = t.clone();
+        tolerance_task::walk(ctx.document, &mut t, Some(event));
+        if t != before {
+            let _ = ctx.document.update_feature_data(id, t.to_json());
+            ctx.document.set_feature_dependencies(id, t.dependencies());
+        }
+    }
+
+    /// The tolerance the open task edits, as the document holds it.
+    pub(crate) fn tolerance_in_task(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<(core_document::FeatureId, tolerance::Tolerance)> {
+        let id = self.tab.tolerance_task.as_ref()?.id;
+        let data = ctx.document.get_feature_data(id)?;
+        tolerance::Tolerance::from_json(data).ok().map(|t| (id, t))
+    }
 }
