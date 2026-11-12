@@ -8,7 +8,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::BuildHasherDefault;
 
 use core_document::mesh_query::nearest_on_segment;
 use glam::DVec2;
@@ -16,7 +16,9 @@ use uuid::Uuid;
 
 use crate::curves::Curve;
 use crate::geom2d::{Prim, raw_hits, within};
-use crate::sketch::{GeometryElement, ORIGIN_ID, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID};
+use crate::sketch::{
+    GeometryElement, IdHasher, IdMap, ORIGIN_ID, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
+};
 
 /// What the cursor resolved to after snapping.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -510,28 +512,6 @@ fn on_sweep(c: DVec2, s: DVec2, e: DVec2, p: DVec2) -> bool {
     (d.y.atan2(d.x) - start).rem_euclid(std::f64::consts::TAU) <= sweep
 }
 
-/// Ids hashed by their own bytes: ids are random, so they spread as well
-/// as a keyed hash would spread them, for a fraction of the cost on every
-/// pointer move.
-#[derive(Default)]
-struct IdHasher(u64);
-
-impl Hasher for IdHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for chunk in bytes.chunks(8) {
-            let mut word = [0u8; 8];
-            word[..chunk.len()].copy_from_slice(chunk);
-            self.0 = self.0.rotate_left(29) ^ u64::from_le_bytes(word);
-        }
-    }
-}
-
-type IdMap<T> = HashMap<Uuid, T, BuildHasherDefault<IdHasher>>;
-
 /// One element of a [`Scene`].
 #[derive(Debug, Clone)]
 struct Item {
@@ -544,10 +524,8 @@ struct Item {
     index: usize,
 }
 
-/// A sketch's elements where they stand, for one pointer query. A sketch
-/// finds a point by walking its list, so looking each curve's points up
-/// there would cost the square of the sketch's size on every pointer move;
-/// this looks every point up once. Elements [`Shape::of`] refuses are left
+/// A sketch's elements where they stand, for one pointer query, every
+/// curve's points looked up once. Elements [`Shape::of`] refuses are left
 /// out: stale references and numbers out of range take no snap and no
 /// click.
 struct Scene {
