@@ -2,38 +2,24 @@
 //! any tool's clicks, drags, arrays and pasted geometry.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId, ParamKind,
+    WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::sketch::{Arc, Circle, GeometryElement, Sketch, Vec2D};
 
+use super::editing;
 use super::{
-    draw, ids, ids_of, line, load, made_since, point_at, points, polyline, positive, sketch, vec,
+    draw, ids, ids_of, line, made_since, point_at, points, polyline, positive, sketch, vec,
 };
+use crate::SketchWorkbench;
+use crate::feature::SketchFeature;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.point"
-            | "sketch.line"
-            | "sketch.polyline"
-            | "sketch.rect"
-            | "sketch.circle"
-            | "sketch.arc"
-            | "sketch.draw"
-            | "sketch.drag"
-            | "sketch.array"
-            | "sketch.paste"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add_free(
         sketch(CommandSpec::new("sketch.point", "Add a point"))
             .param("x", ParamKind::Number, "")
             .param("y", ParamKind::Number, "")
@@ -62,8 +48,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 assert(ends == 2, "the rectangle's corner is the point made first")
                 "#,
             ),
+        editing(point),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.line",
             "Add a line from (x1, y1) to (x2, y2)",
@@ -103,8 +90,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - 30 * 20 / 2 * 4) < 1e-3)
             "#,
         ),
+        editing(line_command),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.polyline",
             "Add lines through a list of points, each ending where the next starts; a level \
@@ -141,8 +129,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - 30 * 20 / 2 * 5) < 1e-3)
             "#,
         ),
+        editing(polyline_command),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.rect",
             "Add a rectangle from its corner (x, y), its width and its height, its sides held \
@@ -177,8 +166,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.centre[1]) < 1e-6 and math.abs(m.centre[2]) < 1e-6, "centred")
             "#,
         ),
+        editing(rect),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new("sketch.circle", "Add a circle"))
             .param("x", ParamKind::Number, "The centre")
             .param("y", ParamKind::Number, "The centre")
@@ -207,8 +197,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
                 "#,
             ),
+        editing(circle),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.arc",
             "Add an arc, counter-clockwise from the start angle to the end angle",
@@ -247,8 +238,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
             "#,
         ),
+        editing(arc),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.draw",
             "Run a drawing or editing tool over points of the sketch, as clicks there would",
@@ -342,8 +334,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - (20 * 6 + math.pi * 3 ^ 2)) < 1e-3, m.volume)
             "#,
         ),
+        editing(draw_command),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.drag",
             "Drag elements by a step, the rest of the sketch following its constraints",
@@ -378,8 +371,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - 30 * 15) < 1e-2, "still a rectangle, stretched")
             "#,
         ),
+        editing(drag),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.array",
             "Repeat elements in rows and columns",
@@ -428,8 +422,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
             "#,
         ),
+        editing(array),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.paste",
             "Add geometry held as a sketch of its own, moved by a step",
@@ -461,132 +456,187 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.max[1] - 30) < 1e-6)
             "#,
         ),
+        editing(paste_command),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
+fn point(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    let a = Args(args);
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
     let sketch = &mut feature.sketch;
-    let answer = match id {
-        "sketch.point" => {
-            let p = point_at(sketch, vec(a.number("x")?, a.number("y")?));
-            json!(p.to_string())
-        }
-        "sketch.line" => {
-            let from = vec(a.number("x1")?, a.number("y1")?);
-            let to = vec(a.number("x2")?, a.number("y2")?);
-            json!(line(sketch, from, to)?.to_string())
-        }
-        "sketch.polyline" => {
-            let points = points(args.get("points"))?;
-            let closed = a.opt_bool("closed")?.unwrap_or(false);
-            json!(polyline(sketch, &points, closed)?)
-        }
-        "sketch.rect" => {
-            let (x, y) = (a.number("x")?, a.number("y")?);
-            let (w, h) = (a.number("width")?, a.number("height")?);
-            if w == 0.0 || h == 0.0 {
-                return Err(CommandError::failed(
-                    "a rectangle needs a width and a height",
-                ));
-            }
-            let corners = [vec(x, y), vec(x + w, y), vec(x + w, y + h), vec(x, y + h)];
-            json!(polyline(sketch, &corners, true)?)
-        }
-        "sketch.circle" => {
-            let radius = positive(&a, "radius")?;
-            let centre = point_at(sketch, vec(a.number("x")?, a.number("y")?));
-            let id = sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, radius)));
-            json!(id.to_string())
-        }
-        "sketch.arc" => {
-            let radius = positive(&a, "radius")?;
-            let (x, y) = (a.number("x")?, a.number("y")?);
-            let at = |deg: f64| {
-                let t = deg.to_radians();
-                vec(x + radius * t.cos(), y + radius * t.sin())
-            };
-            let (start, end) = (a.number("start")?, a.number("end")?);
-            let centre = point_at(sketch, vec(x, y));
-            let s = point_at(sketch, at(start));
-            let e = point_at(sketch, at(end));
-            let id = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, s, e, radius)));
-            json!(id.to_string())
-        }
-        "sketch.draw" => {
-            let (elements, constraints) = draw(sketch, &a, args)?;
-            json!({"elements": elements, "constraints": constraints})
-        }
-        "sketch.array" => {
-            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
-                .into_iter()
-                .collect();
-            let count = |name: &str| -> Result<u32, CommandError> {
-                let n = a.number(name)?;
-                if n >= 1.0 {
-                    Ok(n as u32)
-                } else {
-                    Err(CommandError::bad(name, "must be at least 1"))
-                }
-            };
-            let before = ids_of(sketch);
-            let effect = crate::tools::array(
-                sketch,
-                &items,
-                count("rows")?,
-                count("cols")?,
-                a.number("dx")?,
-                a.number("dy")?,
-                a.opt_bool("linked")?.unwrap_or(false),
-            );
-            if !effect.changed {
-                return Err(CommandError::failed(
-                    "an array needs elements and at least two rows or columns",
-                ));
-            }
-            made_since(sketch, &before)
-        }
-        "sketch.paste" => {
-            let clip: Sketch =
-                serde_json::from_value(args.get("clipboard").cloned().unwrap_or(Value::Null))
-                    .map_err(|e| CommandError::bad("clipboard", e.to_string()))?;
-            let by = points(Some(&json!([args
-                .get("by")
-                .cloned()
-                .unwrap_or(Value::Null)])))
-            .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
-            let before = ids_of(sketch);
-            paste(sketch, &clip, by);
-            made_since(sketch, &before)
-        }
-        "sketch.drag" => {
-            let items = ids(args.get("items"), "items", sketch)?;
-            let by = points(Some(&json!([args
-                .get("by")
-                .cloned()
-                .unwrap_or(Value::Null)])))
-            .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
-            let targets = crate::step::drag_targets(sketch, &items);
-            crate::step::drag(sketch, &targets, by);
-            let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
-            crate::solver::solve_holding(sketch, &held);
-            Value::Null
-        }
-        _ => return Err(CommandError::Unknown(id.to_string())),
+    let p = point_at(sketch, vec(a.number("x")?, a.number("y")?));
+    Ok(json!(p.to_string()))
+}
+
+fn line_command(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let sketch = &mut feature.sketch;
+    let from = vec(a.number("x1")?, a.number("y1")?);
+    let to = vec(a.number("x2")?, a.number("y2")?);
+    Ok(json!(line(sketch, from, to)?.to_string()))
+}
+
+fn polyline_command(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let points = points(args.get("points"))?;
+    let closed = a.opt_bool("closed")?.unwrap_or(false);
+    Ok(json!(polyline(sketch, &points, closed)?))
+}
+
+fn rect(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let sketch = &mut feature.sketch;
+    let (x, y) = (a.number("x")?, a.number("y")?);
+    let (w, h) = (a.number("width")?, a.number("height")?);
+    if w == 0.0 || h == 0.0 {
+        return Err(CommandError::failed(
+            "a rectangle needs a width and a height",
+        ));
+    }
+    let corners = [vec(x, y), vec(x + w, y), vec(x + w, y + h), vec(x, y + h)];
+    Ok(json!(polyline(sketch, &corners, true)?))
+}
+
+fn circle(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let sketch = &mut feature.sketch;
+    let radius = positive(a, "radius")?;
+    let centre = point_at(sketch, vec(a.number("x")?, a.number("y")?));
+    let id = sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, radius)));
+    Ok(json!(id.to_string()))
+}
+
+fn arc(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let sketch = &mut feature.sketch;
+    let radius = positive(a, "radius")?;
+    let (x, y) = (a.number("x")?, a.number("y")?);
+    let at = |deg: f64| {
+        let t = deg.to_radians();
+        vec(x + radius * t.cos(), y + radius * t.sin())
     };
-    crate::solver::solve(sketch);
-    ctx.document
-        .update_feature_data(sketch_id, feature.to_json())
-        .map_err(|e| CommandError::failed(e.to_string()))?;
-    ctx.document.mark_feature_dirty(sketch_id);
-    Ok(answer)
+    let (start, end) = (a.number("start")?, a.number("end")?);
+    let centre = point_at(sketch, vec(x, y));
+    let s = point_at(sketch, at(start));
+    let e = point_at(sketch, at(end));
+    let id = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, s, e, radius)));
+    Ok(json!(id.to_string()))
+}
+
+fn draw_command(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let (elements, constraints) = draw(sketch, a, args)?;
+    Ok(json!({"elements": elements, "constraints": constraints}))
+}
+
+fn array(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+        .into_iter()
+        .collect();
+    let count = |name: &str| -> Result<u32, CommandError> {
+        let n = a.number(name)?;
+        if n >= 1.0 {
+            Ok(n as u32)
+        } else {
+            Err(CommandError::bad(name, "must be at least 1"))
+        }
+    };
+    let before = ids_of(sketch);
+    let effect = crate::tools::array(
+        sketch,
+        &items,
+        count("rows")?,
+        count("cols")?,
+        a.number("dx")?,
+        a.number("dy")?,
+        a.opt_bool("linked")?.unwrap_or(false),
+    );
+    if !effect.changed {
+        return Err(CommandError::failed(
+            "an array needs elements and at least two rows or columns",
+        ));
+    }
+    Ok(made_since(sketch, &before))
+}
+
+fn paste_command(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let clip: Sketch =
+        serde_json::from_value(args.get("clipboard").cloned().unwrap_or(Value::Null))
+            .map_err(|e| CommandError::bad("clipboard", e.to_string()))?;
+    let by = points(Some(&json!([args
+        .get("by")
+        .cloned()
+        .unwrap_or(Value::Null)])))
+    .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
+    let before = ids_of(sketch);
+    paste(sketch, &clip, by);
+    Ok(made_since(sketch, &before))
+}
+
+fn drag(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let items = ids(args.get("items"), "items", sketch)?;
+    let by = points(Some(&json!([args
+        .get("by")
+        .cloned()
+        .unwrap_or(Value::Null)])))
+    .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
+    let targets = crate::step::drag_targets(sketch, &items);
+    crate::step::drag(sketch, &targets, by);
+    let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
+    crate::solver::solve_holding(sketch, &held);
+    Ok(Value::Null)
 }
 
 /// Add `clip`'s geometry to `sketch`, moved by `by`.

@@ -367,30 +367,124 @@ pub type CommandFn =
 pub type CommandFnById =
     fn(&str, &CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult;
 
-#[derive(Clone, Copy)]
-enum Handler {
-    Plain(CommandFn),
-    ById(CommandFnById),
+/// What runs a command that needs the bench's own state `B`.
+pub type BenchFn<B> =
+    fn(&mut B, &CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult;
+
+/// What runs a command that needs the bench's own state, shared by
+/// several specs: told which one it is.
+pub type BenchFnById<B> =
+    fn(&mut B, &str, &CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult;
+
+type Free = Box<
+    dyn Fn(&CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult
+        + Send
+        + Sync,
+>;
+
+type OnBench<B> = Box<
+    dyn Fn(&mut B, &CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult
+        + Send
+        + Sync,
+>;
+
+/// What runs one command: on the context alone, or on the bench's state
+/// too.
+enum Handler<B> {
+    Free(Free),
+    OnBench(OnBench<B>),
 }
 
 /// A bench's commands, each spec beside the function that runs it, so a
 /// command's id is written once, in its spec: registration, which ids
 /// the bench answers and dispatch all read it from here.
-#[derive(Default)]
-pub struct CommandTable {
-    entries: Vec<(CommandSpec, Handler)>,
+///
+/// `B` is the bench state a handler may take (`&mut B`), handed in by
+/// [`run_on`](Self::run_on): the bench itself for a bench whose commands
+/// read its settings or caches, `()` for one whose commands need only the
+/// context. Code that holds the context but not the bench (a panel, a
+/// tool) runs the commands needing no bench state through
+/// [`run`](Self::run). A family adds its commands with a `table(t)`
+/// function of its own; a bench builds one table from its families and
+/// keeps it in a `OnceLock`. A step several commands share (load a
+/// feature, edit it, store it) is a function making the handler, added
+/// through [`add_free`](Self::add_free) or [`add_with`](Self::add_with).
+pub struct CommandTable<B = ()> {
+    entries: Vec<(CommandSpec, Handler<B>)>,
 }
 
-impl CommandTable {
+impl<B> Default for CommandTable<B> {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl<B: 'static> CommandTable<B> {
     /// Add `spec`, run by `run`.
     pub fn add(&mut self, spec: CommandSpec, run: CommandFn) {
-        self.entries.push((spec, Handler::Plain(run)));
+        self.add_free(spec, run);
     }
 
     /// Add `spec`, run by `run` told the command's id: for specs made in
     /// a loop over a table of their own.
     pub fn add_by_id(&mut self, spec: CommandSpec, run: CommandFnById) {
-        self.entries.push((spec, Handler::ById(run)));
+        let id = spec.id.clone();
+        self.add_free(spec, move |args, ctx| run(&id, args, ctx));
+    }
+
+    /// Add `spec`, run by `run`, a handler needing no bench state made by
+    /// a wrapper that does what several commands share around their own
+    /// step.
+    pub fn add_free(
+        &mut self,
+        spec: CommandSpec,
+        run: impl Fn(&CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult
+        + Send
+        + Sync
+        + 'static,
+    ) {
+        self.entries.push((spec, Handler::Free(Box::new(run))));
+    }
+
+    /// Add `spec`, run by `run` on the bench's state.
+    pub fn add_on(&mut self, spec: CommandSpec, run: BenchFn<B>) {
+        self.add_with(spec, run);
+    }
+
+    /// Add `spec`, run by `run` on the bench's state told the command's
+    /// id.
+    pub fn add_on_by_id(&mut self, spec: CommandSpec, run: BenchFnById<B>) {
+        let id = spec.id.clone();
+        self.add_with(spec, move |bench, args, ctx| run(bench, &id, args, ctx));
+    }
+
+    /// Add `spec`, run by `run` on the bench's state: a handler made by a
+    /// wrapper.
+    pub fn add_with(
+        &mut self,
+        spec: CommandSpec,
+        run: impl Fn(
+            &mut B,
+            &CommandArgs,
+            &mut crate::runtime::WorkbenchRuntimeContext,
+        ) -> CommandResult
+        + Send
+        + Sync
+        + 'static,
+    ) {
+        self.entries.push((spec, Handler::OnBench(Box::new(run))));
+    }
+
+    /// Add every command of `family`, a table of its own kept for code
+    /// that asks whether an id is one of that family; each runs through
+    /// it, needing no bench state.
+    pub fn include(&mut self, family: &'static CommandTable) {
+        for spec in family.specs() {
+            let id = spec.id.clone();
+            self.add_free(spec.clone(), move |args, ctx| family.run(&id, args, ctx));
+        }
     }
 
     /// Add `prose`'s notes, related commands and examples to the specs
@@ -429,7 +523,24 @@ impl CommandTable {
         self.entries.iter().any(|(spec, _)| spec.id == id)
     }
 
-    /// Run command `id`, refused as unknown when it is not one of these.
+    /// Run command `id` on `bench`, refused as unknown when it is not one
+    /// of these.
+    pub fn run_on(
+        &self,
+        bench: &mut B,
+        id: &str,
+        args: &CommandArgs,
+        ctx: &mut crate::runtime::WorkbenchRuntimeContext,
+    ) -> CommandResult {
+        match self.entries.iter().find(|(spec, _)| spec.id == id) {
+            Some((_, Handler::Free(run))) => run(args, ctx),
+            Some((_, Handler::OnBench(run))) => run(bench, args, ctx),
+            None => Err(CommandError::Unknown(id.to_string())),
+        }
+    }
+
+    /// Run command `id` without the bench's state: refused as unknown
+    /// when it is not one of these, and when it needs that state.
     pub fn run(
         &self,
         id: &str,
@@ -437,8 +548,10 @@ impl CommandTable {
         ctx: &mut crate::runtime::WorkbenchRuntimeContext,
     ) -> CommandResult {
         match self.entries.iter().find(|(spec, _)| spec.id == id) {
-            Some((_, Handler::Plain(run))) => run(args, ctx),
-            Some((_, Handler::ById(run))) => run(id, args, ctx),
+            Some((_, Handler::Free(run))) => run(args, ctx),
+            Some((_, Handler::OnBench(_))) => Err(CommandError::failed(format!(
+                "`{id}` runs only on its bench"
+            ))),
             None => Err(CommandError::Unknown(id.to_string())),
         }
     }

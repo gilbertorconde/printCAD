@@ -2,7 +2,7 @@
 //! construction, internal geometry and the section view.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
+    Args, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId, ParamKind,
     WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
@@ -11,25 +11,12 @@ use uuid::Uuid;
 use crate::feature::SketchFeature;
 use crate::sketch::Sketch;
 
-use super::{ids, load, save, sketch};
+use super::{editing, ids, reading, sketch};
+use crate::SketchWorkbench;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.solver_settings"
-            | "sketch.repair"
-            | "sketch.restore"
-            | "sketch.delete"
-            | "sketch.construction"
-            | "sketch.internal_geometry"
-            | "sketch.section_view"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add_free(
         sketch(
             CommandSpec::new(
                 "sketch.solver_settings",
@@ -67,8 +54,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(pc.sketch.status{sketch = s}.solved)
             "#,
         ),
+        editing(solver_settings),
     );
-    specs.push(
+    t.add_free(
         sketch(
             CommandSpec::new(
                 "sketch.repair",
@@ -109,8 +97,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(pc.sketch.repair{sketch = s} == "nothing to repair")
             "#,
         ),
+        editing(repair_command),
     );
-    specs.push(
+    t.add_free(
         sketch(
             CommandSpec::new(
                 "sketch.restore",
@@ -139,8 +128,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(#pc.sketch.geometry{sketch = s} == 8, "the circle and its centre are gone")
             "#,
         ),
+        editing(restore),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.delete",
             "Delete elements or constraints, and what depends on them",
@@ -172,8 +162,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(#pc.sketch.constraints{sketch = s} == 2, "and the constraints on them")
             "#,
         ),
+        editing(delete),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.construction",
             "Make elements construction geometry, or normal again",
@@ -206,8 +197,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - (200 - math.pi * 9)) < 0.01, m.volume)
             "#,
         ),
+        editing(construction),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.internal_geometry",
             "Show or hide curves' internal geometry: an ellipse's axes and foci, a parabola's \
@@ -252,8 +244,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(not hidden.shown and #pc.sketch.geometry{sketch = s} == 2, "the same call again takes them away")
             "#,
         ),
+        editing(internal_geometry),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.section_view",
             "Cut away everything on the viewer's side of the sketch plane while it is edited",
@@ -274,99 +267,125 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(pc.doc.feature{id = s}.fields.section_view == nil)
             "#,
         ),
+        reading(section_view),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
+fn solver_settings(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    if let Some(n) = a.opt_number("iterations")? {
+        if n < 1.0 {
+            return Err(CommandError::bad("iterations", "must be at least 1"));
+        }
+        feature.sketch.solver.max_iterations = n as u32;
+    }
+    if let Some(t) = a.opt_number("tolerance")? {
+        if !(t > 0.0 && t < 1.0) {
+            return Err(CommandError::bad(
+                "tolerance",
+                "must be above 0 and below 1",
+            ));
+        }
+        feature.sketch.solver.tolerance = t;
+    }
+    crate::solver::solve(&mut feature.sketch);
+    Ok(Value::Null)
+}
+
+fn repair_command(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let tolerance = a.opt_number("tolerance")?.unwrap_or(0.01);
+    let done = crate::repair::repair(&mut feature.sketch, tolerance);
+    crate::solver::solve(&mut feature.sketch);
+    let words = done.describe();
+    Ok(json!(words))
+}
+
+fn restore(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    let a = Args(args);
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
-    match id {
-        "sketch.solver_settings" => {
-            if let Some(n) = a.opt_number("iterations")? {
-                if n < 1.0 {
-                    return Err(CommandError::bad("iterations", "must be at least 1"));
-                }
-                feature.sketch.solver.max_iterations = n as u32;
-            }
-            if let Some(t) = a.opt_number("tolerance")? {
-                if !(t > 0.0 && t < 1.0) {
-                    return Err(CommandError::bad(
-                        "tolerance",
-                        "must be above 0 and below 1",
-                    ));
-                }
-                feature.sketch.solver.tolerance = t;
-            }
-            crate::solver::solve(&mut feature.sketch);
-            return save(ctx, sketch_id, feature, Value::Null);
-        }
-        "sketch.repair" => {
-            let tolerance = a.opt_number("tolerance")?.unwrap_or(0.01);
-            let done = crate::repair::repair(&mut feature.sketch, tolerance);
-            crate::solver::solve(&mut feature.sketch);
-            let words = done.describe();
-            return save(ctx, sketch_id, feature, Value::Null).map(|_| json!(words));
-        }
-        "sketch.restore" => {
-            let data = args
-                .get("data")
-                .ok_or_else(|| CommandError::bad("data", "is needed"))?;
-            let restored = SketchFeature::from_json(data)
-                .map_err(|e| CommandError::bad("data", e.to_string()))?;
-            ctx.document
-                .set_feature_dependencies(sketch_id, restored.dependencies());
-            return save(ctx, sketch_id, restored, Value::Null);
-        }
-        // A view setting: nothing built from the sketch changes.
-        "sketch.section_view" => {
-            feature.set_section(a.opt_bool("on")?.unwrap_or(true));
-            ctx.document
-                .update_feature_data(sketch_id, feature.to_json())
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            return Ok(Value::Null);
-        }
-        _ => {}
-    }
-    let sketch = &mut feature.sketch;
-    let answer = match id {
-        "sketch.delete" => {
-            let items = ids(args.get("items"), "items", sketch)?;
-            delete_items(sketch, &items);
-            Value::Null
-        }
-        "sketch.internal_geometry" => {
-            let items = ids(args.get("items"), "items", sketch)?;
-            if crate::internal::curves_of(sketch, &items).is_empty() {
-                return Err(CommandError::bad(
-                    "items",
-                    "names no ellipse, parabola, hyperbola or B-spline",
-                ));
-            }
-            let (shown, changed) = crate::internal::toggle(sketch, &items, a.opt_bool("show")?);
-            let changed: Vec<String> = changed.iter().map(Uuid::to_string).collect();
-            json!({"shown": shown, "elements": changed})
-        }
-        "sketch.construction" => {
-            let on = a.opt_bool("on")?.unwrap_or(true);
-            for id in ids(args.get("items"), "items", sketch)? {
-                sketch.set_construction(id, on);
-            }
-            Value::Null
-        }
-        _ => return Err(CommandError::Unknown(id.to_string())),
-    };
-    crate::solver::solve(sketch);
+    let args = a.0;
+    let data = args
+        .get("data")
+        .ok_or_else(|| CommandError::bad("data", "is needed"))?;
+    let restored =
+        SketchFeature::from_json(data).map_err(|e| CommandError::bad("data", e.to_string()))?;
+    ctx.document
+        .set_feature_dependencies(sketch_id, restored.dependencies());
+    *feature = restored;
+    Ok(Value::Null)
+}
+
+fn section_view(
+    a: &Args,
+    sketch_id: FeatureId,
+    mut feature: SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    feature.set_section(a.opt_bool("on")?.unwrap_or(true));
     ctx.document
         .update_feature_data(sketch_id, feature.to_json())
         .map_err(|e| CommandError::failed(e.to_string()))?;
-    ctx.document.mark_feature_dirty(sketch_id);
-    Ok(answer)
+    Ok(Value::Null)
+}
+
+fn delete(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let items = ids(args.get("items"), "items", sketch)?;
+    delete_items(sketch, &items);
+    Ok(Value::Null)
+}
+
+fn internal_geometry(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let items = ids(args.get("items"), "items", sketch)?;
+    if crate::internal::curves_of(sketch, &items).is_empty() {
+        return Err(CommandError::bad(
+            "items",
+            "names no ellipse, parabola, hyperbola or B-spline",
+        ));
+    }
+    let (shown, changed) = crate::internal::toggle(sketch, &items, a.opt_bool("show")?);
+    let changed: Vec<String> = changed.iter().map(Uuid::to_string).collect();
+    Ok(json!({"shown": shown, "elements": changed}))
+}
+
+fn construction(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let on = a.opt_bool("on")?.unwrap_or(true);
+    for id in ids(args.get("items"), "items", sketch)? {
+        sketch.set_construction(id, on);
+    }
+    Ok(Value::Null)
 }
 
 /// Delete elements and constraints, and what hangs on them. The origin and

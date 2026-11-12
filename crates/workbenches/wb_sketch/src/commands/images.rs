@@ -3,37 +3,22 @@
 
 use core_document::command::vec2_of;
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchRuntimeContext,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId,
+    ParamKind, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::sketch::{Circle, GeometryElement, Sketch, Vec2D};
 
-use super::{add_sketch, line, load, placing, point_at, save, sketch, vec};
+use super::{add_sketch, editing, line, load, placing, point_at, reading, save, sketch, vec};
+use crate::SketchWorkbench;
+use crate::feature::SketchFeature;
+use crate::sketch::ReferenceImage;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.image"
-            | "sketch.set_image"
-            | "sketch.align_image"
-            | "sketch.turn_image"
-            | "sketch.bolt_circle"
-            | "sketch.calibrate_axis"
-            | "sketch.save_scanner_profile"
-            | "sketch.image_profile"
-            | "sketch.calibrate_image"
-            | "sketch.image_objects"
-            | "sketch.fit_edge"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add(
         placed(placing(CommandSpec::new(
             "sketch.image",
             "Lay a picture (PNG or JPEG) on a sketch's plane to draw over: in the sketch \
@@ -65,8 +50,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              returned is what `sketch.set_image` takes.",
         )
         .see_also("sketch.set_image"),
+        |args, ctx| add_image(&Args(args), ctx),
     );
-    specs.push(
+    t.add_free(
         placed(sketch(CommandSpec::new(
             "sketch.set_image",
             "Move, size, turn or fade a sketch's picture, or take it away",
@@ -82,8 +68,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              between 0 and 1, and `angle` is degrees counter-clockwise.",
         )
         .see_also("sketch.image"),
+        editing(set_image),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.align_image",
             "Square a picture to the sketch: a point on it to the origin, another along +x",
@@ -105,8 +92,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         )
         .returns("{image, turned}")
         .see_also("sketch.turn_image"),
+        editing(align_image),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.turn_image",
             "Turn a picture by quarter turns about the origin, or mirror it",
@@ -128,8 +116,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         )
         .returns("{image, angle, mirrored}")
         .see_also("sketch.align_image"),
+        editing(turn_image),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.bolt_circle",
             "The circle through the centres of holes, and how far each strays from it",
@@ -146,8 +135,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              `angles` where each sits round it, degrees from the sketch's x axis.",
         )
         .see_also("sketch.fit_edge"),
+        editing(bolt_circle),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.calibrate_axis",
             "Scale a picture along one of its own axes so two points are a known distance apart",
@@ -181,8 +171,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         )
         .see_also("sketch.calibrate_image")
         .see_also("sketch.save_scanner_profile"),
+        editing(calibrate_axis),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.save_scanner_profile",
             "Keep a calibrated picture's scale as a scanner profile for later pictures",
@@ -205,8 +196,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              without a width (one profile for that resolution), or `sketch.image{profile = \
              name}` names it.",
         ),
+        reading(save_scanner_profile),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.image_profile",
             "Read a part on a picture as radius against angle, its peaks counted",
@@ -239,8 +231,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              envelope.",
         )
         .see_also("sketch.image_objects"),
+        reading(image_profile),
     );
-    specs.push(
+    t.add_on(
         sketch(CommandSpec::new(
             "sketch.calibrate_image",
             "Scale a picture so a circle on it, at a point of its rim, is a known size across",
@@ -263,8 +256,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              known size laid on the glass beside the part calibrates the scan.",
         )
         .see_also("sketch.fit_edge"),
+        |bench, args, ctx| calibrate_image(args, ctx, &bench.tab.picture_edges),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.image_objects",
             "Find the separate parts on the sketch's pictures, and measure each",
@@ -282,8 +276,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              degrees, and with `outlines` its outer boundary.",
         )
         .see_also("sketch.fit_edge"),
+        reading(image_objects),
     );
-    specs.push(
+    t.add_on(
         sketch(CommandSpec::new(
             "sketch.fit_edge",
             "Fit a line or a circle to a reference picture's edge where a point lands",
@@ -321,291 +316,323 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              than 8° of round.",
         )
         .see_also("sketch.image"),
+        |bench, args, ctx| fit_edge(args, ctx, &bench.tab.picture_edges),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
+fn set_image(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let image = a.id("image")?;
+    let Some(at) = feature.sketch.images.iter().position(|i| i.id == image) else {
+        return Err(CommandError::bad(
+            "image",
+            "is not a picture of this sketch",
+        ));
+    };
+    if a.opt_bool("remove")?.unwrap_or(false) {
+        feature.sketch.images.remove(at);
+    } else {
+        let placed = place_image(a, feature.sketch.images[at].clone())?;
+        feature.sketch.images[at] = placed;
+    }
+    Ok(Value::Null)
+}
+
+fn bolt_circle(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let ids: Vec<Uuid> = match args.get("circles") {
+        Some(Value::Array(list)) => list
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| CommandError::bad("circles", "are element ids"))
+            })
+            .collect::<Result<_, _>>()?,
+        _ => return Err(CommandError::bad("circles", "lists three or more circles")),
+    };
+    let centres: Vec<Vec2D> = ids
+        .iter()
+        .map(|id| match feature.sketch.get_geometry(*id) {
+            Some(GeometryElement::Circle(c)) => feature.sketch.point_position(c.center),
+            Some(GeometryElement::Arc(a)) => feature.sketch.point_position(a.center),
+            _ => None,
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(|| CommandError::bad("circles", "are circles or arcs of the sketch"))?;
+    if centres.len() < 3 {
+        return Err(CommandError::bad("circles", "lists three or more circles"));
+    }
+    let Some(crate::picture_edges::Fit::Circle { centre, radius, .. }) =
+        crate::picture_edges::circle_fit(&centres)
+    else {
+        return Err(CommandError::failed("the centres lie on a line"));
+    };
+    let strays: Vec<f64> = centres
+        .iter()
+        .map(|p| (p.x - centre.x).hypot(p.y - centre.y) - radius)
+        .collect();
+    let angles: Vec<f64> = centres
+        .iter()
+        .map(|p| (p.y - centre.y).atan2(p.x - centre.x).to_degrees())
+        .collect();
+    let c = point_at(&mut feature.sketch, centre);
+    let id = feature
+        .sketch
+        .add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
+    feature.sketch.set_construction(id, true);
+    let answer = json!({
+        "element": id.to_string(),
+        "centre": {"x": centre.x, "y": centre.y},
+        "radius": radius,
+        "strays": strays,
+        "angles": angles,
+    });
+    Ok(answer)
+}
+
+/// The picture the `image` argument numbers (the first when left out):
+/// where it stands in the sketch's list, and itself.
+fn numbered_image(a: &Args, sketch: &Sketch) -> Result<(usize, ReferenceImage), CommandError> {
+    let n = a.opt_number("image")?.unwrap_or(1.0) as usize;
+    let k = n
+        .checked_sub(1)
+        .filter(|k| *k < sketch.images.len())
+        .ok_or_else(|| CommandError::bad("image", "names no picture of the sketch"))?;
+    Ok((k, sketch.images[k].clone()))
+}
+
+/// Picture `k`, `image` until now, laid as `placed`: what the turn came to.
+fn lay_image(
+    feature: &mut SketchFeature,
+    k: usize,
+    image: &ReferenceImage,
+    placed: ReferenceImage,
+) -> Value {
+    let answer = json!({
+        "image": image.id.to_string(),
+        "turned": placed.angle_deg - image.angle_deg,
+        "angle": placed.angle_deg,
+        "mirrored": placed.mirrored,
+    });
+    feature.sketch.images[k] = placed;
+    answer
+}
+
+fn align_image(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let (k, image) = numbered_image(a, &feature.sketch)?;
+    let point = |name: &str| a.vec2(name).map(|[x, y]| vec(x, y));
+    let placed = crate::images::align(&image, point("origin")?, point("toward")?)
+        .ok_or_else(|| CommandError::bad("toward", "must be apart from the origin"))?;
+    Ok(lay_image(feature, k, &image, placed))
+}
+
+fn turn_image(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let (k, image) = numbered_image(a, &feature.sketch)?;
+    let quarters = a
+        .opt_number("quarters")?
+        .unwrap_or(if a.has("mirror") { 0.0 } else { 1.0 });
+    let placed = crate::images::turn(
+        &image,
+        quarters.round() as i32,
+        a.opt_bool("mirror")? == Some(true),
+    );
+    Ok(lay_image(feature, k, &image, placed))
+}
+
+fn save_scanner_profile(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: SketchFeature,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    let a = Args(args);
-    if id == "sketch.image" {
-        return add_image(&a, ctx);
-    }
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
-    match id {
-        "sketch.set_image" => {
-            let image = a.id("image")?;
-            let Some(at) = feature.sketch.images.iter().position(|i| i.id == image) else {
-                return Err(CommandError::bad(
-                    "image",
-                    "is not a picture of this sketch",
-                ));
-            };
-            if a.opt_bool("remove")?.unwrap_or(false) {
-                feature.sketch.images.remove(at);
-            } else {
-                let placed = place_image(&a, feature.sketch.images[at].clone())?;
-                feature.sketch.images[at] = placed;
-            }
-            return save(ctx, sketch_id, feature, Value::Null);
-        }
-        "sketch.bolt_circle" => {
-            let ids: Vec<Uuid> = match args.get("circles") {
-                Some(Value::Array(list)) => list
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .and_then(|s| s.parse().ok())
-                            .ok_or_else(|| CommandError::bad("circles", "are element ids"))
-                    })
-                    .collect::<Result<_, _>>()?,
-                _ => return Err(CommandError::bad("circles", "lists three or more circles")),
-            };
-            let centres: Vec<Vec2D> = ids
-                .iter()
-                .map(|id| match feature.sketch.get_geometry(*id) {
-                    Some(GeometryElement::Circle(c)) => feature.sketch.point_position(c.center),
-                    Some(GeometryElement::Arc(a)) => feature.sketch.point_position(a.center),
-                    _ => None,
-                })
-                .collect::<Option<_>>()
-                .ok_or_else(|| CommandError::bad("circles", "are circles or arcs of the sketch"))?;
-            if centres.len() < 3 {
-                return Err(CommandError::bad("circles", "lists three or more circles"));
-            }
-            let Some(crate::picture_edges::Fit::Circle { centre, radius, .. }) =
-                crate::picture_edges::circle_fit(&centres)
-            else {
-                return Err(CommandError::failed("the centres lie on a line"));
-            };
-            let strays: Vec<f64> = centres
-                .iter()
-                .map(|p| (p.x - centre.x).hypot(p.y - centre.y) - radius)
-                .collect();
-            let angles: Vec<f64> = centres
-                .iter()
-                .map(|p| (p.y - centre.y).atan2(p.x - centre.x).to_degrees())
-                .collect();
-            let c = point_at(&mut feature.sketch, centre);
-            let id = feature
-                .sketch
-                .add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
-            feature.sketch.set_construction(id, true);
-            let answer = json!({
-                "element": id.to_string(),
-                "centre": {"x": centre.x, "y": centre.y},
-                "radius": radius,
-                "strays": strays,
-                "angles": angles,
-            });
-            return save(ctx, sketch_id, feature, answer);
-        }
-        "sketch.align_image" | "sketch.turn_image" => {
-            let n = a.opt_number("image")?.unwrap_or(1.0) as usize;
-            let k = n
-                .checked_sub(1)
-                .filter(|k| *k < feature.sketch.images.len())
-                .ok_or_else(|| CommandError::bad("image", "names no picture of the sketch"))?;
-            let image = feature.sketch.images[k].clone();
-            let placed = if id == "sketch.align_image" {
-                let point = |name: &str| a.vec2(name).map(|[x, y]| vec(x, y));
-                crate::images::align(&image, point("origin")?, point("toward")?)
-                    .ok_or_else(|| CommandError::bad("toward", "must be apart from the origin"))?
-            } else {
-                let quarters =
-                    a.opt_number("quarters")?
-                        .unwrap_or(if a.has("mirror") { 0.0 } else { 1.0 });
-                crate::images::turn(
-                    &image,
-                    quarters.round() as i32,
-                    a.opt_bool("mirror")? == Some(true),
-                )
-            };
-            let answer = json!({
-                "image": image.id.to_string(),
-                "turned": placed.angle_deg - image.angle_deg,
-                "angle": placed.angle_deg,
-                "mirrored": placed.mirrored,
-            });
-            feature.sketch.images[k] = placed;
-            return save(ctx, sketch_id, feature, answer);
-        }
-        "sketch.calibrate_axis" | "sketch.save_scanner_profile" => {
-            let n = a.opt_number("image")?.unwrap_or(1.0) as usize;
-            let k = n
-                .checked_sub(1)
-                .filter(|k| *k < feature.sketch.images.len())
-                .ok_or_else(|| CommandError::bad("image", "names no picture of the sketch"))?;
-            let image = feature.sketch.images[k].clone();
-            if id == "sketch.save_scanner_profile" {
-                let bytes = ctx
-                    .document
-                    .asset_bytes(image.asset)
-                    .ok_or_else(|| CommandError::failed("the picture's file is missing"))?;
-                let (w, _) = image::ImageReader::new(std::io::Cursor::new(bytes))
-                    .with_guessed_format()
-                    .ok()
-                    .and_then(|r| r.into_dimensions().ok())
-                    .ok_or_else(|| CommandError::failed("the picture does not read"))?;
-                let x = image.width / f64::from(w.max(1));
-                let profile = crate::images::ScannerProfile {
-                    name: a.string("name")?.to_string(),
-                    dpi: image.dpi,
-                    mm_per_px: [x, x * image.stretch],
-                };
-                crate::images::keep_scanner_profile(profile.clone())
-                    .map_err(CommandError::failed)?;
-                return Ok(json!({"name": profile.name, "dpi": profile.dpi,
-                                 "mm_per_px": {"x": profile.mm_per_px[0], "y": profile.mm_per_px[1]}}));
-            }
-            let point = |name: &str| a.vec2(name).map(|[x, y]| vec(x, y));
-            let y = match a.string("axis")? {
-                "x" => false,
-                "y" => true,
-                _ => return Err(CommandError::bad("axis", "is x or y")),
-            };
-            let placed = crate::images::calibrate_axis(
-                &image,
-                point("from")?,
-                point("to")?,
-                a.number("length")?,
-                y,
-            )
+    let (_, image) = numbered_image(a, &feature.sketch)?;
+    let bytes = ctx
+        .document
+        .asset_bytes(image.asset)
+        .ok_or_else(|| CommandError::failed("the picture's file is missing"))?;
+    let (w, _) = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .ok_or_else(|| CommandError::failed("the picture does not read"))?;
+    let x = image.width / f64::from(w.max(1));
+    let profile = crate::images::ScannerProfile {
+        name: a.string("name")?.to_string(),
+        dpi: image.dpi,
+        mm_per_px: [x, x * image.stretch],
+    };
+    crate::images::keep_scanner_profile(profile.clone()).map_err(CommandError::failed)?;
+    Ok(json!({"name": profile.name, "dpi": profile.dpi,
+              "mm_per_px": {"x": profile.mm_per_px[0], "y": profile.mm_per_px[1]}}))
+}
+
+fn calibrate_axis(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let (k, image) = numbered_image(a, &feature.sketch)?;
+    let point = |name: &str| a.vec2(name).map(|[x, y]| vec(x, y));
+    let y = match a.string("axis")? {
+        "x" => false,
+        "y" => true,
+        _ => return Err(CommandError::bad("axis", "is x or y")),
+    };
+    let placed =
+        crate::images::calibrate_axis(&image, point("from")?, point("to")?, a.number("length")?, y)
             .ok_or_else(|| {
                 CommandError::failed(
                     "the points are not apart along that axis, or the length is not a size",
                 )
             })?;
-            let scale = if y {
-                placed.stretch / image.stretch
-            } else {
-                placed.width / image.width
-            };
-            feature.sketch.images[k] = placed;
-            return save(
-                ctx,
-                sketch_id,
-                feature,
-                json!({"image": image.id.to_string(), "scale": scale}),
-            );
+    let scale = if y {
+        placed.stretch / image.stretch
+    } else {
+        placed.width / image.width
+    };
+    feature.sketch.images[k] = placed;
+    Ok(json!({"image": image.id.to_string(), "scale": scale}))
+}
+
+fn image_profile(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let at = vec(a.number("x")?, a.number("y")?);
+    let prominence = a.opt_number("prominence")?.unwrap_or(0.2);
+    let mut best: Option<(f64, Vec2D, Vec<[f64; 2]>)> = None;
+    for image in &feature.sketch.images {
+        let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
+            continue;
+        };
+        let Some((w, h, found)) = crate::picture_edges::objects_of(bytes, 1.0, image.stretch)
+        else {
+            continue;
+        };
+        let set = crate::picture_edges::EdgeSet {
+            width: w,
+            height: h,
+            chains: Vec::new(),
+        };
+        for o in found {
+            let c = crate::picture_edges::to_sketch(image, &set, o.centroid);
+            let d = (c.x - at.x).hypot(c.y - at.y);
+            if best.as_ref().is_none_or(|(b, _, _)| d < *b) {
+                let outline = o
+                    .outline
+                    .iter()
+                    .map(|p| {
+                        let q = crate::picture_edges::to_sketch(image, &set, *p);
+                        [q.x, q.y]
+                    })
+                    .collect();
+                best = Some((d, c, outline));
+            }
         }
-        "sketch.image_profile" => {
-            let at = vec(a.number("x")?, a.number("y")?);
-            let prominence = a.opt_number("prominence")?.unwrap_or(0.2);
-            let mut best: Option<(f64, Vec2D, Vec<[f64; 2]>)> = None;
-            for image in &feature.sketch.images {
-                let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
-                    continue;
-                };
-                let Some((w, h, found)) =
-                    crate::picture_edges::objects_of(bytes, 1.0, image.stretch)
-                else {
-                    continue;
-                };
-                let set = crate::picture_edges::EdgeSet {
-                    width: w,
-                    height: h,
-                    chains: Vec::new(),
-                };
-                for o in found {
-                    let c = crate::picture_edges::to_sketch(image, &set, o.centroid);
-                    let d = (c.x - at.x).hypot(c.y - at.y);
-                    if best.as_ref().is_none_or(|(b, _, _)| d < *b) {
-                        let outline = o
-                            .outline
-                            .iter()
-                            .map(|p| {
-                                let q = crate::picture_edges::to_sketch(image, &set, *p);
-                                [q.x, q.y]
-                            })
-                            .collect();
-                        best = Some((d, c, outline));
-                    }
-                }
-            }
-            let (_, centre, outline) =
-                best.ok_or_else(|| CommandError::failed("no part on the sketch's pictures"))?;
-            let radius = metrology::profile::radial(&outline, [centre.x, centre.y], 720);
-            let found = metrology::profile::peaks(&radius, prominence);
-            let (inner, outer) = radius
-                .iter()
-                .fold((f64::MAX, f64::MIN), |(a, b), r| (a.min(*r), b.max(*r)));
-            let mut answer = json!({
-                "centre": {"x": centre.x, "y": centre.y},
-                "peaks": found.len(),
-                "pitch": if found.is_empty() { Value::Null } else { json!(360.0 / found.len() as f64) },
-                "outer": outer,
-                "inner": inner,
-                "at": found.iter().map(|p| p.at as f64 / 2.0).collect::<Vec<_>>(),
-            });
-            if a.opt_bool("samples")? == Some(true) {
-                answer["radius"] = json!(radius.iter().step_by(2).collect::<Vec<_>>());
-            }
-            return Ok(answer);
-        }
-        "sketch.image_objects" => {
-            let min_area = a.opt_number("min_area")?.unwrap_or(1.0);
-            let outlines = a.opt_bool("outlines")? == Some(true);
-            let mut out = Vec::new();
-            for (n, image) in feature.sketch.images.iter().enumerate() {
-                let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
-                    continue;
-                };
-                let Some((w, h, found)) =
-                    crate::picture_edges::objects_of(bytes, 1.0, image.stretch)
-                else {
-                    continue;
-                };
-                let set = crate::picture_edges::EdgeSet {
-                    width: w,
-                    height: h,
-                    chains: Vec::new(),
-                };
-                let mm = image.width / w.max(1) as f64;
-                for o in found {
-                    let area = o.area * mm * mm;
-                    if area < min_area {
-                        continue;
-                    }
-                    let c = crate::picture_edges::to_sketch(image, &set, o.centroid);
-                    let mut axis = o.long_axis_deg + image.angle_deg;
-                    axis = (axis + 90.0).rem_euclid(180.0) - 90.0;
-                    let mut entry = json!({
-                        "image": n + 1,
-                        "area": area,
-                        "holes": o.holes,
-                        "centroid": {"x": c.x, "y": c.y},
-                        "diameter": o.equivalent_diameter * mm,
-                        "max_width": o.max_width * mm,
-                        "min_width": o.min_width * mm,
-                        "long_axis": axis,
-                    });
-                    if outlines {
-                        entry["outline"] = json!(
-                            o.outline
-                                .iter()
-                                .map(|p| {
-                                    let q = crate::picture_edges::to_sketch(image, &set, *p);
-                                    [q.x, q.y]
-                                })
-                                .collect::<Vec<_>>()
-                        );
-                    }
-                    out.push(entry);
-                }
-            }
-            if feature.sketch.images.is_empty() {
-                return Err(CommandError::failed("the sketch has no picture"));
-            }
-            return Ok(json!(out));
-        }
-        _ => {}
     }
-    Err(CommandError::Unknown(id.to_string()))
+    let (_, centre, outline) =
+        best.ok_or_else(|| CommandError::failed("no part on the sketch's pictures"))?;
+    let radius = metrology::profile::radial(&outline, [centre.x, centre.y], 720);
+    let found = metrology::profile::peaks(&radius, prominence);
+    let (inner, outer) = radius
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), r| (a.min(*r), b.max(*r)));
+    let mut answer = json!({
+        "centre": {"x": centre.x, "y": centre.y},
+        "peaks": found.len(),
+        "pitch": if found.is_empty() { Value::Null } else { json!(360.0 / found.len() as f64) },
+        "outer": outer,
+        "inner": inner,
+        "at": found.iter().map(|p| p.at as f64 / 2.0).collect::<Vec<_>>(),
+    });
+    if a.opt_bool("samples")? == Some(true) {
+        answer["radius"] = json!(radius.iter().step_by(2).collect::<Vec<_>>());
+    }
+    Ok(answer)
+}
+
+fn image_objects(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let min_area = a.opt_number("min_area")?.unwrap_or(1.0);
+    let outlines = a.opt_bool("outlines")? == Some(true);
+    let mut out = Vec::new();
+    for (n, image) in feature.sketch.images.iter().enumerate() {
+        let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
+            continue;
+        };
+        let Some((w, h, found)) = crate::picture_edges::objects_of(bytes, 1.0, image.stretch)
+        else {
+            continue;
+        };
+        let set = crate::picture_edges::EdgeSet {
+            width: w,
+            height: h,
+            chains: Vec::new(),
+        };
+        let mm = image.width / w.max(1) as f64;
+        for o in found {
+            let area = o.area * mm * mm;
+            if area < min_area {
+                continue;
+            }
+            let c = crate::picture_edges::to_sketch(image, &set, o.centroid);
+            let mut axis = o.long_axis_deg + image.angle_deg;
+            axis = (axis + 90.0).rem_euclid(180.0) - 90.0;
+            let mut entry = json!({
+                "image": n + 1,
+                "area": area,
+                "holes": o.holes,
+                "centroid": {"x": c.x, "y": c.y},
+                "diameter": o.equivalent_diameter * mm,
+                "max_width": o.max_width * mm,
+                "min_width": o.min_width * mm,
+                "long_axis": axis,
+            });
+            if outlines {
+                entry["outline"] = json!(
+                    o.outline
+                        .iter()
+                        .map(|p| {
+                            let q = crate::picture_edges::to_sketch(image, &set, *p);
+                            [q.x, q.y]
+                        })
+                        .collect::<Vec<_>>()
+                );
+            }
+            out.push(entry);
+        }
+    }
+    if feature.sketch.images.is_empty() {
+        return Err(CommandError::failed("the sketch has no picture"));
+    }
+    Ok(json!(out))
 }
 
 /// `spec` taking where a picture lies: its middle, width, turn and opacity.

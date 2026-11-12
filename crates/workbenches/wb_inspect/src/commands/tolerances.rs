@@ -1,19 +1,19 @@
 //! Geometric tolerances read off elements.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, WorkbenchContext,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ParamKind,
     WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::json;
 
-use crate::{TOLERANCE, add_tolerance, element_at, tolerance, tolerance_answer, tolerance_read};
+use crate::{
+    InspectionWorkbench, TOLERANCE, add_tolerance, element_at, tolerance, tolerance_answer,
+    tolerance_read,
+};
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(id, TOLERANCE)
-}
-
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
+    t.add(
             CommandSpec::new(
                 TOLERANCE,
                 "Keep a geometric tolerance on an element",
@@ -105,91 +105,78 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                 assert(symmetry.pass and symmetry.value < 0.01)
                 assert(#pc.inspect.report{}.tolerances == 6)
             "#),
-        );
+        tolerance_command,
+    );
 }
 
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+fn tolerance_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    match id {
-        TOLERANCE => {
-            let characteristic = tolerance::Characteristic::ALL
-                .into_iter()
-                .find(|c| {
-                    c.key().eq_ignore_ascii_case(
-                        &a.string("characteristic").unwrap_or("").replace(' ', "_"),
-                    )
-                })
-                .ok_or_else(|| {
-                    CommandError::bad("characteristic", "is not a tolerance characteristic")
-                })?;
-            let datum = a.opt_id("datum")?.map(core_document::FeatureId);
-            let fields =
-                serde_json::to_value(args).map_err(|e| CommandError::failed(e.to_string()))?;
-            let mut t: tolerance::Tolerance = serde_json::from_value(json!({
-                "name": "", "scan": uuid::Uuid::nil(), "characteristic": characteristic,
-                "element": a.id("element")?, "datum": datum, "limit": a.number("limit")?,
-            }))
-            .map_err(|e| CommandError::failed(e.to_string()))?;
-            let mut data = t.to_json();
-            for key in [
-                "datums",
-                "basic",
-                "basic_direction",
-                "material",
-                "material_size",
-                "unequal",
-                "section",
-                "comparison",
-                "reference_face",
-                "opposed",
-                "section_width",
-            ] {
-                if let Some(v) = fields.get(key) {
-                    data[key] = v.clone();
-                }
-            }
-            t = tolerance::Tolerance::from_json(&data)
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            t.angle_deg = a.opt_number("angle")?;
-            if let Some(id) = a.opt_id("tolerance")? {
-                let id = core_document::FeatureId(id);
-                let old = ctx
-                    .document
-                    .feature_tree()
-                    .get_node(id)
-                    .ok_or_else(|| CommandError::bad("tolerance", "is gone"))?;
-                if old.workbench_id.as_str() != tolerance::KIND {
-                    return Err(CommandError::bad("tolerance", "is not a tolerance"));
-                }
-                let body = old.body;
-                t.name = old.name.clone();
-                t.scan = element_at(ctx.document, t.element)
-                    .ok_or_else(|| CommandError::bad("element", "is gone"))?
-                    .scan;
-                if body != Some(t.scan) {
-                    return Err(CommandError::bad(
-                        "element",
-                        "must stay on the tolerance's scan",
-                    ));
-                }
-                let reading = tolerance_read::evaluate(
-                    ctx.document,
-                    &t,
-                    ctx.kernel.map(|k| k as &dyn kernel_api::KernelQueries),
-                )
-                .map_err(CommandError::failed)?;
-                ctx.document
-                    .update_feature_data(id, t.to_json())
-                    .map_err(|e| CommandError::failed(e.to_string()))?;
-                ctx.document.set_feature_dependencies(id, t.dependencies());
-                return Ok(tolerance_answer(id, &t, &Ok(reading)));
-            }
-            add_tolerance(ctx, t).map_err(CommandError::failed)
+    let characteristic = tolerance::Characteristic::ALL
+        .into_iter()
+        .find(|c| {
+            c.key()
+                .eq_ignore_ascii_case(&a.string("characteristic").unwrap_or("").replace(' ', "_"))
+        })
+        .ok_or_else(|| CommandError::bad("characteristic", "is not a tolerance characteristic"))?;
+    let datum = a.opt_id("datum")?.map(core_document::FeatureId);
+    let fields = serde_json::to_value(args).map_err(|e| CommandError::failed(e.to_string()))?;
+    let mut t: tolerance::Tolerance = serde_json::from_value(json!({
+        "name": "", "scan": uuid::Uuid::nil(), "characteristic": characteristic,
+        "element": a.id("element")?, "datum": datum, "limit": a.number("limit")?,
+    }))
+    .map_err(|e| CommandError::failed(e.to_string()))?;
+    let mut data = t.to_json();
+    for key in [
+        "datums",
+        "basic",
+        "basic_direction",
+        "material",
+        "material_size",
+        "unequal",
+        "section",
+        "comparison",
+        "reference_face",
+        "opposed",
+        "section_width",
+    ] {
+        if let Some(v) = fields.get(key) {
+            data[key] = v.clone();
         }
-        _ => Err(CommandError::Unknown(id.to_string())),
     }
+    t = tolerance::Tolerance::from_json(&data).map_err(|e| CommandError::failed(e.to_string()))?;
+    t.angle_deg = a.opt_number("angle")?;
+    if let Some(id) = a.opt_id("tolerance")? {
+        let id = core_document::FeatureId(id);
+        let old = ctx
+            .document
+            .feature_tree()
+            .get_node(id)
+            .ok_or_else(|| CommandError::bad("tolerance", "is gone"))?;
+        if old.workbench_id.as_str() != tolerance::KIND {
+            return Err(CommandError::bad("tolerance", "is not a tolerance"));
+        }
+        let body = old.body;
+        t.name = old.name.clone();
+        t.scan = element_at(ctx.document, t.element)
+            .ok_or_else(|| CommandError::bad("element", "is gone"))?
+            .scan;
+        if body != Some(t.scan) {
+            return Err(CommandError::bad(
+                "element",
+                "must stay on the tolerance's scan",
+            ));
+        }
+        let reading = tolerance_read::evaluate(
+            ctx.document,
+            &t,
+            ctx.kernel.map(|k| k as &dyn kernel_api::KernelQueries),
+        )
+        .map_err(CommandError::failed)?;
+        ctx.document
+            .update_feature_data(id, t.to_json())
+            .map_err(|e| CommandError::failed(e.to_string()))?;
+        ctx.document.set_feature_dependencies(id, t.dependencies());
+        return Ok(tolerance_answer(id, &t, &Ok(reading)));
+    }
+    add_tolerance(ctx, t).map_err(CommandError::failed)
 }

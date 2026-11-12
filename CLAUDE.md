@@ -1364,16 +1364,26 @@ owns the moment.
 **Commands and scripts.** `core_document::command` is the command
 contract: `CommandSpec` (id, typed `ParamSpec`s, `extra_args`), JSON
 `CommandArgs` in, `CommandResult` out, `spec.check` before every call. A
-bench registers commands in `configure` (`register_command`, ids unique
-across the registry) in the order the generated reference lists them (the
-Sketcher and Assembly, whose commands live in `commands/<family>.rs`,
-sort theirs by the `ORDER` list in `commands.rs`, which a test holds
-complete) and runs them in `Workbench::run_command` with the
-same context its tools get. Assembly's families each fill a
-`CommandTable` (`core_document::command`: every spec beside the function
-that runs it, so an id is written once), from which its registration
-order, `owns` and dispatch derive; the other benches' families still
-pair an `owns` match with their specs. `command::object` turns a JSON
+bench registers commands in `configure` (ids unique across the registry)
+in the order the generated reference lists them and runs them in
+`Workbench::run_command` with the same context its tools get. Every
+built-in bench keeps them in one `CommandTable<B>`
+(`core_document::command`: every spec beside the function that runs it,
+so an id is written once; registration order, `owns` and dispatch derive
+from it), built from one `table(t)` per family module and kept in a
+`OnceLock` in its `commands.rs`. `B` is the bench state a handler takes:
+`add`/`add_by_id` for handlers needing only the context, `add_on`/
+`add_on_by_id` for ones taking `&mut B` (Design, Surface, Inspection,
+the Sketcher's exports, the Mesh's step results), `add_free`/`add_with`
+for a handler a family's wrapper makes around a step several commands
+share (the Sketcher's `editing`, `reading` and `editing_text`: load the
+sketch, run the step, solve and store it; the Mesh's `on_scan`: the
+scan and its starting mesh), and `include` for a family kept as a table
+of its own (Inspection's `align_commands`, which tools ask `owns` of).
+`run_on(bench, ..)` runs any; `run(..)`, for code holding the context
+but not the bench (a panel), runs those needing no bench state. The
+Sketcher and Assembly sort theirs by the `ORDER` list in `commands.rs`
+(`sort_by_order`), which a test holds complete. `command::object` turns a JSON
 value into arguments. Benches' tests run commands through
 `core_document::testing` (the `test-support` feature, turned on only by
 dev-dependencies): `ctx(doc)`, a context with no camera, and

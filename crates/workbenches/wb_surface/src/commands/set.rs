@@ -1,25 +1,18 @@
 //! `surface.set`: a step's fields and curves changed.
 
 use core_document::{
-    CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind, WorkbenchContext,
+    CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId, ParamKind,
     WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::Value;
 
 use super::steps::{merge_fields, sketch_curves, unreadable};
 use crate::feature::{KIND, SurfaceFeature};
-use crate::{SET_COMMAND, panel_free};
+use crate::{SET_COMMAND, SurfaceWorkbench, panel_free};
 
-pub(super) fn owns(id: &str) -> bool {
-    id == SET_COMMAND
-}
-
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(set());
-}
-
-pub(super) fn run(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    set_by_command(args, ctx)
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SurfaceWorkbench>) {
+    t.add(set(), set_by_command);
 }
 
 /// `surface.set`.

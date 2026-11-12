@@ -3,7 +3,7 @@
 
 use core_document::command::vec3_of;
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
+    Args, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId, ParamKind,
     WorkbenchRuntimeContext,
 };
 use serde_json::Value;
@@ -11,22 +11,14 @@ use uuid::Uuid;
 
 use crate::sketch::{GeometryElement, Sketch, SketchPlane};
 
-use super::{ids, ids_of, load, made_since, save, sketch};
+use super::editing;
+use super::{ids, ids_of, made_since, sketch};
+use crate::SketchWorkbench;
+use crate::feature::SketchFeature;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.external_from"
-            | "sketch.external_defining"
-            | "sketch.external"
-            | "sketch.intersection"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add_free(
         sketch(
             CommandSpec::new(
                 "sketch.external_from",
@@ -91,8 +83,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - math.pi * 36 * 3) < 0.01, "the copy follows: " .. m.volume)
             "#,
         ),
+        editing(external_from),
     );
-    specs.push(
+    t.add_free(
         sketch(
             CommandSpec::new(
                 "sketch.external_defining",
@@ -134,8 +127,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - math.pi * 25 * 3) < 0.01, m.volume)
             "#,
         ),
+        editing(external_defining),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.external",
             "Project edges of solids into the sketch as fixed references",
@@ -207,8 +201,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(pc.doc.measure{body = body}.volume - 20 * 10 * 8) < 1e-3)
             "#,
         ),
+        editing(external),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.intersection",
             "Add where faces of solids cross the sketch plane, as fixed references",
@@ -255,98 +250,109 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             end
             "#,
         ),
+        editing(intersection),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
+fn external_from(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    let a = Args(args);
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
-    match id {
-        "sketch.external_from" => {
-            let from = FeatureId(a.id("from")?);
-            if from == sketch_id {
-                return Err(CommandError::bad("from", "must be another sketch"));
-            }
-            let sources = reference_sources(ctx.document, from)
-                .ok_or_else(|| CommandError::bad("from", "must be a sketch or a datum"))?;
-            let sources = counting(&a, sources)?;
-            let before = ids_of(&feature.sketch);
-            let placed = crate::placed_plane(
-                &feature.plane,
-                &crate::sketch_placement(ctx.document, sketch_id),
-            );
-            add_external(ctx, &placed, &mut feature.sketch, &sources)
-                .map_err(CommandError::failed)?;
-            let made = made_since(&feature.sketch, &before);
-            return save(ctx, sketch_id, feature, made);
-        }
-        "sketch.external_defining" => {
-            let items = ids(args.get("items"), "items", &feature.sketch)?;
-            // The points of an external curve go with it: the list
-            // `sketch.external` answers with is taken as it comes.
-            let on_external: std::collections::HashSet<Uuid> = feature
-                .sketch
-                .geometry
-                .iter()
-                .filter(|g| feature.sketch.external.contains_key(&g.id()))
-                .flat_map(Sketch::curve_point_ids)
-                .collect();
-            let items: Vec<Uuid> = items
-                .into_iter()
-                .filter(|i| feature.sketch.external.contains_key(i) || !on_external.contains(i))
-                .collect();
-            if let Some(bad) = items
-                .iter()
-                .find(|i| !feature.sketch.external.contains_key(i))
-            {
-                return Err(CommandError::bad(
-                    "items",
-                    format!("{bad} is not external geometry"),
-                ));
-            }
-            set_external_defining(
-                &mut feature.sketch,
-                &items,
-                a.opt_bool("on")?.unwrap_or(true),
-            );
-            return save(ctx, sketch_id, feature, Value::Null);
-        }
-        "sketch.intersection" => {
-            let faces = counting(&a, section_sources(args.get("faces"))?)?;
-            let before = ids_of(&feature.sketch);
-            let placed = crate::placed_plane(
-                &feature.plane,
-                &crate::sketch_placement(ctx.document, sketch_id),
-            );
-            add_external(ctx, &placed, &mut feature.sketch, &faces)
-                .map_err(CommandError::failed)?;
-            let made = made_since(&feature.sketch, &before);
-            return save(ctx, sketch_id, feature, made);
-        }
-        "sketch.external" => {
-            let edges = counting(&a, external_sources(args.get("edges"))?)?;
-            let before = ids_of(&feature.sketch);
-            let placed = crate::placed_plane(
-                &feature.plane,
-                &crate::sketch_placement(ctx.document, sketch_id),
-            );
-            let added = add_external(ctx, &placed, &mut feature.sketch, &edges)
-                .map_err(CommandError::failed)?;
-            if added == 0 {
-                return Err(CommandError::failed("no edge could be projected"));
-            }
-            let made = made_since(&feature.sketch, &before);
-            return save(ctx, sketch_id, feature, made);
-        }
-        _ => {}
+    let from = FeatureId(a.id("from")?);
+    if from == sketch_id {
+        return Err(CommandError::bad("from", "must be another sketch"));
     }
-    Err(CommandError::Unknown(id.to_string()))
+    let sources = reference_sources(ctx.document, from)
+        .ok_or_else(|| CommandError::bad("from", "must be a sketch or a datum"))?;
+    let sources = counting(a, sources)?;
+    let before = ids_of(&feature.sketch);
+    let placed = crate::placed_plane(
+        &feature.plane,
+        &crate::sketch_placement(ctx.document, sketch_id),
+    );
+    add_external(ctx, &placed, &mut feature.sketch, &sources).map_err(CommandError::failed)?;
+    let made = made_since(&feature.sketch, &before);
+    Ok(made)
+}
+
+fn external_defining(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let items = ids(args.get("items"), "items", &feature.sketch)?;
+    // The points of an external curve go with it: the list
+    // `sketch.external` answers with is taken as it comes.
+    let on_external: std::collections::HashSet<Uuid> = feature
+        .sketch
+        .geometry
+        .iter()
+        .filter(|g| feature.sketch.external.contains_key(&g.id()))
+        .flat_map(Sketch::curve_point_ids)
+        .collect();
+    let items: Vec<Uuid> = items
+        .into_iter()
+        .filter(|i| feature.sketch.external.contains_key(i) || !on_external.contains(i))
+        .collect();
+    if let Some(bad) = items
+        .iter()
+        .find(|i| !feature.sketch.external.contains_key(i))
+    {
+        return Err(CommandError::bad(
+            "items",
+            format!("{bad} is not external geometry"),
+        ));
+    }
+    set_external_defining(
+        &mut feature.sketch,
+        &items,
+        a.opt_bool("on")?.unwrap_or(true),
+    );
+    Ok(Value::Null)
+}
+
+fn intersection(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let faces = counting(a, section_sources(args.get("faces"))?)?;
+    let before = ids_of(&feature.sketch);
+    let placed = crate::placed_plane(
+        &feature.plane,
+        &crate::sketch_placement(ctx.document, sketch_id),
+    );
+    add_external(ctx, &placed, &mut feature.sketch, &faces).map_err(CommandError::failed)?;
+    let made = made_since(&feature.sketch, &before);
+    Ok(made)
+}
+
+fn external(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let edges = counting(a, external_sources(args.get("edges"))?)?;
+    let before = ids_of(&feature.sketch);
+    let placed = crate::placed_plane(
+        &feature.plane,
+        &crate::sketch_placement(ctx.document, sketch_id),
+    );
+    let added =
+        add_external(ctx, &placed, &mut feature.sketch, &edges).map_err(CommandError::failed)?;
+    if added == 0 {
+        return Err(CommandError::failed("no edge could be projected"));
+    }
+    let made = made_since(&feature.sketch, &before);
+    Ok(made)
 }
 
 /// `sources` counting in the profile or only guiding, as the call's

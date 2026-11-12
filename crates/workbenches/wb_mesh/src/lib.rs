@@ -9,16 +9,17 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId,
-    FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind, ToolDescriptor, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, Document,
+    FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind, ToolDescriptor,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+mod commands;
 mod solids;
 mod steps;
 mod task;
@@ -389,7 +390,7 @@ impl core_document::Workbench for MeshWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
-        steps::register(context);
+        commands::register(context);
         let category = |id: &str| match id {
             "mesh.fill" | "mesh.smooth" => "repair",
             "mesh.offset" | "mesh.reduce" | "mesh.boolean" | "mesh.thicken" => "shape",
@@ -410,57 +411,6 @@ impl core_document::Workbench for MeshWorkbench {
                 ToolDescriptor::new_action(id, label, Some(category(id))).icon(icon),
             );
         }
-        let scan = |spec: CommandSpec| {
-            spec.optional("scan", ParamKind::Id, "The mesh body; the selected one")
-        };
-        context.register_command(
-            scan(CommandSpec::new(ISLANDS, "Remove specks"))
-                .optional("smaller_than", ParamKind::Number, "Pieces whose box's diagonal is shorter than this go, mm; a hundredth of the mesh's")
-                .returns("{feature, name}"),
-        );
-        context.register_command(
-            scan(CommandSpec::new(DELETE, "Delete marked faces"))
-                .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
-                .optional("box", ParamKind::Any, "{min = {x, y, z}, max = {x, y, z}} in the body's frame")
-                .optional("ball", ParamKind::Any, "{centre = {x, y, z}, radius = r} in the body's frame")
-                .returns("{feature, name}")
-                .note("Without a box or a ball it deletes the marked part of the scan. A face goes when all three of its corners are in the region."),
-        );
-        context.register_command(
-            scan(CommandSpec::new(FLIP, "Flip normals"))
-                .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
-                .optional("box", ParamKind::Any, "Only these faces")
-                .optional("ball", ParamKind::Any, "Only these faces")
-                .returns("{feature, name}")
-                .note("Without a region it turns the marked faces over, or every face when nothing is marked."),
-        );
-        context.register_command(
-            scan(CommandSpec::new(CUT, "Cut by a plane"))
-                .optional("plane", ParamKind::String, "xy, xz or yz, in the body's frame; xy")
-                .optional("at", ParamKind::Number, "Where along the plane's normal, mm; the mesh's middle")
-                .optional("keep", ParamKind::String, "below or above the plane; below")
-                .optional("close", ParamKind::Bool, "Cap every loop of the cut flat; true")
-                .optional("bridge", ParamKind::Number, "Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal")
-                .returns("{feature, name}"),
-        );
-        context.register_command(
-            scan(CommandSpec::new(DEVIATION, "Edit deviation"))
-                .returns("{max, rms, p99, added}")
-                .read_only()
-                .note(
-                    "Each point of the mesh the scan draws now is measured to its mesh as \
-                     imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` \
-                     the share of points on surface an edit added (caps, bridges: a triangle \
-                     whose middle lies off the start). The tool shows it as a map, added \
-                     surface grey.",
-                ),
-        );
-        context.register_command(
-            scan(CommandSpec::new(INSPECT, "Topology and volume"))
-                .returns("{triangles, open_edges, volume, pieces, bounds = {min, max}}")
-                .read_only()
-                .note("Of the mesh the body draws now, its history applied. A closed mesh has no open edges; its volume is positive when its faces point out."),
-        );
     }
 
     fn feature_info(&self, _node: &FeatureNode) -> FeatureInfo {
@@ -679,79 +629,7 @@ impl core_document::Workbench for MeshWorkbench {
         args: &CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
-        let a = Args(args);
-        if id == "mesh.set" || id == "mesh.result" {
-            return self.step_command(id, &a, ctx);
-        }
-        let body = target(&a, ctx)?;
-        let start = start_mesh(ctx.document, body)
-            .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-        if let Some((_, label, _)) = steps::TOOLS.iter().find(|(tool, _, _)| *tool == id) {
-            let (mesh, _) = ctx
-                .document
-                .local_geometry(body)
-                .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-            let op = steps::make(id, &a, ctx, body, &mesh)?;
-            return add_step(ctx, body, label, op);
-        }
-        match id {
-            ISLANDS => {
-                let smaller_than = a
-                    .opt_number("smaller_than")?
-                    .unwrap_or(diagonal(&start) / 100.0);
-                add_step(
-                    ctx,
-                    body,
-                    "Remove islands",
-                    MeshOp::RemoveIslands { smaller_than },
-                )
-            }
-            DELETE => {
-                let region = region(&a, ctx, body, false)?;
-                add_step(ctx, body, "Delete", MeshOp::Delete { region })
-            }
-            FLIP => {
-                let region = region(&a, ctx, body, true)?;
-                add_step(ctx, body, "Flip", MeshOp::Flip { region })
-            }
-            CUT => {
-                let (now, _) = ctx
-                    .document
-                    .local_geometry(body)
-                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-                let op = solids::cut(&a, &now)?;
-                add_step(ctx, body, "Cut", op)
-            }
-            "mesh.preview_cut" => solids::preview_cut(&a, ctx, body),
-            "mesh.export" => solids::export(&a, ctx, body),
-            "mesh.trim_to_scan" => solids::trim(&a, ctx, body),
-            DEVIATION => {
-                let start = ctx
-                    .document
-                    .mesh_start(body)
-                    .ok_or_else(|| CommandError::failed("the scan has no edits"))?
-                    .mesh
-                    .clone();
-                let (now, _) = ctx
-                    .document
-                    .local_geometry(body)
-                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-                let kernel = ctx
-                    .kernel
-                    .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
-                Ok(deviation_reading(
-                    &deviation(kernel, &start, &now).map_err(CommandError::failed)?,
-                ))
-            }
-            INSPECT => {
-                let (drawn, _) = ctx
-                    .document
-                    .local_geometry(body)
-                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-                Ok(inspect(&drawn))
-            }
-            _ => Err(CommandError::Unknown(id.to_string())),
-        }
+        commands::run(self, id, args, ctx)
     }
 }
 

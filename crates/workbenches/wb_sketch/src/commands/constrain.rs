@@ -2,30 +2,22 @@
 //! constraint's flags and removing axis alignments.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId, ParamKind,
+    WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::sketch::{ConstraintKind, Sketch};
 
-use super::{constrain, ids, load, sketch};
+use super::editing;
+use super::{constrain, ids, sketch};
+use crate::SketchWorkbench;
+use crate::feature::SketchFeature;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.constrain"
-            | "sketch.set_value"
-            | "sketch.set_constraint"
-            | "sketch.remove_axis_alignment"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.constrain",
             "Constrain elements, as the constraint's toolbar button does for a selection",
@@ -145,8 +137,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.min[1] - 5) < 1e-4 and math.abs(m.min[2] - 3) < 1e-4, "moved whole")
             "#,
         ),
+        editing(constrain_command),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.set_value",
             "Change a dimension's value",
@@ -184,8 +177,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - math.pi * 10 ^ 2) < 0.01, m.volume)
             "#,
         ),
+        editing(set_value),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.set_constraint",
             "Make constraints driving or reference, active or not, parked or not",
@@ -236,8 +230,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(#pc.sketch.status{sketch = s}.redundant == 0, "a reference only measures")
             "#,
         ),
+        editing(set_constraint),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.remove_axis_alignment",
             "Turn the horizontal and vertical constraints of lines into parallel and \
@@ -265,130 +260,140 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(pc.sketch.status{sketch = s}.dof == 5, "still a rectangle, free to turn")
             "#,
         ),
+        editing(remove_axis_alignment),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
+fn constrain_command(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let kind = a.string("kind")?;
+    let items = ids(args.get("items"), "items", sketch)?;
+    let value = a.opt_number("value")?;
+    let remove_redundant = a.opt_bool("remove_redundant")?.unwrap_or(false);
+    let made = constrain(sketch, kind, &items, value)?;
+    if remove_redundant {
+        remove_superseded(sketch, &made);
+    }
+    Ok(json!(made))
+}
+
+fn set_value(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let sketch = &mut feature.sketch;
+    let id = a.id("constraint")?;
+    let value = a.number("value")?;
+    let constraint = sketch
+        .constraints
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| CommandError::bad("constraint", "is not in this sketch"))?;
+    if crate::sketch::dimension_value(&constraint.kind).is_none() {
+        return Err(CommandError::bad("constraint", "is not a dimension"));
+    }
+    constraint.kind = crate::sketch::with_dimension_value(&constraint.kind, value);
+    if let Some(driving) = a.opt_bool("driving")? {
+        constraint.driving = driving;
+    }
+    Ok(Value::Null)
+}
+
+fn set_constraint(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    let a = Args(args);
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
+    let args = a.0;
     let sketch = &mut feature.sketch;
-    let answer = match id {
-        "sketch.constrain" => {
-            let kind = a.string("kind")?;
-            let items = ids(args.get("items"), "items", sketch)?;
-            let value = a.opt_number("value")?;
-            let remove_redundant = a.opt_bool("remove_redundant")?.unwrap_or(false);
-            let made = constrain(sketch, kind, &items, value)?;
-            if remove_redundant {
-                remove_superseded(sketch, &made);
-            }
-            json!(made)
-        }
-        "sketch.set_value" => {
-            let id = a.id("constraint")?;
-            let value = a.number("value")?;
-            let constraint = sketch
-                .constraints
-                .iter_mut()
-                .find(|c| c.id == id)
-                .ok_or_else(|| CommandError::bad("constraint", "is not in this sketch"))?;
-            if crate::sketch::dimension_value(&constraint.kind).is_none() {
-                return Err(CommandError::bad("constraint", "is not a dimension"));
-            }
-            constraint.kind = crate::sketch::with_dimension_value(&constraint.kind, value);
-            if let Some(driving) = a.opt_bool("driving")? {
-                constraint.driving = driving;
-            }
-            Value::Null
-        }
-        "sketch.set_constraint" => {
-            let items = ids(args.get("items"), "items", sketch)?;
-            let flags = ConstraintFlags {
-                driving: a.opt_bool("driving")?,
-                active: a.opt_bool("active")?,
-                parked: a.opt_bool("parked")?,
-            };
-            for id in &items {
-                let Some(c) = sketch.constraints.iter().find(|c| c.id == *id) else {
-                    return Err(CommandError::bad(
-                        "items",
-                        format!("has {id}, which is not a constraint"),
-                    ));
-                };
-                if flags.driving == Some(false) && crate::sketch::dimension_value(&c.kind).is_none()
-                {
-                    return Err(CommandError::bad(
-                        "driving",
-                        format!("cannot be false for {id}: only a dimension can be a reference"),
-                    ));
-                }
-            }
-            let (switch, arc_switch) = match a.opt_string("as")? {
-                None => (None, None),
-                Some("radius") => (Some(false), None),
-                Some("diameter") => (Some(true), None),
-                Some("length") => (None, Some(false)),
-                Some("angle") => (None, Some(true)),
-                Some(_) => {
-                    return Err(CommandError::bad(
-                        "as",
-                        "must be radius, diameter, length or angle",
-                    ));
-                }
-            };
-            set_constraints(sketch, &items, flags);
-            if let Some(angle) = arc_switch {
-                for id in &items {
-                    if !switch_arc_dimension(ctx.document, sketch_id, sketch, *id, angle) {
-                        return Err(CommandError::bad(
-                            "as",
-                            format!("length and angle apply to an arc's dimension, not {id}"),
-                        ));
-                    }
-                }
-            }
-            if let Some(diameter) = switch {
-                let circular = |id: &Uuid| {
-                    sketch.constraints.iter().any(|c| {
-                        c.id == *id
-                            && matches!(
-                                c.kind,
-                                ConstraintKind::Radius { .. } | ConstraintKind::Diameter { .. }
-                            )
-                    })
-                };
-                if let Some(id) = items.iter().find(|id| !circular(id)) {
-                    return Err(CommandError::bad(
-                        "as",
-                        format!("applies to radius and diameter dimensions, not {id}"),
-                    ));
-                }
-                for id in &items {
-                    switch_dimension(ctx.document, sketch_id, sketch, *id, diameter);
-                }
-            }
-            Value::Null
-        }
-        "sketch.remove_axis_alignment" => {
-            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
-                .into_iter()
-                .collect();
-            json!(crate::tools::remove_axis_alignment(sketch, &items))
-        }
-        _ => return Err(CommandError::Unknown(id.to_string())),
+    let items = ids(args.get("items"), "items", sketch)?;
+    let flags = ConstraintFlags {
+        driving: a.opt_bool("driving")?,
+        active: a.opt_bool("active")?,
+        parked: a.opt_bool("parked")?,
     };
-    crate::solver::solve(sketch);
-    ctx.document
-        .update_feature_data(sketch_id, feature.to_json())
-        .map_err(|e| CommandError::failed(e.to_string()))?;
-    ctx.document.mark_feature_dirty(sketch_id);
-    Ok(answer)
+    for id in &items {
+        let Some(c) = sketch.constraints.iter().find(|c| c.id == *id) else {
+            return Err(CommandError::bad(
+                "items",
+                format!("has {id}, which is not a constraint"),
+            ));
+        };
+        if flags.driving == Some(false) && crate::sketch::dimension_value(&c.kind).is_none() {
+            return Err(CommandError::bad(
+                "driving",
+                format!("cannot be false for {id}: only a dimension can be a reference"),
+            ));
+        }
+    }
+    let (switch, arc_switch) = match a.opt_string("as")? {
+        None => (None, None),
+        Some("radius") => (Some(false), None),
+        Some("diameter") => (Some(true), None),
+        Some("length") => (None, Some(false)),
+        Some("angle") => (None, Some(true)),
+        Some(_) => {
+            return Err(CommandError::bad(
+                "as",
+                "must be radius, diameter, length or angle",
+            ));
+        }
+    };
+    set_constraints(sketch, &items, flags);
+    if let Some(angle) = arc_switch {
+        for id in &items {
+            if !switch_arc_dimension(ctx.document, sketch_id, sketch, *id, angle) {
+                return Err(CommandError::bad(
+                    "as",
+                    format!("length and angle apply to an arc's dimension, not {id}"),
+                ));
+            }
+        }
+    }
+    if let Some(diameter) = switch {
+        let circular = |id: &Uuid| {
+            sketch.constraints.iter().any(|c| {
+                c.id == *id
+                    && matches!(
+                        c.kind,
+                        ConstraintKind::Radius { .. } | ConstraintKind::Diameter { .. }
+                    )
+            })
+        };
+        if let Some(id) = items.iter().find(|id| !circular(id)) {
+            return Err(CommandError::bad(
+                "as",
+                format!("applies to radius and diameter dimensions, not {id}"),
+            ));
+        }
+        for id in &items {
+            switch_dimension(ctx.document, sketch_id, sketch, *id, diameter);
+        }
+    }
+    Ok(Value::Null)
+}
+
+fn remove_axis_alignment(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let sketch = &mut feature.sketch;
+    let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+        .into_iter()
+        .collect();
+    Ok(json!(crate::tools::remove_axis_alignment(sketch, &items)))
 }
 
 /// Set the driving, active and parked flags of `items`, where given.

@@ -1,31 +1,20 @@
 //! Reading a sketch: its geometry, constraints, regions, status and walls.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchRuntimeContext,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId,
+    ParamKind, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::SketchWorkbench;
 use crate::sketch::{GeometryElement, Sketch};
 
 use super::{load, sketch};
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.geometry"
-            | "sketch.constraints"
-            | "sketch.regions"
-            | "sketch.status"
-            | "sketch.wall_thickness"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.geometry",
             "List the sketch's elements with their points",
@@ -61,8 +50,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(count.point == 3, "the line's ends and the centre are points of their own")
             "#,
         ),
+        evaluated(|s| Ok(describe(s))),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.constraints",
             "List the sketch's constraints",
@@ -93,8 +83,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(listed[1].items[1] == a and listed[1].items[2] == b)
             "#,
         ),
+        evaluated(|s| Ok(describe_constraints(s))),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.regions",
             "List the regions the sketch's curves close",
@@ -135,8 +126,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(found, "the lens sits between the centres")
             "#,
         ),
+        evaluated(describe_regions),
     );
-    specs.push(
+    t.add_on(
         sketch(CommandSpec::new(
             "sketch.wall_thickness",
             "How thin the sketch's closed profile gets, for printing",
@@ -172,8 +164,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(not pc.sketch.wall_thickness{sketch = s, minimum = 0.5}.thin)
             "#,
         ),
+        |bench, args, ctx| bench.wall_thickness_command(args, ctx),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.status",
             "How constrained the sketch is, and what conflicts",
@@ -210,33 +203,21 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(not status.solved and #status.conflicting == 3, "radius 5, equal, diameter 12")
             "#,
         ),
+        evaluated(|s| Ok(status(s))),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let a = Args(args);
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let feature = load(ctx, sketch_id)?;
-    // What the sketch reads as is what builds: its formulas' values in,
-    // solved.
-    if matches!(
-        id,
-        "sketch.geometry" | "sketch.constraints" | "sketch.status" | "sketch.regions"
-    ) {
+/// The handler of a command that reads a sketch as it builds: its
+/// formulas' values in, solved.
+fn evaluated(
+    read: fn(&Sketch) -> CommandResult,
+) -> impl Fn(&CommandArgs, &mut WorkbenchRuntimeContext) -> CommandResult + Send + Sync {
+    move |args, ctx| {
+        let sketch_id = FeatureId(Args(args).id("sketch")?);
+        let feature = load(ctx, sketch_id)?;
         let evaluated = crate::stored_sketch(ctx.document, sketch_id).unwrap_or(feature);
-        return Ok(match id {
-            "sketch.geometry" => describe(&evaluated.sketch),
-            "sketch.constraints" => describe_constraints(&evaluated.sketch),
-            "sketch.regions" => describe_regions(&evaluated.sketch)?,
-            _ => status(&evaluated.sketch),
-        });
+        read(&evaluated.sketch)
     }
-    Err(CommandError::Unknown(id.to_string()))
 }
 
 /// The name of a constraint kind, as it is stored.

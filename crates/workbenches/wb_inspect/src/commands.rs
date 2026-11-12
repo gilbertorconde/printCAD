@@ -11,53 +11,41 @@ mod tolerances;
 mod walls;
 
 use core_document::{
-    CommandArgs, CommandError, CommandResult, WorkbenchContext, WorkbenchRuntimeContext,
+    CommandArgs, CommandResult, CommandTable, WorkbenchContext, WorkbenchRuntimeContext,
 };
+use std::sync::OnceLock;
 
-use crate::InspectionWorkbench;
+use crate::{InspectionWorkbench, align_commands};
 
-/// Register every family's commands, in the order the reference lists them.
+/// Every command, in the order the reference lists them.
+fn table() -> &'static CommandTable<InspectionWorkbench> {
+    static TABLE: OnceLock<CommandTable<InspectionWorkbench>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = CommandTable::default();
+        t.include(align_commands::family());
+        sections::table(&mut t);
+        maps::table(&mut t);
+        output::table(&mut t);
+        tolerances::table(&mut t);
+        walls::table(&mut t);
+        comparisons::table(&mut t);
+        alignment::table(&mut t);
+        elements::table(&mut t);
+        t
+    })
+}
+
+/// Register every command, in the order the reference lists them.
 pub(crate) fn configure(context: &mut WorkbenchContext) {
-    sections::configure(context);
-    maps::configure(context);
-    output::configure(context);
-    tolerances::configure(context);
-    walls::configure(context);
-    comparisons::configure(context);
-    alignment::configure(context);
-    elements::configure(context);
+    table().register(context);
 }
 
 /// Run command `id` on `bench`.
 pub(crate) fn run(
-    bench: &InspectionWorkbench,
+    bench: &mut InspectionWorkbench,
     id: &str,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    if sections::owns(id) {
-        return sections::run(id, args, ctx);
-    }
-    if maps::owns(id) {
-        return maps::run(bench, id, args, ctx);
-    }
-    if output::owns(id) {
-        return output::run(bench, id, args, ctx);
-    }
-    if tolerances::owns(id) {
-        return tolerances::run(id, args, ctx);
-    }
-    if walls::owns(id) {
-        return walls::run(bench, id, args, ctx);
-    }
-    if comparisons::owns(id) {
-        return comparisons::run(bench, id, args, ctx);
-    }
-    if alignment::owns(id) {
-        return alignment::run(id, args, ctx);
-    }
-    if elements::owns(id) {
-        return elements::run(bench, id, args, ctx);
-    }
-    Err(CommandError::Unknown(id.to_string()))
+    table().run_on(bench, id, args, ctx)
 }

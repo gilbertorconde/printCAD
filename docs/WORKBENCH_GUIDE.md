@@ -158,29 +158,55 @@ context.register_action(
 ## 5. Add commands
 
 A command is something a script can call by name, with named arguments.
-Register it in `configure` and run it in `run_command`:
+Keep each command's spec beside the function that runs it in a
+`CommandTable`, so its id is written once: the table registers the specs
+in `configure`, answers which ids are the bench's and runs them in
+`run_command`.
 
 ```rust
-context.register_command(
-    CommandSpec::new("mine.slab", "Add a slab")
-        .param("width", ParamKind::Number, "In millimetres")
-        .optional("name", ParamKind::String, "Its name in the tree")
-        .returns("the feature's id"),
-);
+use std::sync::OnceLock;
+
+fn commands() -> &'static CommandTable<MyWorkbench> {
+    static TABLE: OnceLock<CommandTable<MyWorkbench>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = CommandTable::default();
+        t.add(
+            CommandSpec::new("mine.slab", "Add a slab")
+                .param("width", ParamKind::Number, "In millimetres")
+                .optional("name", ParamKind::String, "Its name in the tree")
+                .returns("the feature's id"),
+            slab,
+        );
+        t
+    })
+}
+
+fn slab(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let width = Args(args).number("width")?;
+    let made: FeatureId = todo!("add a {width} mm slab to ctx.document");
+    Ok(json!(made.0.to_string()))
+}
+
+// In `impl Workbench for MyWorkbench`:
+fn configure(&self, context: &mut WorkbenchContext) {
+    commands().register(context);
+}
 
 fn run_command(&mut self, id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    let a = Args(args);
-    match id {
-        "mine.slab" => {
-            let width = a.number("width")?;
-            let made: FeatureId = todo!("add a {width} mm slab to ctx.document");
-            Ok(json!(made.0.to_string()))
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
-    }
+    commands().run_on(self, id, args, ctx)
 }
 ```
 
+- A handler that reads the bench's own state (its settings, a cache)
+  takes it: `t.add_on(spec, |bench, args, ctx| ...)` gets `&mut
+  MyWorkbench`. A bench whose commands need none uses `CommandTable<()>`.
+- A step several commands share (find the feature they work on, store it
+  after) is a function that wraps each command's own step into a handler,
+  added with `t.add_free(spec, wrapper(step))`; the sketcher's `editing`
+  is one.
+- With many commands, keep one module per family, each with a
+  `table(t: &mut CommandTable<MyWorkbench>)` adding its own, and build
+  the bench's table from them.
 - The host checks the arguments against the spec before the call.
 - A command changes the document through its mutators, so the change is
   undoable like a click. It never opens a task or waits for input.
@@ -473,7 +499,8 @@ to the new one as `ctx.attach_request`.
    editing, `suspend_session`/`resume_session` for per-tab state,
    `has_settings` and `ui_settings` for preferences.
 7. `menu_items` and `on_command` for menus and start cards.
-8. `register_command` and `run_command` for what scripts can do, and
+8. A `CommandTable` registered in `configure` and run in `run_command`
+   for what scripts can do, and
    `register_import` for files it reads.
 9. Registration in `crates/workbenches/src/lib.rs`.
 

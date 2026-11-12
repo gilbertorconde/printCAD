@@ -1,25 +1,19 @@
 //! Text laid out as sketch geometry, and changing it.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId,
+    ParamKind, WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{load, points, sketch};
+use crate::SketchWorkbench;
+use crate::sketch::Sketch;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.text" | "sketch.text_edit" | "sketch.explode_text"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.text",
             "Write text from a point, in a frame or along curves: one object whose letters \
@@ -214,8 +208,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.min[1] + m.max[1]) < 1, "centred on the point")
             "#,
         ),
+        editing_text(add_text),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.text_edit",
             "Change a text block: what it says, its font, size, spacing or angle",
@@ -290,8 +285,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(large.volume - 4 * small.volume) < 1e-3, "four times the area")
             "#,
         ),
+        editing_text(text_edit),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.explode_text",
             "Turn a text block into plain lines and splines, which can then be edited one by \
@@ -319,133 +315,152 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(pc.doc.measure{body = body}.volume - before) < 1e-6)
             "#,
         ),
+        editing_text(explode_text),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
+/// What a text command does to the sketch it works in: its answer, and
+/// the text it explodes, if it does.
+type TextEdit = fn(
+    &Args,
+    &mut Sketch,
+    &mut WorkbenchRuntimeContext,
+) -> Result<(Value, Option<Uuid>), CommandError>;
+
+/// The handler of a command that edits a sketch's texts: as `editing`,
+/// each text's formulas kept to set its values from then on and an
+/// exploded one's let go.
+fn editing_text(
+    edit: TextEdit,
+) -> impl Fn(&CommandArgs, &mut WorkbenchRuntimeContext) -> CommandResult + Send + Sync {
+    move |args, ctx| {
+        let a = Args(args);
+        let sketch_id = FeatureId(a.id("sketch")?);
+        let mut feature = load(ctx, sketch_id)?;
+        let sketch = &mut feature.sketch;
+        let (answer, exploded) = edit(&a, sketch, ctx)?;
+        crate::solver::solve(sketch);
+        let kept: Vec<(Uuid, String)> = sketch
+            .texts
+            .iter()
+            .map(|b| (b.id, b.text.clone()))
+            .collect();
+        ctx.document
+            .update_feature_data(sketch_id, feature.to_json())
+            .map_err(|e| CommandError::failed(e.to_string()))?;
+        for (block, text) in kept.into_iter().chain(exploded.map(|b| (b, String::new()))) {
+            crate::text::keep_formulas(ctx.document, sketch_id, block, &text)
+                .map_err(CommandError::failed)?;
+        }
+        ctx.document.mark_feature_dirty(sketch_id);
+        Ok(answer)
+    }
+}
+
+fn add_text(
+    a: &Args,
+    sketch: &mut Sketch,
     ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let a = Args(args);
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
-    let sketch = &mut feature.sketch;
-    let mut exploded = None;
-    let answer = match id {
-        "sketch.text" => {
-            let mut spec = crate::text::TextSpec {
-                text: a.string("text")?.to_string(),
-                ..Default::default()
-            };
-            if a.has("frame") {
-                spec.layout = crate::text::TextLayout::Frame {
-                    corners: [Uuid::nil(); 4],
-                    wrap: false,
-                    fit: false,
-                };
-            } else if a.has("path") {
-                spec.layout = crate::text::TextLayout::Path {
-                    curves: Vec::new(),
-                    side: Default::default(),
-                    offset: 0.0,
-                    fit: false,
-                    reversed: false,
-                };
-            }
-            text_options(&a, &mut spec)?;
-            crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
-            spec.values =
-                crate::text::values_of(ctx.document, &spec.text).map_err(CommandError::failed)?;
-            let at = match args.get("at") {
-                Some(at) => Some(
-                    points(Some(&json!([at])))
-                        .map_err(|_| CommandError::bad("at", "must be {x, y}"))?[0],
-                ),
-                None => None,
-            };
-            let block = if a.has("frame") {
-                let corners = points(args.get("frame"))
-                    .ok()
-                    .filter(|c| c.len() == 2)
-                    .ok_or_else(|| {
-                        CommandError::bad("frame", "must be two corners, {{x, y}, {x, y}}")
-                    })?;
-                crate::text::add_in_frame(sketch, corners[0], corners[1], &spec)
-            } else if a.has("path") {
-                let curves = super::ids(args.get("path"), "path", sketch)?;
-                crate::text::add_on_path(sketch, &curves, at, &spec)
-            } else {
-                let at = at.ok_or_else(|| {
-                    CommandError::bad("at", "is needed without a frame or a path")
-                })?;
-                crate::text::add(sketch, at, &spec)
-            }
-            .map_err(CommandError::failed)?;
-            let made = sketch.texts.iter().find(|b| b.id == block);
-            let mut answer = json!({
-                "text": block.to_string(),
-                "point": made.map(|b| b.anchor).unwrap_or_default().to_string(),
-            });
-            if let Some(crate::text::TextLayout::Frame { corners, .. }) = made.map(|b| &b.layout) {
-                answer["corners"] = json!(corners.map(|c| c.to_string()));
-            }
-            answer
-        }
-        "sketch.explode_text" => {
-            let id = block_arg(args, sketch)?;
-            let left = crate::text::explode(sketch, id).map_err(CommandError::failed)?;
-            exploded = Some(id);
-            let curves: Vec<String> = left
-                .iter()
-                .filter(|e| {
-                    !matches!(
-                        sketch.get_geometry(**e),
-                        Some(crate::sketch::GeometryElement::Point(_)) | None
-                    )
-                })
-                .map(Uuid::to_string)
-                .collect();
-            json!({"curves": curves})
-        }
-        "sketch.text_edit" => {
-            let id = block_arg(args, sketch)?;
-            let block = sketch
-                .texts
-                .iter()
-                .find(|b| b.id == id)
-                .expect("found above");
-            let mut spec = crate::text::TextSpec::of(block);
-            if let Some(t) = a.opt_string("text")? {
-                spec.text = t.to_string();
-                spec.values = crate::text::values_of(ctx.document, &spec.text)
-                    .map_err(CommandError::failed)?;
-            }
-            text_options(&a, &mut spec)?;
-            crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
-            crate::text::change(sketch, id, &spec).map_err(CommandError::failed)?;
-            Value::Null
-        }
-        _ => return Err(CommandError::Unknown(id.to_string())),
+) -> Result<(Value, Option<Uuid>), CommandError> {
+    let args = a.0;
+    let mut spec = crate::text::TextSpec {
+        text: a.string("text")?.to_string(),
+        ..Default::default()
     };
-    crate::solver::solve(sketch);
-    let kept: Vec<(Uuid, String)> = sketch
+    if a.has("frame") {
+        spec.layout = crate::text::TextLayout::Frame {
+            corners: [Uuid::nil(); 4],
+            wrap: false,
+            fit: false,
+        };
+    } else if a.has("path") {
+        spec.layout = crate::text::TextLayout::Path {
+            curves: Vec::new(),
+            side: Default::default(),
+            offset: 0.0,
+            fit: false,
+            reversed: false,
+        };
+    }
+    text_options(a, &mut spec)?;
+    crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
+    spec.values = crate::text::values_of(ctx.document, &spec.text).map_err(CommandError::failed)?;
+    let at = match args.get("at") {
+        Some(at) => Some(
+            points(Some(&json!([at]))).map_err(|_| CommandError::bad("at", "must be {x, y}"))?[0],
+        ),
+        None => None,
+    };
+    let block = if a.has("frame") {
+        let corners = points(args.get("frame"))
+            .ok()
+            .filter(|c| c.len() == 2)
+            .ok_or_else(|| CommandError::bad("frame", "must be two corners, {{x, y}, {x, y}}"))?;
+        crate::text::add_in_frame(sketch, corners[0], corners[1], &spec)
+    } else if a.has("path") {
+        let curves = super::ids(args.get("path"), "path", sketch)?;
+        crate::text::add_on_path(sketch, &curves, at, &spec)
+    } else {
+        let at =
+            at.ok_or_else(|| CommandError::bad("at", "is needed without a frame or a path"))?;
+        crate::text::add(sketch, at, &spec)
+    }
+    .map_err(CommandError::failed)?;
+    let made = sketch.texts.iter().find(|b| b.id == block);
+    let mut answer = json!({
+        "text": block.to_string(),
+        "point": made.map(|b| b.anchor).unwrap_or_default().to_string(),
+    });
+    if let Some(crate::text::TextLayout::Frame { corners, .. }) = made.map(|b| &b.layout) {
+        answer["corners"] = json!(corners.map(|c| c.to_string()));
+    }
+    Ok((answer, None))
+}
+
+fn explode_text(
+    a: &Args,
+    sketch: &mut Sketch,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> Result<(Value, Option<Uuid>), CommandError> {
+    let args = a.0;
+    let id = block_arg(args, sketch)?;
+    let left = crate::text::explode(sketch, id).map_err(CommandError::failed)?;
+    let exploded = Some(id);
+    let curves: Vec<String> = left
+        .iter()
+        .filter(|e| {
+            !matches!(
+                sketch.get_geometry(**e),
+                Some(crate::sketch::GeometryElement::Point(_)) | None
+            )
+        })
+        .map(Uuid::to_string)
+        .collect();
+    Ok((json!({"curves": curves}), exploded))
+}
+
+fn text_edit(
+    a: &Args,
+    sketch: &mut Sketch,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> Result<(Value, Option<Uuid>), CommandError> {
+    let args = a.0;
+    let id = block_arg(args, sketch)?;
+    let block = sketch
         .texts
         .iter()
-        .map(|b| (b.id, b.text.clone()))
-        .collect();
-    ctx.document
-        .update_feature_data(sketch_id, feature.to_json())
-        .map_err(|e| CommandError::failed(e.to_string()))?;
-    // Each text's formulas set its values from now on; an exploded one's
-    // go with it.
-    for (block, text) in kept.into_iter().chain(exploded.map(|b| (b, String::new()))) {
-        crate::text::keep_formulas(ctx.document, sketch_id, block, &text)
-            .map_err(CommandError::failed)?;
+        .find(|b| b.id == id)
+        .expect("found above");
+    let mut spec = crate::text::TextSpec::of(block);
+    if let Some(t) = a.opt_string("text")? {
+        spec.text = t.to_string();
+        spec.values =
+            crate::text::values_of(ctx.document, &spec.text).map_err(CommandError::failed)?;
     }
-    ctx.document.mark_feature_dirty(sketch_id);
-    Ok(answer)
+    text_options(a, &mut spec)?;
+    crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
+    crate::text::change(sketch, id, &spec).map_err(CommandError::failed)?;
+    Ok((Value::Null, None))
 }
 
 /// The text block `block` names, by its own id or its point's.

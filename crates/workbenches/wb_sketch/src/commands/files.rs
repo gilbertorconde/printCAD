@@ -1,26 +1,21 @@
 //! DXF in, and DXF, SVG and CSV out.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchRuntimeContext,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId,
+    ParamKind, WorkbenchRuntimeContext,
 };
 use serde_json::json;
 
+use crate::SketchWorkbench;
+use crate::drawing::{self, LAYER_CONSTRUCTION, LAYER_EDGES, LAYER_ELEMENTS, Lines};
+use crate::feature::SketchFeature;
 use crate::sketch::Sketch;
 
 use super::{add_sketch, load, pictures, placing, sketch};
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.import_dxf" | "sketch.export_dxf" | "sketch.export_svg" | "sketch.export_csv"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add(
         placing(CommandSpec::new(
             "sketch.import_dxf",
             "Make a sketch of a DXF drawing: its lines, arcs, circles, ellipses and polylines \
@@ -50,8 +45,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         )
         .see_also("sketch.new")
         .see_also("sketch.repair"),
+        |args, ctx| import_dxf(&Args(args), ctx),
     );
-    specs.push(
+    t.add_on(
         sketch(CommandSpec::new(
             "sketch.export_dxf",
             "Sketch as layered DXF",
@@ -86,8 +82,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(text:find("1:1 in inch", 1, true), "the traceability note")
             "#,
         ),
+        export_dxf,
     );
-    specs.push(
+    t.add_on(
         sketch(CommandSpec::new(
             "sketch.export_svg",
             "Sketch as SVG",
@@ -100,8 +97,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              construction and projected guides dashed. Points are left out; the \
              traceability line is written under the drawing.",
         ),
+        export_svg,
     );
-    specs.push(
+    t.add_on(
         sketch(CommandSpec::new(
             "sketch.export_csv",
             "Elements and dimensions as CSV",
@@ -125,20 +123,8 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(out.csv:sub(1, 2) == "# ", "the traceability line first")
             "##,
         ),
+        export_csv,
     );
-}
-
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let a = Args(args);
-    if id == "sketch.import_dxf" {
-        return import_dxf(&a, ctx);
-    }
-    Err(CommandError::Unknown(id.to_string()))
 }
 
 /// A sketch of the DXF drawing at `path`, placed as `sketch.new` places
@@ -201,44 +187,69 @@ fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     Ok(json!(id.0.to_string()))
 }
 
-/// `sketch.export_dxf`, `sketch.export_svg` and `sketch.export_csv`.
-pub(crate) fn export(
-    id: &str,
+fn export_csv(
+    bench: &mut SketchWorkbench,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
-    edges: &crate::picture_edges::Edges,
 ) -> CommandResult {
-    use crate::drawing::{self, LAYER_CONSTRUCTION, LAYER_EDGES, LAYER_ELEMENTS};
     let a = Args(args);
     let feature = load(ctx, FeatureId(a.id("sketch")?))?;
     let sketch = &feature.sketch;
-    if id == "sketch.export_csv" {
-        let trace =
-            drawing::traceability(sketch, &feature.plane, &pictures(sketch, ctx, edges), "mm");
-        let (csv, rows) = drawing::csv(sketch, &trace);
-        return Ok(json!({"csv": csv, "rows": rows}));
-    }
+    let pictures = pictures(sketch, ctx, &bench.tab.picture_edges);
+    let trace = drawing::traceability(sketch, &feature.plane, &pictures, "mm");
+    let (csv, rows) = drawing::csv(sketch, &trace);
+    Ok(json!({"csv": csv, "rows": rows}))
+}
+
+/// The sketch an export draws, the file it writes and the sketch's curves
+/// as lines (drawn, then construction), refused when it has none.
+fn drawing_of<'a>(
+    a: &'a Args,
+    ctx: &WorkbenchRuntimeContext,
+) -> Result<(SketchFeature, &'a str, Lines, Lines), CommandError> {
+    let feature = load(ctx, FeatureId(a.id("sketch")?))?;
     let path = a.string("path")?;
-    let (drawn, guides) = drawing::polylines(sketch);
+    let (drawn, guides) = drawing::polylines(&feature.sketch);
     if drawn.is_empty() && guides.is_empty() {
         return Err(CommandError::failed("the sketch has no curves to write"));
     }
-    let write = |text: String| {
-        std::fs::write(path, text).map_err(|e| CommandError::failed(format!("{path}: {e}")))
-    };
-    if id == "sketch.export_svg" {
-        let trace =
-            drawing::traceability(sketch, &feature.plane, &pictures(sketch, ctx, edges), "mm");
-        write(drawing::svg(&drawn, &guides, &trace))?;
-        return Ok(json!({"path": path, "curves": drawn.len(), "construction": guides.len()}));
-    }
+    Ok((feature, path, drawn, guides))
+}
+
+/// Write `text` to `path`.
+fn write_to(path: &str, text: String) -> Result<(), CommandError> {
+    std::fs::write(path, text).map_err(|e| CommandError::failed(format!("{path}: {e}")))
+}
+
+fn export_svg(
+    bench: &mut SketchWorkbench,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let a = Args(args);
+    let (feature, path, drawn, guides) = drawing_of(&a, ctx)?;
+    let sketch = &feature.sketch;
+    let pictures = pictures(sketch, ctx, &bench.tab.picture_edges);
+    let trace = drawing::traceability(sketch, &feature.plane, &pictures, "mm");
+    write_to(path, drawing::svg(&drawn, &guides, &trace))?;
+    Ok(json!({"path": path, "curves": drawn.len(), "construction": guides.len()}))
+}
+
+fn export_dxf(
+    bench: &mut SketchWorkbench,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let a = Args(args);
+    let (feature, path, _, _) = drawing_of(&a, ctx)?;
+    let sketch = &feature.sketch;
     let inches = match a.opt_string("units")? {
         None | Some("mm") => false,
         Some("inch") => true,
         Some(_) => return Err(CommandError::bad("units", "is mm or inch")),
     };
     let unit = if inches { "inch" } else { "mm" };
-    let pictures = pictures(sketch, ctx, edges);
+    let pictures = pictures(sketch, ctx, &bench.tab.picture_edges);
     let trace = drawing::traceability(sketch, &feature.plane, &pictures, unit);
     let sheet = drawing::sheet(sketch, &pictures, &trace, inches);
     let text = ctx
@@ -246,7 +257,7 @@ pub(crate) fn export(
         .ok_or_else(|| CommandError::failed("there is no kernel to write with"))?
         .write_dxf_drawing(&sheet)
         .map_err(|e| CommandError::failed(e.to_string()))?;
-    write(text)?;
+    write_to(path, text)?;
     let on = |layer: &str| sheet.curves.iter().filter(|c| c.layer == layer).count();
     Ok(json!({
         "path": path,

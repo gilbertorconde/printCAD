@@ -1,16 +1,12 @@
 //! Measures of a body's solid: its centre line.
 
-use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, WorkbenchContext,
-    WorkbenchRuntimeContext,
-};
+use core_document::{Args, CommandSpec, CommandTable, ParamKind};
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(id, "design.centre_line")
-}
+use crate::DesignWorkbench;
 
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
+    t.add(
         CommandSpec::new(
             "design.centre_line",
             "Measure the centre line of a tube-like solid between two of its faces",
@@ -73,17 +69,6 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(not line.straight)
             "#,
         ),
+        |args, ctx| crate::centre::command(&Args(args), ctx),
     );
-}
-
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let a = Args(args);
-    if id == "design.centre_line" {
-        return crate::centre::command(&a, ctx);
-    }
-    Err(CommandError::Unknown(id.to_string()))
 }

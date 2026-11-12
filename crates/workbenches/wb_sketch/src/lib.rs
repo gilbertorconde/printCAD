@@ -1333,25 +1333,7 @@ impl Workbench for SketchWorkbench {
         args: &core_document::CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> core_document::CommandResult {
-        if id == "sketch.wall_thickness" {
-            return self.wall_thickness_command(args, ctx);
-        }
-        if matches!(
-            id,
-            "sketch.export_dxf" | "sketch.export_svg" | "sketch.export_csv"
-        ) {
-            return commands::export(id, args, ctx, &self.tab.picture_edges);
-        }
-        if id == "sketch.fit_edge" {
-            return commands::fit_edge(args, ctx, &self.tab.picture_edges);
-        }
-        if id == "sketch.calibrate_image" {
-            return commands::calibrate_image(args, ctx, &self.tab.picture_edges);
-        }
-        if id == "sketch.generator" {
-            return generator::command(args, ctx);
-        }
-        commands::run(id, args, ctx)
+        commands::run_on(self, id, args, ctx)
     }
 
     /// `sketch.start_blank`: a sketch on the XY plane of the selected body,

@@ -297,10 +297,10 @@ pub fn new_sketch(
     Ok(feature)
 }
 
-/// Register the command that changes a generated sketch's numbers.
-pub fn register(context: &mut core_document::WorkbenchContext) {
+/// The command that changes a generated sketch's numbers.
+pub(crate) fn table(t: &mut core_document::CommandTable<crate::SketchWorkbench>) {
     use core_document::{CommandSpec, ParamKind};
-    context.register_command(
+    t.add(
         CommandSpec::new(
             "sketch.generator",
             "Change the numbers a generated sketch (a gear, a sprocket, a shaft, a keyway) is \
@@ -346,6 +346,7 @@ pub fn register(context: &mut core_document::WorkbenchContext) {
             assert(pc.doc.feature{id = gear}.fields.generator == nil, "a plain sketch")
             "#,
         ),
+        command,
     );
 }
 
