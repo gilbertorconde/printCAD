@@ -153,8 +153,9 @@ pub fn fmt_num(v: f64) -> String {
 
 /// Where a dimension's label sits from its anchor, in sketch units: where
 /// the user put it, else [`default_label_offset`].
-pub fn label_offset(
+fn label_offset(
     sketch: &Sketch,
+    shapes: &Shapes,
     proj: &SketchProjector,
     constraint: &sketch::Constraint,
     labels: DimensionLabels,
@@ -162,7 +163,7 @@ pub fn label_offset(
 ) -> Vec2D {
     constraint.label_offset.unwrap_or_else(|| {
         let chars = label_text(sketch, constraint, labels).chars().count();
-        default_label_offset(sketch, proj, &constraint.kind, chars, label_size)
+        default_label_offset(sketch, shapes, proj, &constraint.kind, chars, label_size)
     })
 }
 
@@ -174,6 +175,7 @@ pub fn label_offset(
 /// what it measures. The rest sit a fixed diagonal step off their anchor.
 fn default_label_offset(
     sketch: &Sketch,
+    shapes: &Shapes,
     proj: &SketchProjector,
     kind: &ConstraintKind,
     chars: usize,
@@ -185,7 +187,8 @@ fn default_label_offset(
     if let Some(offset) = angle_label_offset(sketch, proj, kind, chars, label_size) {
         return offset;
     }
-    let (Some(away), Some(anchor)) = (clear_side(sketch, kind), dim_anchor(sketch, kind)) else {
+    let (Some(away), Some(anchor)) = (clear_side(sketch, shapes, kind), dim_anchor(sketch, kind))
+    else {
         return diagonal;
     };
     // The side's direction on screen, which the pill's box is square to.
@@ -203,7 +206,7 @@ fn default_label_offset(
 
 /// The unit direction, in sketch space, a default label leaves its
 /// element by, for the dimensions whose label would otherwise sit on it.
-fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::DVec2> {
+fn clear_side(sketch: &Sketch, shapes: &Shapes, kind: &ConstraintKind) -> Option<glam::DVec2> {
     let off_shape = |seeds: &[Uuid], at: glam::DVec2, normal: glam::DVec2, length: f64| {
         let side_of = |middle: glam::DVec2| {
             let side = (middle - at).dot(normal);
@@ -212,9 +215,10 @@ fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::DVec2> {
         // Away from the middle of its shape, the outside of a profile, or
         // of the sketch for a shape that has no sides; a lone line goes up,
         // or right when upright.
-        let side = middle_of_shape(sketch, seeds)
+        let side = shapes
+            .middle(seeds)
             .and_then(side_of)
-            .or_else(|| middle_of_points(sketch).and_then(side_of))
+            .or_else(|| shapes.middle_of_points().and_then(side_of))
             .unwrap_or(if normal.y.abs() > 1e-6 {
                 -normal.y
             } else {
@@ -341,49 +345,113 @@ fn angle_label_offset(
     Some(Vec2D::from_glam(direction * px * units_per_px))
 }
 
-/// The mean of the sketch's points that are not construction.
-fn middle_of_points(sketch: &Sketch) -> Option<glam::DVec2> {
-    let (sum, n) = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) if !sketch.construction.contains(&p.id) => {
-                Some(p.position.to_glam())
-            }
-            _ => None,
-        })
-        .fold((glam::DVec2::ZERO, 0usize), |(sum, n), p| (sum + p, n + 1));
-    (n > 0).then(|| sum / n as f64)
+/// The sketch's points grouped into shapes, each the points its curves
+/// join, with what a default label asks of them: worked out once for every
+/// label of a build.
+struct Shapes<'s> {
+    sketch: &'s Sketch,
+    /// The shape of each point a curve names, as an index into `sums`.
+    shape_of: HashMap<Uuid, usize>,
+    /// Each shape's sum of positions and how many of its points have one.
+    sums: Vec<(glam::DVec2, usize)>,
+    points_middle: std::cell::OnceCell<Option<glam::DVec2>>,
 }
 
-/// The middle of the points joined to `seeds` through the curves they share:
-/// the shape they stand on, whatever else the sketch holds.
-fn middle_of_shape(sketch: &Sketch, seeds: &[Uuid]) -> Option<glam::DVec2> {
-    let curves: Vec<Vec<Uuid>> = sketch
-        .geometry
-        .iter()
-        .map(Sketch::curve_point_ids)
-        .filter(|points| !points.is_empty())
-        .collect();
-    let mut curves_at: HashMap<Uuid, Vec<usize>> = HashMap::new();
-    for (index, points) in curves.iter().enumerate() {
-        for &point in points {
-            curves_at.entry(point).or_default().push(index);
+impl<'s> Shapes<'s> {
+    fn new(sketch: &'s Sketch) -> Self {
+        fn root(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        let mut index: HashMap<Uuid, usize> = HashMap::new();
+        let mut ids: Vec<Uuid> = Vec::new();
+        let mut parent: Vec<usize> = Vec::new();
+        for element in &sketch.geometry {
+            let mut first = None;
+            for point in Sketch::curve_point_ids(element) {
+                let i = *index.entry(point).or_insert_with(|| {
+                    ids.push(point);
+                    parent.push(parent.len());
+                    parent.len() - 1
+                });
+                match first {
+                    None => first = Some(i),
+                    Some(f) => {
+                        let (a, b) = (root(&mut parent, f), root(&mut parent, i));
+                        parent[b] = a;
+                    }
+                }
+            }
+        }
+        let mut shape_at: HashMap<usize, usize> = HashMap::new();
+        let mut shape_of = HashMap::with_capacity(ids.len());
+        let mut sums = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            let r = root(&mut parent, i);
+            let shape = *shape_at.entry(r).or_insert_with(|| {
+                sums.push((glam::DVec2::ZERO, 0));
+                sums.len() - 1
+            });
+            shape_of.insert(*id, shape);
+            if let Some(p) = sketch.point_position(*id) {
+                sums[shape].0 += p.to_glam();
+                sums[shape].1 += 1;
+            }
+        }
+        Self {
+            sketch,
+            shape_of,
+            sums,
+            points_middle: std::cell::OnceCell::new(),
         }
     }
-    let mut joined: HashSet<Uuid> = seeds.iter().copied().collect();
-    let mut waiting = seeds.to_vec();
-    while let Some(point) = waiting.pop() {
-        for &curve in curves_at.get(&point).into_iter().flatten() {
-            waiting.extend(curves[curve].iter().filter(|p| joined.insert(**p)));
+
+    /// The middle of the points joined to `seeds` through the curves they
+    /// share: the shape they stand on, whatever else the sketch holds.
+    fn middle(&self, seeds: &[Uuid]) -> Option<glam::DVec2> {
+        let mut shapes: Vec<usize> = Vec::new();
+        let mut loose: Vec<Uuid> = Vec::new();
+        for seed in seeds {
+            match self.shape_of.get(seed) {
+                Some(shape) if !shapes.contains(shape) => shapes.push(*shape),
+                None if !loose.contains(seed) => loose.push(*seed),
+                _ => {}
+            }
         }
+        let (mut sum, mut n) = shapes
+            .iter()
+            .map(|&s| self.sums[s])
+            .fold((glam::DVec2::ZERO, 0), |(sum, n), (s, k)| (sum + s, n + k));
+        for p in loose
+            .iter()
+            .filter_map(|id| self.sketch.point_position(*id))
+        {
+            sum += p.to_glam();
+            n += 1;
+        }
+        (n > 0).then(|| sum / n as f64)
     }
-    let positions: Vec<glam::DVec2> = joined
-        .iter()
-        .filter_map(|id| sketch.point_position(*id))
-        .map(Vec2D::to_glam)
-        .collect();
-    (!positions.is_empty()).then(|| positions.iter().sum::<glam::DVec2>() / positions.len() as f64)
+
+    /// The mean of the sketch's points that are not construction.
+    fn middle_of_points(&self) -> Option<glam::DVec2> {
+        *self.points_middle.get_or_init(|| {
+            let sketch = self.sketch;
+            let (sum, n) = sketch
+                .geometry
+                .iter()
+                .filter_map(|g| match g {
+                    GeometryElement::Point(p) if !sketch.construction.contains(&p.id) => {
+                        Some(p.position.to_glam())
+                    }
+                    _ => None,
+                })
+                .fold((glam::DVec2::ZERO, 0usize), |(sum, n), p| (sum + p, n + 1));
+            (n > 0).then(|| sum / n as f64)
+        })
+    }
 }
 
 /// Representative sketch-space anchor of an element (glyph placement).
@@ -1000,6 +1068,7 @@ pub fn build(
     }
     let mut counters: HashMap<&'static str, usize> = HashMap::new();
 
+    let shapes = Shapes::new(sketch);
     let mut out = Vec::new();
     for c in shown() {
         let color = if selected.contains(&c.id) {
@@ -1018,7 +1087,7 @@ pub fn build(
             let Some(anchor) = dim_anchor(sketch, &c.kind) else {
                 continue;
             };
-            let offset = label_offset(sketch, proj, c, labels, label_size);
+            let offset = label_offset(sketch, &shapes, proj, c, labels, label_size);
             let (Some(pos), Some(anchor_px)) = (proj.to_px(anchor + offset), proj.to_px(anchor))
             else {
                 continue;
@@ -1205,7 +1274,7 @@ mod tests {
             name: "constraint-equal",
             suffix: Some(123),
         };
-        layout::arrange_icons(&mut glyphs, &mut Vec::new(), LABEL_SIZE);
+        layout::arrange_icons(&mut glyphs, &mut Default::default(), LABEL_SIZE);
         // The whole suffix clears the following icon's hit circle.
         assert!(glyphs[1].pos[0] - 10.0 > glyphs[0].pos[0] + 9.0 + 8.1);
         let suffix = [glyphs[0].pos[0] + 16.0, glyphs[0].pos[1] + 7.0];
@@ -1351,6 +1420,43 @@ mod tests {
 mod label_tests {
     use super::*;
     use crate::sketch::{Constraint, ConstraintKind};
+
+    /// A shape's middle is the mean of every point its curves join to the
+    /// seeds, each point once, however many seeds it holds; a seed no curve
+    /// names stands for itself.
+    #[test]
+    fn a_shape_is_every_point_the_curves_join() {
+        use crate::sketch::{Circle, Line, Point};
+        let mut sketch = Sketch::new("t");
+        let point = |s: &mut Sketch, x: f64, y: f64| {
+            s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+        };
+        let square =
+            [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)].map(|(x, y)| point(&mut sketch, x, y));
+        for k in 0..4 {
+            let line = Line::new(square[k], square[(k + 1) % 4]);
+            sketch.add_geometry(GeometryElement::Line(line));
+        }
+        let (a, b) = (point(&mut sketch, 10.0, 0.0), point(&mut sketch, 14.0, 0.0));
+        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let centre = point(&mut sketch, 20.0, 8.0);
+        sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, 1.0)));
+        let loose = point(&mut sketch, -8.0, 8.0);
+        sketch.construction.insert(loose);
+        let shapes = Shapes::new(&sketch);
+        let at = |x: f64, y: f64| Some(glam::DVec2::new(x, y));
+        assert_eq!(shapes.middle(&[square[1]]), at(2.0, 2.0));
+        assert_eq!(
+            shapes.middle(&[square[0], square[2], square[0]]),
+            at(2.0, 2.0)
+        );
+        assert_eq!(shapes.middle(&[square[3], b]), at(16.0 / 3.0, 4.0 / 3.0));
+        assert_eq!(shapes.middle(&[loose, loose, a]), at(16.0 / 3.0, 8.0 / 3.0));
+        assert_eq!(shapes.middle(&[centre]), at(20.0, 8.0));
+        assert_eq!(shapes.middle(&[Uuid::new_v4()]), None);
+        // The sketch's middle leaves construction out.
+        assert_eq!(shapes.middle_of_points(), at(52.0 / 7.0, 16.0 / 7.0));
+    }
 
     #[test]
     fn a_label_shows_the_value_the_name_or_both() {
