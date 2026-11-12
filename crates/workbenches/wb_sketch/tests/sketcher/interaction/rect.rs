@@ -4,7 +4,8 @@
 
 use super::Harness;
 use crate::all_lines;
-use wb_sketch::sketch::{GeometryElement, Point, Vec2D};
+use core_document::Workbench;
+use wb_sketch::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 
 fn sketching() -> Harness {
     let mut h = Harness::new();
@@ -200,4 +201,69 @@ fn a_rectangle_waits_in_its_card_until_ok_and_replays() {
     };
     assert!(held(16.0) && held(8.0), "the sizes typed are held");
     super::recording::assert_replays(&h.recorded, before, id, &sketch);
+}
+
+/// Auto remove redundants on, a rectangle drawn onto another's wall (its
+/// two ends reused, the corners between them on the other's edges) drops
+/// the vertical it repeats on its second line between those points: the
+/// first rectangle keeps its own, nothing is left redundant, a replay of
+/// the recording makes the same sketch and one undo takes the second
+/// rectangle back whole. Off, both verticals stay.
+#[test]
+fn a_rectangle_on_another_s_wall_drops_the_constraint_it_repeats() {
+    let status = |h: &mut Harness| {
+        let egui_ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&egui_ctx);
+        super::task_panel_frame(h, &egui_ctx, Vec::new());
+        let ctx = core_document::WorkbenchRuntimeContext::new(
+            &mut h.doc,
+            crate::CAM_POS,
+            [0.0; 3],
+            crate::VIEWPORT,
+        );
+        h.wb.task(&ctx).and_then(|t| t.status).unwrap().text
+    };
+    let cases: [(&str, [(f64, f64); 4]); 2] = [
+        (
+            "sketch.rect",
+            [(-23.0, -16.0), (23.0, 16.0), (13.0, -16.0), (23.0, 16.0)],
+        ),
+        (
+            "sketch.rect:center",
+            [(0.0, 0.0), (23.0, 16.0), (18.0, 0.0), (23.0, 16.0)],
+        ),
+    ];
+    for (tool, clicks) in cases {
+        for remove in [true, false] {
+            let (mut h, id, before) = super::recording::session_on_a_sketch();
+            h.wb.options.auto_remove_redundant = remove;
+            for (x, y) in clicks {
+                h.full_click(x, y, tool);
+            }
+            let sketch = h.sketch();
+            let first: Vec<_> = all_lines(&sketch)[..4].iter().map(|l| l.id).collect();
+            let verticals: Vec<bool> = sketch
+                .constraints
+                .iter()
+                .filter_map(|c| match c.kind {
+                    ConstraintKind::Vertical { element } => Some(first.contains(&element)),
+                    _ => None,
+                })
+                .collect();
+            if remove {
+                assert_eq!(verticals, [true, true, false], "{tool}: the new one goes");
+                assert_ne!(status(&mut h), "Redundant constraints", "{tool}");
+                super::recording::assert_replays(&h.recorded, before, id, &sketch);
+                h.journal.undo(&mut h.doc).unwrap();
+                let back = h.sketch();
+                assert_eq!(all_lines(&back).len(), 4, "{tool}");
+                assert!(back.constraints.iter().any(
+                    |c| matches!(c.kind, ConstraintKind::Vertical { element } if element == first[1])
+                ));
+            } else {
+                assert_eq!(verticals.len(), 4, "{tool}: both stay");
+                assert_eq!(status(&mut h), "Redundant constraints", "{tool}");
+            }
+        }
+    }
 }

@@ -59,7 +59,7 @@ const SOLVER: [Switch; 10] = [
     (
         "auto_remove_redundant",
         "Auto remove redundants",
-        "A new constraint takes away the older ones it makes redundant",
+        "A new constraint takes away the older ones it makes redundant; a drawn shape drops its own constraints the sketch already enforces",
         |o| &mut o.auto_remove_redundant,
     ),
     (

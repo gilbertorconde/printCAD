@@ -319,6 +319,12 @@ header's pill what the solver found; a conflict or redundancy also shows
 a card at the top of the panel, which selects what the offending
 constraints hold when clicked. The **Solver** fold holds how the solver
 runs (auto update, removing redundants, its step limit and tolerance).
+With **Auto remove redundants** on, a constraint added with a constraint
+tool takes away the older constraints it makes redundant, and a shape a
+drawing tool makes drops those of its own constraints the sketch already
+enforces (a rectangle drawn onto another's wall leaves out the vertical
+the wall holds already), keeping what the sketch held before; typed
+values always stay.
 
 ## Modifying
 

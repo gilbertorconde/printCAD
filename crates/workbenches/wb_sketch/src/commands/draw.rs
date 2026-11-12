@@ -138,6 +138,12 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "Drop auto constraints that add nothing (true)",
         )
         .optional(
+            "remove_redundant",
+            ParamKind::Bool,
+            "Drop every constraint the tool makes that adds nothing, a shape's own included, \
+             keeping what the sketch already held (false)",
+        )
+        .optional(
             "selection",
             ParamKind::List,
             "The elements offset, translate, rotate, scale and mirror act on",
