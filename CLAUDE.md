@@ -757,6 +757,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `design.section`) cuts the body's solid by planes through
   `KernelQueries::section` and keeps each cut as a new sketch, its curves'
   ends joined so it closes.
+  `lib.rs` holds its state and the `Workbench` impl; `registration.rs`
+  (tools and their keys), `input.rs` (clicks, handles, typed values),
+  `making.rs` (what a tool reads of the selection, `create_feature`,
+  `take_base`), `menus.rs` (body and row menus, Copy and Paste),
+  `features.rs` (what it answers for its kinds) and `viewport_out.rs`
+  (what the view draws) the rest.
 - `workbenches/wb_surface`: the Surface bench (`docs/SURFACES.md`).
   `SurfaceFeature` (kind `wb.surface`) on surface bodies only:
   `SurfaceWorkbench::takes_surfaces` (a surface body, or one of sketches
@@ -879,6 +885,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   where each solve starts; `place_bodies` stores the new count
   (`counted_couplings`) with every solve, drag and sweep that crosses the
   wrap.
+  `lib.rs` holds its state and the `Workbench` impl; `registration.rs`
+  (tools), `input.rs` (input and each frame's work), `tasks.rs` (the
+  task a feature opens), `menus.rs`, `parameters.rs` (a drive's and a
+  joint kind's numbers), `checks.rs` (interference, mass and motion
+  checks), `frames.rs` (exploded views, motion frames, `sweep_frames`)
+  and `viewport_out.rs` (what the view draws) the rest.
 - `render_wgpu`: data-only renderer (`FrameSubmission` in, pixels out) on
   wgpu: Vulkan, Metal or DirectX 12, the first the platform offers
   (`WGPU_BACKEND` picks one), the GPU chosen by `preferred_gpu` or for
