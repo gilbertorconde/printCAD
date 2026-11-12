@@ -410,6 +410,44 @@ mod tests {
         }
     }
 
+    /// The kept face ids are the ones searched afresh after any of what
+    /// they read moves: the points, the mesh (another at the same
+    /// revision, or the same at another) and the body.
+    #[test]
+    fn kept_face_ids_follow_the_points_and_the_mesh() {
+        use std::sync::Arc;
+        let mesh = Arc::new(TriMesh {
+            faces: vec![3, 3, 5, 5],
+            ..two_face_mesh()
+        });
+        let renumbered = Arc::new(TriMesh {
+            faces: vec![9, 9, 2, 2],
+            ..two_face_mesh()
+        });
+        let (a, b) = (
+            core_document::BodyId(uuid::Uuid::new_v4()),
+            core_document::BodyId(uuid::Uuid::new_v4()),
+        );
+        let (top, bottom) = ([0.5, 0.5, 1.0], [0.5, 0.5, 0.0]);
+        let kept = super::PickedFaceIds::default();
+        for (body, mesh, revision, points) in [
+            (a, &mesh, 1, vec![top]),
+            (a, &mesh, 1, vec![top]),
+            (a, &mesh, 1, vec![top, bottom]),
+            (a, &renumbered, 1, vec![top, bottom]),
+            (a, &renumbered, 2, vec![bottom]),
+            (a, &mesh, 2, vec![bottom]),
+            (b, &mesh, 2, vec![bottom]),
+        ] {
+            let searched: Vec<_> = points
+                .iter()
+                .filter_map(|p| Some((body, super::face_id_at(mesh, *p)?)))
+                .collect();
+            assert_eq!(kept.of(body, mesh, revision, &points), searched);
+        }
+        assert_eq!(kept.of(b, &renumbered, 2, &[top]), [(b, 9)]);
+    }
+
     #[test]
     fn extracts_only_the_hit_plane_exactly_where_it_lies() {
         let mesh = two_face_mesh();
@@ -579,5 +617,74 @@ mod tests {
             6,
             "the plane through the hit is one strip"
         );
+    }
+}
+
+/// Which mesh an answer was worked out on: the body's mesh as an
+/// allocation and its geometry revision. The weak handle keeps the
+/// allocation's address from going to another mesh while the stamp is
+/// kept, and lets the mesh's data go when the body drops it.
+#[derive(Debug, Clone)]
+pub(crate) struct MeshStamp {
+    mesh: std::sync::Weak<kernel_api::TriMesh>,
+    revision: u64,
+}
+
+impl MeshStamp {
+    pub fn of(mesh: &std::sync::Arc<kernel_api::TriMesh>, revision: u64) -> Self {
+        Self {
+            mesh: std::sync::Arc::downgrade(mesh),
+            revision,
+        }
+    }
+}
+
+impl PartialEq for MeshStamp {
+    fn eq(&self, other: &Self) -> bool {
+        self.revision == other.revision && self.mesh.ptr_eq(&other.mesh)
+    }
+}
+
+/// The selected faces' ids on their body's mesh ([`face_id_at`] of each
+/// picked point), kept with what they were found from so a frame that
+/// changes none of it reads them rather than searching the mesh again.
+#[derive(Default)]
+pub(crate) struct PickedFaceIds(std::cell::RefCell<Option<(PickedFacesKey, FaceIds)>>);
+
+/// Faces as their body's mesh numbers them.
+type FaceIds = Vec<(core_document::BodyId, u32)>;
+
+#[derive(PartialEq)]
+struct PickedFacesKey {
+    body: core_document::BodyId,
+    mesh: MeshStamp,
+    points: Vec<[u32; 3]>,
+}
+
+impl PickedFaceIds {
+    /// The id of the face at each of `points` on `mesh`, the mesh of
+    /// `body` at `revision`, in order; a point on no face is left out.
+    pub fn of(
+        &self,
+        body: core_document::BodyId,
+        mesh: &std::sync::Arc<kernel_api::TriMesh>,
+        revision: u64,
+        points: &[[f32; 3]],
+    ) -> FaceIds {
+        let key = PickedFacesKey {
+            body,
+            mesh: MeshStamp::of(mesh, revision),
+            points: points.iter().map(|p| p.map(f32::to_bits)).collect(),
+        };
+        let mut kept = self.0.borrow_mut();
+        if let Some((_, ids)) = kept.as_ref().filter(|(k, _)| *k == key) {
+            return ids.clone();
+        }
+        let ids: FaceIds = points
+            .iter()
+            .filter_map(|p| Some((body, face_id_at(mesh, *p)?)))
+            .collect();
+        *kept = Some((key, ids.clone()));
+        ids
     }
 }
