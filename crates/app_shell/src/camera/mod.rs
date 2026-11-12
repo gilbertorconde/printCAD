@@ -668,21 +668,12 @@ impl CameraController {
         )
     }
 
+    /// [`Self::world_to_viewport`] offset by the viewport's origin: physical
+    /// pixels from the window's corner.
     pub fn world_to_screen(&self, world_pos: Vec3) -> Option<(f32, f32)> {
-        let (w, h) = self.state.viewport_size;
-        if w == 0 || h == 0 {
-            return None;
-        }
-        let view_proj = self.state.view_projection(&self.axes);
-
-        let clip = view_proj * world_pos.extend(1.0);
-        if clip.w <= 0.0 {
-            return None;
-        }
-        let ndc = clip.truncate() / clip.w;
-        let screen_x = (ndc.x + 1.0) * 0.5 * w as f32 + self.state.viewport_origin.0;
-        let screen_y = (ndc.y + 1.0) * 0.5 * h as f32 + self.state.viewport_origin.1;
-        Some((screen_x, screen_y))
+        let (x, y) = self.world_to_viewport(world_pos)?;
+        let (ox, oy) = self.state.viewport_origin;
+        Some((x + ox, y + oy))
     }
 
     pub fn focal_point_world(&self) -> Vec3 {

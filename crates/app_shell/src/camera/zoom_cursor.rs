@@ -1,43 +1,28 @@
 //! Zoom‑to‑cursor: keep the world point under the cursor stable after zoom (`docs/CAMERA.md`, Navigation).
 
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Vec2, Vec3};
 use settings::{CameraSettings, ProjectionMode};
 
 use crate::camera::state::CadCameraState;
 
-pub fn viewport_ray(
+/// Where the cursor's ray, by the shared helpers the benches use, meets the
+/// plane through `plane_origin` square to `plane_normal`.
+pub fn viewport_to_plane(
     state: &CadCameraState,
     axes: &axes::AxisSystem,
     viewport_xy: Vec2,
-) -> Option<(Vec3, Vec3)> {
+    plane_origin: Vec3,
+    plane_normal: Vec3,
+) -> Option<Vec3> {
     let (w, h) = state.viewport_size;
-    if w == 0 || h == 0 {
-        return None;
-    }
-    let vw = w as f32;
-    let vh = h as f32;
-
-    let ndc_x = (viewport_xy.x / vw) * 2.0 - 1.0;
-    let ndc_y = (viewport_xy.y / vh) * 2.0 - 1.0;
-
-    let vp = state.view_projection(axes);
-    let inv = vp.inverse();
-
-    let near_clip = inv * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-    let far_clip = inv * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
-    if near_clip.w.abs() < 1e-20 || far_clip.w.abs() < 1e-20 {
-        return None;
-    }
-    let near_w = near_clip.truncate() / near_clip.w;
-    let far_w = far_clip.truncate() / far_clip.w;
-    let dir = (far_w - near_w).normalize();
-    if dir.length_squared() < 1e-24 {
-        return None;
-    }
-    // The origin lies on this pixel's ray. The eye would do for perspective rays, but orthographic
-    // rays run parallel to forward, offset sideways, and from the eye the cursor correction would
-    // collapse to zooming about the orbit centre.
-    Some((near_w, dir))
+    core_document::runtime::viewport_to_plane(
+        state.view_projection(axes).to_cols_array_2d(),
+        (0, 0, w, h),
+        (viewport_xy.x, viewport_xy.y),
+        plane_origin.to_array(),
+        plane_normal.to_array(),
+    )
+    .map(Vec3::from_array)
 }
 
 #[cfg(test)]
@@ -46,28 +31,13 @@ pub fn intersect_focal_plane_world(
     axes: &axes::AxisSystem,
     viewport_xy: Vec2,
 ) -> Option<Vec3> {
-    let focal = state.focal_point_vec3(axes);
-    let plane_n = state.forward_world(axes).normalize();
-    let (origin, dir) = viewport_ray(state, axes, viewport_xy)?;
-    intersect_ray_plane(origin, dir, focal, plane_n)
-}
-
-pub fn intersect_ray_plane(
-    origin: Vec3,
-    dir: Vec3,
-    plane_origin: Vec3,
-    plane_normal: Vec3,
-) -> Option<Vec3> {
-    let n = plane_normal.normalize();
-    let denom = dir.dot(n);
-    if denom.abs() < 1e-8 {
-        return None;
-    }
-    let t = (plane_origin - origin).dot(n) / denom;
-    if t < 0.0 {
-        return None;
-    }
-    Some(origin + dir * t)
+    viewport_to_plane(
+        state,
+        axes,
+        viewport_xy,
+        state.focal_point_vec3(axes),
+        state.forward_world(axes),
+    )
 }
 
 /// Apply exponential zoom (`factor^wheel_lines`).
@@ -109,13 +79,14 @@ pub fn apply_zoom_wheels(
     let anchor = cursor
         .and_then(|point| camera.view().screen_ray(point))
         .and_then(|ray| {
-            intersect_ray_plane(
-                ray.origin,
-                ray.direction,
-                camera.pivot(),
-                camera.pose().forward(),
+            core_document::runtime::ray_plane(
+                ray.origin.to_array(),
+                ray.direction.to_array(),
+                camera.pivot().to_array(),
+                camera.pose().forward().to_array(),
             )
         })
+        .map(Vec3::from_array)
         .unwrap_or(camera.pivot());
     camera.zoom_by(log_factor.exp(), anchor);
     super::core::apply(state, axes, origin, camera);

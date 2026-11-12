@@ -7,7 +7,7 @@ use viewport_camera::fit::{BoundingSphere, fit};
 
 use super::core;
 use super::state::CadCameraState;
-use super::zoom_cursor::{intersect_ray_plane, viewport_ray};
+use super::zoom_cursor::viewport_to_plane;
 
 pub fn pan_pixels(
     state: &mut CadCameraState,
@@ -103,12 +103,10 @@ pub fn set_pivot_focal_plane_cursor(
     viewport_xy: Vec2,
     settings: &CameraSettings,
 ) -> bool {
-    let Some((origin, dir)) = viewport_ray(state, axes, viewport_xy) else {
-        return false;
-    };
-    intersect_ray_plane(
-        origin,
-        dir,
+    viewport_to_plane(
+        state,
+        axes,
+        viewport_xy,
         state.focal_point_vec3(axes),
         state.forward_world(axes),
     )

@@ -358,19 +358,29 @@ fn a_long_frame_does_not_throw_the_view_across_the_scene() {
     assert!((long_frame - capped).abs() < 1e-3);
 }
 
-/// The viewport-local projection is the window-absolute one minus the
-/// viewport origin: what the cursor and the overlay painters use.
+/// The cursor's ray and the projection back agree in both projections: the
+/// point a cursor finds on the focal plane lands under that cursor, in the
+/// viewport's pixels and, offset by its origin, in the window's (within a
+/// tenth of a pixel, what the single-precision unprojection keeps).
 #[test]
-fn world_to_viewport_is_the_screen_position_less_the_viewport_origin() {
+fn a_cursor_point_on_the_focal_plane_projects_back_under_the_cursor() {
     let settings = CameraSettings::default();
     let mut cam = CameraController::new(&settings, (800, 600));
     cam.update_viewport((320, 48), (800, 600));
-
-    let p = Vec3::new(3.0, -2.0, 1.0);
-    let screen = cam.world_to_screen(p).expect("visible");
-    let local = cam.world_to_viewport(p).expect("visible");
-    assert!((screen.0 - 320.0 - local.0).abs() < 1e-3);
-    assert!((screen.1 - 48.0 - local.1).abs() < 1e-3);
+    let cursor = Vec2::new(123.0, 455.0);
+    for projection in [ProjectionMode::Perspective, ProjectionMode::Orthographic] {
+        cam.state.projection = projection;
+        cam.state.ortho_height = cam.state.visible_height_at_focal_plane();
+        let hit = zoom_cursor::intersect_focal_plane_world(&cam.state, &cam.axes, cursor)
+            .expect("the focal plane faces the camera");
+        let local = cam.world_to_viewport(hit).expect("visible");
+        let screen = cam.world_to_screen(hit).expect("visible");
+        assert!(
+            (Vec2::from(local) - cursor).length() < 0.1,
+            "{projection:?}: {local:?}"
+        );
+        assert!((Vec2::from(screen) - cursor - Vec2::new(320.0, 48.0)).length() < 0.1);
+    }
 }
 
 /// A scene box far larger than the part being looked at, with the camera
