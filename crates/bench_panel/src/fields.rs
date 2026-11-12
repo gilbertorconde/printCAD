@@ -171,7 +171,7 @@ pub(super) fn text_edit(
     let hint = RichText::new(&entry.placeholder).color(TEXT3);
     let response = match document.filter(|_| entry.formulas && !entry.multiline) {
         Some(document) => {
-            let candidates = || crate::formula_candidates(document);
+            let candidates = || crate::formulas::formula_candidates(document);
             ui_kit::completion::completing_text_edit(ui, key, &mut draft, &candidates, |e| {
                 e.font(font)
                     .hint_text(hint)
@@ -394,7 +394,7 @@ fn quantity_control(
                 _ => q.value,
             };
             let slot_error = slot.and_then(|s| s.result.as_ref().err());
-            let host = crate::DocumentFormulas {
+            let host = crate::formulas::DocumentFormulas {
                 document,
                 dim: want,
             };
@@ -490,10 +490,10 @@ fn quantity_control(
     });
 }
 
-pub(super) fn expr_dim(dim: Dim) -> crate::expr::Dim {
+pub(super) fn expr_dim(dim: Dim) -> core_document::expr::Dim {
     match dim {
-        Dim::Length => crate::expr::Dim::LENGTH,
-        Dim::Angle => crate::expr::Dim::ANGLE,
-        Dim::Number => crate::expr::Dim::NUMBER,
+        Dim::Length => core_document::expr::Dim::LENGTH,
+        Dim::Angle => core_document::expr::Dim::ANGLE,
+        Dim::Number => core_document::expr::Dim::NUMBER,
     }
 }

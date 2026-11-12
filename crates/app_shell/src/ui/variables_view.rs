@@ -211,7 +211,7 @@ fn formula_box(
         ui,
         id,
         text,
-        &|| core_document::formula_candidates(document),
+        &|| bench_panel::formula_candidates(document),
         |edit| {
             let edit = edit.font(mono(FONT_SM)).desired_width(width);
             match hint {

@@ -875,7 +875,7 @@ impl Workbench for SurfaceWorkbench {
             Some(_) => {}
         }
         let widgets = self.task_widgets(ctx);
-        let out = core_document::panel::show(
+        let out = bench_panel::show(
             ui,
             egui::Id::new("surface_task"),
             &widgets,
@@ -995,7 +995,7 @@ impl Workbench for SurfaceWorkbench {
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
         let widgets = panel::settings(&self.options);
-        let out = core_document::panel::show_filtered(
+        let out = bench_panel::show_filtered(
             ui,
             egui::Id::new("surface_settings"),
             &widgets,

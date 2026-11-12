@@ -135,6 +135,7 @@ dependencies = [
  "axes",
  "base64 0.23.1",
  "bench_fixtures",
+ "bench_panel",
  "core_document",
  "doc_render",
  "doc_server",
@@ -407,6 +408,18 @@ dependencies = [
  "core_document",
  "wb_design",
  "wb_sketch",
+]
+
+[[package]]
+name = "bench_panel"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "egui",
+ "printcad-bench-api",
+ "serde_json",
+ "ui_kit",
+ "uuid",
 ]
 
 [[package]]
@@ -803,7 +816,6 @@ dependencies = [
  "tar",
  "thiserror 2.0.20",
  "tracing",
- "ui_kit",
  "uuid",
  "zstd 0.14.0",
 ]
@@ -5968,6 +5980,7 @@ dependencies = [
 name = "wb_assembly"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "egui",
  "emath",
@@ -5985,6 +5998,7 @@ dependencies = [
 name = "wb_design"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "egui",
  "glam 0.33.7",
@@ -6004,6 +6018,7 @@ dependencies = [
 name = "wb_inspect"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "egui",
  "glam 0.33.7",
@@ -6021,6 +6036,7 @@ dependencies = [
 name = "wb_mesh"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "egui",
  "metrology",
@@ -6036,6 +6052,7 @@ dependencies = [
 name = "wb_sketch"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "egui",
  "fontdb",
@@ -6059,6 +6076,7 @@ dependencies = [
 name = "wb_surface"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "egui",
  "glam 0.33.7",
@@ -6075,6 +6093,7 @@ dependencies = [
 name = "wb_wasm"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "egui",
  "flate2",

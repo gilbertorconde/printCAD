@@ -294,17 +294,13 @@ pub fn draw(
                             );
                         });
                     }
-                    let shown = core_document::panel::show_card(
-                        ui,
-                        panel_id,
-                        &card.widgets,
-                        Some(&*pctx.document),
-                    );
+                    let shown =
+                        bench_panel::show_card(ui, panel_id, &card.widgets, Some(&*pctx.document));
                     if fresh
                         && !reads
                         && let Some(field) = &card.focus
                     {
-                        core_document::panel::focus_entry(ui, panel_id, &card.widgets, field);
+                        bench_panel::focus_entry(ui, panel_id, &card.widgets, field);
                     }
                     out = Some(shown);
                     if let Some(why) = &card.refusal {

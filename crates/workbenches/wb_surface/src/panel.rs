@@ -1,5 +1,5 @@
 //! The task panels of the Surface bench, declared as widgets and drawn by
-//! `core_document::panel` as a package's panel is, and its Preferences
+//! `bench_panel` as a package's panel is, and its Preferences
 //! page.
 //!
 //! A step's inputs are lists: each row names a sketch or an edge, with a

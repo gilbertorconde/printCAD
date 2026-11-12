@@ -412,7 +412,7 @@ to the new one as `ctx.attach_request`.
   `HostRequest::KeepTaskEdits`, so Cancel goes back only to there.
 - A panel's fields line up on `ui_kit::widgets::LabelColumn` (one per
   section, as wide as its longest label); declared panels
-  (`core_document::panel`, which draws a package's and the Assembly's)
+  (`bench_panel`, which draws a package's and the Assembly's)
   use the same column and the same rows, folds, chips and badges as the
   native panels.
 - `floating_card` puts a card over the view next to what it edits, for a

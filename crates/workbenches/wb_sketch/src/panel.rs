@@ -1,5 +1,5 @@
 //! The sketcher's task panel, declared as widgets (`task_widgets`) and
-//! drawn by `core_document::panel` as a package's is: the plane picker
+//! drawn by `bench_panel` as a package's is: the plane picker
 //! of a sketch about to be made, then the solver's problems, the sketch
 //! pickers, tool settings, the selection's array, spline and text, the
 //! reference pictures, one filter over the element and constraint lists,
@@ -159,8 +159,7 @@ impl SketchWorkbench {
 
         let before = (self.tab.hovered, self.tab.hovered_constraint);
         let widgets = self.task_widgets(ctx);
-        let out =
-            core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
+        let out = bench_panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
         // A formula typed into a dimension's row opens its task, as a value
         // typed there does.
         let mut set_by_formula = Vec::new();
