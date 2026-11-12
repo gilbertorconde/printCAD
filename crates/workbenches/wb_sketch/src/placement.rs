@@ -620,7 +620,8 @@ mod sketch_picker {
             tab: crate::Tab {
                 active_sketch_id: Some(edited),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         (doc, wb, other_id)
@@ -790,7 +791,8 @@ mod placed_body {
             tab: crate::Tab {
                 active_sketch_id: Some(sketch),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         let mut ctx =

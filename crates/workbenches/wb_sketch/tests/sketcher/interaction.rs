@@ -881,6 +881,49 @@ impl kernel_api::KernelQueries for CountingRegions {
     }
 }
 
+/// The view's lines, marks and labels follow a change at once, before the
+/// next frame, as a frame later draws them: an edit outside a tool, a
+/// setting, the view.
+#[test]
+fn the_drawing_follows_each_change_before_the_next_frame() {
+    let mut h = Harness::new();
+    h.typed_line_label();
+    // In any order: loose ends ring in the order a set gives them.
+    let drawn = |h: &mut Harness| {
+        let mut items: Vec<String> = (h.overlays().iter().map(|o| format!("{o:?}")))
+            .chain(h.marks().iter().map(|m| format!("{m:?}")))
+            .chain(h.labels().iter().map(|l| format!("{l:?}")))
+            .collect();
+        items.sort();
+        items
+    };
+    type Change = fn(&mut Harness);
+    let changes: [(&str, Change); 3] = [
+        ("an edit", |h| {
+            h.edit_sketch(|s| {
+                let p = all_points(s)[1].id;
+                if let Some(GeometryElement::Point(p)) = s.get_geometry_mut(p) {
+                    p.position.y += 4.0;
+                }
+            })
+        }),
+        ("a setting", |h| {
+            h.wb.options.appearance.axis_width += 2.0;
+            h.wb.options.appearance.label_size += 4.0;
+        }),
+        ("the view", |h| h.vp = view_proj_from(80.0)),
+    ];
+    let mut before = drawn(&mut h);
+    for (what, change) in changes {
+        change(&mut h);
+        let now = drawn(&mut h);
+        assert_ne!(now, before, "{what} shows");
+        h.frame();
+        assert_eq!(now, drawn(&mut h), "{what} drawn as a frame later draws it");
+        before = now;
+    }
+}
+
 /// A closed outline is shaded while it is edited, meshed once for as long
 /// as it stays the same; an open one is not. Every region shades as the
 /// closed sketch's do, in the same colour and strengths: three concentric
@@ -906,6 +949,15 @@ fn closed_regions_are_shaded_while_editing_as_out_of_it() {
     assert_eq!(shaded(&mut h).len(), 1);
     let asked = kernel.0.load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(asked, 1, "meshed once while the profile stays");
+    h.edit_sketch(|s| {
+        let corner = all_points(s).last().unwrap().id;
+        if let Some(GeometryElement::Point(p)) = s.get_geometry_mut(corner) {
+            p.position.x += 1.0;
+        }
+    });
+    assert_eq!(shaded(&mut h).len(), 1);
+    let asked = kernel.0.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(asked, 2, "meshed again once the outline moves");
 
     let mut h = Harness::sketching();
     h.edit_sketch(|s| {

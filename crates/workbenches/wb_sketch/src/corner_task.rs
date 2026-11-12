@@ -338,9 +338,9 @@ impl SketchWorkbench {
             .is_some_and(|t| t.rect().is_some())
     }
 
-    /// The sketch the view shows: the open card's solved result, else
-    /// the stored sketch. Writes nothing.
-    pub(crate) fn displayed_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
+    /// The sketch as an open card's draft makes it, a corner's or a
+    /// dimension's solved result, when one is open. Writes nothing.
+    pub(crate) fn drafted_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
         self.tab
             .corner_task
             .as_ref()
@@ -348,7 +348,6 @@ impl SketchWorkbench {
             .and_then(|task| task.working.as_ref().ok())
             .cloned()
             .or_else(|| self.dimension_preview(ctx))
-            .or_else(|| self.get_active_sketch(ctx))
     }
 
     /// Put an open card away, writing and recording nothing.

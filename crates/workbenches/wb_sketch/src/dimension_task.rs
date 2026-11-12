@@ -80,16 +80,20 @@ impl SketchWorkbench {
             self.tab.dim_draft = None;
             return;
         };
-        let stale = self.tab.dim_draft.as_ref().is_some_and(|d| {
-            d.constraint != edit.constraint || d.seq != ctx.document.mutation_seq()
-        });
+        let constraint = edit.constraint;
+        let input = (edit.text.clone(), edit.driving, edit.save_as.clone());
+        let stale =
+            self.tab.dim_draft.as_ref().is_some_and(|d| {
+                d.constraint != constraint || d.seq != ctx.document.mutation_seq()
+            });
         if stale {
             self.tab.dim_edit = None;
             self.tab.dim_draft = None;
             return;
         }
         if self.tab.dim_draft.is_none() {
-            let base = match &edit.made {
+            let made = self.tab.dim_edit.as_ref().and_then(|e| e.made.as_ref());
+            let base = match made {
                 Some(made) => Some(made.feature.clone()),
                 None => self.get_active_sketch(ctx),
             };
@@ -97,19 +101,14 @@ impl SketchWorkbench {
                 self.tab.dim_edit = None;
                 return;
             };
-            let Some(c) = base
-                .sketch
-                .constraints
-                .iter()
-                .find(|c| c.id == edit.constraint)
-            else {
+            let Some(c) = base.sketch.constraints.iter().find(|c| c.id == constraint) else {
                 // The dimension went (an undo, a delete): so does its task.
                 self.tab.dim_edit = None;
                 return;
             };
             let formula = ctx
                 .document
-                .feature_formula(id, &edit.constraint.to_string())
+                .feature_formula(id, &constraint.to_string())
                 .map(str::to_string);
             let initial = formula.clone().unwrap_or_else(|| {
                 sketch::dimension_value(&c.kind)
@@ -117,7 +116,7 @@ impl SketchWorkbench {
                     .unwrap_or_default()
             });
             self.tab.dim_draft = Some(DimensionDraft {
-                constraint: edit.constraint,
+                constraint,
                 base,
                 seq: ctx.document.mutation_seq(),
                 initial,
@@ -127,7 +126,6 @@ impl SketchWorkbench {
                 working: Err(String::new()),
             });
         }
-        let input = (edit.text.clone(), edit.driving, edit.save_as.clone());
         if self.tab.dim_draft.as_ref().and_then(|d| d.input.as_ref()) == Some(&input) {
             return;
         }
@@ -737,8 +735,8 @@ impl SketchWorkbench {
     /// The task's dimension made a diameter (or a radius) of its circle in
     /// the draft, what the field holds converted with it; written on Apply.
     fn switch_draft_circle(&mut self, diameter: bool) {
-        let (Some(edit), Some(draft)) = (self.tab.dim_edit.as_mut(), self.tab.dim_draft.as_mut())
-        else {
+        let tab = &mut *self.tab;
+        let (Some(edit), Some(draft)) = (tab.dim_edit.as_mut(), tab.dim_draft.as_mut()) else {
             return;
         };
         let Some(scale) =
@@ -775,8 +773,8 @@ impl SketchWorkbench {
     /// in the draft, at what the arc measures as the task found it; a
     /// formula on it goes, since it gave the other quantity.
     fn switch_draft_arc(&mut self, angle: bool) {
-        let (Some(edit), Some(draft)) = (self.tab.dim_edit.as_mut(), self.tab.dim_draft.as_mut())
-        else {
+        let tab = &mut *self.tab;
+        let (Some(edit), Some(draft)) = (tab.dim_edit.as_mut(), tab.dim_draft.as_mut()) else {
             return;
         };
         let sketch = &mut draft.base.sketch;

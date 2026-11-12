@@ -27,6 +27,7 @@ use external_follow::{
 };
 pub(crate) use external_follow::{project_source, with_edge_names};
 mod feature;
+mod frame_memo;
 pub mod generator;
 mod geom2d;
 mod glyphs;
@@ -698,7 +699,9 @@ pub struct SketchWorkbench {
     pub options: SketchOptions,
     /// What the bench holds for the document on screen, moved with its
     /// tab.
-    tab: Tab,
+    tab: frame_memo::Stamped<Tab>,
+    /// What this frame's hooks have read of the edited sketch.
+    frame: frame_memo::FrameMemo,
 }
 
 /// A flag each constraint carries, as the toolbar flips it.
@@ -1486,6 +1489,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        self.frame.clear();
         Some(&mut self.tab)
     }
 
@@ -2730,7 +2734,8 @@ impl Workbench for SketchWorkbench {
                 self.tab.tool_state = ToolState::Idle;
             }
             self.tab.dim_capture.clear_buffers();
-            self.tab.dim_capture.sync(&self.tab.tool_state, active_tool);
+            let tab = &mut *self.tab;
+            tab.dim_capture.sync(&tab.tool_state, active_tool);
             self.flush_draw_record(ctx);
             if let Some(tool) = active_tool {
                 self.apply_variant_settings(tool);
@@ -2886,12 +2891,12 @@ impl Workbench for SketchWorkbench {
         }
         let id = self.tab.active_sketch_id?;
         let name = ctx.document.get_feature_meta(id)?.name.clone();
-        let feature = self.displayed_sketch(ctx);
+        let feature = self.frame_displayed(ctx);
         Some(TaskInfo {
             title: name,
             subtitle: feature
                 .as_ref()
-                .map(crate::style::placement_label)
+                .map(|f| crate::style::placement_label(f))
                 .unwrap_or_default(),
             status: feature.map(|f| self.task_status(&f.sketch)),
             icon: "sketch-edit",
@@ -3120,7 +3125,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
-        let feature = self.displayed_sketch(ctx)?;
+        let feature = self.frame_displayed(ctx)?;
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let tool = self.tab.last_tool.as_deref().unwrap_or("sketch.select");
@@ -3271,7 +3276,7 @@ impl Workbench for SketchWorkbench {
     /// the side away from the viewer, and a hair beyond the plane so a face
     /// the sketch lies on stays.
     fn clip_plane(&self, ctx: &WorkbenchRuntimeContext) -> Option<[f32; 4]> {
-        let feature = self.get_active_sketch(ctx)?;
+        let feature = self.frame_sketch(ctx)?;
         if !feature.shows_section(self.options.section_on_open) {
             return None;
         }
@@ -3284,7 +3289,7 @@ impl Workbench for SketchWorkbench {
         if !self.options.grid_on {
             return None;
         }
-        let plane = self.get_active_sketch(ctx)?.plane;
+        let plane = self.frame_sketch(ctx)?.plane;
         let look = &self.options.appearance;
         Some(core_document::PlaneGrid {
             origin: narrow3(plane.origin),
@@ -3298,7 +3303,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
-        let feature = self.displayed_sketch(ctx)?;
+        let feature = self.frame_displayed(ctx)?;
         let pal = ctx.sketch_palette;
         let verdict = self.solver_verdict(&feature.sketch);
         let mut names: Vec<String> = feature
@@ -3354,7 +3359,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceImage> {
-        let Some(feature) = self.displayed_sketch(ctx) else {
+        let Some(feature) = self.frame_displayed(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -3401,17 +3406,30 @@ impl Workbench for SketchWorkbench {
         }
         let (Some(id), Some(feature), Some(kernel)) = (
             self.tab.active_sketch_id,
-            self.displayed_sketch(ctx),
+            self.frame_displayed(ctx),
             ctx.kernel,
         ) else {
             return Vec::new();
         };
         let opacity = self.options.appearance.region_opacity;
-        let revision = core_document::data_revision(&feature.to_json());
+        // The stored sketch is known by its data, as out of editing; an
+        // open card's draft by what it holds.
+        let drafting = self.tab.corner_task.is_some() || self.tab.dim_edit.is_some();
+        let revision = match ctx.document.feature_values(id) {
+            Some(data) if !drafting => core_document::data_revision(data),
+            _ => core_document::data_revision(&feature.to_json()),
+        };
         let key = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            (revision, opacity.to_bits()).hash(&mut hasher);
+            let plane = feature.plane;
+            let axes = [plane.origin, plane.normal, plane.x_axis, plane.y_axis];
+            (
+                revision,
+                axes.map(|v| v.map(f64::to_bits)),
+                opacity.to_bits(),
+            )
+                .hash(&mut hasher);
             hasher.finish()
         };
         let mut cached = self.tab.regions.borrow_mut();
@@ -3450,7 +3468,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
-        let Some(feature) = self.displayed_sketch(ctx) else {
+        let Some(feature) = self.frame_displayed(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -3546,7 +3564,12 @@ impl Workbench for SketchWorkbench {
                 }
             }
         }
-        out.extend(self.build_overlays(ctx, &feature, &proj, &pal).lines);
+        out.extend(
+            self.frame_overlays(ctx, &feature, &proj, &pal)
+                .lines
+                .iter()
+                .cloned(),
+        );
         // The calibration's line, to the cursor until its second point.
         if let Some(calibrating) = &self.tab.calibrating
             && let Some(from) = calibrating.from
@@ -3581,7 +3604,7 @@ impl Workbench for SketchWorkbench {
             }
         }
         if !self.options.constraints_hidden {
-            let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
+            let glyphs = self.frame_glyphs(ctx, &feature, &proj);
             out.extend(glyphs::dimension_overlays(
                 &glyphs,
                 &self.options.appearance,
@@ -3595,12 +3618,15 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceMark> {
-        let Some(feature) = self.displayed_sketch(ctx) else {
+        let Some(feature) = self.frame_displayed(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        let mut out = self.build_overlays(ctx, &feature, &proj, &pal).marks;
+        let mut out = self
+            .frame_overlays(ctx, &feature, &proj, &pal)
+            .marks
+            .clone();
         if let Some(check) = self.shown_wall_check() {
             out.extend(walls::marks(check, &proj, &pal));
         }
@@ -3620,7 +3646,7 @@ impl Workbench for SketchWorkbench {
         if !self.options.constraints_hidden {
             let size = self.options.appearance.label_px(ctx.pixels_per_point);
             out.extend(
-                self.glyphs(ctx, &feature.sketch, &proj)
+                self.frame_glyphs(ctx, &feature, &proj)
                     .iter()
                     .filter_map(|g| g.mark(size)),
             );
@@ -3633,7 +3659,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceLabel> {
-        let Some(feature) = self.displayed_sketch(ctx) else {
+        let Some(feature) = self.frame_displayed(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -3641,13 +3667,18 @@ impl Workbench for SketchWorkbench {
         let mut labels: Vec<ScreenSpaceLabel> = if self.options.constraints_hidden {
             Vec::new()
         } else {
-            self.glyphs(ctx, &feature.sketch, &proj)
+            self.frame_glyphs(ctx, &feature, &proj)
                 .iter()
                 .filter_map(|g| g.label(&self.options.appearance, ctx.pixels_per_point))
                 .collect()
         };
         // What the cursor would snap to, by name.
-        labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
+        labels.extend(
+            self.frame_overlays(ctx, &feature, &proj, &pal)
+                .labels
+                .iter()
+                .cloned(),
+        );
         labels.extend(overlay::spline_labels(
             &proj,
             &pal,
@@ -3786,6 +3817,60 @@ impl SketchWorkbench {
         let tol = Self::snap_tolerance(ctx, &feature.plane);
         let snap = snap::resolve(&feature.sketch, self.tab.cursor?, tol, &Default::default());
         snap.kind.is_some().then_some(snap)
+    }
+
+    /// The edited sketch as [`Self::get_active_sketch`] reads it, read once
+    /// for every hook of a frame.
+    fn frame_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<std::sync::Arc<SketchFeature>> {
+        let key = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
+        self.frame.active(key, || self.get_active_sketch(ctx))
+    }
+
+    /// The sketch the view shows: an open card's draft
+    /// ([`Self::drafted_sketch`]), else the stored sketch. Worked out once
+    /// for every hook of a frame; writes nothing.
+    fn frame_displayed(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<std::sync::Arc<SketchFeature>> {
+        let key = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
+        self.frame
+            .displayed(key, || match self.drafted_sketch(ctx) {
+                Some(draft) => Some(std::sync::Arc::new(draft)),
+                None => self.frame_sketch(ctx),
+            })
+    }
+
+    fn draw_key(&self, ctx: &WorkbenchRuntimeContext) -> frame_memo::DrawKey {
+        let sketch = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
+        frame_memo::DrawKey::of(sketch, self.options, ctx)
+    }
+
+    /// [`Self::build_overlays`] of the frame's displayed sketch, built once
+    /// for its lines, marks and labels.
+    fn frame_overlays(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        proj: &SketchProjector,
+        pal: &SketchPalette,
+    ) -> std::sync::Arc<overlay::Overlays> {
+        self.frame.overlays(self.draw_key(ctx), || {
+            self.build_overlays(ctx, feature, proj, pal)
+        })
+    }
+
+    /// [`Self::glyphs`] of the frame's displayed sketch, built once for its
+    /// lines, marks and labels.
+    fn frame_glyphs(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        proj: &SketchProjector,
+    ) -> std::sync::Arc<Vec<glyphs::Glyph>> {
+        self.frame.glyphs(self.draw_key(ctx), || {
+            self.glyphs(ctx, &feature.sketch, proj)
+        })
     }
 
     /// The geometry, previews and markers of one frame.
@@ -4345,7 +4430,7 @@ impl SketchWorkbench {
     /// Where the visible scans cross the open sketch's plane, cut again
     /// when the plane or a scan moves.
     fn scan_guides(&self, ctx: &WorkbenchRuntimeContext) -> std::sync::Arc<Vec<scan::Chain2>> {
-        let (Some(feature), Some(kernel)) = (self.get_active_sketch(ctx), ctx.kernel) else {
+        let (Some(feature), Some(kernel)) = (self.frame_sketch(ctx), ctx.kernel) else {
             return Default::default();
         };
         let Some(key) = scan::key(ctx.document, &feature.plane) else {
@@ -5449,7 +5534,8 @@ mod close_sketch {
             tab: crate::Tab {
                 active_sketch_id: Some(sketch),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         let mut ctx =

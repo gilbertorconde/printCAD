@@ -258,7 +258,8 @@ mod formulas {
             tab: crate::Tab {
                 active_sketch_id: Some(id),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         (doc, wb, id, length_id)

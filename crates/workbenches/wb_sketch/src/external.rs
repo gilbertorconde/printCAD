@@ -1100,7 +1100,8 @@ mod external_geometry {
                 active_sketch_id: Some(sketch),
                 external_refreshed: Some(sketch),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         let mut ctx =
@@ -1164,7 +1165,8 @@ mod external_geometry {
                 last_tool: Some("sketch.external".to_string()),
                 external_refreshed: Some(sketch),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         let mut ctx =

@@ -284,15 +284,16 @@ impl SketchWorkbench {
                 panel::button("attach.face", "Selected face", ButtonStyle::Secondary, true),
             ));
         }
-        self.tab.panel.datum_planes.clear();
+        let tab = &mut *self.tab;
+        tab.panel.datum_planes.clear();
         let mut datum_buttons = |only: bool, prefix: &str, out: &mut Vec<Widget>| {
             for (datum_id, name, datum) in &datums {
                 if (Some(*datum_id) == selected_datum) != only {
                     continue;
                 }
                 for (label, hint, choice) in datum_planes(*datum_id, name, datum, prefix) {
-                    let id = format!("attach.datum:{}", self.tab.panel.datum_planes.len());
-                    self.tab.panel.datum_planes.push(choice);
+                    let id = format!("attach.datum:{}", tab.panel.datum_planes.len());
+                    tab.panel.datum_planes.push(choice);
                     out.push(panel::hinted(
                         hint,
                         panel::button(&id, &label, ButtonStyle::Secondary, true),
@@ -308,7 +309,7 @@ impl SketchWorkbench {
         ]));
         // Attached as a datum plane would be, by a mode on what is
         // selected on the body.
-        self.tab.panel.modes.clear();
+        tab.panel.modes.clear();
         if let Some(body) = body {
             use core_document::attach::{PICK_MODES, Picked, candidate, mode_label};
             let picked = Picked::of(ctx, body);
@@ -326,7 +327,7 @@ impl SketchWorkbench {
             for (i, (mode, needs)) in PICK_MODES.iter().enumerate() {
                 let made = candidate(mode, ctx, body, frame, None, &picked);
                 let enabled = made.is_some();
-                self.tab.panel.modes.push(made);
+                tab.panel.modes.push(made);
                 let mode_button = panel::button(
                     &format!("attach.mode:{i}"),
                     mode_label(mode),
@@ -407,12 +408,12 @@ impl SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         plane: &SketchPlane,
     ) -> Vec<Widget> {
-        let Some(picker) = self.tab.sketch_picker.as_ref() else {
+        let Some(mode) = self.tab.sketch_picker.as_ref().map(|p| p.mode) else {
             return Vec::new();
         };
         self.tab.panel.picked_from.clear();
         let mut children = Vec::new();
-        if picker.mode == crate::SketchPickerMode::ExternalFrom {
+        if mode == crate::SketchPickerMode::ExternalFrom {
             let mut choices: Vec<(FeatureId, String)> = self
                 .other_sketches(ctx)
                 .into_iter()
@@ -459,8 +460,13 @@ impl SketchWorkbench {
                 children,
             )];
         }
-        let merging = picker.mode == crate::SketchPickerMode::Merge;
-        let checked = picker.checked.clone();
+        let merging = mode == crate::SketchPickerMode::Merge;
+        let checked = self
+            .tab
+            .sketch_picker
+            .as_ref()
+            .map(|p| p.checked.clone())
+            .unwrap_or_default();
         let others = self.other_sketches(ctx);
         if others.is_empty() {
             children.push(panel::note(
@@ -1577,17 +1583,19 @@ impl SketchWorkbench {
             // second click takes it out.
             PanelEvent::Select { id, index } => match id.as_str() {
                 "elements" => {
-                    if let Some(row) = self.tab.panel.elements.get(*index)
-                        && !self.tab.selected.remove(&row.id)
+                    let tab = &mut *self.tab;
+                    if let Some(row) = tab.panel.elements.get(*index)
+                        && !tab.selected.remove(&row.id)
                     {
-                        self.tab.selected.insert(row.id);
+                        tab.selected.insert(row.id);
                     }
                 }
                 "constraints" => {
-                    if let Some(row) = self.tab.panel.constraints.get(*index)
-                        && !self.tab.selected_constraints.remove(&row.id)
+                    let tab = &mut *self.tab;
+                    if let Some(row) = tab.panel.constraints.get(*index)
+                        && !tab.selected_constraints.remove(&row.id)
                     {
-                        self.tab.selected_constraints.insert(row.id);
+                        tab.selected_constraints.insert(row.id);
                     }
                 }
                 _ => {}
@@ -2146,8 +2154,13 @@ impl SketchWorkbench {
             }
             _ => {
                 if let Some(field) = id.strip_prefix("text_draft.") {
-                    let mode = &mut self.tab.panel.font_modes[0];
-                    text_choice(&mut self.tab.text_draft, mode, field, index);
+                    let tab = &mut *self.tab;
+                    text_choice(
+                        &mut tab.text_draft,
+                        &mut tab.panel.font_modes[0],
+                        field,
+                        index,
+                    );
                 } else if let Some(field) = id.strip_prefix("text_block.") {
                     let mut mode = self.tab.panel.font_modes[1];
                     self.text_block_edit(ctx, |spec| text_choice(spec, &mut mode, field, index));
