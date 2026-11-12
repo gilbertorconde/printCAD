@@ -109,6 +109,9 @@ pub struct Evaluation {
     /// bench can work a draft out again with only its own list in hand
     /// ([`evaluate_with_retained_parameters`]).
     parameters: HashMap<FeatureId, Vec<Parameter>>,
+    /// The features whose `data` is what the last evaluation settled to,
+    /// taken from it unchanged.
+    pub(crate) reused: std::collections::HashSet<FeatureId>,
 }
 
 enum Source {

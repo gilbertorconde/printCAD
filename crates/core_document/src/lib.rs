@@ -690,16 +690,19 @@ impl Document {
     }
 
     /// What the feature's data settled to last time its values were
-    /// `unsettled`, if they were.
-    pub fn settled_values(
-        &self,
+    /// `unsettled`, taken out of the last evaluation for the next one to
+    /// keep (`Evaluation::reused`, which `apply_evaluation` counts as
+    /// unchanged).
+    pub(crate) fn take_settled_values(
+        &mut self,
         id: FeatureId,
         unsettled: &serde_json::Value,
-    ) -> Option<&serde_json::Value> {
-        let last = &self.evaluated.evaluation;
-        (last.unsettled.get(&id) == Some(unsettled))
-            .then(|| last.data.get(&id))
-            .flatten()
+    ) -> Option<serde_json::Value> {
+        let last = &mut self.evaluated.evaluation;
+        if last.unsettled.get(&id) != Some(unsettled) {
+            return None;
+        }
+        last.data.remove(&id)
     }
 
     /// Whether the document changed since its formulas were worked out.
@@ -715,6 +718,9 @@ impl Document {
         let mut changed: Vec<FeatureId> = Vec::new();
         let old = &self.evaluated.evaluation.data;
         for id in old.keys().chain(evaluation.data.keys()) {
+            if evaluation.reused.contains(id) {
+                continue;
+            }
             let raw = self.feature_tree.get_node(*id).map(|n| &n.data);
             let before = old.get(id).or(raw);
             let after = evaluation.data.get(id).or(raw);

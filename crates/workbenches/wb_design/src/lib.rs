@@ -1557,6 +1557,13 @@ impl Workbench for DesignWorkbench {
         let Some(body) = node.body else {
             return Vec::new();
         };
+        // Only a threaded hole or a copy of features has bores to thread.
+        let threads_or_copies = document
+            .feature_as::<DesignFeature>(id)
+            .is_some_and(|f| f.cosmetic_thread().is_some() || f.originals().is_some());
+        if !threads_or_copies {
+            return Vec::new();
+        }
         let hole = |hole: FeatureId| {
             let feature = document.feature_as::<DesignFeature>(hole)?;
             Some((

@@ -365,11 +365,11 @@ impl DocumentService {
             let Some(owner) = self.owner_of(&node.workbench_id) else {
                 continue;
             };
-            let mut values = evaluation
-                .data
-                .get(&node.id)
-                .cloned()
-                .unwrap_or_else(|| node.data.clone());
+            // Its own values are taken out while it derives (no feature reads
+            // itself) and put back after.
+            let taken = evaluation.data.remove(&node.id);
+            let had = taken.is_some();
+            let mut values = taken.unwrap_or_else(|| node.data.clone());
             let values_of = |id: FeatureId| {
                 evaluation
                     .data
@@ -394,7 +394,7 @@ impl DocumentService {
                     &|other, plane| crate::datum::body_plane_in(document, own?, other, plane),
                 );
             }
-            if moved {
+            if moved || had {
                 evaluation.data.insert(node.id, values);
             }
         }
@@ -402,9 +402,10 @@ impl DocumentService {
         for id in ids {
             let data = evaluation.data.get_mut(&id).expect("listed");
             // The same values as last time settle the same way.
-            if let Some(settled) = document.settled_values(id, data) {
-                let unsettled = std::mem::replace(data, settled.clone());
+            if let Some(settled) = document.take_settled_values(id, data) {
+                let unsettled = std::mem::replace(data, settled);
                 evaluation.unsettled.insert(id, unsettled);
+                evaluation.reused.insert(id);
                 continue;
             }
             let unsettled = data.clone();
