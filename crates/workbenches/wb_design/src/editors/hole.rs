@@ -4,7 +4,8 @@
 use bench_api::Tone;
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 
-use super::{Formulas, choice_shown, deg_drag, mm_drag, sketch_combo, start_rows};
+use super::extrude::start_rows;
+use super::{Formulas, choice_shown, deg_drag, mm_drag, sketch_combo};
 use crate::feature::{DesignFeature, DrillPoint, HoleCut, HoleFit, NutSide, NutTrap, ThreadSpec};
 use crate::form::Form;
 use crate::hole_tables::{NutStandard, ScrewSeat, ThreadStandard, user_cut_profiles};

@@ -4,9 +4,10 @@
 use bench_api::{ButtonStyle, Tone};
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 
+use super::transforms::pattern_axis_editor;
 use super::{
-    Formulas, choice_shown, coords, count_drag, mm_drag, mono_value, pattern_axis_editor,
-    picked_edges, small_button, use_button,
+    Formulas, choice_shown, coords, count_drag, mm_drag, mono_value, picked_edges, small_button,
+    use_button,
 };
 use crate::feature::{EdgePick, PathSpacing, PatternAxis, PatternPath};
 use crate::form::Form;
