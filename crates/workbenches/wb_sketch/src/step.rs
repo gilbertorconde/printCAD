@@ -26,6 +26,10 @@ pub(crate) struct StepSettings {
     pub construction: bool,
     /// Auto constraints the solver would call redundant are dropped.
     pub avoid_redundant: bool,
+    /// Every constraint the click makes but typed values is dropped when
+    /// the solver calls it redundant, a shape tool's own included: what
+    /// the sketch already held stays.
+    pub remove_redundant: bool,
 }
 
 /// What a click did.
@@ -101,7 +105,10 @@ pub(crate) fn click(
     // before it lands. Autos are what a line or polyline infers and what a
     // point snapped onto a curve holds it by; what a shape tool builds its
     // shape with (a slot's tangents, a fillet's) is the shape and stays, as
-    // typed values do.
+    // typed values do, unless Auto remove redundants is on: then every
+    // constraint the click made but typed values is checked, since a
+    // rectangle drawn onto another's wall repeats that wall's vertical on
+    // a second line between the same points.
     let inferring = matches!(tool, "sketch.line" | "sketch.polyline");
     let mut skipped = 0;
     let autos: Vec<Uuid> = sketch
@@ -110,6 +117,7 @@ pub(crate) fn click(
         .filter(|c| !constraints_before.contains(&c.id) && before_typed.contains(&c.id))
         .filter(|c| {
             inferring
+                || settings.remove_redundant
                 || matches!(
                     c.kind,
                     ConstraintKind::Coincident { .. }
@@ -125,7 +133,7 @@ pub(crate) fn click(
     // together, and dropping one leaves the other holding. A line drawn to
     // a tangent snap keeps both its end on the circle and its tangency:
     // the solver writes that tangency at the held end, independent of it.
-    if settings.avoid_redundant && !autos.is_empty() {
+    if (settings.avoid_redundant || settings.remove_redundant) && !autos.is_empty() {
         let mut diagnosis = crate::solver::diagnose(sketch);
         for id in autos {
             if diagnosis.redundant.contains(&id) {

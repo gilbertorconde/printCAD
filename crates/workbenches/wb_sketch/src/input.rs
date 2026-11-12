@@ -385,6 +385,7 @@ impl SketchWorkbench {
             params,
             construction: self.construction_mode(),
             avoid_redundant: self.options.avoid_redundant_auto,
+            remove_redundant: self.options.auto_remove_redundant,
         };
         // The line tool's arc: let go after a drag from its end, or typed
         // while the drag is under way.
@@ -617,6 +618,9 @@ impl SketchWorkbench {
             }
             if !settings.avoid_redundant {
                 named.insert("avoid_redundant".into(), serde_json::json!(false));
+            }
+            if settings.remove_redundant {
+                named.insert("remove_redundant".into(), serde_json::json!(true));
             }
             if SELECTION_TOOLS.contains(&tool) && !self.tab.selected.is_empty() {
                 let mut selected: Vec<Uuid> = self.tab.selected.iter().copied().collect();

@@ -2618,6 +2618,7 @@ assert(math.abs(m.volume - math.pi * 10 ^ 2) < 0.01, m.volume)
 - `params` (any, optional): Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, copies_linked, copies_total, copies_symmetric, rotate_full_turn, bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, arc_helpers, mirror_keep, mirror_linked, mirror_center, cut_at_axes
 - `construction` (boolean, optional): What it makes is construction geometry
 - `avoid_redundant` (boolean, optional): Drop auto constraints that add nothing (true)
+- `remove_redundant` (boolean, optional): Drop every constraint the tool makes that adds nothing, a shape's own included, keeping what the sketch already held (false)
 - `selection` (list, optional): The elements offset, translate, rotate, scale and mirror act on
 - Returns {elements, constraints}: what it made
 

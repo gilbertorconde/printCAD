@@ -2019,6 +2019,7 @@ impl SketchWorkbench {
             params: ovp::typed_params(&self.click_params(), &self.tab.tool_state, &typed),
             construction: false,
             avoid_redundant: false,
+            remove_redundant: false,
         };
         let (at, tol) = step::land(
             &self.tab.tool_state,
