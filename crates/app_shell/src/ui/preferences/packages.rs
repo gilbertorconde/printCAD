@@ -22,11 +22,11 @@ pub(super) fn packages_page(
             _ => {}
         }
     }
-    if !filter.is_empty()
-        && !"workbench packages plugins install remove extensions".contains(filter)
+    let words = ["workbench packages plugins install remove extensions"];
+    if !pref_matches(filter, &words)
         && !packages
             .iter()
-            .any(|p| p.name.to_lowercase().contains(filter) || p.id.contains(filter))
+            .any(|p| pref_matches(filter, &[&p.name, &p.id]))
     {
         return;
     }

@@ -1844,10 +1844,30 @@ impl<'a> PrefRow<'a> {
     }
 
     fn matches(&self, filter: &str) -> bool {
-        filter.is_empty()
-            || self.label.to_lowercase().contains(filter)
-            || self.hint.is_some_and(|h| h.to_lowercase().contains(filter))
+        pref_matches(filter, &[self.label, self.hint.unwrap_or_default()])
     }
+}
+
+/// Whether a Preferences search for `filter` (lowercase) finds one of
+/// `words`: an empty search finds everything, and no words are found by
+/// none. Every row, group and block of a Preferences page is filtered by
+/// this one rule.
+pub fn pref_matches(filter: &str, words: &[&str]) -> bool {
+    filter.is_empty() || words.iter().any(|w| w.to_lowercase().contains(filter))
+}
+
+/// A block of a Preferences page that is no group of rows (a note, a
+/// picker laid out its own way, a free text field), found by `words`:
+/// `add` draws it only when [`pref_matches`] finds them, so a search
+/// leaves it out as it leaves out a group with no matching rows. A note
+/// that only explains its page passes no words and shows with no search.
+/// Returns whether it drew.
+pub fn pref_block(ui: &mut Ui, words: &[&str], filter: &str, add: impl FnOnce(&mut Ui)) -> bool {
+    if !pref_matches(filter, words) {
+        return false;
+    }
+    add(ui);
+    true
 }
 
 /// The width a preference row's control is taken to need before it has
