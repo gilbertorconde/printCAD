@@ -74,7 +74,13 @@ impl PrintCadApp {
             };
         let cursor = Vec2::new(cx, cy);
         let camera = &self.session.camera;
-        let project = |p: [f32; 3]| camera.world_to_viewport(Vec3::from_array(p));
+        // The view's matrix is built once, not per point: the search
+        // projects both ends of every outline segment it reaches.
+        let view_proj = camera.view_projection();
+        let vp = camera.viewport_info();
+        let viewport = (vp.0 as u32, vp.1 as u32, vp.2, vp.3);
+        let project =
+            |p: [f32; 3]| core_document::runtime::world_to_viewport(view_proj, viewport, p);
         let eye = Vec3::from_array(camera.position());
         let forward = (Vec3::from_array(camera.target()) - eye).normalize_or_zero();
         let depth_of = |p: Vec3| (p - eye).dot(forward);
@@ -88,8 +94,6 @@ impl PrintCadApp {
         });
         // The depths the pick pass drew around the cursor, while they are
         // of the view on screen.
-        let view_proj = camera.view_projection();
-        let vp = camera.viewport_info();
         let window = self
             .session
             .pick_depths
