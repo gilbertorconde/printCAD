@@ -28,7 +28,8 @@ const BENCH_EDIT_IDLE_FRAMES: u32 = 30;
 /// once.
 #[derive(Debug, Default)]
 pub(crate) struct BenchHooks {
-    /// `PRINTCAD_OPEN_FILE`: files to import at start, `;`-separated.
+    /// `PRINTCAD_OPEN_FILE`: files to open or import at start,
+    /// `;`-separated.
     pub open_files: Vec<PathBuf>,
     /// `PRINTCAD_OPEN_SAME_TAB`: those files all land in one scene.
     pub open_same_tab: bool,
@@ -277,14 +278,20 @@ impl PrintCadApp {
         // without a dialog.
         if !self.bench.open_fired {
             self.bench.open_fired = true;
-            // Several files each import into a tab of their own, so a
-            // capture can show the strip, or all into one scene.
+            // Several files each get a tab of their own, so a capture can
+            // show the strip: a printCAD document opens there, another
+            // file imports. With one scene asked for, they all import
+            // into it, a document's bodies linked.
             let detail = self.imports.last_detail.clone();
             for path in &hooks.open_files {
-                if !hooks.open_same_tab {
+                if hooks.open_same_tab {
+                    self.import_step_at(path, detail.clone());
+                } else if crate::app::step_import::is_document(path) {
+                    self.open_document_at(path.clone());
+                } else {
                     self.ensure_fresh_tab();
+                    self.import_step_at(path, detail.clone());
                 }
-                self.import_step_at(path, detail.clone());
             }
             if let Some(path) = &hooks.open_doc {
                 self.open_document_at(path.clone());

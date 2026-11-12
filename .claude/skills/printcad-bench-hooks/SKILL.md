@@ -7,8 +7,10 @@ description: "The PRINTCAD_* environment hooks for scripted, click-free runs (PR
 
 These hooks are part of the on-demand render loop (`printcad-render-loop`). `PRINTCAD_EXIT_AFTER_MS` and `PRINTCAD_GPU_VALIDATION` are described with the GPU invariants in `CLAUDE.md`; `PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` in `printcad-render-loop`.
 
-`PRINTCAD_OPEN_FILE` (several paths `;`-separated open a tab
-each, or all into one scene with `PRINTCAD_OPEN_SAME_TAB`) / `PRINTCAD_OPEN_DOC` /
+`PRINTCAD_OPEN_FILE` (several paths `;`-separated get a tab
+each: a `.prtcad` opens there as `PRINTCAD_OPEN_DOC` would, another file
+imports; with `PRINTCAD_OPEN_SAME_TAB` they all import into one scene, a
+`.prtcad`'s bodies linked) / `PRINTCAD_OPEN_DOC` /
 `PRINTCAD_BENCH_ORBIT` are bench hooks (`PRINTCAD_EDGE_MIN_PX` /
 `PRINTCAD_NO_EDGES` are the renderer's, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;
