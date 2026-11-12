@@ -1,6 +1,7 @@
 //! Actions the UI requests from the app, emitted once on the frame they
 //! were triggered. Adding a new UI action = one enum variant here + one
-//! match arm in `PrintCadApp::apply_ui_commands`.
+//! match arm in `PrintCadApp::fold_command`. A change to settings alone
+//! needs no variant: it is an [`UiCommand::EditSettings`].
 
 use core_document::TaskOutcome;
 use settings::ProjectionMode;
@@ -69,9 +70,60 @@ pub enum StartKind {
     Coupon,
 }
 
+/// A change to the user's settings, applied where the UI asked for it
+/// and saved with the frame's other settings changes.
+#[derive(Clone)]
+pub struct SettingsEdit {
+    edit: std::sync::Arc<dyn Fn(&mut settings::UserSettings) + Send + Sync>,
+    /// What the log says once the change is made.
+    note: Option<&'static str>,
+}
+
+impl SettingsEdit {
+    pub fn new(edit: impl Fn(&mut settings::UserSettings) + Send + Sync + 'static) -> Self {
+        Self {
+            edit: std::sync::Arc::new(edit),
+            note: None,
+        }
+    }
+
+    /// One field set to `value`.
+    pub fn set<T: Clone + Send + Sync + 'static>(
+        field: fn(&mut settings::UserSettings) -> &mut T,
+        value: T,
+    ) -> Self {
+        Self::new(move |settings| *field(settings) = value.clone())
+    }
+
+    /// The same change, with a line for the log once it is made.
+    pub fn noting(self, note: &'static str) -> Self {
+        Self {
+            note: Some(note),
+            ..self
+        }
+    }
+
+    /// Make the change on `settings`, answering the log line it carries.
+    pub fn apply(&self, settings: &mut settings::UserSettings) -> Option<&'static str> {
+        (self.edit)(settings);
+        self.note
+    }
+}
+
+impl std::fmt::Debug for SettingsEdit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SettingsEdit")
+            .field("note", &self.note)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum UiCommand {
     File(FileCommand),
+    /// A change to the user's settings: one field, or a few that go
+    /// together, with nothing else to do but save them.
+    EditSettings(SettingsEdit),
     Quit,
     FitView,
     /// Frame the selected body, or the active one.
@@ -79,10 +131,6 @@ pub enum UiCommand {
     SetDrawStyle(settings::DrawStyle),
     /// The print bed drawn around the model, or not.
     TogglePrintBed,
-    /// The gap the print layout leaves between parts, mm.
-    SetLayoutGap(f32),
-    /// Send to slicer sends the print layout, or the bodies where they sit.
-    SetSlicerLayout(bool),
     /// The annotations imported files carry drawn over the scene, or not.
     ToggleAnnotations,
     /// The grid on the ground plane drawn, or not.
@@ -129,21 +177,6 @@ pub enum UiCommand {
         feature: core_document::FeatureId,
         formulas: std::collections::BTreeMap<String, String>,
     },
-    /// The colours kept under "Your colours".
-    SetCustomColors(Vec<[f32; 3]>),
-    /// Keep the tool card where the user dragged it; `None` puts it back
-    /// in the view's corner.
-    SetToolHintOffset(Option<[f32; 2]>),
-    /// Turn the tool card off, as its Preferences switch does.
-    HideToolHint,
-    /// Keep the toolbar groups where the user dragged them; empty puts
-    /// every group back where its bench puts it.
-    SetToolbarLayout(Vec<Vec<String>>),
-    /// Keep a bench's ordered tool pins; None restores its defaults.
-    SetToolPanelPins {
-        bench: String,
-        pins: Option<Vec<String>>,
-    },
     /// Look for a newer printCAD release now and say what was found.
     CheckForUpdates,
     /// Pick a file whose first solid becomes the body's shape.
@@ -181,9 +214,6 @@ pub enum UiCommand {
     ShowWorkspace,
     /// A blank tab, on the start page.
     NewTab,
-    /// The palette ran the entry this key names: it goes to the top of
-    /// the recent list.
-    NoteRecentCommand(String),
     /// Files dropped on the window, outside the assistant: documents open,
     /// model files import.
     OpenDropped(Vec<std::path::PathBuf>),
@@ -299,8 +329,6 @@ pub enum UiCommand {
     Undo,
     Redo,
     ToggleLogPanel,
-    /// The status bar's readouts, as its menu left them.
-    SetStatusBar(settings::StatusBarSettings),
     /// Orbit around the point on the focal plane under the cursor.
     PivotAtCursor,
     /// Run a workbench's keyboard action, bound to a key.

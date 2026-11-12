@@ -15,11 +15,11 @@ use core_document::{
 use egui::Ui;
 use serde_json::{Value, json};
 
-use super::UiCommand;
 use super::task_blocks::{
     Form, caption, check, choice, degrees, draw, gap, grid, heading_in, hinted, label, length,
     note, number, offset, quantity, raw, row, secondary, select, srgb,
 };
+use super::{SettingsEdit, UiCommand};
 
 /// The colours offered first, a row of neutrals and two of hues.
 pub const PALETTE: &[[f32; 3]] = &[
@@ -303,6 +303,14 @@ fn body_name(document: &Document, body: BodyId) -> String {
         .find(|b| b.id == body)
         .map(|b| b.name.clone())
         .unwrap_or_default()
+}
+
+/// The colours kept under "Your colours".
+fn custom_colors_edit(colors: Vec<[f32; 3]>) -> UiCommand {
+    UiCommand::EditSettings(SettingsEdit::set(
+        |s| &mut s.rendering.custom_colors,
+        colors,
+    ))
 }
 
 fn same_color(a: [f32; 3], b: [f32; 3]) -> bool {
@@ -593,7 +601,9 @@ fn print_layout_controls(
     let mut gap_mm = printing.layout_gap_mm;
     let spacing = number(form, &mut gap_mm, length("gap", "", 0.0, 0.0, 50.0));
     if spacing.set {
-        commands.push(UiCommand::SetLayoutGap(gap_mm));
+        commands.push(UiCommand::EditSettings(SettingsEdit::new(move |s| {
+            s.printing.layout_gap_mm = gap_mm.max(0.0);
+        })));
     }
     form.push(row([label("Gap"), spacing.widget.into()]));
     let mut slicer_layout = printing.slicer_layout;
@@ -605,7 +615,10 @@ fn print_layout_controls(
     };
     let slicer = form.check("slicer_layout", &mut slicer_layout, shape);
     if form.put(slicer) {
-        commands.push(UiCommand::SetSlicerLayout(slicer_layout));
+        commands.push(UiCommand::EditSettings(SettingsEdit::set(
+            |s| &mut s.printing.slicer_layout,
+            slicer_layout,
+        )));
     }
     form.push(gap(GapSize::Medium));
     form.push(note(
@@ -1103,7 +1116,7 @@ impl AppearanceTask {
         if keep.set {
             let mut all = custom_colors.to_vec();
             all.push(self.custom);
-            commands.push(UiCommand::SetCustomColors(all));
+            commands.push(custom_colors_edit(all));
         }
         if forget.set {
             let all = custom_colors
@@ -1111,7 +1124,7 @@ impl AppearanceTask {
                 .copied()
                 .filter(|c| !same_color(*c, self.custom))
                 .collect();
-            commands.push(UiCommand::SetCustomColors(all));
+            commands.push(custom_colors_edit(all));
         }
         let keep = if custom_colors.iter().any(|c| same_color(*c, self.custom)) {
             hinted("Take it out of your colours", forget.widget)
@@ -1524,6 +1537,16 @@ fn moved_by(
 
 #[cfg(test)]
 mod tests {
+    /// The settings a settings edit leaves, made on the defaults.
+    fn edited(command: &UiCommand) -> settings::UserSettings {
+        let UiCommand::EditSettings(edit) = command else {
+            panic!("not a settings edit: {command:?}");
+        };
+        let mut settings = settings::UserSettings::default();
+        edit.apply(&mut settings);
+        settings
+    }
+
     use super::*;
 
     use crate::ui::task_blocks::in_frame;
@@ -1844,7 +1867,10 @@ mod tests {
         send(&mut task, &mut doc, number("density", 0.3));
         let material = doc.bodies()[0].material.clone().unwrap();
         assert_eq!((material.name.as_str(), material.density), ("Foam", 0.3));
-        assert!(matches!(&commands[..], [UiCommand::SetCustomColors(c)] if c.len() == 2));
+        let [kept] = &commands[..] else {
+            panic!("one settings edit, got {commands:?}");
+        };
+        assert_eq!(edited(kept).rendering.custom_colors.len(), 2);
         let entry = doc.bodies()[0].clone();
         let widgets = task.widgets(&doc, &entry, &[]);
         for id in ["uncolor", "material_name", "density"] {
@@ -1974,14 +2000,17 @@ mod tests {
         ] {
             print_layout_event(&event, &mut commands);
         }
+        let [gap, slicer, send, export] = &commands[..] else {
+            panic!("four commands, got {commands:?}");
+        };
+        assert_eq!(edited(gap).printing.layout_gap_mm, 4.0);
+        assert!(edited(slicer).printing.slicer_layout);
         assert!(matches!(
-            &commands[..],
-            [
-                UiCommand::SetLayoutGap(4.0),
-                UiCommand::SetSlicerLayout(true),
+            (send, export),
+            (
                 UiCommand::File(super::super::FileCommand::SendLaidOutToSlicer),
                 UiCommand::File(super::super::FileCommand::ExportLaidOut),
-            ]
+            )
         ));
     }
 

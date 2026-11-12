@@ -1,8 +1,15 @@
 //! Application of per-frame [`UiCommand`]s. THE place a new UI action lands:
-//! add a variant in `ui/commands.rs`, fold it into [`FrameIntents`], apply it
-//! in [`PrintCadApp::apply_ui_commands`].
+//! add a variant in `ui/commands.rs` and its arm in
+//! [`PrintCadApp::fold_command`], which either acts at once or folds it
+//! into [`FrameIntents`], applied in their fixed order by
+//! `intents.rs`. A change to settings alone needs no variant of its own:
+//! the UI sends an [`UiCommand::EditSettings`].
 
-use glam::Vec3;
+mod arms;
+mod intents;
+
+use arms::ShapeWork;
+
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::doc_io::FileDialogKind;
@@ -11,7 +18,7 @@ use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 use crate::PrintCadApp;
 use crate::ui::{
-    ActiveWorkbench, FileCommand, Screen, StartKind, TreeFeatureCommand, TreeItemId, UiCommand,
+    ActiveWorkbench, FileCommand, StartKind, TreeFeatureCommand, TreeItemId, UiCommand,
 };
 
 /// Phase 1 of the two-phase dispatch: commands folded into per-frame
@@ -79,6 +86,24 @@ struct FrameIntents {
     show_workspace: bool,
 }
 
+impl FrameIntents {
+    /// One dialog a frame, by priority: import > open > save-as > save;
+    /// a script to run takes the slot whatever it held.
+    fn ask_dialog(&mut self, kind: FileDialogKind) {
+        let take = match kind {
+            FileDialogKind::Open => !matches!(self.file_dialog, Some(FileDialogKind::ImportStep)),
+            FileDialogKind::SaveAs => {
+                matches!(self.file_dialog, None | Some(FileDialogKind::Save))
+            }
+            FileDialogKind::Save => self.file_dialog.is_none(),
+            _ => true,
+        };
+        if take {
+            self.file_dialog = Some(kind);
+        }
+    }
+}
+
 impl PrintCadApp {
     /// The window fills the monitor it is on, borderless, or leaves it.
     fn toggle_fullscreen(&mut self) {
@@ -91,6 +116,9 @@ impl PrintCadApp {
         self.redraw_needed = true;
     }
 
+    /// The frame's commands, in the order the UI pushed them: each is
+    /// recorded, then acted on at once or folded into an intent, and the
+    /// intents are applied after the last in their fixed order.
     pub(crate) fn apply_ui_commands(
         &mut self,
         commands: Vec<UiCommand>,
@@ -108,836 +136,264 @@ impl PrintCadApp {
                     "Undo and Redo are not in the recording: what they took back stays in it",
                 );
             }
-            match command {
-                UiCommand::File(FileCommand::New) => intents.new_document = true,
-                UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
-                UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(false),
-                UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true),
-                UiCommand::File(FileCommand::ExportLaidOut) => {
-                    self.open_export_dialog();
-                    if let Some(draft) = &mut self.session.file.export_pending {
-                        draft.layout = true;
-                        draft.selected_only = false;
-                    }
+            self.fold_command(command, &mut intents);
+        }
+        self.apply_intents(intents, event_loop);
+    }
+
+    /// Phase 1 for one command: what acts at once acts here, the rest
+    /// becomes an intent.
+    fn fold_command(&mut self, command: UiCommand, intents: &mut FrameIntents) {
+        match command {
+            UiCommand::EditSettings(edit) => {
+                if let Some(note) = edit.apply(&mut self.user_settings) {
+                    app_log::info(note);
                 }
-                UiCommand::SetLayoutGap(gap) => {
-                    self.user_settings.printing.layout_gap_mm = gap.max(0.0);
+                intents.persist_settings = true;
+            }
+            UiCommand::File(FileCommand::New) => intents.new_document = true,
+            UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
+            UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(false),
+            UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true),
+            UiCommand::File(FileCommand::ExportLaidOut) => self.open_export_laid_out(),
+            UiCommand::File(FileCommand::SavePicture) => self.save_picture(),
+            UiCommand::ConfirmExport => self.confirm_export(),
+            UiCommand::CancelExport => self.session.file.export_pending = None,
+            UiCommand::File(FileCommand::ImportStep) => {
+                intents.ask_dialog(FileDialogKind::ImportStep);
+            }
+            UiCommand::File(FileCommand::Open) => intents.ask_dialog(FileDialogKind::Open),
+            UiCommand::File(FileCommand::SaveAs) => intents.ask_dialog(FileDialogKind::SaveAs),
+            UiCommand::File(FileCommand::Save) => intents.ask_dialog(FileDialogKind::Save),
+            UiCommand::File(FileCommand::RunScript) => {
+                intents.ask_dialog(FileDialogKind::RunScript);
+            }
+            UiCommand::Quit => intents.quit = true,
+            UiCommand::CancelKernelJob => self.cancel_kernel_job(),
+            UiCommand::FitView => intents.fit_view = true,
+            UiCommand::FitSelection => intents.fit_selection = true,
+            UiCommand::SetDrawStyle(style) => intents.set_draw_style = Some(style),
+            UiCommand::TogglePrintBed => intents.toggle_print_bed = true,
+            UiCommand::ToggleAnnotations => intents.toggle_annotations = true,
+            UiCommand::ToggleGrid => intents.toggle_grid = true,
+            UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
+            UiCommand::ToggleFullscreen => self.toggle_fullscreen(),
+            UiCommand::ToggleSplitView => self.session.view.split = !self.session.view.split,
+            UiCommand::ToggleSplitLink => self.toggle_split_link(),
+            UiCommand::ToggleMeasure => intents.toggle_measure = true,
+            UiCommand::ToggleNoteTool => self.toggle_note_tool(),
+            UiCommand::SaveNoteCard(text) => self.save_note_card(text),
+            UiCommand::CloseNoteCard => self.session.tools.note_card = None,
+            UiCommand::OpenNoteCard(id) => self.open_note_card(id),
+            UiCommand::ResolveNote { note, resolved } => self.resolve_note(note, resolved),
+            UiCommand::Edit(command) => intents.edit.push(command),
+            UiCommand::SetBodyDisplay { body, display } => {
+                intents.body_display.push((body, display));
+            }
+            UiCommand::SetPickFilter(filter) => self.set_pick_filter(filter),
+            UiCommand::RepeatLastTool => {
+                self.session.viewport_menu = None;
+                self.repeat_last_tool();
+            }
+            UiCommand::LookAtFace { body, face } => {
+                self.session.viewport_menu = None;
+                self.look_at_face(body, face);
+            }
+            UiCommand::RevealInTree(body) => {
+                self.session.viewport_menu = None;
+                self.session.selection.reveal_body = Some(body);
+            }
+            UiCommand::SelectBody(body) => self.select_whole_body(body),
+            UiCommand::CloseViewportMenu => self.session.viewport_menu = None,
+            UiCommand::SelectOther { body, triangle } => self.select_other(body, triangle),
+            UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
+            UiCommand::CameraSnapFit(view) => intents.camera_fit = Some(Some(view)),
+            UiCommand::CameraHome => intents.camera_fit = Some(None),
+            UiCommand::CubeDrag(drag) => intents.cube_drag = Some(drag),
+            UiCommand::CameraRotate(delta) => intents.camera_rotate = Some(delta),
+            UiCommand::CommitSettings {
+                settings,
+                display_unit,
+            } => intents.commit_settings = Some((settings, display_unit)),
+            UiCommand::SelectTreeItem(item) => intents.select_tree_item = Some(item),
+            UiCommand::ActivateTreeItem(item) => intents.activate_tree_item = Some(item),
+            UiCommand::ToggleTreeFeature(feature) => self.toggle_tree_feature(feature),
+            UiCommand::MoveTipTo(feature) => self.move_in_time_to(feature),
+            UiCommand::MoveTipToEnd(body) => self.move_tip_to_end(body),
+            UiCommand::SuppressFeatures {
+                features,
+                suppressed,
+            } => self.suppress_features(&features, suppressed),
+            UiCommand::TreeFeature { feature, command } => {
+                intents.tree_feature = Some((feature, command));
+            }
+            UiCommand::SetImportedVisibility { node, visible } => {
+                intents.set_visibility.push((node, visible));
+            }
+            UiCommand::SetFieldOfView { degrees, settled } => {
+                self.set_field_of_view(degrees);
+                // The file waits for the edit to end.
+                if settled {
                     intents.persist_settings = true;
                 }
-                UiCommand::SetStatusBar(shown) => {
-                    self.user_settings.status_bar = shown;
+            }
+            UiCommand::BodyEdit { body, edit } => self.apply_body_edit(body, edit),
+            UiCommand::CheckForUpdates => self.check_app_release(false),
+            UiCommand::PickTexturePicture { body, index } => {
+                self.start_file_dialog(FileDialogKind::TexturePicture(body, index));
+            }
+            UiCommand::ReplaceShape(body) => {
+                self.start_file_dialog(FileDialogKind::ReplaceShape(body));
+            }
+            UiCommand::PasteFormulas { feature, formulas } => {
+                self.paste_formulas(feature, formulas);
+            }
+            UiCommand::ReloadLink(body) => self.reload_link(body),
+            UiCommand::OpenLinkSource(body) => self.open_link_source(body),
+            UiCommand::Isolate(body) => self.isolate(body),
+            UiCommand::LeaveIsolation => self.session.document.set_isolation(None),
+            UiCommand::HideOthers(body) => self.hide_others(body),
+            UiCommand::ShowAllBodies => self.show_all_bodies(),
+            UiCommand::SetBodyVisible { body, visible } => {
+                self.session.viewport_menu = None;
+                Self::log_refusal(self.set_tree_item_visible(TreeItemId::Body(body), visible));
+            }
+            UiCommand::SetNoteVisible { note, visible } => {
+                Self::log_refusal(self.set_tree_item_visible(TreeItemId::Note(note), visible));
+            }
+            UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
+            UiCommand::CancelStepImport => intents.cancel_step_import = true,
+            // A panel's requests take the same paths the UI's own
+            // commands take, so a frame carrying both stays in order.
+            UiCommand::HostRequest(core_document::HostRequest::FinishEditing) => {
+                intents.finish_sketch = true;
+            }
+            UiCommand::HostRequest(core_document::HostRequest::OrientCamera(req)) => {
+                intents.orient_to_plane = Some(req);
+            }
+            UiCommand::HostRequest(core_document::HostRequest::SwitchWorkbench(wb)) => {
+                intents.request_workbench = Some(ActiveWorkbench(wb));
+            }
+            UiCommand::HostRequest(request) => intents.host_requests.push(request),
+            UiCommand::BenchCommand {
+                workbench,
+                id,
+                scope,
+            } => intents.bench_commands.push((workbench, id, scope)),
+            UiCommand::SwitchWorkbench { from, to } => {
+                intents.workbench_switch = Some((from, to));
+            }
+            UiCommand::Undo => intents.undo = true,
+            UiCommand::RunConsole(line) => self.run_console_line(&line),
+            UiCommand::RunCommand { id, args } => self.run_palette_command(id, args),
+            UiCommand::RunScriptFile(path) => self.run_script_file(&path),
+            UiCommand::InstallPackage => self.start_file_dialog(FileDialogKind::InstallPackage),
+            UiCommand::RemovePackage(id) => self.remove_package(&id),
+            UiCommand::InstallPackageFromGithub(text) => self.install_package_from_github(text),
+            UiCommand::CheckPackageUpdates => self.check_package_updates(),
+            UiCommand::LookAtStores => self.look_at_stores(false),
+            UiCommand::InstallListed { store, id } => self.install_listed(store, id),
+            UiCommand::UpdatePackage(id) => self.update_package(id),
+            UiCommand::StopScript => self.stop_script(),
+            UiCommand::ToggleRecording => self.toggle_recording(),
+            UiCommand::Recorded(calls) => self.record_calls(calls),
+            UiCommand::NewChat(agent) => self.new_chat(agent),
+            UiCommand::SendChat { chat, text } => self.send_to_chat(&chat, text),
+            UiCommand::CancelChat(chat) => self.cancel_chat(&chat),
+            UiCommand::UnqueueChat { chat, queued, keep } => {
+                self.unqueue_chat(&chat, queued, keep);
+            }
+            UiCommand::ResumeChatQueue(chat) => self.resume_chat_queue(&chat),
+            UiCommand::WakeChat(chat) => self.wake_chat(&chat),
+            UiCommand::CloseChat(chat) => self.close_chat(&chat),
+            UiCommand::AnswerPermission {
+                chat,
+                entry,
+                option,
+            } => self.answer_permission(&chat, entry, option),
+            UiCommand::SetChatAsk { chat, ask } => self.set_chat_asks(&chat, ask),
+            UiCommand::SetDocumentAgentRules(rules) => self.set_document_agent_rules(rules),
+            UiCommand::SetParameter {
+                feature,
+                parameter,
+                edit,
+            } => self.set_parameter(feature, &parameter, edit),
+            UiCommand::SetFeatureReference { feature, key, to } => {
+                self.set_feature_reference(feature, &key, to);
+            }
+            UiCommand::NewVariableSet => self.new_variable_set(),
+            UiCommand::Config(edit) => self.apply_config_edit(edit),
+            UiCommand::SetVariable {
+                set,
+                name,
+                formula,
+                comment,
+            } => self.set_variable(set, name, &formula, comment.as_deref()),
+            UiCommand::RemoveVariable { set, name } => self.remove_variable(set, name),
+            UiCommand::RenameVariable { set, name, to } => self.rename_variable(set, name, &to),
+            UiCommand::AttachFiles(chat) => self.start_file_dialog(FileDialogKind::Attach(chat)),
+            UiCommand::AttachPaths { chat, paths } => self.attach_files(&chat, paths),
+            UiCommand::AttachView(chat) => self.attach_view(&chat),
+            UiCommand::AddMention { chat, option } => self.add_mention(&chat, &option),
+            UiCommand::AttachClipboard(chat) => self.attach_clipboard(&chat),
+            UiCommand::RenameChat { chat, title } => self.rename_chat(&chat, &title),
+            UiCommand::RetitleChat(chat) => self.retitle_chat(&chat),
+            UiCommand::Detach { chat, index } => self.detach(&chat, index),
+            UiCommand::SetChatOption { chat, id, value } => self.set_chat_option(&chat, id, value),
+            UiCommand::SettleApproval { index, allow } => self.settle_approval(index, allow),
+            UiCommand::NewScript => self.new_script(None),
+            UiCommand::SaveRunsAsScript(runs) => self.new_script(Some(runs)),
+            UiCommand::EditScript(path) => self.edit_script(path),
+            UiCommand::PivotAtCursor => self.pivot_at_cursor(),
+            UiCommand::BenchAction { workbench, id } => {
+                intents.bench_actions.push((workbench, id));
+            }
+            UiCommand::Redo => intents.redo = true,
+            UiCommand::ToggleLogPanel => intents.toggle_log_panel = true,
+            UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
+            UiCommand::SetSection(toggle) => self.set_section(toggle),
+            UiCommand::SavedSection(action) => self.saved_section_action(action),
+            UiCommand::SetMeasureUnit(unit) => self.set_measure_unit(unit),
+            UiCommand::ClearMeasure => self.clear_measure(),
+            UiCommand::RecomputeAll => intents.recompute_all = true,
+            UiCommand::TaskClosed { outcome, take_back } => {
+                intents.task_closed = Some((outcome, take_back));
+            }
+            UiCommand::CloseCard { accept } => {
+                self.close_card(accept);
+            }
+            UiCommand::DeleteTreeItem(item) => intents.delete_item = Some(item),
+            UiCommand::ConvertToSolid(bodies) => self.ask_shape_work(bodies, ShapeWork::Convert),
+            UiCommand::RefineShapes(bodies) => self.ask_shape_work(bodies, ShapeWork::Refine),
+            UiCommand::RepairShapes(bodies) => self.ask_shape_work(bodies, ShapeWork::Repair),
+            UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
+            UiCommand::ReleaseActiveObject => intents.release_active_object = true,
+            UiCommand::ShowStartPage => intents.show_start_page = true,
+            UiCommand::ShowWorkspace => intents.show_workspace = true,
+            UiCommand::NewTab => intents.new_tab = true,
+            UiCommand::ReopenTab => self.reopen_closed_tab(),
+            UiCommand::OpenDropped(paths) => self.open_dropped(paths),
+            UiCommand::RecoverDocument(copy) => self.recover_document(copy),
+            UiCommand::DiscardRecovery(copy) => self.discard_recovery(copy),
+            UiCommand::CloseTab(tab) => intents.close_tab = Some(tab),
+            UiCommand::SelectTab(tab) => intents.select_tab = Some(tab),
+            UiCommand::CycleTab(delta) => intents.cycle_tab = Some(delta),
+            UiCommand::StartNew(kind) => intents.start_new = Some(kind),
+            UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
+            UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
+            UiCommand::AnswerUnsaved(answer) => intents.unsaved_answer = Some(answer),
+            UiCommand::MarkEdit(edit) => self.mark_edit(edit),
+            UiCommand::AnswerMeshUnits(answer) => {
+                if self.answer_mesh_units(answer) {
                     intents.persist_settings = true;
                 }
-                UiCommand::SetSlicerLayout(on) => {
-                    self.user_settings.printing.slicer_layout = on;
+            }
+            UiCommand::AnswerSaveOver(answer) => {
+                if self.answer_save_over(answer) {
                     intents.persist_settings = true;
                 }
-                UiCommand::File(FileCommand::SavePicture) => {
-                    if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.renderer
-                            .request_capture(render_wgpu::CaptureKind::Scene);
-                        self.redraw_needed = true;
-                    }
-                }
-                UiCommand::ConfirmExport => self.confirm_export(),
-                UiCommand::CancelExport => self.session.file.export_pending = None,
-                // One dialog a frame, by priority: import > open > save-as
-                // > save.
-                UiCommand::File(FileCommand::ImportStep) => {
-                    intents.file_dialog = Some(FileDialogKind::ImportStep);
-                }
-                UiCommand::File(FileCommand::Open) => {
-                    if !matches!(intents.file_dialog, Some(FileDialogKind::ImportStep)) {
-                        intents.file_dialog = Some(FileDialogKind::Open);
-                    }
-                }
-                UiCommand::File(FileCommand::SaveAs) => {
-                    if matches!(intents.file_dialog, None | Some(FileDialogKind::Save)) {
-                        intents.file_dialog = Some(FileDialogKind::SaveAs);
-                    }
-                }
-                UiCommand::File(FileCommand::Save) => {
-                    if intents.file_dialog.is_none() {
-                        intents.file_dialog = Some(FileDialogKind::Save);
-                    }
-                }
-                UiCommand::Quit => intents.quit = true,
-                UiCommand::CancelKernelJob => {
-                    self.kernel_worker.cancel_current();
-                    crate::log_panel::info("Cancelling the running kernel job…");
-                }
-                UiCommand::FitView => intents.fit_view = true,
-                UiCommand::FitSelection => intents.fit_selection = true,
-                UiCommand::SetDrawStyle(style) => intents.set_draw_style = Some(style),
-                UiCommand::TogglePrintBed => intents.toggle_print_bed = true,
-                UiCommand::ToggleAnnotations => intents.toggle_annotations = true,
-                UiCommand::ToggleGrid => intents.toggle_grid = true,
-                UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
-                UiCommand::ToggleFullscreen => self.toggle_fullscreen(),
-                UiCommand::ToggleSplitView => self.session.view.split = !self.session.view.split,
-                UiCommand::ToggleSplitLink => self.toggle_split_link(),
-                UiCommand::ToggleMeasure => intents.toggle_measure = true,
-                UiCommand::ToggleNoteTool => {
-                    self.session.tools.note_tool = !self.session.tools.note_tool;
-                    self.session.tools.note_card = None;
-                    if self.session.tools.note_tool {
-                        app_log::info("Note: click a face, an edge or a point of a part");
-                    }
-                }
-                UiCommand::SaveNoteCard(text) => self.save_note_card(text),
-                UiCommand::CloseNoteCard => self.session.tools.note_card = None,
-                UiCommand::OpenNoteCard(id) => self.open_note_card(id),
-                UiCommand::ResolveNote { note, resolved } => self.resolve_note(note, resolved),
-                UiCommand::Edit(command) => intents.edit.push(command),
-                UiCommand::SetBodyDisplay { body, display } => {
-                    intents.body_display.push((body, display));
-                }
-                UiCommand::SetPickFilter(filter) => {
-                    self.session.view.pick_filter = filter;
-                    self.session.hover.edge = None;
-                    app_log::info(format!("Picking: {}", filter.label()));
-                }
-                UiCommand::RepeatLastTool => {
-                    self.session.viewport_menu = None;
-                    self.repeat_last_tool();
-                }
-                UiCommand::LookAtFace { body, face } => {
-                    self.session.viewport_menu = None;
-                    self.look_at_face(body, face);
-                }
-                UiCommand::RevealInTree(body) => {
-                    self.session.viewport_menu = None;
-                    self.session.selection.reveal_body = Some(body);
-                }
-                UiCommand::SelectBody(body) => {
-                    self.session.viewport_menu = None;
-                    self.session.selection.face_highlight = None;
-                    self.session.selection.last_face_hit = None;
-                    self.session.selection.body = Some(body.0);
-                    app_log::info(format!("Selected body: {:?}", body.0));
-                }
-                UiCommand::CloseViewportMenu => self.session.viewport_menu = None,
-                UiCommand::SelectOther { body, triangle } => self.select_other(body, triangle),
-                UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
-                UiCommand::CameraSnapFit(view) => intents.camera_fit = Some(Some(view)),
-                UiCommand::CameraHome => intents.camera_fit = Some(None),
-                UiCommand::CubeDrag(drag) => intents.cube_drag = Some(drag),
-                UiCommand::CameraRotate(delta) => intents.camera_rotate = Some(delta),
-                UiCommand::CommitSettings {
-                    settings,
-                    display_unit,
-                } => intents.commit_settings = Some((settings, display_unit)),
-                UiCommand::SelectTreeItem(item) => intents.select_tree_item = Some(item),
-                UiCommand::ActivateTreeItem(item) => intents.activate_tree_item = Some(item),
-                UiCommand::ToggleTreeFeature(feature) => self.toggle_tree_feature(feature),
-                UiCommand::MoveTipTo(feature) => self.move_in_time_to(feature),
-                UiCommand::MoveTipToEnd(body) => self.move_tip_to_end(body),
-                UiCommand::SuppressFeatures {
-                    features,
-                    suppressed,
-                } => self.suppress_features(&features, suppressed),
-                UiCommand::TreeFeature { feature, command } => {
-                    intents.tree_feature = Some((feature, command));
-                }
-                UiCommand::SetImportedVisibility { node, visible } => {
-                    intents.set_visibility.push((node, visible));
-                }
-                UiCommand::SetFieldOfView { degrees, settled } => {
-                    self.session
-                        .view
-                        .camera
-                        .set_field_of_view(degrees, &self.user_settings.camera);
-                    // A later fit frames with the setting, so it follows
-                    // the edit at once; the file waits for the edit to end.
-                    self.user_settings.camera.fov_degrees =
-                        self.session.view.camera.field_of_view_deg();
-                    if settled {
-                        intents.persist_settings = true;
-                    }
-                }
-                UiCommand::BodyEdit { body, edit } => self.apply_body_edit(body, edit),
-                UiCommand::SetCustomColors(colors) => {
-                    self.user_settings.rendering.custom_colors = colors;
-                    intents.persist_settings = true;
-                }
-                UiCommand::CheckForUpdates => self.check_app_release(false),
-                UiCommand::PickTexturePicture { body, index } => {
-                    self.start_file_dialog(FileDialogKind::TexturePicture(body, index));
-                }
-                UiCommand::ReplaceShape(body) => {
-                    self.start_file_dialog(FileDialogKind::ReplaceShape(body));
-                }
-                UiCommand::SetToolHintOffset(offset) => {
-                    self.user_settings.tool_hint.offset = offset;
-                    intents.persist_settings = true;
-                }
-                UiCommand::HideToolHint => {
-                    self.user_settings.tool_hint.show = false;
-                    intents.persist_settings = true;
-                    app_log::info(
-                        "Tool card hidden; Preferences, General, Tool card shows it again",
-                    );
-                }
-                UiCommand::SetToolbarLayout(rows) => {
-                    self.user_settings.toolbars.rows = rows;
-                    intents.persist_settings = true;
-                }
-                UiCommand::SetToolPanelPins { bench, pins } => {
-                    if let Some(pins) = pins {
-                        self.user_settings.tool_panel_pins.insert(bench, pins);
-                    } else {
-                        self.user_settings.tool_panel_pins.remove(&bench);
-                    }
-                    intents.persist_settings = true;
-                }
-                UiCommand::PasteFormulas { feature, formulas } => {
-                    self.paste_formulas(feature, formulas);
-                }
-                UiCommand::ReloadLink(body) => self.reload_link(body),
-                UiCommand::OpenLinkSource(body) => self.open_link_source(body),
-                UiCommand::Isolate(body) => {
-                    if self.session.document.isolation().is_some() {
-                        self.session.document.set_isolation(None);
-                    } else {
-                        let kept = match body {
-                            Some(body) => vec![body],
-                            None => self.bodies_to_isolate(),
-                        };
-                        if kept.is_empty() {
-                            app_log::warn("Select a body to isolate");
-                        } else {
-                            self.session
-                                .selection
-                                .edges
-                                .retain(|e| kept.iter().any(|b| b.0 == e.body));
-                            self.session.document.set_isolation(Some(kept));
-                        }
-                    }
-                }
-                UiCommand::LeaveIsolation => self.session.document.set_isolation(None),
-                UiCommand::HideOthers(body) => {
-                    let body = body.or_else(|| self.selected_body_for_isolate());
-                    match body {
-                        Some(keep) => {
-                            let others: Vec<core_document::BodyId> = self
-                                .session
-                                .document
-                                .bodies()
-                                .iter()
-                                .map(|b| b.id)
-                                .filter(|b| *b != keep)
-                                .collect();
-                            for other in others {
-                                self.session.document.set_body_visible(other, false);
-                            }
-                            self.session.document.set_body_visible(keep, true);
-                            self.session.selection.edges.retain(|e| e.body == keep.0);
-                            self.session.journal.label_next("Isolate body");
-                            self.close_gesture();
-                        }
-                        None => app_log::warn("Select a body to isolate"),
-                    }
-                }
-                UiCommand::ShowAllBodies => {
-                    let hidden: Vec<core_document::BodyId> = self
-                        .session
-                        .document
-                        .bodies()
-                        .iter()
-                        .filter(|b| b.hidden)
-                        .map(|b| b.id)
-                        .collect();
-                    for body in hidden {
-                        self.session.document.set_body_visible(body, true);
-                    }
-                    self.session.document.set_isolation(None);
-                    self.session.journal.label_next("Show all bodies");
-                    self.close_gesture();
-                }
-                UiCommand::SetBodyVisible { body, visible } => {
-                    self.session.viewport_menu = None;
-                    Self::log_refusal(self.set_tree_item_visible(TreeItemId::Body(body), visible));
-                }
-                UiCommand::SetNoteVisible { note, visible } => {
-                    Self::log_refusal(self.set_tree_item_visible(TreeItemId::Note(note), visible));
-                }
-                UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
-                UiCommand::CancelStepImport => intents.cancel_step_import = true,
-                // A panel's requests take the same paths the UI's own
-                // commands take, so a frame carrying both stays in order.
-                UiCommand::HostRequest(core_document::HostRequest::FinishEditing) => {
-                    intents.finish_sketch = true;
-                }
-                UiCommand::HostRequest(core_document::HostRequest::OrientCamera(req)) => {
-                    intents.orient_to_plane = Some(req);
-                }
-                UiCommand::HostRequest(core_document::HostRequest::SwitchWorkbench(wb)) => {
-                    intents.request_workbench = Some(ActiveWorkbench(wb));
-                }
-                UiCommand::HostRequest(request) => intents.host_requests.push(request),
-                UiCommand::BenchCommand {
-                    workbench,
-                    id,
-                    scope,
-                } => intents.bench_commands.push((workbench, id, scope)),
-                UiCommand::SwitchWorkbench { from, to } => {
-                    intents.workbench_switch = Some((from, to));
-                }
-                UiCommand::Undo => intents.undo = true,
-                UiCommand::RunConsole(line) => self.run_console_line(&line),
-                UiCommand::RunCommand { id, args } => self.run_palette_command(id, args),
-                UiCommand::RunScriptFile(path) => self.run_script_file(&path),
-                UiCommand::InstallPackage => {
-                    self.start_file_dialog(crate::app::doc_io::FileDialogKind::InstallPackage)
-                }
-                UiCommand::RemovePackage(id) => self.remove_package(&id),
-                UiCommand::InstallPackageFromGithub(text) => self.install_package_from_github(text),
-                UiCommand::CheckPackageUpdates => self.check_package_updates(),
-                UiCommand::LookAtStores => self.look_at_stores(false),
-                UiCommand::InstallListed { store, id } => self.install_listed(store, id),
-                UiCommand::UpdatePackage(id) => self.update_package(id),
-                UiCommand::StopScript => self.stop_script(),
-                UiCommand::ToggleRecording => self.toggle_recording(),
-                UiCommand::Recorded(calls) => self.record_calls(calls),
-                UiCommand::NewChat(agent) => self.new_chat(agent),
-                UiCommand::SendChat { chat, text } => self.send_to_chat(&chat, text),
-                UiCommand::CancelChat(chat) => self.cancel_chat(&chat),
-                UiCommand::UnqueueChat { chat, queued, keep } => {
-                    self.unqueue_chat(&chat, queued, keep);
-                }
-                UiCommand::ResumeChatQueue(chat) => self.resume_chat_queue(&chat),
-                UiCommand::WakeChat(chat) => self.wake_chat(&chat),
-                UiCommand::CloseChat(chat) => self.close_chat(&chat),
-                UiCommand::AnswerPermission {
-                    chat,
-                    entry,
-                    option,
-                } => self.answer_permission(&chat, entry, option),
-                UiCommand::SetChatAsk { chat, ask } => self.set_chat_asks(&chat, ask),
-                UiCommand::SetDocumentAgentRules(rules) => {
-                    self.session.document.set_agent_rules(rules);
-                    self.session.journal.label_next("Agent rules");
-                    self.close_gesture();
-                }
-                UiCommand::SetParameter {
-                    feature,
-                    parameter,
-                    edit,
-                } => self.set_parameter(feature, &parameter, edit),
-                UiCommand::SetFeatureReference { feature, key, to } => {
-                    self.set_feature_reference(feature, &key, to);
-                }
-                UiCommand::NewVariableSet => self.new_variable_set(),
-                UiCommand::Config(edit) => self.apply_config_edit(edit),
-                UiCommand::SetVariable {
-                    set,
-                    name,
-                    formula,
-                    comment,
-                } => {
-                    let label = format!("Set {name}");
-                    let done = self.session.document.set_variable(
-                        set,
-                        &name,
-                        &formula,
-                        comment.as_deref(),
-                    );
-                    self.finish_variable_edit(done, label);
-                }
-                UiCommand::RemoveVariable { set, name } => {
-                    let done = self.session.document.remove_variable(set, &name);
-                    self.finish_variable_edit(done, format!("Remove {name}"));
-                }
-                UiCommand::RenameVariable { set, name, to } => {
-                    let done = self.session.document.rename_variable(set, &name, &to);
-                    self.finish_variable_edit(done, format!("Rename {name}"));
-                }
-                UiCommand::AttachFiles(chat) => {
-                    self.start_file_dialog(FileDialogKind::Attach(chat))
-                }
-                UiCommand::AttachPaths { chat, paths } => self.attach_files(&chat, paths),
-                UiCommand::AttachView(chat) => self.attach_view(&chat),
-                UiCommand::AddMention { chat, option } => self.add_mention(&chat, &option),
-                UiCommand::AttachClipboard(chat) => self.attach_clipboard(&chat),
-                UiCommand::RenameChat { chat, title } => self.rename_chat(&chat, &title),
-                UiCommand::RetitleChat(chat) => self.retitle_chat(&chat),
-                UiCommand::Detach { chat, index } => self.detach(&chat, index),
-                UiCommand::SetChatOption { chat, id, value } => {
-                    self.set_chat_option(&chat, id, value)
-                }
-                UiCommand::SettleApproval { index, allow } => self.settle_approval(index, allow),
-                UiCommand::NewScript => self.new_script(None),
-                UiCommand::SaveRunsAsScript(runs) => self.new_script(Some(runs)),
-                UiCommand::EditScript(path) => self.edit_script(path),
-                UiCommand::File(FileCommand::RunScript) => {
-                    intents.file_dialog = Some(FileDialogKind::RunScript);
-                }
-                UiCommand::PivotAtCursor => {
-                    if self.input.cursor_in_viewport.is_some()
-                        && self
-                            .session
-                            .view
-                            .camera
-                            .pivot_from_key_h(&self.user_settings.camera)
-                    {
-                        self.redraw_needed = true;
-                    }
-                }
-                UiCommand::BenchAction { workbench, id } => {
-                    intents.bench_actions.push((workbench, id));
-                }
-                UiCommand::Redo => intents.redo = true,
-                UiCommand::ToggleLogPanel => intents.toggle_log_panel = true,
-                UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
-                UiCommand::SetSection(toggle) => self.set_section(toggle),
-                UiCommand::SavedSection(action) => self.saved_section_action(action),
-                UiCommand::SetMeasureUnit(unit) => {
-                    if unit != self.session.document.measure_unit() {
-                        self.session.document.set_measure_unit(unit);
-                        self.session.journal.label_next("Measure unit");
-                        self.close_gesture();
-                    }
-                }
-                UiCommand::ClearMeasure => {
-                    if let Some(picks) = &mut self.session.tools.measure {
-                        picks.clear();
-                    }
-                    self.session.tools.measure_gap = None;
-                }
-                UiCommand::RecomputeAll => intents.recompute_all = true,
-                UiCommand::TaskClosed { outcome, take_back } => {
-                    intents.task_closed = Some((outcome, take_back))
-                }
-                UiCommand::CloseCard { accept } => {
-                    self.close_card(accept);
-                }
-                UiCommand::DeleteTreeItem(item) => intents.delete_item = Some(item),
-                UiCommand::ConvertToSolid(bodies) => {
-                    self.session.viewport_menu = None;
-                    let asked = bodies
-                        .into_iter()
-                        .filter(|body| self.session.document.request_mesh_solid(*body))
-                        .count();
-                    if asked > 0 {
-                        self.session.journal.label_next("Convert to solid");
-                        self.close_gesture();
-                        app_log::info(format!(
-                            "Conversion to a solid asked for {asked} mesh(es); undo history cleared"
-                        ));
-                    }
-                }
-                UiCommand::RefineShapes(bodies) => {
-                    self.session.viewport_menu = None;
-                    let asked = bodies
-                        .into_iter()
-                        .filter(|body| self.session.document.request_body_refine(*body))
-                        .count();
-                    if asked > 0 {
-                        self.session.journal.label_next("Refine shape");
-                        self.close_gesture();
-                        app_log::info(format!(
-                            "Refine asked for {asked} converted solid(s); undo history cleared"
-                        ));
-                    }
-                }
-                UiCommand::RepairShapes(bodies) => {
-                    self.session.viewport_menu = None;
-                    let asked = bodies
-                        .into_iter()
-                        .filter(|body| self.session.document.request_body_repair(*body))
-                        .count();
-                    if asked > 0 {
-                        self.session.journal.label_next("Repair shape");
-                        self.close_gesture();
-                        app_log::info(format!(
-                            "Repair asked for {asked} shape(s); undo history cleared"
-                        ));
-                    }
-                }
-                UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
-                UiCommand::ReleaseActiveObject => intents.release_active_object = true,
-                UiCommand::ShowStartPage => intents.show_start_page = true,
-                UiCommand::ShowWorkspace => intents.show_workspace = true,
-                UiCommand::NewTab => intents.new_tab = true,
-                UiCommand::ReopenTab => self.reopen_closed_tab(),
-                UiCommand::OpenDropped(paths) => self.open_dropped(paths),
-                UiCommand::RecoverDocument(copy) => self.recover_document(copy),
-                UiCommand::DiscardRecovery(copy) => self.discard_recovery(copy),
-                UiCommand::NoteRecentCommand(key) => {
-                    let recent = &mut self.user_settings.recent_commands;
-                    recent.retain(|k| *k != key);
-                    recent.insert(0, key);
-                    recent.truncate(crate::ui::PALETTE_RECENT_KEPT);
-                    intents.persist_settings = true;
-                }
-                UiCommand::CloseTab(tab) => intents.close_tab = Some(tab),
-                UiCommand::SelectTab(tab) => intents.select_tab = Some(tab),
-                UiCommand::CycleTab(delta) => intents.cycle_tab = Some(delta),
-                UiCommand::StartNew(kind) => intents.start_new = Some(kind),
-                UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
-                UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
-                UiCommand::AnswerUnsaved(answer) => intents.unsaved_answer = Some(answer),
-                UiCommand::MarkEdit(edit) => self.mark_edit(edit),
-                UiCommand::AnswerMeshUnits(answer) => {
-                    if self.answer_mesh_units(answer) {
-                        intents.persist_settings = true;
-                    }
-                }
-                UiCommand::AnswerSaveOver(answer) => {
-                    if self.answer_save_over(answer) {
-                        intents.persist_settings = true;
-                    }
-                }
-                UiCommand::DismissFileNotice => self.session.file.safety.newer_notice = false,
             }
-        }
-
-        // Undo and redo first: they replace what every later intent acts on.
-        if intents.undo {
-            self.perform_undo();
-        }
-        if intents.redo {
-            self.perform_redo();
-        }
-        if intents.toggle_log_panel {
-            self.user_settings.rendering.show_log_panel =
-                !self.user_settings.rendering.show_log_panel;
-            intents.persist_settings = true;
-        }
-        if intents.toggle_print_bed {
-            self.user_settings.printing.show_bed = !self.user_settings.printing.show_bed;
-            intents.persist_settings = true;
-        }
-        if intents.toggle_annotations {
-            self.user_settings.rendering.show_annotations =
-                !self.user_settings.rendering.show_annotations;
-            intents.persist_settings = true;
-        }
-        if intents.toggle_grid {
-            self.user_settings.rendering.show_grid = !self.user_settings.rendering.show_grid;
-            intents.persist_settings = true;
-        }
-        if intents.toggle_origin_planes {
-            self.user_settings.rendering.show_origin_planes =
-                !self.user_settings.rendering.show_origin_planes;
-            intents.persist_settings = true;
-        }
-        if let Some(style) = intents.set_draw_style
-            && self.user_settings.rendering.draw_style != style
-        {
-            self.user_settings.rendering.draw_style = style;
-            intents.persist_settings = true;
-        }
-        if let Some(mode) = intents.set_projection {
-            self.user_settings.camera.projection = mode;
-            intents.persist_settings = true;
-            intents.apply_camera_settings = true;
-        }
-        if intents.recompute_all {
-            self.registry.invalidate_all(&mut self.session.document);
-            app_log::info("Recomputing every feature");
-        }
-        if let Some((outcome, take_back)) = intents.task_closed {
-            // What the view held for the task is let go, nothing put back.
-            self.end_gestures(crate::app::gesture::GestureEnd::TaskClosed);
-            self.end_task_step(&outcome, take_back);
-            match outcome {
-                core_document::TaskOutcome::Accepted { label } => app_log::info(label),
-                core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),
-                core_document::TaskOutcome::Open => {}
-            }
-        }
-        if intents.release_active_object {
-            // The body the task or sketch belonged to stays selected, so the
-            // next feature has a target without another trip to the tree.
-            let target = self
-                .session
-                .active_body_id
-                .map(TreeItemId::Body)
-                .unwrap_or(TreeItemId::DocumentRoot);
-            self.apply_tree_selection(target);
-        }
-        if let Some((item, name)) = intents.rename {
-            match item {
-                TreeItemId::Feature(id) => self.session.document.rename_feature(id, name),
-                TreeItemId::Body(id) => self.session.document.rename_body(id, name),
-                TreeItemId::Component(id) => {
-                    if let Some(mut component) = self.session.document.component(id).cloned() {
-                        component.name = name;
-                        if let Err(err) = self.session.document.update_component(component) {
-                            app_log::warn(format!("Could not rename the component: {err}"));
-                        }
-                    }
-                }
-                TreeItemId::Note(id) => {
-                    if let Some((_, note)) = self.session.document.note(id) {
-                        let mut changed = note.clone();
-                        changed.text = name;
-                        self.session.document.set_note(changed);
-                    }
-                }
-                TreeItemId::DocumentRoot
-                | TreeItemId::ImportedObject(_)
-                | TreeItemId::Notes(_)
-                | TreeItemId::Array(_) => {}
-            }
-        }
-        if let Some(wb) = intents.request_workbench
-            && wb != self.session.active_workbench
-        {
-            intents.workbench_switch = Some((self.session.active_workbench.clone(), wb));
-        }
-
-        // Phase 2: the intents applied in their fixed order.
-
-        // An open sketch keeps the view square to its plane: standard
-        // views and out-of-plane rotation are refused, but rolling about
-        // the plane normal (the direction the camera looks down) is not.
-        let planar_only = self.sketch_editing_active();
-        match intents.camera_snap {
-            Some(_) if planar_only => {
-                app_log::info("Standard views are locked while a sketch is open")
-            }
-            Some(view) => self
-                .session
-                .view
-                .camera
-                .snap_to_view(view, &self.user_settings.camera),
-            None => {}
-        }
-        match intents.camera_fit {
-            Some(_) if planar_only => {
-                app_log::info("Standard views are locked while a sketch is open")
-            }
-            Some(view) => self.fly_to_scene(view),
-            None => {}
-        }
-        match intents.cube_drag {
-            Some(CubeDrag::Moved(offset)) => {
-                if self
-                    .session
-                    .view
-                    .camera
-                    .orbit_from_cube(offset, &self.user_settings.camera)
-                {
-                    self.redraw_needed = true;
-                }
-            }
-            Some(CubeDrag::Released) => self.session.view.camera.release_cube_orbit(),
-            None => {}
-        }
-        if let Some(ref delta) = intents.camera_rotate {
-            if !planar_only || delta.axis.keeps_view_direction() {
-                self.session
-                    .view
-                    .camera
-                    .apply_rotate_delta(delta, &self.user_settings.camera);
-            } else {
-                app_log::info("The view only turns in the sketch plane while a sketch is open");
-            }
-        }
-
-        if let Some((settings, display_unit)) = intents.commit_settings {
-            // Only a changed camera section re-syncs the controller: a sync
-            // resets the wheel zoom and orbit framing from the saved values.
-            if settings.camera != self.user_settings.camera {
-                intents.apply_camera_settings = true;
-            }
-            let packages_before = self.user_settings.packages.clone();
-            let detail_before = self.user_settings.rendering.curve_step_deg;
-            if *settings != self.user_settings {
-                self.user_settings = *settings;
-            }
-            // A bench page applies to the bench as it is drawn; the commit
-            // writes what the benches hold now, keeping the settings of
-            // packages turned off.
-            self.user_settings
-                .workbenches
-                .extend(self.registry.collect_settings());
-            intents.persist_settings = true;
-            if self.user_settings.packages != packages_before {
-                self.packages_changed(&packages_before);
-            }
-            // Solids are meshed at the detail they were built with: a new
-            // curve smoothness rebuilds every tab's.
-            if self.user_settings.rendering.curve_step_deg != detail_before {
-                for session in crate::app::tabs::sessions_mut(&mut self.session, &mut self.tabs) {
-                    self.registry.invalidate_all(&mut session.document);
-                }
-            }
-            if display_unit != self.session.document.display_unit() {
-                self.session.document.set_display_unit(display_unit);
-            }
-        }
-        if intents.persist_settings
-            && let Err(err) = self.settings_store.save(&self.user_settings)
-        {
-            app_log::warn(format!("Failed to save settings: {err}"));
-        }
-        if intents.apply_camera_settings {
-            self.session
-                .view
-                .camera
-                .sync_with_settings(&self.user_settings.camera);
-        }
-
-        let mut step_import_to_run = None;
-        if intents.confirm_step_import {
-            step_import_to_run = self.session.file.step_import_pending.take();
-        }
-        if intents.cancel_step_import {
-            self.session.file.step_import_pending = None;
-        }
-
-        if intents.fit_view {
-            self.fit_view_to_scene();
-        }
-        if intents.fit_selection {
-            self.fit_view_to_selection();
-        }
-        for (body, display) in intents.body_display {
-            self.session.document.set_body_display(body, display);
-        }
-
-        for (node_id, visible) in intents.set_visibility {
-            self.session
-                .document
-                .set_imported_object_visibility(node_id, visible);
-        }
-
-        if let Some(selection) = intents.select_tree_item {
-            self.apply_tree_selection(selection);
-        }
-        if let Some(item) = intents.activate_tree_item {
-            self.apply_tree_activation(item);
-        }
-        if let Some((feature, command)) = intents.tree_feature {
-            self.apply_tree_feature_command(feature, command);
-        }
-
-        if let Some(item) = intents.delete_item {
-            let done = self.delete_tree_item(item);
-            Self::log_refusal(done);
-        }
-
-        if let Some(req) = intents.orient_to_plane {
-            self.session.view.camera.orient_to_plane(
-                Vec3::from_array(req.plane_origin),
-                Vec3::from_array(req.plane_normal),
-                Vec3::from_array(req.plane_up),
-                req.centre.map(Vec3::from_array),
-                &self.user_settings.camera,
-            );
-        }
-
-        if intents.finish_sketch {
-            self.finish_active_workbench_editing();
-        }
-        for request in intents.host_requests {
-            self.apply_host_request(request, crate::app::workbench_host::HookSite::Interaction);
-        }
-        for (workbench, id, scope) in intents.bench_commands {
-            self.run_bench_command(workbench, &id, scope);
-        }
-        for (workbench, id) in intents.bench_actions {
-            self.run_bench_action(&workbench, &id);
-        }
-        for command in intents.edit {
-            let bench = self.session.active_workbench.0.clone();
-            self.run_bench_command(bench, command.id(), core_document::MenuScope::EditMenu);
-        }
-        if intents.toggle_measure {
-            self.session.tools.measure = match self.session.tools.measure {
-                Some(_) => None,
-                None => Some(Vec::new()),
-            };
-            if self.session.tools.measure.is_some() {
-                app_log::info(
-                    "Measure: click a point, an edge or a face, then another to measure between",
-                );
-            }
-        }
-
-        if let Some((path, detail)) = step_import_to_run {
-            self.imports.last_detail = detail.clone();
-            self.import_step_at(&path, detail);
-        }
-
-        // New and Open never discard anything: a tab with edits keeps
-        // them and the new document opens beside it.
-        if intents.new_document {
-            self.reset_to_new_document();
-        }
-        if let Some(kind) = intents.start_new {
-            self.start_new_document(kind);
-        }
-        if let Some(path) = intents.open_recent {
-            if crate::platform::exists(&path) {
-                self.open_document_at(path);
-            } else {
-                app_log::error(format!("`{}` is gone; removed from recent", path.display()));
-                self.remove_recent(&path);
-            }
-        }
-        for path in intents.remove_recent {
-            self.remove_recent(&path);
-        }
-        if intents.show_start_page {
-            self.session.screen = Screen::Start;
-        }
-        if intents.show_workspace {
-            self.session.screen = Screen::Workspace;
-        }
-
-        if let Some(kind) = intents.file_dialog {
-            self.start_file_dialog(kind);
-        }
-
-        self.poll_file_dialog();
-        self.drain_package_news();
-        for path in std::mem::take(&mut self.scripting.to_run) {
-            self.run_script_file(&path);
-        }
-        self.poll_export();
-        self.open_export_when_ready();
-
-        // Workbench change last-but-one so the outgoing workbench sees the
-        // frame's selection updates in its deactivate hook.
-        if let Some((old_wb, new_wb)) = intents.workbench_switch {
-            // A deliberate user switch cancels any pending return-to-bench.
-            self.session.return_workbench = None;
-            self.session.active_workbench = new_wb.clone();
-            self.call_workbench_deactivate(&old_wb.0);
-            self.call_workbench_activate(&new_wb.0);
-        }
-
-        // Tab changes after everything else acted on the tab it was meant
-        // for; a new tab opens on the start page.
-        if intents.new_tab {
-            let session = self.new_session(Screen::Start);
-            self.open_tab(session);
-        }
-        if let Some(tab) = intents.select_tab
-            && let Some(index) = self.tab_index_of(tab)
-        {
-            self.switch_tab(index);
-        }
-        if let Some(delta) = intents.cycle_tab {
-            self.cycle_tab(delta);
-        }
-        if let Some(tab) = intents.close_tab
-            && let Some(index) = self.tab_index_of(tab)
-        {
-            self.close_tab_interactive(index);
-        }
-
-        // File > Quit / Ctrl+Q. Applied here so the rest of the frame
-        // (rendering, picks, dialogs) finishes cleanly before the loop ends.
-        if let Some(answer) = intents.unsaved_answer {
-            self.answer_unsaved(answer, event_loop);
-        }
-        if intents.quit {
-            self.request_quit(event_loop);
+            UiCommand::DismissFileNotice => self.session.file.safety.newer_notice = false,
         }
     }
 

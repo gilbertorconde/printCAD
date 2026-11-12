@@ -11,7 +11,7 @@ use ui_kit::widgets::{ToolButtonState, tool_button, vseparator};
 use workbenches::REGISTERED_WORKBENCHES;
 
 use super::host_ctx::{HostCtxParams, panel_ctx};
-use super::{ActiveTool, ActiveWorkbench, UiCommand};
+use super::{ActiveTool, ActiveWorkbench, SettingsEdit, UiCommand};
 
 /// Everything the toolbar needs from the frame.
 pub struct ToolbarInputs<'a> {
@@ -913,14 +913,18 @@ pub fn draw_toolbars(
                     });
             });
         if panels.reset || panels.pins != initial_pins {
-            commands.push(UiCommand::SetToolPanelPins {
-                bench: tools_bench.as_str().to_owned(),
-                pins: if panels.reset {
-                    None
-                } else {
-                    Some(panels.pins)
+            let bench = tools_bench.as_str().to_owned();
+            let pins = (!panels.reset).then_some(panels.pins);
+            commands.push(UiCommand::EditSettings(SettingsEdit::new(
+                move |settings| match &pins {
+                    Some(pins) => {
+                        settings.tool_panel_pins.insert(bench.clone(), pins.clone());
+                    }
+                    None => {
+                        settings.tool_panel_pins.remove(&bench);
+                    }
                 },
-            });
+            )));
         }
         return;
     }
@@ -1048,7 +1052,7 @@ pub fn draw_toolbars(
         });
 
     if reset {
-        commands.push(UiCommand::SetToolbarLayout(Vec::new()));
+        commands.push(toolbar_layout(Vec::new()));
         return;
     }
     let Some((g, stopped)) = drag else {
@@ -1076,7 +1080,7 @@ pub fn draw_toolbars(
                     .is_some_and(|x| x.end == side)
             };
             let rows = moved(full, &groups[g].id, &to, same_side);
-            commands.push(UiCommand::SetToolbarLayout(rows));
+            commands.push(toolbar_layout(rows));
         }
         return;
     }
@@ -1205,6 +1209,12 @@ fn separator(ui: &mut egui::Ui) {
     ui.add_space(5.0);
     vseparator(ui, 22.0);
     ui.add_space(5.0);
+}
+
+/// Keep the toolbar groups where the user dragged them; empty puts every
+/// group back where its bench puts it.
+fn toolbar_layout(rows: Vec<Vec<String>>) -> UiCommand {
+    UiCommand::EditSettings(SettingsEdit::set(|s| &mut s.toolbars.rows, rows))
 }
 
 #[cfg(test)]
