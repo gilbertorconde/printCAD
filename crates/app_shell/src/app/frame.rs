@@ -498,26 +498,7 @@ impl PrintCadApp {
         let planar_view_lock = self.sketch_editing_active();
         let hover_card = self.hover_card();
         let picks = self.picks_summary();
-        // The faces selected in the view, as their body's mesh
-        // numbers them, in the order picked: what the Appearance
-        // and texture tasks take.
-        let picked_faces: Vec<(core_document::BodyId, u32)> = self
-            .session
-            .selected_body
-            .filter(|_| self.session.face_highlight.is_some())
-            .map(core_document::BodyId)
-            .and_then(|body| {
-                let mesh = &self.session.document.imported_geometry(body)?.mesh;
-                Some(
-                    self.selected_face_refs()
-                        .into_iter()
-                        .filter_map(|face| {
-                            Some((body, crate::app::input::face_id_at(mesh, face.point)?))
-                        })
-                        .collect(),
-                )
-            })
-            .unwrap_or_default();
+        let picked_faces = self.picked_face_ids();
         let dimensions = self.selection_dimensions();
         let quick_measure = self.drive_quick_measure();
         self.follow_section_formula();

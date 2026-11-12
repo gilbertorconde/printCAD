@@ -118,7 +118,9 @@ impl PrintCadApp {
         let shown = document
             .notes()
             .filter(|(_, note)| document.note_effective_visible(note.id));
+        let mut drawn = std::collections::HashSet::new();
         for (body, note) in shown.chain(card_new) {
+            drawn.insert(note.id);
             let placed = document.note_placed(body, note);
             let color = if selected == Some(note.id) || on_card == Some(note.id) {
                 self.user_settings.rendering.selection_color
@@ -142,9 +144,10 @@ impl PrintCadApp {
                 _ if shows.is_empty() => format!("#{number}"),
                 _ => format!("#{number} {shows}"),
             };
-            let hidden = self.hidden_by_part(body, placed.at);
+            let hidden = self.hidden_by_part(note.id, body, placed.at);
             self.leader(data, (placed.at, placed.label), text, color, hidden);
         }
+        self.session.note_occlusions.retain(&drawn);
     }
 
     /// A callout of each cosmetic thread: a leader from its bore's rim to

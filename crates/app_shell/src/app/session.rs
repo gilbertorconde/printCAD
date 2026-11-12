@@ -144,6 +144,11 @@ pub(crate) struct DocumentSession {
     /// overlay. Present only while a face (not the whole body) is the
     /// selection.
     pub face_highlight: Option<crate::app::input::FaceHighlight>,
+    /// The selected faces' ids, found once per selection and mesh.
+    pub picked_face_ids: crate::app::face_pick::PickedFaceIds,
+    /// Whether each shown note's point is hidden by its own body, kept
+    /// with what it was worked out from.
+    pub note_occlusions: crate::app::note_tool::Occlusions,
     /// Feature under the cursor (CPU hit-test, drives hover tint).
     pub hovered_feature: Option<FeatureId>,
     /// The part of a feature under the cursor (a region of a closed
@@ -397,6 +402,8 @@ impl DocumentSession {
             plane_session_open: false,
             last_face_hit: None,
             face_highlight: None,
+            picked_face_ids: Default::default(),
+            note_occlusions: Default::default(),
             hovered_feature: None,
             hovered_part: None,
             picked_parts: None,

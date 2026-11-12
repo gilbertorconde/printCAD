@@ -8,8 +8,11 @@
 use core_document::{BodyId, Document, Note, NoteAuthor, NoteId, NoteWant, TriMesh};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::PrintCadApp;
+use crate::app::face_pick::MeshStamp;
 
 /// How near the cursor a note's point or label must be to be under it, in
 /// logical pixels.
@@ -218,13 +221,65 @@ impl PrintCadApp {
             .map(|(_, id)| id)
     }
 
-    /// Whether `body`'s own shape hides the world point `at` from the view.
-    pub(crate) fn hidden_by_part(&self, body: BodyId, at: [f32; 3]) -> bool {
+    /// Whether `body`'s own shape hides the world point `at` of `note`
+    /// from the view.
+    pub(crate) fn hidden_by_part(&self, note: NoteId, body: BodyId, at: [f32; 3]) -> bool {
         let Some(geometry) = self.session.document.imported_geometry(body) else {
             return false;
         };
-        let view = Mat4::from_cols_array_2d(&self.session.camera.view_projection());
-        hides(&geometry.mesh, view, Vec3::from_array(at))
+        self.session.note_occlusions.hidden(
+            note,
+            &geometry.mesh,
+            geometry.revision,
+            self.session.camera.view_projection(),
+            at,
+        )
+    }
+}
+
+/// Whether each note's point is hidden by its body ([`hides`]), kept by
+/// note with everything the answer reads: the body's mesh, the view and
+/// the point. A frame that moves none of them reads the answer rather
+/// than casting the ray through every triangle again.
+#[derive(Default)]
+pub(crate) struct Occlusions(std::cell::RefCell<HashMap<NoteId, (OcclusionKey, bool)>>);
+
+#[derive(PartialEq)]
+struct OcclusionKey {
+    mesh: MeshStamp,
+    view: [u32; 16],
+    at: [u32; 3],
+}
+
+impl Occlusions {
+    /// Whether `mesh`, a body's placed mesh at `revision`, hides `at` from
+    /// the view `view` (a view-projection, columns first).
+    pub fn hidden(
+        &self,
+        note: NoteId,
+        mesh: &Arc<TriMesh>,
+        revision: u64,
+        view: [[f32; 4]; 4],
+        at: [f32; 3],
+    ) -> bool {
+        let view = Mat4::from_cols_array_2d(&view);
+        let key = OcclusionKey {
+            mesh: MeshStamp::of(mesh, revision),
+            view: view.to_cols_array().map(f32::to_bits),
+            at: at.map(f32::to_bits),
+        };
+        let mut kept = self.0.borrow_mut();
+        if let Some((_, hidden)) = kept.get(&note).filter(|(k, _)| *k == key) {
+            return *hidden;
+        }
+        let hidden = hides(mesh, view, Vec3::from_array(at));
+        kept.insert(note, (key, hidden));
+        hidden
+    }
+
+    /// Let go of the answers for notes not among `shown`.
+    pub fn retain(&self, shown: &HashSet<NoteId>) {
+        self.0.borrow_mut().retain(|note, _| shown.contains(note));
     }
 }
 
@@ -391,10 +446,10 @@ fn surface_words(surface: &kernel_api::FaceSurface) -> String {
 mod tests {
     use super::*;
 
-    /// A box from 0 to 10 seen from straight above: a point on its top is
-    /// seen, one on its bottom or inside is hidden.
-    #[test]
-    fn the_part_hides_a_point_behind_its_near_side() {
+    /// A box from 0 to 10 (its top and bottom), and a view looking down
+    /// from z = 50 onto x and y from -15 to 25: depth grows downwards,
+    /// nearest at the top.
+    fn box_from_above() -> (TriMesh, Mat4) {
         let mut mesh = TriMesh::default();
         let corners = [
             [0.0, 0.0, 0.0],
@@ -408,17 +463,61 @@ mod tests {
         ];
         mesh.positions = corners.to_vec();
         mesh.indices = vec![0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7];
-        // Looking down from z = 50 onto x and y from -15 to 25: depth
-        // grows downwards, nearest at the top.
         let view = Mat4::from_cols(
             Vec4::new(0.05, 0.0, 0.0, 0.0),
             Vec4::new(0.0, 0.05, 0.0, 0.0),
             Vec4::new(0.0, 0.0, -0.01, 0.0),
             Vec4::new(-0.25, -0.25, 0.5, 1.0),
         );
+        (mesh, view)
+    }
+
+    /// Seen from straight above, a point on the box's top is seen, one on
+    /// its bottom or inside is hidden.
+    #[test]
+    fn the_part_hides_a_point_behind_its_near_side() {
+        let (mesh, view) = box_from_above();
         assert!(!hides(&mesh, view, Vec3::new(5.0, 5.0, 10.0)), "on top");
         assert!(hides(&mesh, view, Vec3::new(5.0, 5.0, 0.0)), "underneath");
         assert!(hides(&mesh, view, Vec3::new(5.0, 5.0, 4.0)), "inside");
         assert!(!hides(&mesh, view, Vec3::new(15.0, 5.0, 0.0)), "beside it");
+    }
+
+    /// The kept answer is the one worked out afresh after any of what it
+    /// reads moves: the point, the view, the mesh (another at the same
+    /// revision, or the same at another).
+    #[test]
+    fn a_kept_occlusion_follows_the_point_the_view_and_the_mesh() {
+        let (mesh, view) = box_from_above();
+        let mesh = Arc::new(mesh);
+        let mut open = (*mesh).clone();
+        open.indices.truncate(6);
+        let open = Arc::new(open);
+        // The same box seen from below: z mirrored.
+        let below =
+            view * Mat4::from_cols(Vec4::X, Vec4::Y, -Vec4::Z, Vec4::new(0.0, 0.0, 10.0, 1.0));
+        let note = NoteId(uuid::Uuid::new_v4());
+        let kept = Occlusions::default();
+        let bottom = [5.0, 5.0, 0.0];
+        let top = [5.0, 5.0, 10.0];
+        for (mesh, revision, view, at) in [
+            (&mesh, 1, view, bottom),
+            (&mesh, 1, view, bottom),
+            (&mesh, 1, view, top),
+            (&mesh, 1, below, top),
+            (&mesh, 1, below, bottom),
+            (&mesh, 1, view, bottom),
+            (&open, 1, view, bottom),
+            (&open, 2, view, bottom),
+            (&mesh, 2, view, bottom),
+        ] {
+            assert_eq!(
+                kept.hidden(note, mesh, revision, view.to_cols_array_2d(), at),
+                hides(mesh, view, Vec3::from_array(at)),
+                "{at:?} at revision {revision}"
+            );
+        }
+        assert!(kept.hidden(note, &mesh, 2, view.to_cols_array_2d(), bottom));
+        assert!(!kept.hidden(note, &open, 2, view.to_cols_array_2d(), bottom));
     }
 }

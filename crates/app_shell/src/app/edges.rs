@@ -214,6 +214,30 @@ impl PrintCadApp {
         self.session.selected_face_refs()
     }
 
+    /// The faces selected in the view, as their body's mesh numbers them,
+    /// in the order picked: what the Appearance and texture tasks take.
+    pub(crate) fn picked_face_ids(&self) -> Vec<(core_document::BodyId, u32)> {
+        let Some(body) = self
+            .session
+            .selected_body
+            .filter(|_| self.session.face_highlight.is_some())
+            .map(core_document::BodyId)
+        else {
+            return Vec::new();
+        };
+        let Some(geometry) = self.session.document.imported_geometry(body) else {
+            return Vec::new();
+        };
+        let points: Vec<[f32; 3]> = self
+            .selected_face_refs()
+            .into_iter()
+            .map(|face| face.point)
+            .collect();
+        self.session
+            .picked_face_ids
+            .of(body, &geometry.mesh, geometry.revision, &points)
+    }
+
     /// The view's picks in words when there are several ("3 faces, 2
     /// edges"); `None` for one pick or none.
     pub(crate) fn picks_summary(&self) -> Option<String> {
