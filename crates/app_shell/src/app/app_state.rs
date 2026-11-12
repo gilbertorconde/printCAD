@@ -424,6 +424,12 @@ pub(crate) struct Agents {
     pub chats: Vec<crate::app::chats::Chat>,
     /// How many chats this session has opened, for the next one's name.
     pub chats_made: usize,
+    /// The closed chats the assistant's history lists, read again whenever
+    /// one closes, reopens or is forgotten, and when the list opens.
+    pub history: Vec<crate::app::chats::PastChat>,
+    /// Chats closed on documents not saved, by tab: kept for the run, and
+    /// moved into the store when the document is first saved.
+    pub closed_unsaved: Vec<(Uuid, crate::app::chat_store::SavedChat)>,
     /// Wakes the loop from another thread.
     pub waker: Arc<dyn Fn() + Send + Sync>,
 }
@@ -437,6 +443,8 @@ impl Agents {
             assistant_attention: false,
             chats: Vec::new(),
             chats_made: 0,
+            history: Vec::new(),
+            closed_unsaved: Vec::new(),
             waker,
         }
     }

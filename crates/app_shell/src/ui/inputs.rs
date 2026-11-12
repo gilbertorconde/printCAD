@@ -180,6 +180,8 @@ pub struct UiFrameInputs<'a> {
     pub approvals: &'a [crate::app::mcp::Approval],
     /// What each chat's `@` list offers, by the tab the chat works on.
     pub mentions: Vec<(uuid::Uuid, Vec<crate::app::mentions::MentionOption>)>,
+    /// The closed chats the assistant's history offers, newest first.
+    pub past_chats: Vec<crate::app::chats::PastChat>,
     /// An agent needs the user: the assistant panel opens.
     pub assistant_attention: bool,
     /// The paste key went down: a chat whose box has the keyboard and got

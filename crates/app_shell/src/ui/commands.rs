@@ -404,6 +404,19 @@ pub enum UiCommand {
     /// Start a chat from an earlier visit, its conversation coming back.
     WakeChat(String),
     CloseChat(String),
+    /// Read the closed chats again, for the history the assistant opens.
+    ShowChatHistory,
+    /// Reopen a closed chat on the document on screen: kept with `file`
+    /// (the store's key), or with a document not saved when `None`.
+    ReopenChat {
+        file: Option<String>,
+        session: String,
+    },
+    /// Take a closed chat out of the history for good.
+    ForgetChat {
+        file: Option<String>,
+        session: String,
+    },
     /// Answer an agent's request for permission, entry `entry` of `chat`.
     AnswerPermission {
         chat: String,
