@@ -197,7 +197,7 @@ impl PrintCadApp {
     }
 
     /// Whether the view moves on its own: a camera tween in either pane,
-    /// or a bench hook that keeps frames coming.
+    /// or a bench hook that keeps frames coming or still waits for them.
     fn animating(&self) -> bool {
         self.session.view.camera.is_animating()
             || self
@@ -207,6 +207,7 @@ impl PrintCadApp {
                 .as_ref()
                 .is_some_and(|c| c.is_animating())
             || crate::app::bench_hooks::hooks().animating()
+            || self.bench.waiting
     }
 
     /// Ask the window for another frame.

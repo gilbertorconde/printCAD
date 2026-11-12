@@ -43,8 +43,12 @@ once there is geometry (after the click hook's click), aimed `x`, `y`,
 `z`, `view`, `face` (the selected flat face, else waiting for a click) or
 `points:x,y,z;x,y,z;x,y,z` or `saved:<name>`, moved along its normal, `!` flipped, `^0`/`^1` a
 wedge's second plane, the body named after `~` left uncut;
-`PRINTCAD_BENCH_UI=<steps>` plays pointer steps into the window once
-the scene has settled (`ui/bench_ui.rs`: `click:x,y`, `right:x,y`,
+`PRINTCAD_BENCH_UI=<steps>` plays pointer steps into the window after
+every other hook has had its turn (the start-up opens have given the
+document a body, the edit, select, note, chat, task, workbench and
+section hooks have fired, the click has reported; Preferences opens on
+the first frame) and the scene has then been quiet a while, document or
+not (`BenchHooks::ui_may_play`; `ui/bench_ui.rs`: `click:x,y`, `right:x,y`,
 `move:x,y`, `wait:n`, `;`-separated, logical points; `view:fx,fy` a
 click at that fraction of the viewport, handed to the active bench as
 its clicks are, `type:text` typed into the field with the keys, `key:name`
@@ -55,7 +59,9 @@ waits for them, so a capture shows a panel in a state only clicks reach;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),
 and `PRINTCAD_BENCH_WINDOW=<path>` one of the whole window, panels and
-menus with it (`CaptureKind::Window`);
+menus with it (`CaptureKind::Window`); while steps, a click, an edit, a
+chat or a picture still wait, the loop keeps frames coming
+(`BenchProgress::waiting`), so none of them sleeps through its turn;
 `PRINTCAD_AUTOSAVE_SECS` shortens the autosave wait (`app/recovery.rs`:
 copies of edited tabs in the data folder's `recovery/`, taken away when
 saved, closed or on exit, offered on the start page after a crash);
