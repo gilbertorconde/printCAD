@@ -431,7 +431,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,
   File › Import for PNG and JPEG),
   the profile's regions shaded while editing (`get_overlay_meshes` over
-  `KernelQueries::profile_mesh`, cached by profile) and out of it (the
+  `KernelQueries::profile_mesh`, cached by profile, a moving drag keeping its start's until release) and out of it (the
   passive geometry's `regions`, one `PassiveRegion` per region with its
   `FeaturePart`, the plain profile's regions stronger, which the host
   meshes once per revision and draws see-through behind the lines, lit

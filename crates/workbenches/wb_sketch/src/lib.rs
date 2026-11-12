@@ -3433,7 +3433,10 @@ impl Workbench for SketchWorkbench {
             hasher.finish()
         };
         let mut cached = self.tab.regions.borrow_mut();
-        if cached.as_ref().is_none_or(|(k, _)| *k != key) {
+        // A drag that moves the geometry keeps the regions shaded where it
+        // started; its release has them worked out for the sketch it leaves.
+        let moving = self.tab.dragging.as_ref().is_some_and(|drag| drag.moved);
+        if cached.as_ref().is_none_or(|(k, _)| *k != key && !moving) {
             let meshes = self
                 .tab
                 .closed_parts
