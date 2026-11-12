@@ -1662,34 +1662,8 @@ impl Workbench for SketchWorkbench {
         self.handle_input(event, active_tool, ctx)
     }
 
-    /// The sketcher draws nothing under the tree: its UI lives in the
-    /// task panel.
-    #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        self.sync_active_sketch_from_ctx(ctx);
-    }
-
     fn has_settings(&self) -> bool {
         true
-    }
-
-    /// The Sketcher preferences page: the solver, snap and view switches,
-    /// the minimum wall, and the palette, read-only.
-    #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
-        let mut snap = !self.tab.snap_off;
-        let widgets = settings::widgets(&self.options, snap);
-        let out = bench_panel::show_filtered(
-            ui,
-            egui::Id::new("sketch_settings"),
-            &widgets,
-            None,
-            filter,
-        );
-        for event in &out.events {
-            settings::apply(&mut self.options, &mut snap, event);
-        }
-        self.tab.snap_off = !snap;
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
@@ -1718,16 +1692,6 @@ impl Workbench for SketchWorkbench {
             // Every line drawn or constraint added is a step of its own.
             stepwise: true,
         })
-    }
-
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        self.draw_task_panel(ui, ctx, request)
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
@@ -1957,6 +1921,42 @@ impl Workbench for SketchWorkbench {
     /// Edges are being found in a reference picture.
     fn busy(&self) -> bool {
         self.tab.picture_edges.running()
+    }
+}
+
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for SketchWorkbench {
+    /// The sketcher draws nothing under the tree: its UI lives in the
+    /// task panel.
+    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        self.sync_active_sketch_from_ctx(ctx);
+    }
+
+    /// The Sketcher preferences page: the solver, snap and view switches,
+    /// the minimum wall, and the palette, read-only.
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
+        let mut snap = !self.tab.snap_off;
+        let widgets = settings::widgets(&self.options, snap);
+        let out = bench_panel::show_filtered(
+            ui,
+            egui::Id::new("sketch_settings"),
+            &widgets,
+            None,
+            filter,
+        );
+        for event in &out.events {
+            settings::apply(&mut self.options, &mut snap, event);
+        }
+        self.tab.snap_off = !snap;
+    }
+
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        self.draw_task_panel(ui, ctx, request)
     }
 }
 

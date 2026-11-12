@@ -19,7 +19,7 @@ name = "wb_mine"
 
 [features]
 default = ["egui"]
-egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
+egui = ["dep:egui", "dep:ui_kit", "dep:bench_panel"]
 
 [dependencies]
 core_document = { path = "../../core_document" }
@@ -28,16 +28,37 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 egui = { workspace = true, optional = true }
 ui_kit = { path = "../../ui_kit", optional = true }
+bench_panel = { path = "../../bench_panel", optional = true }
 ```
 
-The `egui` feature enables the panel methods. Panel code takes colours and
-sizes from `ui_kit::tokens`, never as literal values.
+The `egui` feature enables the bench's drawing side: what it draws itself
+with egui is `bench_panel::BenchUi` (`ui_task_panel`, `ui_settings`,
+`ui_left_panel`, `ui_viewport_strip`, each drawing nothing by default),
+implemented on the bench's own type beside its `Workbench`:
+
+```rust
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for MyWorkbench {
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+    ) -> TaskOutcome {
+        // ...
+    }
+}
+```
+
+The `workbenches` crate gives every bench it lists its drawing side, so
+nothing else is needed. Panel code takes colours and sizes from
+`ui_kit::tokens`, never as literal values.
 
 Add it to the workspace members and to the `workbenches` crate's
 dependencies, then register it in `crates/workbenches/src/lib.rs`:
 
 ```rust
-core_document::define_workbenches!(
+listed!(
     SketchWorkbench,
     DesignWorkbench,
     SurfaceWorkbench,
@@ -45,6 +66,9 @@ core_document::define_workbenches!(
     MyWorkbench
 );
 ```
+
+Every bench in that list registers with its drawing side, so it must
+implement `BenchUi`, even if only as an empty `impl`.
 
 The order matters. A new document opens in the first workbench that is not
 modal, and Preferences lists workbench pages in this order. The switcher
@@ -426,7 +450,8 @@ to the new one as `ctx.attach_request`.
 
 ## 11. Draw panels
 
-- `task()` opens the task panel on the right; `ui_task_panel` draws it and
+- `task()` opens the task panel on the right; `ui_task_panel` (on
+  `BenchUi`, as are `ui_left_panel` and `ui_settings`) draws it and
   handles Done and Cancel, which the host draws in the panel's header with
   the task's title, its `subtitle` and its `status` as a pill. One task is
   one undo step, unless its `TaskInfo`

@@ -840,54 +840,6 @@ impl Workbench for SurfaceWorkbench {
         })
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        use core_document::TaskOutcome;
-        match &self.tab.task {
-            None if self.tab.analysis.is_none() && self.tab.check.is_none() => {
-                return TaskOutcome::Open;
-            }
-            None if request.accept || request.cancel => {
-                if self.tab.analysis.take().is_none() {
-                    self.tab.check = None;
-                }
-                return TaskOutcome::Cancelled;
-            }
-            None => {}
-            // The task closes on its own when its step is gone (an undo).
-            Some(task) if Self::step(ctx, task.feature).is_none() => {
-                self.tab.task = None;
-                return TaskOutcome::Cancelled;
-            }
-            Some(_) if request.accept => {
-                let label = self.close(ctx, true).unwrap_or_default();
-                return TaskOutcome::Accepted { label };
-            }
-            Some(_) if request.cancel => {
-                self.close(ctx, false);
-                return TaskOutcome::Cancelled;
-            }
-            Some(_) => {}
-        }
-        let widgets = self.task_widgets(ctx);
-        let out = bench_panel::show(
-            ui,
-            egui::Id::new("surface_task"),
-            &widgets,
-            Some(&*ctx.document),
-        );
-        let by_formula = out.write_formulas(ctx);
-        for event in out.events_besides(&by_formula) {
-            self.task_event(ctx, event);
-        }
-        TaskOutcome::Open
-    }
-
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
         core_document::ViewportOutput {
             meshes: self.overlay_meshes(ctx, ctx.active_document_object),
@@ -992,21 +944,6 @@ impl Workbench for SurfaceWorkbench {
         true
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
-        let widgets = panel::settings(&self.options);
-        let out = bench_panel::show_filtered(
-            ui,
-            egui::Id::new("surface_settings"),
-            &widgets,
-            None,
-            filter,
-        );
-        for event in &out.events {
-            panel::settings_event(&mut self.options, event);
-        }
-    }
-
     fn settings_json(&self) -> Option<Value> {
         serde_json::to_value(&self.options).ok()
     }
@@ -1019,6 +956,70 @@ impl Workbench for SurfaceWorkbench {
 
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
         Some(&mut self.tab)
+    }
+}
+
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for SurfaceWorkbench {
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        use core_document::TaskOutcome;
+        match &self.tab.task {
+            None if self.tab.analysis.is_none() && self.tab.check.is_none() => {
+                return TaskOutcome::Open;
+            }
+            None if request.accept || request.cancel => {
+                if self.tab.analysis.take().is_none() {
+                    self.tab.check = None;
+                }
+                return TaskOutcome::Cancelled;
+            }
+            None => {}
+            // The task closes on its own when its step is gone (an undo).
+            Some(task) if Self::step(ctx, task.feature).is_none() => {
+                self.tab.task = None;
+                return TaskOutcome::Cancelled;
+            }
+            Some(_) if request.accept => {
+                let label = self.close(ctx, true).unwrap_or_default();
+                return TaskOutcome::Accepted { label };
+            }
+            Some(_) if request.cancel => {
+                self.close(ctx, false);
+                return TaskOutcome::Cancelled;
+            }
+            Some(_) => {}
+        }
+        let widgets = self.task_widgets(ctx);
+        let out = bench_panel::show(
+            ui,
+            egui::Id::new("surface_task"),
+            &widgets,
+            Some(&*ctx.document),
+        );
+        let by_formula = out.write_formulas(ctx);
+        for event in out.events_besides(&by_formula) {
+            self.task_event(ctx, event);
+        }
+        TaskOutcome::Open
+    }
+
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
+        let widgets = panel::settings(&self.options);
+        let out = bench_panel::show_filtered(
+            ui,
+            egui::Id::new("surface_settings"),
+            &widgets,
+            None,
+            filter,
+        );
+        for event in &out.events {
+            panel::settings_event(&mut self.options, event);
+        }
     }
 }
 

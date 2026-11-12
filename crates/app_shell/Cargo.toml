@@ -18,7 +18,7 @@ local_ipc = { path = "../local_ipc" }
 anyhow.workspace = true
 agents = { path = "../agents" }
 base64.workspace = true
-core_document = { path = "../core_document", features = ["egui"] }
+core_document = { path = "../core_document" }
 bench_panel = { path = "../bench_panel" }
 doc_render = { path = "../doc_render" }
 bench_api.workspace = true

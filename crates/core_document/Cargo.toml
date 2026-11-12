@@ -7,9 +7,6 @@ rust-version.workspace = true
 
 [features]
 default = []
-# The `Workbench` trait's drawing hooks (task panel, Preferences page,
-# left panel, strip under the view).
-egui = ["dep:egui"]
 # `testing`: what benches' tests share. Only dev-dependencies turn it on.
 test-support = []
 
@@ -24,7 +21,6 @@ thiserror.workspace = true
 serde_json.workspace = true
 glam.workspace = true
 uuid.workspace = true
-egui = { workspace = true, optional = true }
 tar.workspace = true
 flate2.workspace = true
 zstd.workspace = true

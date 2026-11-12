@@ -1379,7 +1379,7 @@ fn workbench_page(ui: &mut Ui, registry: &mut DocumentService, index: usize, fil
     let Some(id) = registry.ids().get(index).cloned() else {
         return;
     };
-    if let Ok(wb) = registry.workbench_mut(&id) {
+    if let Some(wb) = bench_panel::bench_ui(registry, &id) {
         wb.ui_settings(ui, filter);
     }
 }

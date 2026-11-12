@@ -37,6 +37,8 @@ struct WorkbenchEntry {
     descriptor: WorkbenchDescriptor,
     workbench: Box<dyn Workbench>,
     context: WorkbenchContext,
+    /// What a drawing host keeps for the bench ([`DocumentService::set_drawing_side`]).
+    drawing_side: Option<Box<dyn std::any::Any + Send>>,
 }
 
 impl DocumentService {
@@ -89,6 +91,7 @@ impl DocumentService {
                 descriptor,
                 workbench,
                 context,
+                drawing_side: None,
             },
         );
 
@@ -104,6 +107,21 @@ impl DocumentService {
         self.order.retain(|o| o != id);
         self.owners.retain(|_, owner| owner != id);
         Some(entry.workbench)
+    }
+
+    /// Keep `side` for bench `id`: what a host that draws needs to reach
+    /// the bench's drawing (a cast to its own drawing trait). The registry
+    /// never reads it and drops it with the bench; a bench that is not
+    /// registered keeps nothing.
+    pub fn set_drawing_side(&mut self, id: &WorkbenchId, side: Box<dyn std::any::Any + Send>) {
+        if let Some(entry) = self.workbenches.get_mut(id.as_str()) {
+            entry.drawing_side = Some(side);
+        }
+    }
+
+    /// What [`Self::set_drawing_side`] keeps for bench `id`.
+    pub fn drawing_side(&self, id: &WorkbenchId) -> Option<&(dyn std::any::Any + Send)> {
+        self.workbenches.get(id.as_str())?.drawing_side.as_deref()
     }
 
     pub fn workbench_descriptors(&self) -> impl Iterator<Item = &WorkbenchDescriptor> {

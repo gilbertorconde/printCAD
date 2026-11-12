@@ -1163,6 +1163,7 @@ mod tests {
         active: FeatureId,
         request: core_document::TaskRequest,
     ) -> Vec<core_document::Recorded> {
+        use bench_panel::BenchUi;
         let egui_ctx = egui::Context::default();
         ui_kit::apply_theme(&egui_ctx);
         let mut recorded = Vec::new();

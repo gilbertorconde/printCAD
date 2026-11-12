@@ -4859,7 +4859,8 @@ fn section_view_cuts_the_scene_at_the_sketch_plane_and_stays_with_the_sketch() {
 /// so in the recording, so a replay ends where the live session did.
 #[test]
 fn cancelling_a_sketch_session_puts_the_sketch_back() {
-    use core_document::{TaskRequest, Workbench};
+    use bench_panel::BenchUi;
+    use core_document::TaskRequest;
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 7.0));
     assert_eq!(h.counts().1, 1, "a line drawn");
@@ -4906,7 +4907,7 @@ fn task_panel_request(
     events: Vec<egui::Event>,
     request: core_document::TaskRequest,
 ) -> (core_document::TaskOutcome, bool, egui::FullOutput) {
-    use core_document::Workbench;
+    use bench_panel::BenchUi;
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,

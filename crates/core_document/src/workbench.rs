@@ -808,8 +808,13 @@ impl<T: Default + Send + 'static> TabSlot for T {
 /// Trait implemented by all workbench plugins.
 ///
 /// Workbenches declare their tools via `configure`, and can optionally
-/// implement runtime hooks for input handling, per-frame updates, and custom UI.
-pub trait Workbench: Send {
+/// implement runtime hooks for input handling, per-frame updates, and the
+/// declared panels and cards the host draws. What a bench draws itself
+/// with egui (its task panel, Preferences page, left panel and strip under
+/// the view) is a drawing-side trait of a host that draws, which reaches
+/// the bench as `dyn Any` through the registry's drawing side
+/// ([`crate::DocumentService::set_drawing_side`]).
+pub trait Workbench: std::any::Any + Send {
     /// Returns metadata describing this workbench.
     fn descriptor(&self) -> WorkbenchDescriptor;
 
@@ -1211,14 +1216,10 @@ pub trait Workbench: Send {
     }
 
     /// Whether the bench fills a strip under the view while active, as it
-    /// last drew.
+    /// last drew; its drawing side draws it.
     fn has_viewport_strip(&self) -> bool {
         false
     }
-
-    /// Draw the strip under the view, while [`Self::has_viewport_strip`].
-    #[cfg(feature = "egui")]
-    fn ui_viewport_strip(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
 
     /// The card over the view next to what it edits, while the bench is
     /// active and has one: declared widgets the host draws as it draws a
@@ -1256,25 +1257,9 @@ pub trait Workbench: Send {
     /// outside the window may not arrive; restore the gesture's press state.
     fn cancel_pointer_gesture(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
 
-    /// Draw custom UI in the left panel, above the feature tree.
-    /// Called every frame while this workbench is active.
-    #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
-
     /// What the task panel is editing, if anything. `Some` opens the panel.
     fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         None
-    }
-
-    /// Draw the task panel body and react to the host's accept/cancel.
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        _ui: &mut egui::Ui,
-        _ctx: &mut WorkbenchRuntimeContext,
-        _request: TaskRequest,
-    ) -> TaskOutcome {
-        TaskOutcome::Open
     }
 
     /// The keys in effect for this workbench's tools and actions, by id,
@@ -1317,18 +1302,11 @@ pub trait Workbench: Send {
         true
     }
 
-    /// The bench has a Preferences page: without one it takes no place
-    /// in the rail.
+    /// The bench has a Preferences page, which its drawing side draws:
+    /// without one it takes no place in the rail.
     fn has_settings(&self) -> bool {
         false
     }
-
-    /// Draw this bench's Preferences page, while it is shown. `filter` is
-    /// the dialog's lowercase search text; rows that do not match it stay
-    /// hidden (`ui_kit::widgets::pref_group` applies it). The settings it
-    /// changes are saved through `settings_json`.
-    #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, _ui: &mut egui::Ui, _filter: &str) {}
 
     /// Finish/close the current editing session (e.g., finish sketch).
     /// Called when the user requests to finish editing (e.g., via UI button).

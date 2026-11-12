@@ -766,33 +766,6 @@ impl Workbench for WasmWorkbench {
         !self.inner().frame.transport.is_empty()
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_viewport_strip(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        let strip = {
-            let frame = self.refresh(&mut inner, ctx);
-            vec![Widget::Row {
-                children: frame.transport.clone(),
-            }]
-        };
-        let strip = Self::with_progress(&inner, &strip);
-        let out = bench_panel::show(
-            ui,
-            egui::Id::new(("bench_strip", self.id())),
-            &strip,
-            Some(&*ctx.document),
-        );
-        out.write_formulas(ctx);
-        for event in out.events {
-            let Ok(json) = serde_json::to_string(&event) else {
-                continue;
-            };
-            let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
-                b.panel_event("transport", &json)
-            });
-        }
-    }
-
     fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
         let mut inner = self.inner();
         let mut card = self.refresh(&mut inner, ctx).card.clone()?;
@@ -1305,87 +1278,8 @@ impl Workbench for WasmWorkbench {
         })
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        use core_document::TaskOutcome;
-        let mut inner = self.inner();
-        let panel = {
-            let frame = self.refresh(&mut inner, ctx);
-            // The task's header is the host's, drawn above the panel.
-            without_task_header(&frame.panel)
-        };
-        let panel = Self::with_progress(&inner, &panel);
-        let out = bench_panel::show(
-            ui,
-            egui::Id::new(("bench_panel", self.id())),
-            &panel,
-            Some(&*ctx.document),
-        );
-        out.write_formulas(ctx);
-        for event in out.events {
-            let Ok(json) = serde_json::to_string(&event) else {
-                continue;
-            };
-            let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
-                b.panel_event("task", &json)
-            });
-        }
-        if request.accept || request.cancel {
-            let title = inner
-                .frame
-                .task
-                .as_ref()
-                .map(|t| t.title.clone())
-                .unwrap_or_default();
-            let label = self.write_call(&mut inner, ctx, Budget::Long, |b| {
-                b.task_close(request.accept)
-            });
-            return if request.accept {
-                TaskOutcome::Accepted {
-                    label: label.flatten().unwrap_or(title),
-                }
-            } else {
-                TaskOutcome::Cancelled
-            };
-        }
-        TaskOutcome::Open
-    }
-
     fn has_settings(&self) -> bool {
         !self.settings_panel().is_empty()
-    }
-
-    #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
-        let panel = self.settings_panel();
-        let mut inner = self.inner();
-        let out = bench_panel::show_filtered(
-            ui,
-            egui::Id::new(("bench_settings", self.id())),
-            &panel,
-            None,
-            filter,
-        );
-        let changed = !out.events.is_empty();
-        for event in out.events {
-            let Ok(json) = serde_json::to_string(&event) else {
-                continue;
-            };
-            if let Some((_, aftermath)) = inner.guest.call(Budget::Long, Access::None, |b| {
-                b.panel_event("settings", &json)
-            }) && aftermath.redraw
-            {
-                inner.stale = true;
-            }
-        }
-        if changed {
-            inner.settings_panel = None;
-        }
     }
 
     /// What the frame shows, from one look at the package: refreshed
@@ -1525,6 +1419,112 @@ impl Workbench for WasmWorkbench {
             invalidate_owned(ctx.document, &self.package, body);
         }
         removed
+    }
+}
+
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for WasmWorkbench {
+    fn ui_viewport_strip(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        let strip = {
+            let frame = self.refresh(&mut inner, ctx);
+            vec![Widget::Row {
+                children: frame.transport.clone(),
+            }]
+        };
+        let strip = Self::with_progress(&inner, &strip);
+        let out = bench_panel::show(
+            ui,
+            egui::Id::new(("bench_strip", self.id())),
+            &strip,
+            Some(&*ctx.document),
+        );
+        out.write_formulas(ctx);
+        for event in out.events {
+            let Ok(json) = serde_json::to_string(&event) else {
+                continue;
+            };
+            let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+                b.panel_event("transport", &json)
+            });
+        }
+    }
+
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        use core_document::TaskOutcome;
+        let mut inner = self.inner();
+        let panel = {
+            let frame = self.refresh(&mut inner, ctx);
+            // The task's header is the host's, drawn above the panel.
+            without_task_header(&frame.panel)
+        };
+        let panel = Self::with_progress(&inner, &panel);
+        let out = bench_panel::show(
+            ui,
+            egui::Id::new(("bench_panel", self.id())),
+            &panel,
+            Some(&*ctx.document),
+        );
+        out.write_formulas(ctx);
+        for event in out.events {
+            let Ok(json) = serde_json::to_string(&event) else {
+                continue;
+            };
+            let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+                b.panel_event("task", &json)
+            });
+        }
+        if request.accept || request.cancel {
+            let title = inner
+                .frame
+                .task
+                .as_ref()
+                .map(|t| t.title.clone())
+                .unwrap_or_default();
+            let label = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+                b.task_close(request.accept)
+            });
+            return if request.accept {
+                TaskOutcome::Accepted {
+                    label: label.flatten().unwrap_or(title),
+                }
+            } else {
+                TaskOutcome::Cancelled
+            };
+        }
+        TaskOutcome::Open
+    }
+
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
+        let panel = self.settings_panel();
+        let mut inner = self.inner();
+        let out = bench_panel::show_filtered(
+            ui,
+            egui::Id::new(("bench_settings", self.id())),
+            &panel,
+            None,
+            filter,
+        );
+        let changed = !out.events.is_empty();
+        for event in out.events {
+            let Ok(json) = serde_json::to_string(&event) else {
+                continue;
+            };
+            if let Some((_, aftermath)) = inner.guest.call(Budget::Long, Access::None, |b| {
+                b.panel_event("settings", &json)
+            }) && aftermath.redraw
+            {
+                inner.stale = true;
+            }
+        }
+        if changed {
+            inner.settings_panel = None;
+        }
     }
 }
 

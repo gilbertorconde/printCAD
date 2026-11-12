@@ -619,6 +619,7 @@ fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
 /// Every text the task panel draws in a panel `width` points wide, with
 /// how many lines each took.
 fn drawn_texts(wb: &mut AssemblyWorkbench, doc: &mut Document, width: f32) -> Vec<(String, usize)> {
+    use bench_panel::BenchUi;
     let egui_ctx = egui::Context::default();
     ui_kit::apply_theme(&egui_ctx);
     let input = egui::RawInput {
