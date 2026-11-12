@@ -182,7 +182,11 @@ pub fn make(document: &Document, kernel: &dyn KernelQueries, s: &Shadow) -> Made
         .iter()
         .map(|p| (DVec3::from(p.map(f64::from)) - DVec3::from(s.origin)).dot(n))
         .fold(0.0, f64::max);
-    let area = answer.silhouette.iter().map(|l| loop_area(l)).sum::<f64>();
+    let area = answer
+        .silhouette
+        .iter()
+        .map(|l| kernel_api::polygon::signed_area(l))
+        .sum::<f64>();
     let mut band = [f64::MAX, f64::MIN];
     for p in answer.outline.iter().flat_map(samples) {
         let d = answer
@@ -324,14 +328,6 @@ fn to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     (p[0] - x).hypot(p[1] - y)
 }
 
-fn loop_area(l: &[[f64; 2]]) -> f64 {
-    let n = l.len();
-    (0..n)
-        .map(|i| l[i][0] * l[(i + 1) % n][1] - l[(i + 1) % n][0] * l[i][1])
-        .sum::<f64>()
-        / 2.0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +344,5 @@ mod tests {
                 "{pts:?}"
             );
         }
-        assert!((loop_area(&[[0.0, 0.0], [2.0, 0.0], [2.0, 3.0], [0.0, 3.0]]) - 6.0).abs() < 1e-12);
     }
 }

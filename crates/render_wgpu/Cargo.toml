@@ -22,3 +22,4 @@ glam.workspace = true
 [dev-dependencies]
 # The shaders are checked by the validator wgpu itself runs, without a GPU.
 naga = { version = "30", features = ["wgsl-in"] }
+metrology = { path = "../metrology" }

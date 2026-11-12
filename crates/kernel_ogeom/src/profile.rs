@@ -717,17 +717,7 @@ pub fn signed_area(wire: &ProfileWire) -> f64 {
             }
         }
     }
-    let n = polygon.len();
-    if n < 3 {
-        return 0.0;
-    }
-    let mut twice = 0.0;
-    for i in 0..n {
-        let a = polygon[i];
-        let b = polygon[(i + 1) % n];
-        twice += a[0] * b[1] - b[0] * a[1];
-    }
-    twice / 2.0
+    kernel_api::polygon::signed_area(&polygon)
 }
 
 /// The first on-curve point a wire mentions, in world space.

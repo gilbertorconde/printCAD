@@ -76,16 +76,8 @@ fn scale(ui: &mut egui::Ui, map: &ScalarMap, unit: core_document::Unit) {
     for i in 0..256 {
         let lo = i as f32 / 256.0;
         let hi = (i + 1) as f32 / 256.0;
-        let mut t = (lo + hi) * 0.5;
-        if map.bands > 0 {
-            let bands = map.bands as f32;
-            t = ((t * bands).floor() + 0.5) / bands;
-        }
-        let at = t.clamp(0.0, 1.0) * map.ramp.len().saturating_sub(1) as f32;
-        let low = at.floor() as usize;
-        let a = map.ramp.get(low).copied().unwrap_or(map.none);
-        let b = map.ramp.get(low + 1).copied().unwrap_or(a);
-        let color: [f32; 3] = std::array::from_fn(|c| a[c] + (b[c] - a[c]) * (at - low as f32));
+        let middle = (lo + hi) * 0.5;
+        let color = map.ramp_colour(map.position(middle).unwrap_or(middle));
         painter.rect_filled(
             Rect::from_min_max(pos2(bar.left(), y(hi)), pos2(bar.right(), y(lo))),
             0.0,

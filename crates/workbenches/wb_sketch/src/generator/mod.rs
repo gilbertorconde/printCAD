@@ -611,15 +611,6 @@ pub(crate) fn arc_span(center: P2, a: P2, b: P2) -> (f64, f64) {
     (a0, sweep)
 }
 
-/// The area a closed polyline encloses (positive counter-clockwise).
-pub fn shoelace(points: &[P2]) -> f64 {
-    let n = points.len();
-    (0..n)
-        .map(|i| cross(points[i], points[(i + 1) % n]))
-        .sum::<f64>()
-        / 2.0
-}
-
 /// What a generator makes: closed loops, loops standing as holes in them
 /// (a bore with its keyway), whole circles (a bore), and construction
 /// circles drawn as guides (a pitch circle).
@@ -749,13 +740,17 @@ impl Outline {
         let loops: f64 = self
             .loops
             .iter()
-            .map(|l| shoelace(&l.polyline(64)).abs())
+            .map(|l| kernel_api::polygon::signed_area(&l.polyline(64)).abs())
             .sum();
         let holes: f64 = self
             .circles
             .iter()
             .map(|(_, r)| std::f64::consts::PI * r * r)
-            .chain(self.holes.iter().map(|l| shoelace(&l.polyline(64)).abs()))
+            .chain(
+                self.holes
+                    .iter()
+                    .map(|l| kernel_api::polygon::signed_area(&l.polyline(64)).abs()),
+            )
             .sum();
         (loops - holes).abs()
     }

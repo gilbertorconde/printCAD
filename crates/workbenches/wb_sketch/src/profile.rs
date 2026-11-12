@@ -566,13 +566,7 @@ fn encloses_nothing(segments: &[ProfileSegment]) -> bool {
             _ => return false,
         }
     }
-    let twice: f64 = (0..corners.len())
-        .map(|i| {
-            let (a, b) = (corners[i], corners[(i + 1) % corners.len()]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum();
-    twice.abs() * 0.5 < 1e-9
+    kernel_api::polygon::signed_area(&corners).abs() < 1e-9
 }
 
 /// The loose ends of the curves that count in the profile: points only one

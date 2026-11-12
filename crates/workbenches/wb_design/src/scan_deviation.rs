@@ -81,7 +81,7 @@ pub fn measure(kernel: &dyn KernelQueries, inputs: &Inputs) -> Result<Arc<[f32]>
 
 /// The shares of the measured points on the surface (within `range`),
 /// deeper inside the body and farther outside, and the RMS of those on
-/// the surface.
+/// the surface. A value that is not finite measured nothing.
 pub fn reading(values: &[f32], range: f64) -> Value {
     let measured: Vec<f64> = values
         .iter()
@@ -94,11 +94,7 @@ pub fn reading(values: &[f32], range: f64) -> Value {
         .copied()
         .filter(|v| v.abs() <= range)
         .collect();
-    let rms = if on.is_empty() {
-        0.0
-    } else {
-        (on.iter().map(|v| v * v).sum::<f64>() / on.len() as f64).sqrt()
-    };
+    let rms = metrology::stats::summary(&on).map_or(0.0, |s| s.rms);
     json!({
         "within": on.len() as f64 / n,
         "inside": measured.iter().filter(|v| **v < -range).count() as f64 / n,
@@ -122,12 +118,14 @@ mod tests {
     use super::*;
 
     /// Points on the surface count within the range, deeper inside and
-    /// farther outside apart; the map leaves the outside plain.
+    /// farther outside apart, an infinity measuring nothing; the map
+    /// leaves the outside plain.
     #[test]
     fn a_reading_splits_the_surface_from_what_is_missing() {
-        let values = [0.05, -0.05, -0.5, 0.4, f32::NAN];
+        let values = [0.05, -0.05, -0.5, 0.4, f32::NAN, f32::INFINITY];
         let r = reading(&values, 0.1);
         assert_eq!(r["measured"], 4);
+        assert!((r["rms"].as_f64().unwrap() - 0.05).abs() < 1e-6);
         assert!((r["within"].as_f64().unwrap() - 0.5).abs() < 1e-12);
         assert!((r["inside"].as_f64().unwrap() - 0.25).abs() < 1e-12);
         assert!((r["outside"].as_f64().unwrap() - 0.25).abs() < 1e-12);
