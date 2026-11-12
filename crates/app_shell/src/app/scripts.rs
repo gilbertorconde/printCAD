@@ -601,7 +601,7 @@ impl PrintCadApp {
         let mesh_pending = self
             .in_script_tab(|app| {
                 app.drive_mesh_histories();
-                app.session.mesh_histories.pending()
+                app.session.jobs.mesh_histories.pending()
             })
             .unwrap_or(false);
         let answer = if self.kernel_worker.in_flight() == 0 && !mesh_pending {
@@ -729,9 +729,9 @@ impl PrintCadApp {
     ) -> CommandResult {
         let state = HostState {
             active_tab: Some(self.session.tab),
-            section_on: self.session.section.is_some(),
+            section_on: self.session.view.section.is_some(),
             document: &self.session.document,
-            tree_selection: self.session.tree_selection,
+            tree_selection: self.session.selection.tree,
             editing: false,
         };
         match keymap::host_outcome(action, &state) {
@@ -758,7 +758,7 @@ impl PrintCadApp {
             args,
             &mut self.session.document,
             &self.registry,
-            self.session.current_file.as_deref(),
+            self.session.file.path.as_deref(),
         ) {
             return answer;
         }
@@ -773,7 +773,7 @@ impl PrintCadApp {
                 &self.user_settings.printing,
             ),
             "doc.selection" => Ok(json!({
-                "item": self.session.tree_selection.and_then(item_id).map(|u| u.to_string()),
+                "item": self.session.selection.tree.and_then(item_id).map(|u| u.to_string()),
                 "body": self.session.active_body_id.map(|b| b.0.to_string()),
                 "feature": self.session.active_document_object.map(|f| f.0.to_string()),
             })),

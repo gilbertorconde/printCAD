@@ -876,7 +876,7 @@ impl PrintCadApp {
     /// `width` by `height` an agent can look at.
     pub(crate) fn view_png(&self, width: u32, height: u32) -> Option<Vec<u8>> {
         let shapes = self.thumbnail_shapes();
-        let (forward, up) = self.session.camera.view_basis();
+        let (forward, up) = self.session.view.camera.view_basis();
         doc_render::thumbnail::render_at(&shapes, forward, up, width, height)
     }
 
@@ -915,13 +915,13 @@ fn picture_of(
     session: &crate::app::session::DocumentSession,
     request: &doc_render::proof::Request,
 ) -> Result<Vec<u8>, String> {
-    let camera = &session.camera;
+    let camera = &session.view.camera;
     doc_render::proof::picture_with_maps(
         &session.document,
         request,
         Some(camera.view_basis()),
         camera.axis_system(),
-        &session.shown_maps,
+        &session.drawn.shown_maps,
         &crate::app::scripts::picture_ink(),
     )
 }

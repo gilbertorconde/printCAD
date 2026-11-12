@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::PrintCadApp;
-use crate::app::session::DocumentSession;
+use crate::app::session_state::ViewState;
 use crate::camera::KeptView;
 use crate::log_panel as app_log;
 use crate::ui::PanelLayout;
@@ -226,10 +226,10 @@ pub(crate) fn keep_session(session: &KeptSession) {
     }
 }
 
-impl DocumentSession {
+impl ViewState {
     /// The view to keep with this tab's file: none while the opened
     /// document still waits to be framed, which is no view the user chose.
-    pub(crate) fn view_to_keep(&self) -> Option<KeptView> {
+    pub(crate) fn to_keep(&self) -> Option<KeptView> {
         (!self.fit_on_layout).then(|| KeptView {
             side: self
                 .side_camera
@@ -237,6 +237,16 @@ impl DocumentSession {
                 .map(|camera| Box::new(camera.kept_view())),
             ..self.camera.kept_view()
         })
+    }
+
+    /// Put `view` on the cameras. Whether the main one took it.
+    pub(crate) fn restore(&mut self, view: KeptView, settings: &settings::CameraSettings) -> bool {
+        let restored = self.camera.restore_view(&view, settings);
+        self.side_camera = view.side.and_then(|side| {
+            let mut camera = self.camera.detached(settings);
+            camera.restore_view(&side, settings).then_some(camera)
+        });
+        restored
     }
 }
 
@@ -247,13 +257,7 @@ impl PrintCadApp {
         let Some(view) = view_of(file) else {
             return false;
         };
-        let settings = &self.user_settings.camera;
-        let restored = self.session.camera.restore_view(&view, settings);
-        self.session.side_camera = view.side.and_then(|side| {
-            let mut camera = self.session.camera.detached(settings);
-            camera.restore_view(&side, settings).then_some(camera)
-        });
-        restored
+        self.session.view.restore(view, &self.user_settings.camera)
     }
 
     /// The session as it ends, for the next start. Runs on the way out,
@@ -320,7 +324,7 @@ impl PrintCadApp {
     fn session_now(&self) -> Standing {
         let tabs: Vec<(Option<PathBuf>, Option<KeptView>)> = self
             .sessions()
-            .map(|session| (session.current_file.clone(), session.view_to_keep()))
+            .map(|session| (session.file.path.clone(), session.view.to_keep()))
             .collect();
         let views = tabs
             .iter()

@@ -473,7 +473,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   a closed sketch's parts picked with no task open (`closed_parts.rs`:
   `Workbench::pick_part` answers the curve within reach or the region
   under the cursor, `part_lines` a picked curve's lines; the host keeps
-  them as `DocumentSession::picked_parts` beside the selected feature,
+  them as `DocumentSession::selection.parts` beside the selected feature,
   a click taking a region alone and Ctrl adding regions or curves, a
   region behind the face the pick found left alone, and hands them to
   benches as `ctx.selected_parts`; Design's Pad, Pocket, Revolution and
@@ -895,7 +895,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`pick_primitive.wgsl`, `PickResult::triangle` with the revision the
   body was drawn at); the host takes it as the face under the cursor when
   that body was drawn with its document mesh at that revision
-  (`DocumentSession::drawn_meshes`, not a textured body), and otherwise
+  (`DocumentSession::drawn.meshes`, not a textured body), and otherwise
   searches for the triangle nearest the picked point. The window takes a
   plain format, as egui blends for; the scene draws into an sRGB texture
   that the blit encodes onto it.
@@ -917,8 +917,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   second pane; a pick inside its rect draws its bodies with its camera
   (`Pane::at`). View › Split view puts every body but the scans, and the
   selection and hover paints drawn for them (`overlay_bodies`), in it
-  (`DocumentSession::split_view`, the UI halving the viewport); View ›
-  Link split cameras off gives it `DocumentSession::side_camera`
+  (`DocumentSession::view.split`, the UI halving the viewport); View ›
+  Link split cameras off gives it `DocumentSession::view.side_camera`
   (`CameraController::detached`, kept as `KeptView::side`). Pointer
   input over it (`input.rs::side_pane_input`) runs with the side camera
   swapped in as the session's and the cursor in its pixels, so benches,
@@ -966,7 +966,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `Packages`, `KeptRun`), so a module borrows one group while the rest
   of the app is borrowed elsewhere; each sits in `PrintCadApp` where its
   members with a thread or a `Drop` stood, since fields drop in
-  declaration order. `app/` modules: `frame.rs` (per-frame loop),
+  declaration order. A tab's state is grouped the same way in
+  `app/session_state.rs` (`view`, `hover`, `selection`, `file`,
+  `connection`, `tools`, `jobs`, `builds`, `drawn` on `DocumentSession`),
+  the server connection after the file's save and open receivers and the
+  threaded caches after both, as they stood. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `links.rs` (parts linked from other
   `.prtcad` files: `Body.link` names the file and body, the shape is read
@@ -1630,7 +1634,7 @@ preview (`request_build_solid`'s `preview`, `ChainRequest::preview`
 over the feature's op range): the chain keeps the feature's tool and the
 body before it (an adding feature) or after it (a cutting one) in
 `SolidBuildResult::preview`. The body's geometry is then that solid, so
-picks match what is drawn; `session.previews` keeps the whole solid, put
+picks match what is drawn; `session.builds.previews` keeps the whole solid, put
 back when the task closes (and in the save snapshot), and the tool, drawn
 `front_only` in `rendering.preview_color`/`preview_opacity` with its edges
 over its faces (the renderer's `TranslucentFront` pass, back faces culled).
@@ -1666,7 +1670,7 @@ at op N has the worker build the ops before the failing feature's first
 carries the error and every feature after it "not built"
 (`mark_unbuilt`), and a first feature failing leaves no built shape
 (`SolidFailed::nothing_built`). A body has one build out at a time
-(`session.builds_out`, `recompute::BuildsOut`): a plan made while it builds waits in its
+(`session.builds.out`, `recompute::BuildsOut`): a plan made while it builds waits in its
 place, a newer one replacing it, and goes when the build lands
 (`build_landed`), so a drag that changes a feature every frame builds only
 the latest shape rather than replaying each step. A history that changed shape goes through
@@ -2004,7 +2008,7 @@ edits them) · wheel = zoom · LMB = select (click sketch → tree-select; click
 solid → face-first, double click → the whole body the face belongs to, one
 part of an assembly, and in Design the tree opens to its row; LMB drag
 in sketch = box select; ctrl = additive: Ctrl+click adds or removes a
-face of the selected body (`session.earlier_faces` beside the last,
+face of the selected body (`session.selection.earlier_faces` beside the last,
 `last_face_hit`; `face_pick::toggled`), and an edge, faces and edges mixing;
 benches see every picked face as `ctx.selected_faces` /
 `selected_faces_in(body)`, `selected_face` the last; the status bar says

@@ -241,7 +241,7 @@ impl PrintCadApp {
         use crate::ui::SavedSectionAction as Action;
         match action {
             Action::Save(name) => {
-                let Some(plane) = &self.session.section else {
+                let Some(plane) = &self.session.view.section else {
                     return;
                 };
                 self.session.document.save_section(plane.saved(&name));
@@ -276,6 +276,7 @@ impl PrintCadApp {
         let a = Args(args);
         let plane = self
             .session
+            .view
             .section
             .clone()
             .ok_or_else(|| CommandError::failed("the view cuts at no plane; give one"))?;
@@ -307,6 +308,7 @@ impl PrintCadApp {
         self.redraw_needed = true;
         Ok(self
             .session
+            .view
             .section
             .as_ref()
             .map_or(Value::Null, |plane| answer(&plane.saved(""))))

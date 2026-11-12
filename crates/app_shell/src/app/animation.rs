@@ -63,7 +63,7 @@ impl PrintCadApp {
                     .collect()
             })
             .collect();
-        let (forward, up) = self.session.camera.view_basis();
+        let (forward, up) = self.session.view.camera.view_basis();
         Animation {
             name,
             frames,

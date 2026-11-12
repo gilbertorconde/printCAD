@@ -4,7 +4,7 @@
 pub(crate) use doc_render::face_pick::*;
 
 /// The picked triangle as one of the document's: `drawn` is the body's
-/// entry in `DocumentSession::drawn_meshes`, the revision it was last
+/// entry in `DocumentSession::drawn.meshes`, the revision it was last
 /// submitted with and its geometry's. A pick drawn with another revision,
 /// or a body drawn with a mesh of its own, names no triangle of the
 /// document's.

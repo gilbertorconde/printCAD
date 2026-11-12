@@ -46,6 +46,7 @@ pub(crate) mod section;
 pub(crate) mod section_commands;
 pub(crate) mod server;
 pub(crate) mod session;
+pub(crate) mod session_state;
 pub(crate) mod session_store;
 pub(crate) mod shading;
 pub(crate) mod sixdof;

@@ -171,7 +171,8 @@ pub(crate) fn in_text(mentions: &[Mention], text: &str) -> Vec<Mention> {
 /// What a session's tab is called: its file's name, else its title.
 fn tab_name(session: &DocumentSession) -> String {
     session
-        .current_file
+        .file
+        .path
         .as_deref()
         .and_then(|f| f.file_name())
         .map(|n| n.to_string_lossy().into_owned())
@@ -199,29 +200,31 @@ struct Selection {
 
 impl Selection {
     fn of(session: &DocumentSession) -> Self {
-        let faces = session.selected_face_refs();
+        let faces = session.selection.face_refs();
         let edges: Vec<core_document::EdgeRef> = session
-            .selected_edges
+            .selection
+            .edges
             .iter()
             .map(crate::app::edges::EdgeHit::as_ref)
             .collect();
         let bodies = match faces.is_empty() && edges.is_empty() {
             true => session
+                .selection
                 .earlier_bodies
                 .iter()
                 .copied()
-                .chain(session.selected_body)
+                .chain(session.selection.body)
                 .collect(),
             false => Vec::new(),
         };
-        let mut features = session.selected_features();
+        let mut features = session.selection.features();
         if features.is_empty()
-            && let Some(crate::ui::TreeItemId::Feature(id)) = session.tree_selection
+            && let Some(crate::ui::TreeItemId::Feature(id)) = session.selection.tree
         {
             features.push(id);
         }
         Self {
-            face_body: session.selected_body.filter(|_| !faces.is_empty()),
+            face_body: session.selection.body.filter(|_| !faces.is_empty()),
             faces,
             edges,
             bodies,
@@ -277,7 +280,7 @@ impl PrintCadApp {
     /// The tabs `name` calls: by its file's path or name, or its title.
     pub(crate) fn tabs_called(&self, name: &str) -> Vec<Uuid> {
         self.sessions()
-            .filter(|s| calls(name, s.current_file.as_deref(), s.document.name()))
+            .filter(|s| calls(name, s.file.path.as_deref(), s.document.name()))
             .map(|s| s.tab)
             .collect()
     }
@@ -285,7 +288,7 @@ impl PrintCadApp {
     /// The open files in words, for an agent told it named none of them.
     pub(crate) fn open_file_words(&self) -> String {
         self.sessions()
-            .map(|s| match &s.current_file {
+            .map(|s| match &s.file.path {
                 Some(file) => format!("`{}` ({})", tab_name(s), file.display()),
                 None => format!("`{}` (not saved)", tab_name(s)),
             })
@@ -301,7 +304,7 @@ impl PrintCadApp {
                 .map(|s| {
                     json!({
                         "tab": tab_name(s),
-                        "file": s.current_file.as_ref().map(|f| f.display().to_string()),
+                        "file": s.file.path.as_ref().map(|f| f.display().to_string()),
                         "on_screen": s.tab == self.session.tab,
                         "chat_document": s.tab == own,
                     })
@@ -318,7 +321,7 @@ impl PrintCadApp {
             .map(|session| MentionOption {
                 source: MentionSource::File(session.tab),
                 token: format!("@{}", tab_name(session)),
-                detail: match &session.current_file {
+                detail: match &session.file.path {
                     Some(file) => file.display().to_string(),
                     None => "not saved".to_string(),
                 },
@@ -348,12 +351,7 @@ impl PrintCadApp {
         let mut body = Map::new();
         body.insert(
             "file".into(),
-            json!(
-                session
-                    .current_file
-                    .as_ref()
-                    .map(|f| f.display().to_string())
-            ),
+            json!(session.file.path.as_ref().map(|f| f.display().to_string())),
         );
         body.insert("tab".into(), json!(tab_name(session)));
         match source {

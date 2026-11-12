@@ -137,7 +137,7 @@ impl PrintCadApp {
     /// The cursor moved to `cursor` in the view: a press that moved is a
     /// pan, never the menu.
     pub(crate) fn radial_moved(&mut self, cursor: Vec2) {
-        let scale = self.session.camera.pixels_per_point();
+        let scale = self.session.view.camera.pixels_per_point();
         let reach = self.user_settings.camera.click_drag_threshold_px * scale;
         if self
             .session
@@ -166,7 +166,7 @@ impl PrintCadApp {
         if slices.is_empty() {
             return;
         }
-        self.session.camera.let_go_of_pan();
+        self.session.view.camera.let_go_of_pan();
         self.session.gestures.radial = Some(Radial {
             centre: press.centre,
             slices,
@@ -186,7 +186,7 @@ impl PrintCadApp {
             .input
             .cursor_in_viewport
             .map_or(radial.centre, |(x, y)| Vec2::new(x, y));
-        let scale = self.session.camera.pixels_per_point();
+        let scale = self.session.view.camera.pixels_per_point();
         let Some(slice) = radial.pointed(cursor, scale).map(|i| &radial.slices[i]) else {
             return true;
         };

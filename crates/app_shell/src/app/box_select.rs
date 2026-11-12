@@ -388,10 +388,10 @@ impl PrintCadApp {
     /// press is the measure tool's or lands on a sketch, an edge or an
     /// origin plane.
     pub(crate) fn may_start_box(&self) -> bool {
-        self.session.measure.is_none()
-            && self.session.hovered_body.is_none()
-            && self.session.hovered_edge.is_none()
-            && self.session.hovered_base_plane.is_none()
+        self.session.tools.measure.is_none()
+            && self.session.hover.body.is_none()
+            && self.session.hover.edge.is_none()
+            && self.session.hover.base_plane.is_none()
             && !self.input.held_buttons[1]
             && !self.input.held_buttons[2]
             && self.feature_under_cursor().is_none()
@@ -401,12 +401,12 @@ impl PrintCadApp {
     /// (whole bodies unless it asks for faces or edges); Ctrl adds to what
     /// is picked, otherwise the box's catch replaces it.
     pub(crate) fn finish_box_select(&mut self, drag: BoxDrag) {
-        let target = match self.session.pick_filter {
+        let target = match self.session.view.pick_filter {
             PickFilter::Faces => Target::Faces,
             PickFilter::Edges => Target::Edges,
             PickFilter::Any | PickFilter::Bodies => Target::Bodies,
         };
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         let probe = Probe {
             rect: drag.rect(),
             catch: drag.catch(),
@@ -423,7 +423,7 @@ impl PrintCadApp {
             }
             return;
         }
-        self.session.last_select_click = None;
+        self.session.selection.last_select_click = None;
         match target {
             Target::Bodies => self.box_bodies(caught.into_iter().map(|(id, _)| id), ctrl),
             Target::Faces => self.box_faces(caught, ctrl),
@@ -443,12 +443,13 @@ impl PrintCadApp {
             }
         }
         self.clear_view_selection();
-        self.session.selected_body = bodies.pop();
-        self.session.earlier_bodies = bodies;
+        self.session.selection.body = bodies.pop();
+        self.session.selection.earlier_bodies = bodies;
         // As a double click on it does, the last body's row opens in the
         // tree, except in an edit session.
         if !self.registry.is_modal(&self.session.active_workbench.0) {
-            self.session.reveal_body = self.session.selected_body.map(core_document::BodyId);
+            self.session.selection.reveal_body =
+                self.session.selection.body.map(core_document::BodyId);
         }
         let count = self.selected_bodies().len();
         app_log::info(if count == 1 {
@@ -464,9 +465,10 @@ impl PrintCadApp {
     fn box_faces(&mut self, caught: Vec<(Uuid, Vec<u32>)>, ctrl: bool) {
         let current = self
             .session
+            .selection
             .last_face_hit
             .map(|(body, _)| body)
-            .filter(|body| self.session.selected_body == Some(*body));
+            .filter(|body| self.session.selection.body == Some(*body));
         let adding = current
             .filter(|_| ctrl)
             .and_then(|body| caught.iter().find(|(id, _)| *id == body));
@@ -486,15 +488,15 @@ impl PrintCadApp {
         let mesh = std::sync::Arc::clone(&geometry.mesh);
         let mut picked: Vec<PickedFace> = Vec::new();
         if adding.is_some() {
-            picked = std::mem::take(&mut self.session.earlier_faces);
+            picked = std::mem::take(&mut self.session.selection.earlier_faces);
             if let (Some((_, face)), Some(highlight)) = (
-                self.session.last_face_hit,
-                self.session.face_highlight.take(),
+                self.session.selection.last_face_hit,
+                self.session.selection.face_highlight.take(),
             ) {
                 picked.push(PickedFace { face, highlight });
             }
         } else if !ctrl {
-            self.session.selected_edges.clear();
+            self.session.selection.edges.clear();
         }
         for id in faces {
             if picked
@@ -514,12 +516,12 @@ impl PrintCadApp {
             }
         }
         let last = picked.pop();
-        self.session.earlier_faces = picked;
-        self.session.last_face_hit = last.as_ref().map(|p| (body, p.face));
-        self.session.face_highlight = last.map(|p| p.highlight);
-        self.session.earlier_bodies.clear();
-        self.session.selected_body = Some(body);
-        let count = self.selected_face_refs().len();
+        self.session.selection.earlier_faces = picked;
+        self.session.selection.last_face_hit = last.as_ref().map(|p| (body, p.face));
+        self.session.selection.face_highlight = last.map(|p| p.highlight);
+        self.session.selection.earlier_bodies.clear();
+        self.session.selection.body = Some(body);
+        let count = self.session.selection.face_refs().len();
         app_log::info(if count == 1 {
             "Selected 1 face".to_string()
         } else {
@@ -529,7 +531,7 @@ impl PrintCadApp {
 
     fn box_edges(&mut self, caught: Vec<(Uuid, Vec<u32>)>, ctrl: bool) {
         if !ctrl {
-            self.session.selected_edges.clear();
+            self.session.selection.edges.clear();
         }
         let mut last_body = None;
         for (body, edges) in caught {
@@ -544,45 +546,49 @@ impl PrintCadApp {
             for edge in edges {
                 if self
                     .session
-                    .selected_edges
+                    .selection
+                    .edges
                     .iter()
                     .any(|s| s.body == body && s.edge == edge)
                 {
                     continue;
                 }
                 if let Some(hit) = crate::app::edges::edge_hit(&mesh, body, edge) {
-                    self.session.selected_edges.push(hit);
+                    self.session.selection.edges.push(hit);
                     last_body = Some(body);
                 }
             }
         }
-        let Some(body) = last_body.or(self.session.selected_body) else {
+        let Some(body) = last_body.or(self.session.selection.body) else {
             return;
         };
         // Ctrl keeps the faces picked on the same body beside the edges.
-        if !ctrl || self.session.selected_body != Some(body) {
-            self.session.face_highlight = None;
-            self.session.last_face_hit = None;
+        if !ctrl || self.session.selection.body != Some(body) {
+            self.session.selection.face_highlight = None;
+            self.session.selection.last_face_hit = None;
         }
-        self.session.earlier_bodies.clear();
-        self.session.selected_body = Some(body);
+        self.session.selection.earlier_bodies.clear();
+        self.session.selection.body = Some(body);
         app_log::info(format!(
             "Selected {} edge(s)",
-            self.session.selected_edges.len()
+            self.session.selection.edges.len()
         ));
     }
 
     /// Every body picked whole: the ones a box took beside the last, and
     /// the last. Empty while a face or an edge is the pick.
     pub(crate) fn selected_bodies(&self) -> Vec<Uuid> {
-        if self.session.face_highlight.is_some() || !self.session.selected_edges.is_empty() {
+        if self.session.selection.face_highlight.is_some()
+            || !self.session.selection.edges.is_empty()
+        {
             return Vec::new();
         }
         self.session
+            .selection
             .earlier_bodies
             .iter()
             .copied()
-            .chain(self.session.selected_body)
+            .chain(self.session.selection.body)
             .collect()
     }
 }

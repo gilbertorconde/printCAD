@@ -214,13 +214,13 @@ pub(crate) fn with_extension(path: &Path, format: ExportFormat) -> PathBuf {
 impl PrintCadApp {
     /// Open the export dialog on the options used last.
     pub(crate) fn open_export_dialog(&mut self) {
-        self.session.export_pending = Some(self.files.last_export.clone());
+        self.session.file.export_pending = Some(self.files.last_export.clone());
     }
 
     /// The walkthrough's second step: once the example has a solid, the
     /// export dialog opens over it, set for the whole document.
     pub(crate) fn open_export_when_ready(&mut self) {
-        if !self.session.export_when_ready {
+        if !self.session.file.export_when_ready {
             return;
         }
         let draft = ExportDraft {
@@ -228,14 +228,14 @@ impl PrintCadApp {
             ..self.files.last_export.clone()
         };
         if !self.export_bodies(&draft).is_empty() {
-            self.session.export_when_ready = false;
-            self.session.export_pending = Some(draft);
+            self.session.file.export_when_ready = false;
+            self.session.file.export_pending = Some(draft);
         }
     }
 
     /// Ask where to write, once the dialog is confirmed.
     pub(crate) fn confirm_export(&mut self) {
-        let Some(draft) = self.session.export_pending.take() else {
+        let Some(draft) = self.session.file.export_pending.take() else {
             return;
         };
         if self.export_bodies(&draft).is_empty() {
@@ -329,7 +329,8 @@ impl PrintCadApp {
         }
         let stem = self
             .session
-            .current_file
+            .file
+            .path
             .as_ref()
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
@@ -490,10 +491,11 @@ impl PrintCadApp {
     /// and any others a box took with it.
     fn bodies_to_export_selected(&self) -> Vec<uuid::Uuid> {
         self.session
+            .selection
             .earlier_bodies
             .iter()
             .copied()
-            .chain(self.session.selected_body)
+            .chain(self.session.selection.body)
             .collect()
     }
 
@@ -505,7 +507,7 @@ impl PrintCadApp {
         let parts = parts_to_print(document, &self.registry);
         let settings = LayoutSettings::of(&self.user_settings.printing);
         let key = layout_key(document, &parts, &settings);
-        match &self.session.print_layout {
+        match &self.session.tools.print_layout {
             Some(shown) if shown.key == key => shown.layout.clone(),
             _ => lay_out(document, &parts, &settings),
         }

@@ -251,7 +251,7 @@ impl PrintCadApp {
         // Dev/bench hook: orbit continuously so frame measurements cover the
         // moving-camera case (the one the user feels).
         if hooks.orbit {
-            self.session.camera.apply_rotate_delta(
+            self.session.view.camera.apply_rotate_delta(
                 &crate::orientation_cube::RotateDelta {
                     axis: crate::orientation_cube::RotateAxis::ScreenY,
                     degrees: 0.5,
@@ -369,7 +369,7 @@ impl PrintCadApp {
         {
             let id = note.id;
             self.bench.note_fired = true;
-            self.session.note_tool = true;
+            self.session.tools.note_tool = true;
             self.open_note_card(id);
         }
 
@@ -426,7 +426,7 @@ impl PrintCadApp {
         // names in hand, so a capture shows a tool's cues, or the view's
         // hover, where the pointer is.
         if (self.bench.edit_fired || hooks.edit.is_none())
-            && !self.session.camera.is_animating()
+            && !self.session.view.camera.is_animating()
             && hooks.click.is_none()
             && let Some((fx, fy)) = hooks.pointer
         {
@@ -434,12 +434,12 @@ impl PrintCadApp {
             if let Some(tool) = &tool {
                 self.session.active_tool.active_ids.insert(tool.clone());
             }
-            let vp = self.session.camera.viewport_info();
+            let vp = self.session.view.camera.viewport_info();
             let at = (fx * vp.2 as f32, fy * vp.3 as f32);
             self.input.cursor_in_viewport = Some(at);
             if !self.sketch_editing_active() {
-                self.session.hovered_feature = self.feature_under_cursor();
-                self.session.hovered_part = self.part_under_cursor();
+                self.session.hover.feature = self.feature_under_cursor();
+                self.session.hover.part = self.part_under_cursor();
             }
             let wb_id = self.active_workbench_id();
             self.call_workbench_input(
@@ -463,7 +463,7 @@ impl PrintCadApp {
         // `PRINTCAD_BENCH_UI`'s steps play once the scene has settled, and
         // the picture waits for them.
         let settled = self.kernel_worker.in_flight() == 0
-            && !self.session.camera.is_animating()
+            && !self.session.view.camera.is_animating()
             && (self.bench.edit_fired || hooks.edit.is_none())
             && self.bench.edit_idle >= BENCH_EDIT_IDLE_FRAMES;
         let mut playing = false;
@@ -488,7 +488,7 @@ impl PrintCadApp {
         if (scene || window)
             && self.bench.picture_frames <= PICTURE_SETTLE_FRAMES
             && self.kernel_worker.in_flight() == 0
-            && !self.session.camera.is_animating()
+            && !self.session.view.camera.is_animating()
             && !clicking
         {
             self.bench.picture_frames += 1;
@@ -633,11 +633,11 @@ impl PrintCadApp {
         {
             self.bench.click_frames += 1;
             self.redraw_needed = true;
-            let vp = self.session.camera.viewport_info();
+            let vp = self.session.view.camera.viewport_info();
             let cx = fx * vp.2 as f32;
             let cy = fy * vp.3 as f32;
             match self.bench.click_frames {
-                1 => self.session.camera.snap_to_view(
+                1 => self.session.view.camera.snap_to_view(
                     crate::orientation_cube::CameraSnapView::FrontTopRight,
                     &self.user_settings.camera,
                 ),
@@ -653,20 +653,20 @@ impl PrintCadApp {
                         target: "printcad.frame",
                         "bench click at ({cx}, {cy}) of {:?}: body {:?} at {:?}, triangle {:?}, edge {:?}, face {:?}",
                         (vp.2, vp.3),
-                        self.session.hovered_body,
-                        self.session.hovered_world_pos,
-                        self.session.hovered_triangle,
-                        self.session.hovered_edge,
-                        self.session.hovered_face.as_ref().map(|f| f.face),
+                        self.session.hover.body,
+                        self.session.hover.world_pos,
+                        self.session.hover.triangle,
+                        self.session.hover.edge,
+                        self.session.hover.face.as_ref().map(|f| f.face),
                     );
                     self.toggle_body_under_cursor_selection();
                     tracing::info!(
                         target: "printcad.frame",
                         "bench click selected: body {:?}, face {:?}, face highlight {}, edges {}",
-                        self.session.selected_body,
-                        self.session.last_face_hit,
-                        self.session.face_highlight.is_some(),
-                        self.session.selected_edges.len(),
+                        self.session.selection.body,
+                        self.session.selection.last_face_hit,
+                        self.session.selection.face_highlight.is_some(),
+                        self.session.selection.edges.len(),
                     );
                 }
                 BENCH_TOOL_FRAME => {
@@ -721,7 +721,7 @@ impl PrintCadApp {
     /// viewport's own input hands it to the active bench with the tool in
     /// hand.
     fn bench_view_click(&mut self, at: egui::Pos2) {
-        let vp = self.session.camera.viewport_info();
+        let vp = self.session.view.camera.viewport_info();
         let viewport_pos = (at.x * vp.2 as f32, at.y * vp.3 as f32);
         self.input.cursor_in_viewport = Some(viewport_pos);
         let tool = self.session.active_tool.active_ids.iter().next().cloned();

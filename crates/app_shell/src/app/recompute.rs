@@ -17,9 +17,9 @@ impl PrintCadApp {
         // Nothing is out on the kernel thread: a body still marked as
         // building lost its answer (it left the tab while it built), and
         // what waits for it goes now.
-        if self.kernel_worker.in_flight() == 0 && !self.session.builds_out.is_empty() {
-            self.session.stale_builds.clear();
-            for (body, next) in self.session.builds_out.take_all() {
+        if self.kernel_worker.in_flight() == 0 && !self.session.builds.out.is_empty() {
+            self.session.builds.stale.clear();
+            for (body, next) in self.session.builds.out.take_all() {
                 if let Some(next) = next {
                     self.submit_build(body, next);
                 }
@@ -46,11 +46,11 @@ impl PrintCadApp {
             };
             match job.plan {
                 Ok(plan) if plan.ops.is_empty() => {
-                    self.session.coarse.remove(&body_id.0);
-                    self.session.preview_rest.remove(&body_id.0);
+                    self.session.builds.coarse.remove(&body_id.0);
+                    self.session.builds.preview_rest.remove(&body_id.0);
                     // A build still out is of a history that is gone.
-                    if self.session.builds_out.forget_waiting(body_id.0) {
-                        self.session.stale_builds.insert(body_id.0);
+                    if self.session.builds.out.forget_waiting(body_id.0) {
+                        self.session.builds.stale.insert(body_id.0);
                         self.drop_build_out(body_id.0);
                     }
                     // Only geometry the features produced is cleared; an
@@ -62,6 +62,7 @@ impl PrintCadApp {
                 Ok(plan) => {
                     let preview = self
                         .session
+                        .builds
                         .preview_feature
                         .filter(|f| plan.op_features.contains(f))
                         .map(|f| f.0);
@@ -75,9 +76,10 @@ impl PrintCadApp {
                     };
                     // The edited feature first: what follows it waits
                     // until the edits settle.
-                    self.session.preview_rest.remove(&body_id.0);
+                    self.session.builds.preview_rest.remove(&body_id.0);
                     if let Some(first) = build.up_to_edited() {
                         self.session
+                            .builds
                             .preview_rest
                             .insert(body_id.0, std::mem::replace(&mut build, first));
                     }
@@ -86,11 +88,12 @@ impl PrintCadApp {
                     // A plan that replaces one still building means the
                     // body is being changed faster than it builds: it is
                     // moving, and builds coarse until it settles.
-                    self.session.coarse.remove(&body_id.0);
-                    match self.session.builds_out.plan(body_id.0, build) {
+                    self.session.builds.coarse.remove(&body_id.0);
+                    match self.session.builds.out.plan(body_id.0, build) {
                         Some(build) => self.submit_build(body_id.0, build),
                         None => {
                             self.session
+                                .builds
                                 .moving
                                 .insert(body_id.0, std::time::Instant::now());
                             self.drop_build_out(body_id.0);
@@ -330,26 +333,27 @@ impl PrintCadApp {
     }
 
     fn submit_build(&mut self, body: uuid::Uuid, build: QueuedBuild) {
-        self.session.builds_out.sent(body, build.preview);
+        self.session.builds.out.sent(body, build.preview);
         // A moving body is meshed coarse, and its plan kept to build again
         // finely once it settles.
         let moving = self
             .session
+            .builds
             .moving
             .get(&body)
             .is_some_and(|at| at.elapsed() < SETTLE);
         let detail = if moving {
-            self.session.coarse.insert(body, build.clone());
+            self.session.builds.coarse.insert(body, build.clone());
             coarse(self.solid_detail())
         } else {
-            self.session.coarse.remove(&body);
-            self.session.moving.remove(&body);
+            self.session.builds.coarse.remove(&body);
+            self.session.builds.moving.remove(&body);
             self.solid_detail()
         };
         if build.partial {
-            self.session.partial_out.insert(body);
+            self.session.builds.partial_out.insert(body);
         } else {
-            self.session.partial_out.remove(&body);
+            self.session.builds.partial_out.remove(&body);
         }
         let serial = self.kernel_worker.request_build_solid(
             body,
@@ -360,7 +364,7 @@ impl PrintCadApp {
             build.probes,
             build.projections,
         );
-        self.session.build_serials.insert(body, serial);
+        self.session.builds.serials.insert(body, serial);
     }
 
     /// Build at full detail every body shown coarse whose plans have
@@ -369,12 +373,14 @@ impl PrintCadApp {
     fn settle_coarse_builds(&mut self) {
         let settled: Vec<uuid::Uuid> = self
             .session
+            .builds
             .coarse
             .keys()
-            .chain(self.session.preview_rest.keys())
-            .filter(|body| !self.session.builds_out.is_out(**body))
+            .chain(self.session.builds.preview_rest.keys())
+            .filter(|body| !self.session.builds.out.is_out(**body))
             .filter(|body| {
                 self.session
+                    .builds
                     .moving
                     .get(*body)
                     .is_none_or(|at| at.elapsed() >= SETTLE)
@@ -384,9 +390,9 @@ impl PrintCadApp {
         for body in settled {
             // The whole history, when the edited feature was built alone;
             // it is built at full detail and brings the preview with it.
-            let coarse = self.session.coarse.remove(&body);
-            if let Some(build) = self.session.preview_rest.remove(&body).or(coarse) {
-                self.session.moving.remove(&body);
+            let coarse = self.session.builds.coarse.remove(&body);
+            if let Some(build) = self.session.builds.preview_rest.remove(&body).or(coarse) {
+                self.session.builds.moving.remove(&body);
                 self.submit_build(body, build);
             }
         }
@@ -395,23 +401,23 @@ impl PrintCadApp {
     /// The body's build out on the kernel thread is of a plan nobody needs
     /// any more: drop it, so the plan waiting goes sooner.
     fn drop_build_out(&mut self, body: uuid::Uuid) {
-        if self.session.dropped_builds.contains(&body) {
+        if self.session.builds.dropped.contains(&body) {
             return;
         }
-        let Some(&serial) = self.session.build_serials.get(&body) else {
+        let Some(&serial) = self.session.builds.serials.get(&body) else {
             return;
         };
-        let usual = self.session.build_times.get(&body).copied();
+        let usual = self.session.builds.times.get(&body).copied();
         if self.kernel_worker.drop_build(serial, usual) {
-            self.session.dropped_builds.insert(body);
+            self.session.builds.dropped.insert(body);
         }
     }
 
     /// A body's build landed: the newest plan made meanwhile goes now.
     /// What the build that landed was.
     pub(crate) fn build_landed(&mut self, body: uuid::Uuid) -> BuildLanded {
-        self.session.build_serials.remove(&body);
-        let (landed, next) = self.session.builds_out.landed(body);
+        self.session.builds.serials.remove(&body);
+        let (landed, next) = self.session.builds.out.landed(body);
         if let Some(next) = next {
             self.submit_build(body, next);
         }
@@ -442,11 +448,11 @@ impl PrintCadApp {
                             .is_some_and(|info| info.builds_solid)
                 })
             });
-        if editing == self.session.preview_feature {
+        if editing == self.session.builds.preview_feature {
             return;
         }
         self.end_feature_previews();
-        self.session.preview_feature = editing;
+        self.session.builds.preview_feature = editing;
         if let Some(feature) = editing {
             // Built again, this time with its preview.
             self.session.document.mark_feature_stale(feature);
@@ -459,9 +465,10 @@ impl PrintCadApp {
     pub(crate) fn end_feature_previews(&mut self) {
         let gone = self
             .session
+            .builds
             .preview_feature
             .is_some_and(|f| self.session.document.get_feature_meta(f).is_none());
-        for (body, preview) in std::mem::take(&mut self.session.previews) {
+        for (body, preview) in std::mem::take(&mut self.session.builds.previews) {
             if self.session.document.body(body).is_none() {
                 continue;
             }
@@ -473,7 +480,7 @@ impl PrintCadApp {
             }
         }
         // A body shown at the feature, its history after it still to build.
-        for body in std::mem::take(&mut self.session.preview_rest).into_keys() {
+        for body in std::mem::take(&mut self.session.builds.preview_rest).into_keys() {
             let body = core_document::BodyId(body);
             if self.session.document.body(body).is_some() {
                 self.registry
@@ -486,7 +493,7 @@ impl PrintCadApp {
     /// of an earlier build, so it goes, and the body keeps showing itself
     /// without the feature.
     pub(crate) fn drop_failed_preview(&mut self, body: core_document::BodyId) {
-        self.session.previews.remove(&body);
+        self.session.builds.previews.remove(&body);
     }
 
     /// A build that came with the edited feature's preview: the body stands
@@ -510,11 +517,11 @@ impl PrintCadApp {
         } else {
             placement.mesh(&preview.tool)
         };
-        let (id, revision) = match self.session.previews.get(&body) {
+        let (id, revision) = match self.session.builds.previews.get(&body) {
             Some(previous) => (previous.id, previous.revision.wrapping_add(1)),
             None => (uuid::Uuid::new_v4(), 0),
         };
-        self.session.previews.insert(
+        self.session.builds.previews.insert(
             body,
             crate::app::session::BodyPreview {
                 full,
@@ -532,7 +539,7 @@ impl PrintCadApp {
     /// document reopened before its repair landed.
     pub(crate) fn drive_shape_repairs(&mut self) {
         for body in self.session.document.bodies_awaiting_repair() {
-            if self.session.repairs_in_flight.contains(&body.0) {
+            if self.session.jobs.repairs.contains(&body.0) {
                 continue;
             }
             // A body with a base mends its base, which its features build on.
@@ -554,7 +561,7 @@ impl PrintCadApp {
                 continue;
             };
             let face_colors = face_colors.unwrap_or_default();
-            self.session.repairs_in_flight.insert(body.0);
+            self.session.jobs.repairs.insert(body.0);
             app_log::info(format!("Repairing `{}`…", self.body_name(body)));
             self.kernel_worker
                 .request_repair(body.0, blob, face_colors, self.solid_detail());
@@ -567,8 +574,8 @@ impl PrintCadApp {
     /// kernel thread.
     pub(crate) fn drive_shape_replacements(&mut self) {
         for (body, asset) in self.session.document.bodies_awaiting_shape() {
-            if self.session.shapes_in_flight.contains(&body.0)
-                || self.session.shapes_failed.get(&body.0) == Some(&asset)
+            if self.session.jobs.shapes.contains(&body.0)
+                || self.session.jobs.shapes_failed.get(&body.0) == Some(&asset)
             {
                 continue;
             }
@@ -585,7 +592,7 @@ impl PrintCadApp {
                 match crate::platform::scratch_file("shapes", &name.to_string_lossy(), &bytes) {
                     Ok(path) => path,
                     Err(e) => {
-                        self.session.shapes_failed.insert(body.0, asset);
+                        self.session.jobs.shapes_failed.insert(body.0, asset);
                         app_log::error(format!(
                             "Could not stage the new shape of `{}`: {e}",
                             self.body_name(body)
@@ -593,7 +600,7 @@ impl PrintCadApp {
                         continue;
                     }
                 };
-            self.session.shapes_in_flight.insert(body.0);
+            self.session.jobs.shapes.insert(body.0);
             let what = if self.session.document.is_stand_in(body, asset) {
                 "the shape kept for"
             } else {
@@ -613,12 +620,12 @@ impl PrintCadApp {
         result: Result<kernel_api::MeshSolidResult, String>,
         elapsed: std::time::Duration,
     ) {
-        self.session.shapes_in_flight.remove(&body.0);
+        self.session.jobs.shapes.remove(&body.0);
         let name = self.body_name(body);
         let mut read = match result {
             Ok(read) => read,
             Err(error) => {
-                self.session.shapes_failed.insert(body.0, asset);
+                self.session.jobs.shapes_failed.insert(body.0, asset);
                 app_log::error(format!(
                     "The new shape of `{name}` could not be read: {error}"
                 ));
@@ -662,7 +669,7 @@ impl PrintCadApp {
         result: kernel_api::RepairResult,
         elapsed: std::time::Duration,
     ) {
-        self.session.repairs_in_flight.remove(&body.0);
+        self.session.jobs.repairs.remove(&body.0);
         if let Some(previous) = self.session.document.base_geometry(body).cloned() {
             let broken = result.health.broken;
             self.session.document.set_base_solid(
@@ -738,8 +745,8 @@ impl PrintCadApp {
     /// peer's and a reopened document's refine the same way.
     pub(crate) fn drive_shape_refinements(&mut self) {
         for body in self.session.document.bodies_awaiting_refine() {
-            if self.session.refines_in_flight.contains(&body.0)
-                || self.session.refines_failed.contains(&body.0)
+            if self.session.jobs.refines.contains(&body.0)
+                || self.session.jobs.refines_failed.contains(&body.0)
             {
                 continue;
             }
@@ -751,7 +758,7 @@ impl PrintCadApp {
                 .imported_brep_face_colors(body)
                 .map(<[_]>::to_vec)
                 .unwrap_or_default();
-            self.session.refines_in_flight.insert(body.0);
+            self.session.jobs.refines.insert(body.0);
             app_log::info(format!("Refining `{}`…", self.body_name(body)));
             self.kernel_worker
                 .request_refine(body.0, blob, face_colors, self.solid_detail());
@@ -766,12 +773,12 @@ impl PrintCadApp {
         result: Result<kernel_api::MeshSolidResult, String>,
         elapsed: std::time::Duration,
     ) {
-        self.session.refines_in_flight.remove(&body.0);
+        self.session.jobs.refines.remove(&body.0);
         let name = self.body_name(body);
         let refined = match result {
             Ok(refined) => refined,
             Err(error) => {
-                self.session.refines_failed.insert(body.0);
+                self.session.jobs.refines_failed.insert(body.0);
                 if Self::is_cancellation(&error) {
                     app_log::info(format!("Refine of `{name}` cancelled"));
                 } else {
@@ -820,7 +827,7 @@ impl PrintCadApp {
     /// The body the property panel is showing: a body row, or an imported
     /// part linked to one.
     fn panel_body(&self) -> Option<core_document::BodyId> {
-        match self.session.tree_selection? {
+        match self.session.selection.tree? {
             crate::ui::TreeItemId::Body(body) => Some(body),
             crate::ui::TreeItemId::ImportedObject(id) => {
                 self.session.document.body_of_imported_object(id)
@@ -845,6 +852,7 @@ impl PrintCadApp {
         };
         if self
             .session
+            .drawn
             .physical
             .get(&body.0)
             .is_some_and(|(measured, _)| *measured == revision)
@@ -861,6 +869,7 @@ impl PrintCadApp {
             return;
         };
         self.session
+            .drawn
             .physical
             .insert(body.0, (revision, crate::ui::Physical::Measuring));
         self.kernel_worker.request_measure(body.0, revision, blob);
@@ -873,14 +882,15 @@ impl PrintCadApp {
         let document = &self.session.document;
         let mut bodies: Vec<core_document::BodyId> = self
             .session
+            .selection
             .earlier_bodies
             .iter()
             .copied()
-            .chain(self.session.selected_body)
+            .chain(self.session.selection.body)
             .map(core_document::BodyId)
             .collect();
         if bodies.is_empty() {
-            bodies = match self.session.tree_selection {
+            bodies = match self.session.selection.tree {
                 Some(TreeItemId::Body(body)) => vec![body],
                 Some(TreeItemId::ImportedObject(id)) => {
                     document.body_of_imported_object(id).into_iter().collect()
@@ -912,7 +922,7 @@ impl PrintCadApp {
             if self.session.document.imported_brep_blob_arc(body).is_none() {
                 continue;
             }
-            match self.session.physical.get(&body.0) {
+            match self.session.drawn.physical.get(&body.0) {
                 Some((measured, reading)) if *measured == revision => match reading {
                     crate::ui::Physical::Ready(props) => {
                         if let Some(volume) = props.volume_mm3 {
@@ -942,7 +952,7 @@ impl PrintCadApp {
     pub(crate) fn panel_physical(&self) -> Option<crate::ui::Physical> {
         let body = self.panel_body()?;
         let revision = self.session.document.imported_geometry(body)?.revision;
-        let (measured, reading) = self.session.physical.get(&body.0)?;
+        let (measured, reading) = self.session.drawn.physical.get(&body.0)?;
         if *measured != revision {
             return None;
         }
@@ -994,7 +1004,8 @@ impl PrintCadApp {
         }
         let picked_edge = self
             .session
-            .selected_edges
+            .selection
+            .edges
             .last()
             .map(|edge| match edge.circle {
                 Some(c) => R::Axis {
@@ -1010,6 +1021,7 @@ impl PrintCadApp {
             });
         let picked_face = self
             .session
+            .selection
             .last_face_hit
             .and_then(|(_, face)| face.surface?.axis())
             .map(|(point, direction)| R::Axis {
@@ -1055,7 +1067,7 @@ impl PrintCadApp {
     /// reopened document's convert the same way.
     pub(crate) fn drive_mesh_solids(&mut self) {
         for body in self.session.document.bodies_awaiting_solid() {
-            if self.session.solids_in_flight.contains(&body.0) {
+            if self.session.jobs.solids.contains(&body.0) {
                 continue;
             }
             // The solid is built in the body's own frame, as every kernel
@@ -1063,7 +1075,7 @@ impl PrintCadApp {
             let Some((mesh, _)) = self.session.document.local_geometry(body) else {
                 continue;
             };
-            self.session.solids_in_flight.insert(body.0);
+            self.session.jobs.solids.insert(body.0);
             app_log::info(format!(
                 "Converting `{}` to a solid ({} triangles)…",
                 self.body_name(body),
@@ -1080,10 +1092,11 @@ impl PrintCadApp {
         for (body, blob, plane) in self.session.document.copies_awaiting_shape() {
             let failed = self
                 .session
+                .jobs
                 .mirrors_failed
                 .get(&body.0)
                 .is_some_and(|f| std::sync::Arc::ptr_eq(f, &blob));
-            if !failed && self.session.mirrors_in_flight.insert(body.0) {
+            if !failed && self.session.jobs.mirrors.insert(body.0) {
                 self.kernel_worker.request_mirror(body.0, blob, plane);
             }
         }
@@ -1097,7 +1110,7 @@ impl PrintCadApp {
         result: kernel_api::MeshSolidResult,
         elapsed: std::time::Duration,
     ) {
-        self.session.solids_in_flight.remove(&body.0);
+        self.session.jobs.solids.remove(&body.0);
         let Some(previous) = self.session.document.imported_geometry(body).cloned() else {
             return;
         };

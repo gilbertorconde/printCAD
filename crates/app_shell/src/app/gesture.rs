@@ -175,8 +175,8 @@ impl PrintCadApp {
         }
         if why == GestureEnd::Lost {
             self.input.side_gesture = false;
-            self.session.camera.forget_released([false; 3]);
-            if let Some(side) = self.session.side_camera.as_mut() {
+            self.session.view.camera.forget_released([false; 3]);
+            if let Some(side) = self.session.view.side_camera.as_mut() {
                 side.forget_released([false; 3]);
             }
             let wb_id = self.active_workbench_id();
@@ -208,7 +208,7 @@ impl PrintCadApp {
                     .filter(|h| h.is_under(at))
                     .map(|h| h.held(at))
                     .or_else(|| {
-                        let formula = self.session.section.as_ref()?.formula.clone();
+                        let formula = self.session.view.section.as_ref()?.formula.clone();
                         self.section_handle()
                             .filter(|h| h.is_under(at))
                             .map(|h| h.held(at, formula))

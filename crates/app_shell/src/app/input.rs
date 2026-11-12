@@ -65,7 +65,7 @@ impl PrintCadApp {
         match &event {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.input.modifiers = modifiers.state();
-                self.session.camera.set_modifiers(self.input.modifiers);
+                self.session.view.camera.set_modifiers(self.input.modifiers);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 match state {
@@ -133,7 +133,7 @@ impl PrintCadApp {
                     }
             )
         {
-            self.session.fit_on_layout = false;
+            self.session.view.fit_on_layout = false;
         }
         if matches!(
             event,
@@ -144,8 +144,11 @@ impl PrintCadApp {
                     ..
                 }
         ) {
-            self.session.camera.forget_released(self.input.held_buttons);
-            if let Some(side) = self.session.side_camera.as_mut() {
+            self.session
+                .view
+                .camera
+                .forget_released(self.input.held_buttons);
+            if let Some(side) = self.session.view.side_camera.as_mut() {
                 side.forget_released(self.input.held_buttons);
             }
         }
@@ -166,7 +169,7 @@ impl PrintCadApp {
             let phys_x = position.x.max(0.0).round() as u32;
             let phys_y = position.y.max(0.0).round() as u32;
 
-            let vp = self.session.camera.viewport_info();
+            let vp = self.session.view.camera.viewport_info();
             let cursor_x = phys_x as f32 - vp.0;
             let cursor_y = phys_y as f32 - vp.1;
 
@@ -184,7 +187,7 @@ impl PrintCadApp {
 
             // The split view's side pane: a cursor over it hovers and picks
             // what it shows, with its camera.
-            self.input.cursor_in_side = self.session.side_rect.and_then(|(x, y, w, h)| {
+            self.input.cursor_in_side = self.session.view.side_rect.and_then(|(x, y, w, h)| {
                 let (sx, sy) = (phys_x as f32 - x as f32, phys_y as f32 - y as f32);
                 let inside = sx >= 0.0 && sy >= 0.0 && sx < w as f32 && sy < h as f32;
                 (self.input.side_gesture || (inside && !floating_ui_owns_pointer))
@@ -195,9 +198,9 @@ impl PrintCadApp {
                 if let Some(gfx) = self.gfx.as_mut() {
                     gfx.renderer.request_pick(phys_x, phys_y);
                 }
-                self.session.hovered_feature = None;
-                self.session.hovered_part = None;
-                self.session.hovered_edge = None;
+                self.session.hover.feature = None;
+                self.session.hover.part = None;
+                self.session.hover.edge = None;
             } else if cursor_x >= 0.0
                 && cursor_y >= 0.0
                 && cursor_x < vp.2 as f32
@@ -214,26 +217,26 @@ impl PrintCadApp {
                 // Sketch hover feedback (CPU hit-test; the GPU pick can't
                 // reliably hit hairline sketch curves). Skipped while
                 // editing: the sketcher renders its own hover state.
-                self.session.hovered_feature = if self.sketch_editing_active() {
+                self.session.hover.feature = if self.sketch_editing_active() {
                     None
                 } else {
                     self.feature_under_cursor()
                 };
-                self.session.hovered_part = self.part_under_cursor();
+                self.session.hover.part = self.part_under_cursor();
             } else {
                 self.input.cursor_in_viewport = None;
                 // No picks are requested off-viewport, so drop the stale
                 // hover state instead of letting the highlight linger.
-                self.session.hovered_body = None;
-                self.session.hovered_world_pos = None;
-                self.session.hovered_triangle = None;
-                self.session.hovered_edge = None;
-                self.session.hovered_part = None;
+                self.session.hover.body = None;
+                self.session.hover.world_pos = None;
+                self.session.hover.triangle = None;
+                self.session.hover.edge = None;
+                self.session.hover.part = None;
             }
         }
 
         let vp_cursor = self.input.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
-        self.session.camera.set_cursor_viewport(vp_cursor);
+        self.session.view.camera.set_cursor_viewport(vp_cursor);
 
         let zoom_wheel_over_viewport = matches!(
             event,
@@ -267,7 +270,7 @@ impl PrintCadApp {
             if matches!(event, WindowEvent::KeyboardInput { .. })
                 && (self.questions.unsaved.is_some()
                     || self.questions.save_over.is_some()
-                    || self.session.mesh_units_pending.is_some())
+                    || self.session.file.mesh_units_pending.is_some())
             {
                 return;
             }
@@ -321,7 +324,7 @@ impl PrintCadApp {
                 ke.logical_key,
                 Key::Named(winit::keyboard::NamedKey::Escape)
             )
-            && self.session.measure.take().is_some()
+            && self.session.tools.measure.take().is_some()
         {
             self.redraw_needed = true;
             return;
@@ -333,8 +336,8 @@ impl PrintCadApp {
                 ke.logical_key,
                 Key::Named(winit::keyboard::NamedKey::Escape)
             )
-            && (self.session.note_card.take().is_some()
-                || std::mem::take(&mut self.session.note_tool))
+            && (self.session.tools.note_card.take().is_some()
+                || std::mem::take(&mut self.session.tools.note_tool))
         {
             self.redraw_needed = true;
             return;
@@ -349,7 +352,7 @@ impl PrintCadApp {
             && matches!(ke.state, ElementState::Pressed)
             && ke.logical_key == Key::Named(winit::keyboard::NamedKey::Escape)
             && (self.end_gestures(crate::app::gesture::GestureEnd::Escape)
-                || self.session.section_pick.take().is_some())
+                || self.session.view.section_pick.take().is_some())
         {
             self.redraw_needed = true;
             return;
@@ -416,7 +419,7 @@ impl PrintCadApp {
         // While a marking tool is in hand, a drag over the view marks the
         // scan (the right button or Alt rubs out); Shift leaves it to the
         // camera.
-        if self.session.mark_arm.is_some()
+        if self.session.tools.mark_arm.is_some()
             && let WindowEvent::MouseInput { button, state, .. } = &event
             && matches!(button, MouseButton::Left | MouseButton::Right)
         {
@@ -480,18 +483,19 @@ impl PrintCadApp {
             _ => {}
         }
 
-        let orbit_pick = self.session.hovered_world_pos.map(Vec3::from_array);
-        let cam_res =
-            self.session
-                .camera
-                .on_viewport_pointer(&event, &self.user_settings.camera, orbit_pick);
+        let orbit_pick = self.session.hover.world_pos.map(Vec3::from_array);
+        let cam_res = self.session.view.camera.on_viewport_pointer(
+            &event,
+            &self.user_settings.camera,
+            orbit_pick,
+        );
         redraw |= cam_res.wants_redraw();
         if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) && !boxed {
-            redraw |= if self.session.section_pick.is_some() {
+            redraw |= if self.session.view.section_pick.is_some() {
                 self.section_pick_click()
-            } else if self.session.measure.is_some() {
+            } else if self.session.tools.measure.is_some() {
                 self.measure_click()
-            } else if self.session.note_tool {
+            } else if self.session.tools.note_tool {
                 self.note_click()
             } else {
                 self.toggle_body_under_cursor_selection()
@@ -512,6 +516,7 @@ impl PrintCadApp {
                     gfx.renderer.resize(size);
                 }
                 self.session
+                    .view
                     .camera
                     .update_viewport((0, 0), (size.width.max(1), size.height.max(1)));
             }
@@ -524,6 +529,7 @@ impl PrintCadApp {
                     let _ = inner_size_writer.request_inner_size(size);
                     gfx.renderer.resize(size);
                     self.session
+                        .view
                         .camera
                         .update_viewport((0, 0), (size.width.max(1), size.height.max(1)));
                 }
@@ -547,7 +553,7 @@ impl PrintCadApp {
                 | WindowEvent::MouseWheel { .. }
                 | WindowEvent::PinchGesture { .. }
         );
-        if !pointer || self.session.side_rect.is_none() {
+        if !pointer || self.session.view.side_rect.is_none() {
             self.input.side_gesture = false;
             return false;
         }
@@ -572,12 +578,14 @@ impl PrintCadApp {
         );
         let main_camera = self
             .session
+            .view
             .side_camera
             .take()
-            .map(|side| std::mem::replace(&mut self.session.camera, side));
+            .map(|side| std::mem::replace(&mut self.session.view.camera, side));
         let redraw = self.side_pane_turn(event, boxed);
         if let Some(main) = main_camera {
-            self.session.side_camera = Some(std::mem::replace(&mut self.session.camera, main));
+            self.session.view.side_camera =
+                Some(std::mem::replace(&mut self.session.view.camera, main));
         }
         self.input.cursor_in_viewport = viewport_cursor;
         if self.input.mouse_buttons_down == 0 {
@@ -597,18 +605,18 @@ impl PrintCadApp {
             return wb.redraw;
         }
         let cursor = self.input.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
-        let orbit_pick = self.session.hovered_world_pos.map(Vec3::from_array);
-        let camera = &mut self.session.camera;
+        let orbit_pick = self.session.hover.world_pos.map(Vec3::from_array);
+        let camera = &mut self.session.view.camera;
         camera.set_modifiers(self.input.modifiers);
         camera.set_cursor_viewport(cursor);
         let result = camera.on_viewport_pointer(event, &self.user_settings.camera, orbit_pick);
         let mut redraw = wb.redraw || result.wants_redraw();
         if matches!(result, CameraPointerResult::LmbReleasedMaybeSelect) && !boxed {
-            redraw |= if self.session.section_pick.is_some() {
+            redraw |= if self.session.view.section_pick.is_some() {
                 self.section_pick_click()
-            } else if self.session.measure.is_some() {
+            } else if self.session.tools.measure.is_some() {
                 self.measure_click()
-            } else if self.session.note_tool {
+            } else if self.session.tools.note_tool {
                 self.note_click()
             } else {
                 self.toggle_body_under_cursor_selection()
@@ -811,7 +819,7 @@ impl PrintCadApp {
     /// click on nothing starts over.
     fn measure_click(&mut self) -> bool {
         use crate::app::measure::{MeasurePick, pick_at, readout};
-        let edge = self.session.hovered_edge.map(|edge| MeasurePick::Edge {
+        let edge = self.session.hover.edge.map(|edge| MeasurePick::Edge {
             point: edge.point,
             direction: edge.direction,
             length: edge.length_mm,
@@ -819,7 +827,7 @@ impl PrintCadApp {
             body: Some(core_document::BodyId(edge.body)),
         });
         let datum = edge.is_none().then(|| self.datum_under_cursor()).flatten();
-        let mesh = self.session.hovered_body.and_then(|body| {
+        let mesh = self.session.hover.body.and_then(|body| {
             self.session
                 .document
                 .imported_geometry(core_document::BodyId(body))
@@ -828,22 +836,22 @@ impl PrintCadApp {
             pick_at(
                 edge,
                 mesh.map(|geometry| &*geometry.mesh),
-                self.session.hovered_world_pos,
+                self.session.hover.world_pos,
             )
         });
         let unit = self.measure_unit();
-        let Some(picks) = self.session.measure.as_mut() else {
+        let Some(picks) = self.session.tools.measure.as_mut() else {
             return false;
         };
         let Some(mut pick) = pick else {
             // Empty space: the chain starts over.
             let had = !picks.is_empty();
             picks.clear();
-            self.session.measure_gap = None;
+            self.session.tools.measure_gap = None;
             return had;
         };
         if let MeasurePick::Face { body, .. } = &mut pick {
-            *body = self.session.hovered_body.map(core_document::BodyId);
+            *body = self.session.hover.body.map(core_document::BodyId);
         }
         picks.push(pick);
         app_log::info(format!("Measured {}", readout(picks, unit).join(", ")));
@@ -853,7 +861,7 @@ impl PrintCadApp {
 
     /// The datum under the cursor, placed in the world, as a measure pick.
     pub(crate) fn datum_under_cursor(&self) -> Option<crate::app::measure::MeasurePick> {
-        let id = self.session.hovered_feature?;
+        let id = self.session.hover.feature?;
         let document = &self.session.document;
         let placed = document.placed_datum(id)?;
         let (eye, ray) = self.cursor_ray()?;
@@ -869,8 +877,8 @@ impl PrintCadApp {
     /// With the last two picks faces or edges of solids, ask the kernel for
     /// the least distance between them; otherwise drop the last answer.
     fn ask_measure_gap(&mut self) {
-        let picks = self.session.measure.clone().unwrap_or_default();
-        self.session.measure_gap = self.ask_gap(&picks);
+        let picks = self.session.tools.measure.clone().unwrap_or_default();
+        self.session.tools.measure_gap = self.ask_gap(&picks);
     }
 
     /// The status bar's quick measure of the selection, a line each: asked
@@ -878,25 +886,28 @@ impl PrintCadApp {
     /// is turned off or nothing is picked.
     pub(crate) fn drive_quick_measure(&mut self) -> Vec<String> {
         if !self.user_settings.status_bar.quick_measure {
-            self.session.quick_measure = None;
+            self.session.tools.quick_measure = None;
             return Vec::new();
         }
         let picks = self.selection_picks();
         if picks.is_empty() {
-            self.session.quick_measure = None;
+            self.session.tools.quick_measure = None;
             return Vec::new();
         }
         if self
             .session
+            .tools
             .quick_measure
             .as_ref()
             .is_none_or(|q| q.picks != picks)
         {
             let gap = self.ask_gap(&picks);
-            self.session.quick_measure = Some(crate::app::measure::QuickMeasure { picks, gap });
+            self.session.tools.quick_measure =
+                Some(crate::app::measure::QuickMeasure { picks, gap });
         }
         let unit = self.session.document.display_unit();
         self.session
+            .tools
             .quick_measure
             .as_ref()
             .map(|q| q.lines(unit))
@@ -911,16 +922,19 @@ impl PrintCadApp {
         let mut picks = Vec::new();
         if let Some((body, _)) = self
             .session
+            .selection
             .last_face_hit
-            .filter(|(body, _)| self.session.selected_body == Some(*body))
+            .filter(|(body, _)| self.session.selection.body == Some(*body))
         {
             let last = self
                 .session
+                .selection
                 .last_face_hit
-                .zip(self.session.face_highlight.as_ref())
+                .zip(self.session.selection.face_highlight.as_ref())
                 .map(|((_, face), highlight)| (face, highlight));
             let faces = self
                 .session
+                .selection
                 .earlier_faces
                 .iter()
                 .filter(|p| p.highlight.body == body)
@@ -936,7 +950,7 @@ impl PrintCadApp {
                 });
             }
         }
-        for edge in &self.session.selected_edges {
+        for edge in &self.session.selection.edges {
             picks.push(MeasurePick::Edge {
                 point: edge.point,
                 direction: edge.direction,
@@ -964,8 +978,8 @@ impl PrintCadApp {
         ) else {
             return None;
         };
-        self.session.gap_token += 1;
-        let token = self.session.gap_token;
+        self.session.tools.gap_token += 1;
+        let token = self.session.tools.gap_token;
         let (place_a, place_b) = (document.body_placement(a), document.body_placement(b));
         let local = |placement: core_document::BodyPlacement, p: [f32; 3]| {
             placement.inverse().point(p).map(f64::from)
@@ -997,7 +1011,7 @@ impl PrintCadApp {
         let Some(gfx) = self.gfx.as_ref() else {
             return false;
         };
-        let body = self.session.hovered_body.filter(|id| {
+        let body = self.session.hover.body.filter(|id| {
             // Sketch feature meshes pick as bodies too; they have no body menu.
             self.session
                 .document
@@ -1008,16 +1022,17 @@ impl PrintCadApp {
             self.session.viewport_menu = None;
             return true;
         };
-        let vp = self.session.camera.viewport_info();
+        let vp = self.session.view.camera.viewport_info();
         let scale = gfx.window.scale_factor() as f32;
         let face = self
             .session
-            .hovered_face
+            .hover
+            .face
             .as_ref()
             .filter(|hover| Some(hover.body) == body)
             .map(|hover| hover.face);
         let repeat = self.last_tool_label();
-        let point = self.session.hovered_world_pos.filter(|_| body.is_some());
+        let point = self.session.hover.world_pos.filter(|_| body.is_some());
         let others = if body.is_some() {
             self.faces_under_cursor()
         } else {
@@ -1038,7 +1053,7 @@ impl PrintCadApp {
     /// space: its origin and unit direction. `None` off the viewport.
     pub(crate) fn cursor_ray(&self) -> Option<(Vec3, Vec3)> {
         let cursor = self.input.cursor_in_viewport?;
-        let camera = &self.session.camera;
+        let camera = &self.session.view.camera;
         let vp = camera.viewport_info();
         let (origin, direction) = core_document::runtime::viewport_to_ray(
             camera.view_projection(),
@@ -1160,36 +1175,37 @@ impl PrintCadApp {
                     mesh: std::sync::Arc::new(submesh),
                     revision: self
                         .session
+                        .selection
                         .face_highlight
                         .as_ref()
                         .map_or(0, |f| f.revision.wrapping_add(1)),
                 }
             });
-        self.session.selected_edges.clear();
-        self.session.earlier_faces.clear();
-        self.session.earlier_bodies.clear();
-        self.session.selected_body = Some(body.0);
-        self.session.last_face_hit = Some((body.0, face));
-        self.session.face_highlight = highlight;
-        self.session.last_select_click = None;
+        self.session.selection.edges.clear();
+        self.session.selection.earlier_faces.clear();
+        self.session.selection.earlier_bodies.clear();
+        self.session.selection.body = Some(body.0);
+        self.session.selection.last_face_hit = Some((body.0, face));
+        self.session.selection.face_highlight = highlight;
+        self.session.selection.last_select_click = None;
         app_log::info("Selected face");
     }
 
     /// Drop what is picked in the view: the body, its faces and its edges.
     pub(crate) fn clear_view_selection(&mut self) {
-        self.session.selected_body = None;
-        self.session.last_face_hit = None;
-        self.session.earlier_faces.clear();
-        self.session.earlier_bodies.clear();
-        self.session.face_highlight = None;
-        self.session.selected_edges.clear();
-        self.session.picked_parts = None;
-        self.session.last_select_click = None;
+        self.session.selection.body = None;
+        self.session.selection.last_face_hit = None;
+        self.session.selection.earlier_faces.clear();
+        self.session.selection.earlier_bodies.clear();
+        self.session.selection.face_highlight = None;
+        self.session.selection.edges.clear();
+        self.session.selection.parts = None;
+        self.session.selection.last_select_click = None;
     }
 
     pub(crate) fn toggle_body_under_cursor_selection(&mut self) -> bool {
         // A click picks one body at most; the others a box took go.
-        self.session.earlier_bodies.clear();
+        self.session.selection.earlier_bodies.clear();
         // A region of a closed sketch takes the click on its own, and Ctrl
         // takes a curve of one beside the regions.
         let ctrl = self.input.modifiers.control_key();
@@ -1204,8 +1220,8 @@ impl PrintCadApp {
         // against them on the CPU with a proper pixel tolerance.
         if let Some(feature_id) = self.feature_under_cursor() {
             self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
-            self.session.last_face_hit = None;
-            self.session.face_highlight = None;
+            self.session.selection.last_face_hit = None;
+            self.session.selection.face_highlight = None;
             app_log::info(format!("Selected feature {feature_id:?}"));
             return true;
         }
@@ -1213,15 +1229,19 @@ impl PrintCadApp {
         // An edge under the cursor takes the click before the face it
         // borders; Ctrl adds it to the picked edges, a plain click replaces
         // them.
-        if let Some(hit) = self.session.hovered_edge {
+        if let Some(hit) = self.session.hover.edge {
             let ctrl = self.input.modifiers.control_key();
             // A double click on an edge takes every edge that runs on from
             // it smoothly: a fillet's or chamfer's round outline in one go.
             let now = Instant::now();
-            let double = self.session.last_edge_click.is_some_and(|(t, body, edge)| {
-                body == hit.body && edge == hit.edge && now.duration_since(t).as_millis() < 400
-            });
-            self.session.last_edge_click = Some((now, hit.body, hit.edge));
+            let double = self
+                .session
+                .selection
+                .last_edge_click
+                .is_some_and(|(t, body, edge)| {
+                    body == hit.body && edge == hit.edge && now.duration_since(t).as_millis() < 400
+                });
+            self.session.selection.last_edge_click = Some((now, hit.body, hit.edge));
             if double
                 && let Some(geometry) = self
                     .session
@@ -1235,56 +1255,58 @@ impl PrintCadApp {
                         .filter_map(|edge| crate::app::edges::edge_hit(mesh, hit.body, edge))
                         .collect();
                 if !ctrl {
-                    self.session.selected_edges.clear();
+                    self.session.selection.edges.clear();
                 }
                 for edge in chain {
                     if !self
                         .session
-                        .selected_edges
+                        .selection
+                        .edges
                         .iter()
                         .any(|s| s.body == edge.body && s.edge == edge.edge)
                     {
-                        self.session.selected_edges.push(edge);
+                        self.session.selection.edges.push(edge);
                     }
                 }
-                if !ctrl || self.session.selected_body != Some(hit.body) {
-                    self.session.face_highlight = None;
-                    self.session.last_face_hit = None;
+                if !ctrl || self.session.selection.body != Some(hit.body) {
+                    self.session.selection.face_highlight = None;
+                    self.session.selection.last_face_hit = None;
                 }
-                self.session.selected_body = Some(hit.body);
+                self.session.selection.body = Some(hit.body);
                 app_log::info(format!(
                     "Selected {} edge(s) along the chain",
-                    self.session.selected_edges.len()
+                    self.session.selection.edges.len()
                 ));
                 return true;
             }
             let already = self
                 .session
-                .selected_edges
+                .selection
+                .edges
                 .iter()
                 .position(|s| s.body == hit.body && s.edge == hit.edge);
             match (ctrl, already) {
                 (true, Some(i)) => {
-                    self.session.selected_edges.remove(i);
+                    self.session.selection.edges.remove(i);
                 }
-                (true, None) => self.session.selected_edges.push(hit),
-                (false, _) => self.session.selected_edges = vec![hit],
+                (true, None) => self.session.selection.edges.push(hit),
+                (false, _) => self.session.selection.edges = vec![hit],
             }
             // Ctrl keeps the faces picked on the same body beside the edges.
-            if !ctrl || self.session.selected_body != Some(hit.body) {
-                self.session.face_highlight = None;
-                self.session.last_face_hit = None;
+            if !ctrl || self.session.selection.body != Some(hit.body) {
+                self.session.selection.face_highlight = None;
+                self.session.selection.last_face_hit = None;
             }
-            self.session.selected_body = Some(hit.body);
+            self.session.selection.body = Some(hit.body);
             app_log::info(format!(
                 "Selected {} edge(s)",
-                self.session.selected_edges.len()
+                self.session.selection.edges.len()
             ));
             return true;
         }
 
-        let filter = self.session.pick_filter;
-        if let Some(hovered) = self.session.hovered_body {
+        let filter = self.session.view.pick_filter;
+        if let Some(hovered) = self.session.hover.body {
             // Picking only edges, a click on a body away from them takes
             // nothing.
             if filter == crate::ui::PickFilter::Edges {
@@ -1295,7 +1317,7 @@ impl PrintCadApp {
             let feature_id = core_document::FeatureId(hovered);
             if self.session.document.get_feature_meta(feature_id).is_some() {
                 self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
-                self.session.last_face_hit = None;
+                self.session.selection.last_face_hit = None;
                 return true;
             }
 
@@ -1303,7 +1325,7 @@ impl PrintCadApp {
             // cursor; a double click promotes to the whole body. A mesh has
             // no faces to pick, so a click on one takes the whole body.
             let now = Instant::now();
-            let previous = self.session.last_select_click;
+            let previous = self.session.selection.last_select_click;
             // Ctrl picks faces one after another, however quick.
             let is_double = !self.input.modifiers.control_key()
                 && previous
@@ -1313,9 +1335,9 @@ impl PrintCadApp {
             // selection made from the tree or by an import is not something
             // the next click should undo.
             let clicked_before = previous.is_some_and(|(_, target)| target == hovered);
-            self.session.last_select_click = Some((now, hovered));
-            let already_whole = self.session.selected_body == Some(hovered)
-                && self.session.face_highlight.is_none()
+            self.session.selection.last_select_click = Some((now, hovered));
+            let already_whole = self.session.selection.body == Some(hovered)
+                && self.session.selection.face_highlight.is_none()
                 && clicked_before;
             let whole_mesh = self
                 .session
@@ -1344,49 +1366,50 @@ impl PrintCadApp {
                 // assembly, not the assembly. A modelling bench works from
                 // the tree, so there the body's row opens and scrolls into
                 // view; an edit session keeps the tree still.
-                self.session.face_highlight = None;
-                self.session.selected_body = Some(hovered);
+                self.session.selection.face_highlight = None;
+                self.session.selection.body = Some(hovered);
                 if !self.registry.is_modal(&self.session.active_workbench.0) {
-                    self.session.reveal_body = Some(core_document::BodyId(hovered));
+                    self.session.selection.reveal_body = Some(core_document::BodyId(hovered));
                 }
                 app_log::info(format!("Selected body: {hovered:?}"));
-            } else if self.session.selected_body == Some(hovered)
-                && self.session.face_highlight.is_none()
+            } else if self.session.selection.body == Some(hovered)
+                && self.session.selection.face_highlight.is_none()
                 && clicked_before
             {
                 // Clicking an already fully-selected body deselects it.
-                self.session.selected_body = None;
-                self.session.last_face_hit = None;
+                self.session.selection.body = None;
+                self.session.selection.last_face_hit = None;
                 app_log::info("Deselected body");
             } else {
                 let ctrl = self.input.modifiers.control_key();
                 // A face pick without Ctrl lets the edges go.
                 if !ctrl {
-                    self.session.selected_edges.clear();
+                    self.session.selection.edges.clear();
                 }
                 let hit = self.face_hit_under_cursor(hovered);
                 let highlight = hit.and_then(|face| self.face_highlight_of(hovered, face));
                 // Ctrl adds a face of the body already picked on, or takes
                 // a picked one out; otherwise the pick starts again.
                 let adding = ctrl
-                    && self.session.selected_body == Some(hovered)
+                    && self.session.selection.body == Some(hovered)
                     && self
                         .session
+                        .selection
                         .last_face_hit
                         .is_some_and(|(b, _)| b == hovered)
-                    && self.session.face_highlight.is_some();
-                self.session.selected_body = Some(hovered);
+                    && self.session.selection.face_highlight.is_some();
+                self.session.selection.body = Some(hovered);
                 match (adding, hit, highlight) {
                     (true, Some(face), Some(highlight)) => self.toggle_face(face, highlight),
                     (_, hit, highlight) => {
-                        self.session.earlier_faces.clear();
-                        self.session.last_face_hit = hit.map(|face| (hovered, face));
-                        self.session.face_highlight = highlight;
+                        self.session.selection.earlier_faces.clear();
+                        self.session.selection.last_face_hit = hit.map(|face| (hovered, face));
+                        self.session.selection.face_highlight = highlight;
                     }
                 }
-                self.session.reveal_face_maker =
+                self.session.selection.reveal_face_maker =
                     !self.registry.is_modal(&self.session.active_workbench.0);
-                let picked = self.selected_face_refs().len();
+                let picked = self.session.selection.face_refs().len();
                 if picked > 1 {
                     app_log::info(format!("Selected {picked} faces"));
                 } else {
@@ -1395,9 +1418,9 @@ impl PrintCadApp {
                     );
                 }
             }
-        } else if self.session.selected_body.is_some()
-            || !self.session.selected_edges.is_empty()
-            || self.session.picked_parts.is_some()
+        } else if self.session.selection.body.is_some()
+            || !self.session.selection.edges.is_empty()
+            || self.session.selection.parts.is_some()
         {
             self.clear_view_selection();
             app_log::info("Deselected (clicked empty space)");
@@ -1424,6 +1447,7 @@ impl PrintCadApp {
         )?;
         let revision = self
             .session
+            .selection
             .face_highlight
             .as_ref()
             .map(|f| f.revision.wrapping_add(1))
@@ -1439,10 +1463,10 @@ impl PrintCadApp {
     /// Ctrl's face pick: a face already picked is taken out, any other is
     /// added as the last ([`toggled`]).
     fn toggle_face(&mut self, face: core_document::FaceRef, highlight: FaceHighlight) {
-        let mut picked: Vec<PickedFace> = std::mem::take(&mut self.session.earlier_faces);
+        let mut picked: Vec<PickedFace> = std::mem::take(&mut self.session.selection.earlier_faces);
         if let (Some((_, last)), Some(last_highlight)) = (
-            self.session.last_face_hit,
-            self.session.face_highlight.take(),
+            self.session.selection.last_face_hit,
+            self.session.selection.face_highlight.take(),
         ) {
             picked.push(PickedFace {
                 face: last,
@@ -1451,9 +1475,9 @@ impl PrintCadApp {
         }
         let mut picked = toggled(picked, PickedFace { face, highlight });
         let last = picked.pop();
-        self.session.earlier_faces = picked;
-        self.session.last_face_hit = last.as_ref().map(|p| (p.highlight.body, p.face));
-        self.session.face_highlight = last.map(|p| p.highlight);
+        self.session.selection.earlier_faces = picked;
+        self.session.selection.last_face_hit = last.as_ref().map(|p| (p.highlight.body, p.face));
+        self.session.selection.face_highlight = last.map(|p| p.highlight);
     }
 
     /// The visible feature whose geometry passes within a few pixels of the
@@ -1469,9 +1493,9 @@ impl PrintCadApp {
     /// The cursor and the view it sits in, for picking features.
     fn viewport_pick(&self) -> Option<core_document::ViewportPick> {
         let cursor = self.input.cursor_in_viewport?;
-        let vp = self.session.camera.viewport_info();
+        let vp = self.session.view.camera.viewport_info();
         Some(core_document::ViewportPick {
-            view_proj: self.session.camera.view_projection(),
+            view_proj: self.session.view.camera.view_projection(),
             viewport: (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
             cursor,
         })
@@ -1487,8 +1511,9 @@ impl PrintCadApp {
             return None;
         }
         let pick = self.viewport_pick()?;
-        let eye = Vec3::from_array(self.session.camera.position());
-        let forward = (Vec3::from_array(self.session.camera.target()) - eye).normalize_or_zero();
+        let eye = Vec3::from_array(self.session.view.camera.position());
+        let forward =
+            (Vec3::from_array(self.session.view.camera.target()) - eye).normalize_or_zero();
         let depth = |p: [f32; 3]| (Vec3::from_array(p) - eye).dot(forward);
         let document = &self.session.document;
         // The body's depth read on the face under the cursor, its plane
@@ -1498,7 +1523,8 @@ impl PrintCadApp {
             core_document::runtime::viewport_to_ray(pick.view_proj, pick.viewport, pick.cursor);
         let body_depth =
             self.session
-                .hovered_body
+                .hover
+                .body
                 .filter(|b| {
                     document
                         .get_feature_meta(core_document::FeatureId(*b))
@@ -1517,7 +1543,7 @@ impl PrintCadApp {
                     );
                     on_face
                         .map(|p| p.to_array())
-                        .or(self.session.hovered_world_pos)
+                        .or(self.session.hover.world_pos)
                 })
                 .map(depth);
         let curve_last = |part: &core_document::FeaturePart| {
@@ -1546,7 +1572,8 @@ impl PrintCadApp {
     ) {
         let mut parts = self
             .session
-            .picked_parts
+            .selection
+            .parts
             .take()
             .filter(|(f, _)| adding && *f == feature)
             .filter(|_| self.session.active_document_object == Some(feature))
@@ -1560,12 +1587,12 @@ impl PrintCadApp {
             None => parts.push(part),
         }
         if self.session.active_document_object != Some(feature)
-            || self.session.tree_selection != Some(crate::ui::TreeItemId::Feature(feature))
+            || self.session.selection.tree != Some(crate::ui::TreeItemId::Feature(feature))
         {
             self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
         }
-        self.session.last_face_hit = None;
-        self.session.face_highlight = None;
+        self.session.selection.last_face_hit = None;
+        self.session.selection.face_highlight = None;
         let regions = parts
             .iter()
             .filter(|p| matches!(p, core_document::FeaturePart::Region(_)))
@@ -1577,14 +1604,14 @@ impl PrintCadApp {
             (0, c) => format!("Selected {c} curve(s)"),
             (r, c) => format!("Selected {r} region(s), {c} curve(s)"),
         });
-        self.session.picked_parts = (!parts.is_empty()).then_some((feature, parts));
+        self.session.selection.parts = (!parts.is_empty()).then_some((feature, parts));
     }
 
     /// Derive the face (surface point + normal) under the cursor from the
     /// picked body's mesh: the triangle the pick pass drew there, else the
     /// one nearest the picked point.
     fn face_hit_under_cursor(&self, body: Uuid) -> Option<core_document::FaceRef> {
-        let point = glam::Vec3::from_array(self.session.hovered_world_pos?);
+        let point = glam::Vec3::from_array(self.session.hover.world_pos?);
         let geometry = self
             .session
             .document
@@ -1601,7 +1628,7 @@ impl PrintCadApp {
     /// from the triangle the pick drew there, or, on a mesh small enough to
     /// search every frame, the triangle nearest the picked point.
     pub(crate) fn face_ref_under_cursor(&self, body: Uuid) -> Option<core_document::FaceRef> {
-        let point = glam::Vec3::from_array(self.session.hovered_world_pos?);
+        let point = glam::Vec3::from_array(self.session.hover.world_pos?);
         let geometry = self
             .session
             .document
@@ -1619,8 +1646,9 @@ impl PrintCadApp {
     /// it found there.
     pub(crate) fn hovered_triangle_of(&self, body: Uuid) -> Option<HoveredTriangle> {
         self.session
-            .hovered_triangle
-            .filter(|_| self.session.hovered_body == Some(body))
+            .hover
+            .triangle
+            .filter(|_| self.session.hover.body == Some(body))
     }
 }
 

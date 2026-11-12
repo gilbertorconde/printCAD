@@ -146,32 +146,28 @@ impl PrintCadApp {
     /// Context params for activate/deactivate/input hooks: camera-derived
     /// viewport plus the live hover/selection state.
     pub(crate) fn interaction_ctx_params(&self) -> WbCtxParams {
-        let vp = self.session.camera.viewport_info();
+        let vp = self.session.view.camera.viewport_info();
         WbCtxParams {
-            cam_pos: self.session.camera.position(),
-            cam_target: self.session.camera.target(),
+            cam_pos: self.session.view.camera.position(),
+            cam_target: self.session.view.camera.target(),
             viewport: (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
             pixels_per_point: self.pixels_per_point(),
-            view_proj: Some(self.session.camera.view_projection()),
-            hovered_world_pos: self.session.hovered_world_pos,
-            hovered_body_id: self.session.hovered_body,
-            hovered_base_plane: self.session.hovered_base_plane,
-            selected_body_id: self.session.selected_body,
+            view_proj: Some(self.session.view.camera.view_projection()),
+            hovered_world_pos: self.session.hover.world_pos,
+            hovered_body_id: self.session.hover.body,
+            hovered_base_plane: self.session.hover.base_plane,
+            selected_body_id: self.session.selection.body,
             cursor_viewport_pos: self.input.cursor_in_viewport,
             active_document_object: self.session.active_document_object,
-            selected_features: self.session.selected_features(),
+            selected_features: self.session.selection.features(),
             attach_request: self.session.pending_sketch_creation,
-            selected_face: self
-                .session
-                .last_face_hit
-                .filter(|(body, _)| self.session.selected_body == Some(*body))
-                .map(|(_, face)| face),
-            selected_faces: self.selected_face_refs(),
-            selected_edges: self.selected_edge_refs(),
+            selected_face: self.session.selection.face(),
+            selected_faces: self.session.selection.face_refs(),
+            selected_edges: self.session.selection.edge_refs(),
             selected_parts: self.session.selected_parts(),
-            hovered_face: self.session.hovered_face_ref,
-            hovered_edge: self.session.hovered_edge.map(|e| e.as_ref()),
-            hovered_vertex: self.session.hovered_vertex,
+            hovered_face: self.session.hover.face_ref,
+            hovered_edge: self.session.hover.edge.map(|e| e.as_ref()),
+            hovered_vertex: self.session.hover.vertex,
             marking: self.marked_surface(),
             ctrl_down: self.input.modifiers.control_key(),
             shift_down: self.input.modifiers.shift_key(),
@@ -191,24 +187,24 @@ impl PrintCadApp {
             (0, 0, 1920, 1080)
         };
         WbCtxParams {
-            cam_pos: self.session.camera.position(),
-            cam_target: self.session.camera.target(),
+            cam_pos: self.session.view.camera.position(),
+            cam_target: self.session.view.camera.target(),
             viewport,
             pixels_per_point: self.pixels_per_point(),
-            view_proj: Some(self.session.camera.view_projection()),
-            hovered_world_pos: self.session.hovered_world_pos,
-            hovered_body_id: self.session.hovered_body,
+            view_proj: Some(self.session.view.camera.view_projection()),
+            hovered_world_pos: self.session.hover.world_pos,
+            hovered_body_id: self.session.hover.body,
             hovered_base_plane: None,
             selected_body_id: self.session.active_body_id.map(|id| id.0),
             cursor_viewport_pos: None,
             active_document_object: self.session.active_document_object,
-            selected_features: self.session.selected_features(),
+            selected_features: self.session.selection.features(),
             attach_request: None,
             selected_face: None,
             selected_faces: Vec::new(),
-            selected_edges: self.selected_edge_refs(),
+            selected_edges: self.session.selection.edge_refs(),
             selected_parts: self.session.selected_parts(),
-            hovered_face: self.session.hovered_face_ref,
+            hovered_face: self.session.hover.face_ref,
             hovered_edge: None,
             hovered_vertex: None,
             marking: self.marked_surface(),
@@ -227,13 +223,14 @@ impl PrintCadApp {
         &self,
         viewport: (u32, u32, u32, u32),
     ) -> Option<core_document::SidePaneView> {
-        let (x, y, _, _) = self.session.side_rect?;
+        let (x, y, _, _) = self.session.view.side_rect?;
         let bodies = self.frame_submission.side_pane.as_ref()?.bodies.clone();
         let camera = self
             .session
+            .view
             .side_camera
             .as_ref()
-            .unwrap_or(&self.session.camera);
+            .unwrap_or(&self.session.view.camera);
         Some(core_document::SidePaneView {
             bodies,
             view_proj: camera.view_projection(),
@@ -304,7 +301,7 @@ impl PrintCadApp {
                         .get_feature_meta(FeatureId(id))
                         .is_some()
                 {
-                    self.session.tree_selection = Some(TreeItemId::Feature(FeatureId(id)));
+                    self.session.selection.tree = Some(TreeItemId::Feature(FeatureId(id)));
                 }
             }
             Err(err) => app_log::error(format!("Could not import {}: {err}", path.display())),
@@ -374,7 +371,7 @@ impl PrintCadApp {
                 Some((first, rest)) => {
                     let row = TreeItemId::Feature(*first);
                     self.apply_tree_selection(row);
-                    self.session.tree_also = Some((row, rest.to_vec()));
+                    self.session.selection.tree_also = Some((row, rest.to_vec()));
                 }
                 None => self.apply_tree_selection(TreeItemId::DocumentRoot),
             },
@@ -428,7 +425,7 @@ impl PrintCadApp {
                 }
             }
             HostRequest::OrientCamera(orient) => {
-                self.session.camera.orient_to_plane(
+                self.session.view.camera.orient_to_plane(
                     glam::Vec3::from_array(orient.plane_origin),
                     glam::Vec3::from_array(orient.plane_normal),
                     glam::Vec3::from_array(orient.plane_up),

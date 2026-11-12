@@ -13,7 +13,8 @@ impl PrintCadApp {
         let picked_parts = self.session.selected_parts();
         let hovered_curve = self
             .session
-            .hovered_part
+            .hover
+            .part
             .clone()
             .filter(|(_, part)| matches!(part, core_document::FeaturePart::Edge(_)));
         let sketch_meshes: Vec<BodySubmission> = self
@@ -26,7 +27,7 @@ impl PrintCadApp {
                 // blue. Color is baked directly so the tint is unmistakable
                 // even on hairline geometry.
                 let is_active = self.session.active_document_object == Some(feature_id)
-                    || self.session.tree_selection
+                    || self.session.selection.tree
                         == Some(crate::ui::TreeItemId::Feature(feature_id));
                 // Parts of it picked on their own leave the rest plain.
                 let parts: &[core_document::FeaturePart] =
@@ -41,9 +42,8 @@ impl PrintCadApp {
                 let curve_lit = hovered_curve
                     .as_ref()
                     .is_some_and(|(f, _)| *f == feature_id);
-                let is_hovered = (self.session.hovered_feature == Some(feature_id) && !curve_lit)
-                    || self.session.tree_hovered
-                        == Some(crate::ui::TreeItemId::Feature(feature_id));
+                let is_hovered = (self.session.hover.feature == Some(feature_id) && !curve_lit)
+                    || self.session.hover.tree == Some(crate::ui::TreeItemId::Feature(feature_id));
                 let palette = core_document::SketchPalette::default();
                 let plain = match geometry.tint {
                     core_document::PassiveTint::Plain => palette.geometry,
@@ -94,7 +94,8 @@ impl PrintCadApp {
                     let picked = part.is_some_and(|p| parts.contains(p));
                     let under_cursor = part.is_some_and(|p| {
                         self.session
-                            .hovered_part
+                            .hover
+                            .part
                             .as_ref()
                             .is_some_and(|(f, h)| *f == feature_id && h == p)
                     });
@@ -217,7 +218,7 @@ impl PrintCadApp {
         // stable, and the document's revision counter is forwarded to the
         // renderer so panning/orbiting never re-uploads the static mesh.
         let scene_clip = self.scene_clip();
-        let section = self.session.section.clone();
+        let section = self.session.view.section.clone();
         let mut imported_meshes: Vec<BodySubmission> = self
             .session
             .document
@@ -231,9 +232,10 @@ impl PrintCadApp {
                 // Selection is painted by the overlay below, never by a
                 // tint; hover brightens, and a peer's selection tints
                 // subordinate to it, so your own interaction always wins.
-                let is_hovered = self.session.hovered_body == Some(body_id.0);
+                let is_hovered = self.session.hover.body == Some(body_id.0);
                 let is_peer_selected = self
                     .session
+                    .connection
                     .peer_presence
                     .values()
                     .any(|p| p.selected_body == Some(body_id.0));
@@ -265,6 +267,7 @@ impl PrintCadApp {
                 // own frame, drawn moved where the body sits.
                 let pressed = self
                     .session
+                    .drawn
                     .textured
                     .get(body_id)
                     .and_then(|p| p.made.as_ref());
@@ -287,7 +290,7 @@ impl PrintCadApp {
                     shown_revision.hash(&mut hasher);
                     format!("{shading:?}").hash(&mut hasher);
                     let key = hasher.finish();
-                    let mesh = match self.session.shaded.get(body_id) {
+                    let mesh = match self.session.drawn.shaded.get(body_id) {
                         Some((k, mesh)) if *k == key => Arc::clone(mesh),
                         _ => {
                             let crease = match shading {
@@ -296,6 +299,7 @@ impl PrintCadApp {
                             };
                             let mesh = Arc::new(crate::app::shading::reshade(&shown, crease));
                             self.session
+                                .drawn
                                 .shaded
                                 .insert(*body_id, (key, Arc::clone(&mesh)));
                             mesh
@@ -318,6 +322,7 @@ impl PrintCadApp {
                     let key = hasher.finish();
                     let cached = self
                         .session
+                        .drawn
                         .face_colored
                         .get(body_id)
                         .filter(|(k, _)| *k == key)
@@ -334,6 +339,7 @@ impl PrintCadApp {
                         };
                         let mesh = Arc::new(base);
                         self.session
+                            .drawn
                             .face_colored
                             .insert(*body_id, (key, Arc::clone(&mesh)));
                         mesh
@@ -358,6 +364,7 @@ impl PrintCadApp {
                         let ptr = Arc::as_ptr(&shared) as usize;
                         let key = self
                             .session
+                            .drawn
                             .shared_meshes
                             .entry(ptr)
                             .or_insert_with(|| (Arc::downgrade(&shared), Uuid::new_v4()))
@@ -378,11 +385,12 @@ impl PrintCadApp {
                     && crate::camera::section::clip_for(scene_clip, section.as_ref(), *body_id)
                         .is_none();
                 let open = !uncut && {
-                    let closed = match self.session.closed.get(body_id) {
+                    let closed = match self.session.drawn.closed.get(body_id) {
                         Some((at, closed)) if *at == geometry.revision => *closed,
                         _ => {
                             let closed = crate::app::scans::closes(&geometry.mesh);
                             self.session
+                                .drawn
                                 .closed
                                 .insert(*body_id, (geometry.revision, closed));
                             closed
@@ -431,16 +439,18 @@ impl PrintCadApp {
         }
         // A shared mesh no copy draws any more is let go.
         self.session
+            .drawn
             .shared_meshes
             .retain(|_, (mesh, _)| mesh.strong_count() > 0);
         // What a pick's triangle numbers: each body drawn with the
         // document's mesh, or a copy of it in its order with faces
         // coloured; a textured body's triangles are split.
-        self.session.drawn_meshes.clear();
+        self.session.drawn.meshes.clear();
         for submitted in &imported_meshes {
             let body = core_document::BodyId(submitted.id);
             let textured = self
                 .session
+                .drawn
                 .textured
                 .get(&body)
                 .is_some_and(|p| p.made.is_some());
@@ -448,14 +458,15 @@ impl PrintCadApp {
                 && !textured
             {
                 self.session
-                    .drawn_meshes
+                    .drawn
+                    .meshes
                     .insert(submitted.id, (submitted.revision, geometry.revision));
             }
         }
         // While the Print layout task is open the scene is the layout: the
         // copies on the bed, drawn but not picked, the bodies left where
         // they are.
-        if let Some(shown) = &self.session.print_layout {
+        if let Some(shown) = &self.session.tools.print_layout {
             let document = &self.session.document;
             imported_meshes = shown
                 .layout
@@ -525,10 +536,10 @@ impl PrintCadApp {
         // path joining them and the readout of the last two, drawn over the
         // scene; a pick on a body the split view's side pane shows is
         // pinned there.
-        if let Some(picks) = &self.session.measure {
+        if let Some(picks) = &self.session.tools.measure {
             let unit = self.measure_unit();
             let color = HOVER_PAINT;
-            let vp = self.session.camera.viewport_info();
+            let vp = self.session.view.camera.viewport_info();
             let vp = (vp.0 as u32, vp.1 as u32, vp.2, vp.3);
             let side = self.side_pane_view(vp);
             let px: Vec<Option<(f32, f32)>> = picks
@@ -540,6 +551,7 @@ impl PrintCadApp {
                     }
                     _ => self
                         .session
+                        .view
                         .camera
                         .world_to_viewport(Vec3::from_array(p.point())),
                 })
@@ -557,7 +569,7 @@ impl PrintCadApp {
             let mut lines = crate::app::measure::readout(picks, unit);
             // The kernel's least distance between the last two picks, with
             // the closest points joined.
-            if let Some(gap) = &self.session.measure_gap {
+            if let Some(gap) = &self.session.tools.measure_gap {
                 match (&gap.found, gap.in_world()) {
                     (_, Some((distance, a, b))) => {
                         lines.insert(
@@ -567,7 +579,7 @@ impl PrintCadApp {
                                 crate::app::measure::length(distance, unit)
                             ),
                         );
-                        let camera = &self.session.camera;
+                        let camera = &self.session.view.camera;
                         if let (Some(a), Some(b)) =
                             (camera.world_to_viewport(a), camera.world_to_viewport(b))
                         {
@@ -638,12 +650,13 @@ impl PrintCadApp {
         // Peers' cursors: a named marker where each other editor points.
         // Same projection the overlays use; a cursor behind the camera or
         // outside the model simply has no marker this frame.
-        for state in self.session.peer_presence.values() {
+        for state in self.session.connection.peer_presence.values() {
             let Some(world) = state.cursor_world else {
                 continue;
             };
             let Some((x, y)) = self
                 .session
+                .view
                 .camera
                 .world_to_viewport(Vec3::new(world[0], world[1], world[2]))
             else {
@@ -677,7 +690,7 @@ impl PrintCadApp {
         // in that body's pane of a split view.
         let mut overlay_bodies: Vec<(Uuid, Uuid)> = Vec::new();
         // The faces Ctrl added before the last, each in a slot of its own.
-        for (i, picked) in self.session.earlier_faces.iter().enumerate() {
+        for (i, picked) in self.session.selection.earlier_faces.iter().enumerate() {
             let face = &picked.highlight;
             let (hi, lo) = face.body.as_u64_pair();
             let id = Uuid::from_u128(self.overlay_ids.face_highlight.as_u128() ^ (i as u128 + 1));
@@ -700,7 +713,7 @@ impl PrintCadApp {
                 section: Default::default(),
             });
         }
-        if let Some(face) = &self.session.face_highlight {
+        if let Some(face) = &self.session.selection.face_highlight {
             overlay_bodies.push((self.overlay_ids.face_highlight, face.body));
             all_meshes.push(BodySubmission {
                 scalar: None,
@@ -721,14 +734,16 @@ impl PrintCadApp {
             });
         } else if let Some(geometry) = self
             .session
-            .selected_body
+            .selection
+            .body
             // Picked edges are the selection then, drawn as lines below.
-            .filter(|_| self.session.selected_edges.is_empty())
+            .filter(|_| self.session.selection.edges.is_empty())
             // A body showing a feature's preview is not painted over: the
             // preview is what it shows.
             .filter(|id| {
                 !self
                     .session
+                    .builds
                     .previews
                     .contains_key(&core_document::BodyId(*id))
             })
@@ -740,7 +755,7 @@ impl PrintCadApp {
         {
             // One slot serves every body; the body's id in the revision
             // keeps two bodies at the same revision from sharing buffers.
-            let selected = self.session.selected_body.unwrap_or_default();
+            let selected = self.session.selection.body.unwrap_or_default();
             overlay_bodies.push((self.overlay_ids.body_highlight, selected));
             let (hi, lo) = selected.as_u64_pair();
             all_meshes.push(BodySubmission {
@@ -763,9 +778,9 @@ impl PrintCadApp {
         }
 
         // The bodies a box took beside the last, each in a slot of its own.
-        for (i, body) in self.session.earlier_bodies.iter().enumerate() {
+        for (i, body) in self.session.selection.earlier_bodies.iter().enumerate() {
             let id = core_document::BodyId(*body);
-            if self.session.previews.contains_key(&id) {
+            if self.session.builds.previews.contains_key(&id) {
                 continue;
             }
             let Some(geometry) = self.session.document.imported_geometry(id) else {
@@ -796,8 +811,8 @@ impl PrintCadApp {
         // The body a tree row under the pointer stands for, translucent in
         // the hover paint, unless it is selected already.
         if let Some(body) = self.tree_hovered_body()
-            && self.session.selected_body != Some(body.0)
-            && !self.session.previews.contains_key(&body)
+            && self.session.selection.body != Some(body.0)
+            && !self.session.builds.previews.contains_key(&body)
             && let Some(geometry) = self.session.document.imported_geometry(body)
         {
             let (hi, lo) = body.0.as_u64_pair();
@@ -823,14 +838,21 @@ impl PrintCadApp {
 
         // The hovered face, translucent in the hover paint, unless it is the
         // selected face already.
-        if let Some(hover) = &self.session.hovered_face
-            && self.session.hovered_edge.is_none()
-            && self.session.pick_filter.faces()
+        if let Some(hover) = &self.session.hover.face
+            && self.session.hover.edge.is_none()
+            && self.session.view.pick_filter.faces()
             && !self
                 .session
+                .selection
                 .face_highlight
                 .iter()
-                .chain(self.session.earlier_faces.iter().map(|p| &p.highlight))
+                .chain(
+                    self.session
+                        .selection
+                        .earlier_faces
+                        .iter()
+                        .map(|p| &p.highlight),
+                )
                 .any(|f| f.body == hover.body && f.face == Some(hover.face))
         {
             let (hi, lo) = hover.body.as_u64_pair();
@@ -856,10 +878,11 @@ impl PrintCadApp {
 
         // The hovered edge and the picked edges, drawn as line bodies over
         // the outline in the hover and selection paints.
-        if let Some(hit) = &self.session.hovered_edge
+        if let Some(hit) = &self.session.hover.edge
             && !self
                 .session
-                .selected_edges
+                .selection
+                .edges
                 .iter()
                 .any(|s| s.body == hit.body && s.edge == hit.edge)
             && let Some(submission) = crate::app::edges::highlight_submission(
@@ -874,7 +897,7 @@ impl PrintCadApp {
             all_meshes.push(submission);
         }
         let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<u32>> = Default::default();
-        for hit in &self.session.selected_edges {
+        for hit in &self.session.selection.edges {
             by_body.entry(hit.body).or_default().push(hit.edge);
         }
         for (i, (body, edges)) in by_body.iter().enumerate() {
@@ -904,6 +927,6 @@ impl PrintCadApp {
                 }
             }
         }
-        self.session.overlay_bodies = overlay_bodies;
+        self.session.drawn.overlay_bodies = overlay_bodies;
     }
 }

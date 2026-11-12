@@ -460,7 +460,7 @@ impl PrintCadApp {
     fn document_words(&self, chat: Option<&str>) -> String {
         let session = self.chat_session(chat);
         let name = session.document.name();
-        match &session.current_file {
+        match &session.file.path {
             Some(file) => format!("\"{name}\", saved as {}", file.display()),
             None => format!("\"{name}\", not saved yet"),
         }
@@ -563,7 +563,7 @@ impl PrintCadApp {
             "application": "printCAD",
             "document": {
                 "name": document.name(),
-                "file": session.current_file.as_ref().map(|f| f.display().to_string()),
+                "file": session.file.path.as_ref().map(|f| f.display().to_string()),
                 "unsaved_changes": document.metadata().dirty(),
                 "unit": format!("{:?}", document.display_unit()),
             },
