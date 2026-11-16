@@ -1556,6 +1556,11 @@ impl<'a> Importer<'a> {
                 follow_tangent: true,
                 corner: Default::default(),
                 refine,
+                mode: Default::default(),
+                radius2: 0.0,
+                flip: false,
+                profile: Default::default(),
+                rho: 0.5,
             }));
         }
         let mode = match object.integer("ChamferType")? {

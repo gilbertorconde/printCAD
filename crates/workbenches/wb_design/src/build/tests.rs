@@ -523,3 +523,47 @@ fn a_dress_up_s_corner_choice_reaches_its_op() {
     assert_eq!(corners(&fillet), "RollingBall");
     assert_eq!(corners(&chamfer), "Facet");
 }
+
+/// A fillet of two distances builds the op carrying them, its profile
+/// and flip; one saved before fillets had them builds a plain round.
+#[test]
+fn a_fillet_of_two_distances_reaches_its_op() {
+    use crate::feature::{FilletMode, FilletProfile};
+    let mut fillet = serde_json::from_value::<DesignFeature>(
+        serde_json::json!({"Fillet": {"radius": 2.0, "edges": "All"}}),
+    )
+    .unwrap();
+    let distances = |feature: &DesignFeature| match edge_op(feature) {
+        Ok(Some(SolidOp::Fillet { distances, .. })) => Ok(distances),
+        Ok(other) => panic!("not a fillet op: {other:?}"),
+        Err(e) => Err(e),
+    };
+    assert_eq!(distances(&fillet), Ok(None));
+    if let DesignFeature::Fillet {
+        mode,
+        radius2,
+        flip,
+        profile,
+        rho,
+        ..
+    } = &mut fillet
+    {
+        *mode = FilletMode::TwoDistances;
+        *radius2 = 5.0;
+        *flip = true;
+        *profile = FilletProfile::Conic;
+        *rho = 0.25;
+    }
+    assert_eq!(
+        distances(&fillet),
+        Ok(Some(kernel_api::RoundDistances {
+            other: 5.0,
+            flip: true,
+            profile: kernel_api::RoundProfile::Conic { rho: 0.25 },
+        }))
+    );
+    if let DesignFeature::Fillet { rho, .. } = &mut fillet {
+        *rho = 1.0;
+    }
+    assert!(distances(&fillet).is_err(), "rho must lie inside 0..1");
+}

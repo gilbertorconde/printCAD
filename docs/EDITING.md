@@ -386,6 +386,13 @@ edge (Flip direction takes the other) and keeps it on that side all along
 a tangent chain, even where the faces change from a flat side to a round
 and on.
 
+A fillet's Type **Two distances** meets one face Distance 1 from the edge
+and the other Distance 2 (Flip direction swaps the faces). Its Profile is
+Elliptical, the round stretched to the two distances, or Conic, whose Rho
+sets how full it is: near 0 almost a bevel, 0.5 a parabola, near 1 almost
+the sharp edge. It rounds one edge at a time for now; a selection of more
+says so.
+
 **Corners** says how a vertex closes where the rounds or bevels meet. A
 fillet's Setback stops each round short of the corner and fills the gap
 with one smooth patch; Rolling ball, where the rounds would meet along the

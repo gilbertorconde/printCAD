@@ -56,11 +56,42 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             edges,
             follow_tangent,
             corner,
+            mode,
+            radius2,
+            flip,
+            profile,
+            rho,
             ..
         } => {
             if *radius <= 0.0 {
                 return Err("fillet radius must be positive".into());
             }
+            let distances = match mode {
+                crate::feature::FilletMode::Radius => None,
+                crate::feature::FilletMode::TwoDistances => {
+                    if *radius2 <= 0.0 {
+                        return Err("a fillet's second distance must be positive".into());
+                    }
+                    let profile = match profile {
+                        crate::feature::FilletProfile::Elliptical => {
+                            kernel_api::RoundProfile::Elliptical
+                        }
+                        crate::feature::FilletProfile::Conic => {
+                            if !(*rho > 0.0 && *rho < 1.0) {
+                                return Err("a conic fillet's rho lies between 0 and 1".into());
+                            }
+                            kernel_api::RoundProfile::Conic {
+                                rho: f64::from(*rho),
+                            }
+                        }
+                    };
+                    Some(kernel_api::RoundDistances {
+                        other: f64::from(*radius2),
+                        flip: *flip,
+                        profile,
+                    })
+                }
+            };
             match edges {
                 crate::feature::EdgeSel::BetweenFaces(picks) => match picks.as_slice() {
                     [a, b] => SolidOp::BlendFaces {
@@ -79,6 +110,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                     edges: edge_selection(edges)?,
                     follow_tangent: *follow_tangent,
                     corner: *corner,
+                    distances,
                 },
             }
         }

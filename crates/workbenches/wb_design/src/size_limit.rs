@@ -6,14 +6,14 @@
 
 use core_document::{Document, FeatureId, WorkbenchFeature};
 
-use crate::feature::{ChamferMode, DesignFeature};
+use crate::feature::{ChamferMode, DesignFeature, FilletMode};
 
 /// The largest values a drag sets for a fillet's or chamfer's sizes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DragLimits {
     /// A fillet's radius, a chamfer's size.
     pub first: f32,
-    /// A chamfer's second size, with two distances.
+    /// A fillet's or chamfer's second size, with two distances.
     pub second: Option<f32>,
 }
 
@@ -25,7 +25,15 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
     let part =
         DesignFeature::from_json(document.feature_values(feature).unwrap_or(&node.data)).ok()?;
     let (size, size2) = match &part {
-        DesignFeature::Fillet { radius, .. } => (*radius, None),
+        DesignFeature::Fillet {
+            radius,
+            mode,
+            radius2,
+            ..
+        } => (
+            *radius,
+            (*mode == FilletMode::TwoDistances).then_some(*radius2),
+        ),
         DesignFeature::Chamfer {
             size, mode, size2, ..
         } => (
@@ -52,7 +60,7 @@ pub(crate) fn drag_most(document: &Document, feature: FeatureId, pointer: &str) 
     let limits = drag_limits(document, feature)?;
     match pointer {
         "/Fillet/radius" | "/Chamfer/size" => Some(limits.first),
-        "/Chamfer/size2" => limits.second,
+        "/Fillet/radius2" | "/Chamfer/size2" => limits.second,
         _ => None,
     }
 }
