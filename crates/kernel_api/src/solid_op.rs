@@ -599,20 +599,20 @@ impl SolidOp {
         use std::hash::{Hash, Hasher};
         let sized = match self {
             SolidOp::Fillet {
-                radius,
                 edges,
                 follow_tangent,
                 corner,
                 distances,
+                auto,
+                ..
             } => SolidOp::Fillet {
                 radius: 0.0,
                 edges: edges.clone(),
                 follow_tangent: *follow_tangent,
                 corner: *corner,
-                distances: distances.map(|d| RoundDistances {
-                    other: d.other / radius,
-                    ..d
-                }),
+                // Each face's limit is its own, whatever the distances.
+                distances: distances.map(|d| RoundDistances { other: 0.0, ..d }),
+                auto: *auto,
             },
             SolidOp::Chamfer {
                 spec,
@@ -759,7 +759,9 @@ pub enum SolidOp {
     /// Round the selected edges; with `follow_tangent`, every edge meeting
     /// one of them tangentially joins the selection, and so on along the
     /// chain. With `distances`, the round meets one face `radius` from the
-    /// edge and the other `distances.other`.
+    /// edge and the other `distances.other`. With `auto` and one edge, a
+    /// face too narrow for `radius` takes its contact as far as it goes
+    /// while the other's goes on to `radius`, the round turning elliptical.
     Fillet {
         radius: f64,
         edges: EdgeSelection,
@@ -769,6 +771,8 @@ pub enum SolidOp {
         corner: FilletCorner,
         #[serde(default)]
         distances: Option<RoundDistances>,
+        #[serde(default)]
+        auto: bool,
     },
     /// Round between two faces of the running solid, which need share no
     /// edge: the ball rolling between them, its round filling or taking off

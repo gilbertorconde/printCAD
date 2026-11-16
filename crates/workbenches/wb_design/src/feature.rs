@@ -704,6 +704,9 @@ impl PipeCorner {
 /// Fillet sizing style.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum FilletMode {
+    /// One size, each face's contact stopping where the face runs out
+    /// while the other's goes on (on one edge).
+    Auto,
     #[default]
     Radius,
     /// One distance on each face from the edge.
@@ -711,10 +714,15 @@ pub enum FilletMode {
 }
 
 impl FilletMode {
-    pub const ALL: [FilletMode; 2] = [FilletMode::Radius, FilletMode::TwoDistances];
+    pub const ALL: [FilletMode; 3] = [
+        FilletMode::Auto,
+        FilletMode::Radius,
+        FilletMode::TwoDistances,
+    ];
 
     pub fn label(&self) -> &'static str {
         match self {
+            FilletMode::Auto => "Auto",
             FilletMode::Radius => "Radius",
             FilletMode::TwoDistances => "Two distances",
         }
@@ -2056,7 +2064,8 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         corner: kernel_api::FilletCorner,
-        /// One radius, or `radius` on one face and `radius2` on the other.
+        /// One radius; one size each face takes as far as it goes (Auto);
+        /// or `radius` on one face and `radius2` on the other.
         #[serde(default)]
         #[walk(setting)]
         mode: FilletMode,

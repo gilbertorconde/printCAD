@@ -16,7 +16,9 @@ use core_document::{
 use glam::Vec3;
 use serde_json::Value;
 
-use crate::feature::{DesignFeature, EdgeSel, ExtrudeDirection, ExtrudeMode, RevolveMode};
+use crate::feature::{
+    DesignFeature, EdgeSel, ExtrudeDirection, ExtrudeMode, FilletMode, RevolveMode,
+};
 
 /// How close to a handle, in logical pixels, a press takes hold of it.
 const REACH_PX: f32 = 10.0;
@@ -322,7 +324,10 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
         }
         DesignFeature::Draft { .. } => out.push(draft_handle(&maker, &part, eye)),
         DesignFeature::Primitive { .. } => out.extend(primitive_handles(&maker, &part)),
-        DesignFeature::Fillet { edges, .. } => out.push(edge_handle(&maker, edges, "/radius", eye)),
+        DesignFeature::Fillet { edges, mode, .. } => match side_handles(&maker, &part, *mode) {
+            Some(two) => out.extend(two),
+            None => out.push(edge_handle(&maker, edges, "/radius", eye)),
+        },
         DesignFeature::Chamfer { edges, .. } => out.push(edge_handle(&maker, edges, "/size", eye)),
         _ => {}
     }
@@ -762,6 +767,43 @@ fn edge_handle(maker: &Maker, edges: &EdgeSel, pointer: &str, eye: Vec3) -> Opti
     )?;
     handle.stop = drag_stop(maker.document, &handle);
     Some(handle)
+}
+
+/// A fillet of two distances': one on each face beside its edge, running
+/// from the edge the way the face does, each stopping where its face runs
+/// out. `None` until a preview build has read the faces for the fillet as
+/// it stands, or for any other fillet.
+fn side_handles(
+    maker: &Maker,
+    part: &DesignFeature,
+    mode: FilletMode,
+) -> Option<Vec<Option<Handle>>> {
+    if mode != FilletMode::TwoDistances {
+        return None;
+    }
+    let key = crate::build::edge_op(part).ok()??.size_limit_key()?;
+    let limit = maker.document.size_limit(maker.feature)?;
+    let sides = (limit.key == key).then_some(limit.sides?)?;
+    let origin = maker.world64(sides.at);
+    let handles = ["/radius", "/radius2"]
+        .into_iter()
+        .zip(sides.sides)
+        .map(|(pointer, side)| {
+            let dir = maker.world_dir64(side.direction);
+            let mut handle = maker.handle(
+                pointer,
+                Shape::Line {
+                    origin,
+                    dir,
+                    scale: 1.0,
+                },
+                Range::Positive,
+            )?;
+            handle.stop = drag_stop(maker.document, &handle);
+            Some(handle)
+        })
+        .collect();
+    Some(handles)
 }
 
 /// The largest a drag sets `handle`'s number to as things stand: a

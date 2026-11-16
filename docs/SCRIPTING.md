@@ -4204,7 +4204,7 @@ Notes:
 - Without `edges` it rounds every edge of the solid (`edges = "All"`); `radius` is 1 mm when left out. In the app, edges selected in the view are taken instead.
 - `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
 - Edges running on tangentially are taken too (`follow_tangent`, on by default).
-- A radius larger than the faces beside an edge can take fails at `pc.doc.rebuild()`.
+- `mode` is Auto (when left out), Radius or TwoDistances. Auto on one edge takes each face's contact `radius` from the edge or as far as the face goes, whichever is less; with Radius, a radius larger than the faces beside an edge can take fails at `pc.doc.rebuild()`. TwoDistances puts `radius` on one face and `radius2` on the other (`flip` swaps them), its `profile` Elliptical or Conic (with `rho` strictly between 0 and 1, 0.5 when left out), on one edge.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.chamfer`.
 

@@ -99,6 +99,30 @@ pub struct SizeLimit {
     /// distance (with two distances, the first at their common scale).
     /// `None` where no size short of the solid's own fails.
     pub largest: Option<f64>,
+    /// A round of one edge set back by distances: where the edge is read
+    /// and each face's own limit. `None` for any other op.
+    #[serde(default)]
+    pub sides: Option<RoundSides>,
+}
+
+/// The two faces beside the one edge of a round of distances, as a drag
+/// reads them: the face its first distance is on, then the other.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RoundSides {
+    /// A point on the edge, in the body's frame.
+    pub at: [f64; 3],
+    pub sides: [RoundSide; 2],
+}
+
+/// One face beside a rounded edge.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RoundSide {
+    /// The way the face runs from the edge at `RoundSides::at`, square to
+    /// the edge: where a round's contact on it moves as it grows.
+    pub direction: [f64; 3],
+    /// The farthest the contact goes before running off the face, mm;
+    /// `None` where it does not run off short of the solid's size.
+    pub largest: Option<f64>,
 }
 
 /// A warning on one op of a chain that built (or, in

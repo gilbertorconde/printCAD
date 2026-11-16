@@ -12,7 +12,7 @@ use crate::feature::{ChamferMode, DesignFeature, FilletMode};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DragLimits {
     /// A fillet's radius, a chamfer's size.
-    pub first: f32,
+    pub first: Option<f32>,
     /// A fillet's or chamfer's second size, with two distances.
     pub second: Option<f32>,
 }
@@ -43,13 +43,30 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
         _ => return None,
     };
     let key = crate::build::edge_op(&part).ok()??.size_limit_key()?;
-    let largest = match document.size_limit(feature) {
-        Some(limit) if limit.key == key => limit.largest? as f32,
-        _ => crate::failing::largest_size(document, feature)?,
+    let limit = document
+        .size_limit(feature)
+        .filter(|limit| limit.key == key);
+    // A fillet's two distances each stop where their own face runs out.
+    if let DesignFeature::Fillet {
+        mode: FilletMode::TwoDistances,
+        ..
+    } = part
+        && let Some(sides) = limit.and_then(|limit| limit.sides)
+    {
+        let [first, second] = sides.sides.map(|side| {
+            side.largest
+                .map(|most| hundredths_below(most as f32))
+                .filter(|most| *most > 0.0)
+        });
+        return (first.is_some() || second.is_some()).then_some(DragLimits { first, second });
+    }
+    let largest = match limit {
+        Some(limit) => limit.largest? as f32,
+        None => crate::failing::largest_size(document, feature)?,
     };
     let first = hundredths_below(largest);
     (first > 0.0).then(|| DragLimits {
-        first,
+        first: Some(first),
         second: size2.map(|s2| hundredths_below(s2 * largest / size)),
     })
 }
@@ -59,7 +76,7 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
 pub(crate) fn drag_most(document: &Document, feature: FeatureId, pointer: &str) -> Option<f32> {
     let limits = drag_limits(document, feature)?;
     match pointer {
-        "/Fillet/radius" | "/Chamfer/size" => Some(limits.first),
+        "/Fillet/radius" | "/Chamfer/size" => limits.first,
         "/Fillet/radius2" | "/Chamfer/size2" => limits.second,
         _ => None,
     }

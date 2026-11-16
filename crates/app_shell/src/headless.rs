@@ -1045,7 +1045,7 @@ endsolid t
             pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
             local pad = pc.design.pad{sketch = s, length = 5}
             local body = pc.doc.feature{id = pad}.body
-            pc.design.fillet{body = body, radius = 50,
+            pc.design.fillet{body = body, radius = 50, mode = "Radius",
               edges = {Edges = {{point = {20, 5, 5}, direction = {0, 1, 0}}}}}
             assert(#pc.doc.rebuild() == 1, "the fillet fails")
             "#;

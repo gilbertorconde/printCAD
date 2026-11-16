@@ -273,6 +273,7 @@ fn an_edge_pick_far_from_every_edge_fails() {
                 follow_tangent: false,
                 corner: Default::default(),
                 distances: None,
+                auto: false,
             },
         ])
     };
@@ -304,6 +305,7 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
                 follow_tangent: false,
                 corner: Default::default(),
                 distances: None,
+                auto: false,
             },
         ])?;
         let volume = volume(&result.brep_blob);
@@ -433,6 +435,7 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
                 follow_tangent: false,
                 corner: Default::default(),
                 distances: None,
+                auto: false,
             },
         ),
         (
@@ -481,6 +484,7 @@ fn a_refused_dress_up_names_its_failing_edge() {
         follow_tangent: false,
         corner: Default::default(),
         distances: None,
+        auto: false,
     };
     let chamfer = |size: f64| SolidOp::Chamfer {
         spec: ChamferSpec::EqualDistance { distance: size },
@@ -536,6 +540,7 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
             follow_tangent: false,
             corner: Default::default(),
             distances: None,
+            auto: false,
         },
     ])
     .expect_err("top and bottom bands overlap on the 2 mm sides");
@@ -651,6 +656,7 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
             follow_tangent: false,
             corner: Default::default(),
             distances: None,
+            auto: false,
         },
     ]);
     assert_eq!(
@@ -712,6 +718,7 @@ fn fillets_of_three_edges_round_their_corner() {
                     follow_tangent: false,
                     corner: Default::default(),
                     distances: None,
+                    auto: false,
                 },
             ],
             &fine_detail(),
@@ -900,6 +907,7 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
         follow_tangent: false,
         corner: Default::default(),
         distances: None,
+        auto: false,
     });
     let cylinders = chain(&ops)
         .mesh
@@ -926,6 +934,7 @@ fn rolling_ball_corners_on_the_step_are_analytic() {
         follow_tangent: false,
         corner: FilletCorner::RollingBall,
         distances: None,
+        auto: false,
     });
     let built = chain(&ops);
     let surfaces = &built.mesh.face_surfaces;
@@ -982,6 +991,7 @@ fn cube_rounded(profile: kernel_api::RoundProfile, flip: bool) -> kernel_api::So
                 flip,
                 profile,
             }),
+            auto: false,
         },
     ])
 }
@@ -1033,6 +1043,67 @@ fn a_round_of_two_distances_takes_off_its_conic_corner() {
     assert_eq!(reach(&flipped), [b, a]);
 }
 
+/// An automatic round on the top front edge of a plate 4 mm thick: one
+/// that fits both faces is the round of its radius; one too wide for the
+/// top stops its contact there, at the plate's back edge, and goes on
+/// down the front, a quarter ellipse's corner 4 by 10 taken off. Previewed,
+/// the build reads each face's way from the edge and its own limit, and
+/// the size grows on until the front runs out too.
+#[test]
+fn an_auto_round_stops_at_a_narrow_face_and_grows_on_the_other() {
+    let plate = || box_of(20.0, 4.0, 20.0);
+    let round = |radius: f64| SolidOp::Fillet {
+        radius,
+        edges: EdgeSelection::Near(vec![[10.0, 0.0, 20.0]]),
+        follow_tangent: false,
+        corner: Default::default(),
+        distances: None,
+        auto: true,
+    };
+    let taken = |radius: f64| 1600.0 - volume(&chain(&[plate(), round(radius)]).brep_blob);
+    let corner = 1.0 - std::f64::consts::FRAC_PI_4;
+    let fits = 9.0 * corner * 20.0;
+    assert!((taken(3.0) - fits).abs() < fits * 1e-4, "{}", taken(3.0));
+    let stopped = 4.0 * 10.0 * corner * 20.0;
+    assert!(
+        (taken(10.0) - stopped).abs() < stopped * 1e-4,
+        "{}",
+        taken(10.0)
+    );
+
+    let detail = kernel_api::TessellationSettings::default();
+    let ops = [plate(), round(1.0)];
+    let previewed = new_kernel()
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(1..2)))
+        .expect("a 1 mm round builds");
+    let limit = previewed.size_limit.expect("the preview's limit");
+    let sides = limit.sides.expect("the faces beside the edge");
+    let [x, y, z] = sides.at;
+    assert!(y.abs() < 1e-6 && (z - 20.0).abs() < 1e-6 && x > 0.0 && x < 20.0);
+    let mut read: Vec<([i64; 3], f64)> = sides
+        .sides
+        .iter()
+        .map(|side| {
+            (
+                side.direction.map(|c| c.round() as i64),
+                side.largest.expect("each face runs out"),
+            )
+        })
+        .collect();
+    read.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert_eq!(read[0].0, [0, 1, 0], "the top runs back from the edge");
+    assert_eq!(read[1].0, [0, 0, -1], "the front runs down");
+    assert!(
+        (read[0].1 - 4.0).abs() < 1e-3 && (read[1].1 - 20.0).abs() < 1e-3,
+        "{read:?}"
+    );
+    let largest = limit.largest.expect("a size both faces stop");
+    assert!((largest - read[1].1).abs() < 1e-9);
+    // A drag stops a hundredth short of the limit, which builds.
+    try_chain(&[plate(), round(largest - 0.01)])
+        .unwrap_or_else(|e| panic!("{} builds: {e}", largest - 0.01));
+}
+
 /// Rounds of two distances on several edges go to the kernel together, so
 /// they close the corners where they meet.
 #[test]
@@ -1050,6 +1121,7 @@ fn rounds_of_two_distances_on_every_edge_of_a_cube_build() {
                 flip: false,
                 profile: kernel_api::RoundProfile::Elliptical,
             }),
+            auto: false,
         },
     ]);
     assert!(built.is_ok(), "{:?}", built.err());
@@ -2584,6 +2656,7 @@ fn a_dress_up_previews_what_it_takes_off_or_adds() {
         follow_tangent: false,
         corner: Default::default(),
         distances: None,
+        auto: false,
     });
     let (preview, whole) = preview_of(&inside, rounded_at..rounded_at + 1);
     assert!(!preview.cuts, "an inside round only adds");
@@ -3325,6 +3398,7 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
             follow_tangent,
             corner: Default::default(),
             distances: None,
+            auto: false,
         });
         volume(&try_chain(&ops).expect("the seam rounds").brep_blob)
     };
@@ -3362,6 +3436,7 @@ fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
             follow_tangent: true,
             corner: Default::default(),
             distances: None,
+            auto: false,
         },
     ];
     let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");

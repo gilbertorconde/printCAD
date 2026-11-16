@@ -68,6 +68,7 @@ fn fillet(radius: f64, edges: EdgeSelection, follow: bool) -> SolidOp {
         follow_tangent: follow,
         corner: Default::default(),
         distances: None,
+        auto: false,
     }
 }
 fn chamfer(distance: f64, edges: EdgeSelection, follow: bool) -> SolidOp {
