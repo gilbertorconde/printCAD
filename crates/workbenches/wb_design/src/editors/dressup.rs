@@ -31,6 +31,7 @@ pub(super) fn dressup_editor(
             radius,
             edges,
             follow_tangent,
+            ..
         } => {
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
             changed |= mm_drag_upto(f, fx, radius, ("Radius:", "radius"), most.map(|m| m.first));
@@ -47,6 +48,7 @@ pub(super) fn dressup_editor(
             flip,
             edges,
             follow_tangent,
+            ..
         } => {
             changed |= pick(f, "Type", &ChamferMode::ALL, mode, |candidate| {
                 candidate.label()

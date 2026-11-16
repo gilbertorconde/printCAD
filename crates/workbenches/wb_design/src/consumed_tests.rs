@@ -34,6 +34,7 @@ fn only_a_feature_made_from_a_sketch_consumes_it() {
         radius: 1.0,
         edges: EdgeSel::All,
         follow_tangent: false,
+        refine: false,
     };
     let fillet = doc
         .add_feature_in_body(fillet, "Fillet".into(), body)

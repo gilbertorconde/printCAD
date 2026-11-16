@@ -406,3 +406,97 @@ fn every_face_keeps_the_op_that_made_it() {
         assert_eq!(maker(on), made_by, "{what}");
     }
 }
+
+/// The refined three-step part: box A x -15..15 z 0..7, B x 0..15 z 7..14,
+/// C x 7..15 z 14..21, all y -7..7, its sides named, each pad refined;
+/// the first `pads` of them.
+fn three_step_pads(pads: usize) -> (Vec<SolidOp>, Vec<TopoName>) {
+    let pad = |x0: f64, z: f64, op| {
+        let (x1, y0, y1) = (15.0, -7.0, 7.0);
+        let p = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        SolidOp::Sweep {
+            profile: Profile {
+                plane: plane(z),
+                wires: vec![ProfileWire {
+                    segments: (0..4)
+                        .map(|i| ProfileSegment::Line {
+                            start: p[i],
+                            end: p[(i + 1) % 4],
+                        })
+                        .collect(),
+                    names: (1..=4).map(|i| naming::name_of(&[i])).collect(),
+                }],
+            },
+            kind: extrude(ExtrudeTermination::Blind { distance: 7.0 }),
+            op,
+        }
+    };
+    let steps = [
+        pad(-15.0, 0.0, BooleanOp::NewSolid),
+        pad(0.0, 7.0, BooleanOp::Fuse),
+        pad(7.0, 14.0, BooleanOp::Fuse),
+    ];
+    let mut ops = Vec::new();
+    let mut tags = Vec::new();
+    for (i, step) in steps.into_iter().take(pads).enumerate() {
+        let tag = 301 + i as TopoName;
+        ops.extend([step, SolidOp::Refine]);
+        tags.extend([tag, tag]);
+    }
+    (ops, tags)
+}
+
+/// An upright picked on the right side before the top step was padded,
+/// in pieces or whole, is found by its names once the refine has joined
+/// it into one 21 mm edge: the round goes along all of it, unwarned.
+#[test]
+fn an_upright_picked_before_its_pieces_were_joined_is_found_whole() {
+    let (two, two_tags) = three_step_pads(2);
+    let picked = OgeomKernel::new()
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&two, &TessellationSettings::default()).tags(&two_tags),
+        )
+        .unwrap();
+    let names = super::common::edge_names(&picked.mesh, |p| {
+        (p[0] - 15.0).abs() < 1e-3 && (p[1] + 7.0).abs() < 1e-3
+    });
+    assert!(names.iter().all(|n| *n != 0), "the upright is named");
+
+    let (mut ops, mut tags) = three_step_pads(3);
+    ops.push(SolidOp::Fillet {
+        radius: 1.0,
+        edges: kernel_api::EdgeSelection::Picked(vec![kernel_api::EdgeProbe {
+            point: [15.0, -7.0, 3.0],
+            direction: [0.0, 0.0, 1.0],
+            faces: names,
+        }]),
+        follow_tangent: false,
+    });
+    tags.push(399);
+    let built = OgeomKernel::new()
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&ops, &TessellationSettings::default()).tags(&tags),
+        )
+        .unwrap();
+    assert!(built.warnings.is_empty(), "{:?}", built.warnings);
+    let rounds: Vec<usize> = (0..built.mesh.face_surfaces.len())
+        .filter(|f| {
+            matches!(
+                built.mesh.face_surfaces[*f],
+                kernel_api::FaceSurface::Cylinder { .. }
+            )
+        })
+        .collect();
+    assert_eq!(rounds.len(), 1, "one round");
+    let heights: Vec<f32> = built
+        .mesh
+        .indices
+        .chunks(3)
+        .zip(&built.mesh.faces)
+        .filter(|(_, f)| **f as usize == rounds[0])
+        .flat_map(|(t, _)| t.iter().map(|i| built.mesh.positions[*i as usize][2]))
+        .collect();
+    let low = heights.iter().copied().fold(f32::INFINITY, f32::min);
+    let high = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(low < 1.0 + 1e-3 && high > 20.0 - 1e-3, "{low}..{high}");
+}

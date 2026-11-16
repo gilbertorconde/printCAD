@@ -223,14 +223,33 @@ fn a_refined_feature_is_followed_by_a_refine_its_pattern_skips() {
     unrefined.set_refine(false);
     assert!(!unrefined.refine());
     assert!(unrefined.can_refine());
-    assert!(
-        !DesignFeature::Fillet {
-            radius: 1.0,
-            edges: crate::feature::EdgeSel::All,
-            follow_tangent: false,
-        }
-        .can_refine()
-    );
+}
+
+/// A fillet or chamfer refines its result when its switch says so, and
+/// one saved before it had the switch loads with it off.
+#[test]
+fn a_dress_up_refines_when_asked_and_an_old_one_does_not() {
+    let (mut doc, body, sketch_id) = doc_with_body_sketch();
+    add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
+    let old: DesignFeature =
+        serde_json::from_value(serde_json::json!({"Fillet": {"radius": 1.0, "edges": "All"}}))
+            .unwrap();
+    assert!(old.can_refine() && !old.refine());
+    let fillet_id = add(&mut doc, body, old.clone(), "Fillet");
+    let plain = body_build_ops(&doc, body).unwrap();
+    assert!(matches!(plain.ops.last(), Some(SolidOp::Fillet { .. })));
+
+    let mut refined = old;
+    refined.set_refine(true);
+    doc.update_feature_data(fillet_id, refined.to_json())
+        .unwrap();
+    let plan = body_build_ops(&doc, body).unwrap();
+    assert!(matches!(plan.ops.last(), Some(SolidOp::Refine)));
+    assert!(matches!(
+        plan.ops[plan.ops.len() - 2],
+        SolidOp::Fillet { .. }
+    ));
+    assert_eq!(plan.op_features.last(), Some(&fillet_id));
 }
 
 /// A stated boolean tolerance wraps each op the feature makes, in its
