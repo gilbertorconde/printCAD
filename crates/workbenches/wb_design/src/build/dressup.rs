@@ -55,6 +55,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             radius,
             edges,
             follow_tangent,
+            corner,
             ..
         } => {
             if *radius <= 0.0 {
@@ -77,6 +78,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                     radius: *radius as f64,
                     edges: edge_selection(edges)?,
                     follow_tangent: *follow_tangent,
+                    corner: *corner,
                 },
             }
         }
@@ -88,6 +90,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             flip,
             edges,
             follow_tangent,
+            corner,
             ..
         } => {
             if *size <= 0.0 {
@@ -117,6 +120,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                 flip: *flip,
                 edges: edge_selection(edges)?,
                 follow_tangent: *follow_tangent,
+                corner: *corner,
             }
         }
         _ => return Ok(None),

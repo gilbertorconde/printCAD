@@ -497,3 +497,29 @@ fn an_open_profile_fails_on_its_feature() {
     // The feature names itself wherever the error shows.
     assert!(!err.message.contains("BadPad"), "{}", err.message);
 }
+
+/// A fillet's and a chamfer's corner choice reaches the op they build,
+/// and ones saved before they had the choice load with setback and point
+/// corners, building as before.
+#[test]
+fn a_dress_up_s_corner_choice_reaches_its_op() {
+    use kernel_api::{ChamferCorner, FilletCorner};
+    let old = |json| serde_json::from_value::<DesignFeature>(json).unwrap();
+    let mut fillet = old(serde_json::json!({"Fillet": {"radius": 1.0, "edges": "All"}}));
+    let mut chamfer = old(serde_json::json!({"Chamfer": {"size": 1.0, "edges": "All"}}));
+    let corners = |feature: &DesignFeature| match edge_op(feature).unwrap() {
+        Some(SolidOp::Fillet { corner, .. }) => format!("{corner:?}"),
+        Some(SolidOp::Chamfer { corner, .. }) => format!("{corner:?}"),
+        other => panic!("not a dress-up op: {other:?}"),
+    };
+    assert_eq!(corners(&fillet), "Setback");
+    assert_eq!(corners(&chamfer), "Point");
+    if let DesignFeature::Fillet { corner, .. } = &mut fillet {
+        *corner = FilletCorner::RollingBall;
+    }
+    if let DesignFeature::Chamfer { corner, .. } = &mut chamfer {
+        *corner = ChamferCorner::Facet;
+    }
+    assert_eq!(corners(&fillet), "RollingBall");
+    assert_eq!(corners(&chamfer), "Facet");
+}

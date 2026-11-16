@@ -6,7 +6,7 @@
 //! edge at once, resolved on the solid as it stands, so blends and bevels
 //! that meet at a vertex close their corner between them.
 
-use kernel_api::{ChamferSpec, EdgeSelection, ThicknessJoin};
+use kernel_api::{ChamferCorner, ChamferSpec, EdgeSelection, FilletCorner, ThicknessJoin};
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
     BlendRefusal, Chamfer, chamfer_edges_checked, chamfer_edges_with, fillet_edges,
@@ -247,7 +247,14 @@ pub fn fillet(
     radius: f64,
     edges: &EdgeSelection,
     follow_tangent: bool,
+    corner: FilletCorner,
 ) -> Result<Shape, Refusal> {
+    if corner == FilletCorner::RollingBall {
+        return Err("the kernel does not build rolling-ball corners yet; \
+                    choose setback corners"
+            .to_string()
+            .into());
+    }
     let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
     let pick =
         |picked: &[usize]| -> Vec<Shape> { picked.iter().map(|&i| chain[i].clone()).collect() };
@@ -838,6 +845,7 @@ pub fn chamfer(
     flip: bool,
     edges: &EdgeSelection,
     follow_tangent: bool,
+    corner: ChamferCorner,
 ) -> Result<Shape, Refusal> {
     let asked = match spec {
         ChamferSpec::EqualDistance { distance } | ChamferSpec::DistanceAngle { distance, .. } => {
@@ -847,6 +855,18 @@ pub fn chamfer(
     };
     let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer")?;
     let specs = chamfer_specs(model, solid, spec, flip, chain)?;
+    if corner == ChamferCorner::Facet {
+        let built = ogeom::fillet::chamfer_edges_cornered(
+            model,
+            solid,
+            &specs,
+            ogeom::fillet::ChamferCorner::Facet,
+            tol(),
+        )
+        .map_err(|e| format!("chamfer corners as facets: {e}"))?;
+        crate::naming::record(&built.history);
+        return Ok(built.shape);
+    }
     match chamfer_edges_checked(model, solid, &specs, tol()) {
         Ok(built) => {
             crate::naming::record(&built.history);
@@ -963,6 +983,7 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Opt
             flip,
             edges,
             follow_tangent,
+            ..
         } => {
             let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "chamfer").ok()?;
             let specs = chamfer_specs(&mut model, solid, spec, *flip, chain).ok()?;

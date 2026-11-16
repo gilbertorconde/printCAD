@@ -805,9 +805,10 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 radius,
                 edges,
                 follow_tangent,
+                corner,
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
-                ops::dressup::fillet(&mut model, &solid, *radius, edges, *follow_tangent)
+                ops::dressup::fillet(&mut model, &solid, *radius, edges, *follow_tangent, *corner)
                     .map_err(refused)?
             }
             SolidOp::BlendFaces { radius, faces } => {
@@ -819,10 +820,19 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 flip,
                 edges,
                 follow_tangent,
+                corner,
             } => {
                 let solid = base.ok_or_else(|| err("chamfer needs an existing solid".into()))?;
-                ops::dressup::chamfer(&mut model, &solid, spec, *flip, edges, *follow_tangent)
-                    .map_err(refused)?
+                ops::dressup::chamfer(
+                    &mut model,
+                    &solid,
+                    spec,
+                    *flip,
+                    edges,
+                    *follow_tangent,
+                    *corner,
+                )
+                .map_err(refused)?
             }
             SolidOp::Draft {
                 angle_deg,

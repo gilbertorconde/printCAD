@@ -4,6 +4,7 @@
 
 use bench_api::Select;
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
+use kernel_api::{ChamferCorner, FilletCorner};
 
 use crate::feature::{ChamferMode, DesignFeature, EdgePick, EdgeSel, ExtrudeMode, FacePick};
 use crate::form::Form;
@@ -13,6 +14,23 @@ use super::{
     face_pick_row, label_row, mm_drag, mm_drag_upto, number, number_drag, pick, picked_edges,
     picked_row, set_f32, signed_mm, small_button, taper_note, use_button,
 };
+
+const FILLET_CORNERS: [FilletCorner; 2] = [FilletCorner::Setback, FilletCorner::RollingBall];
+const CHAMFER_CORNERS: [ChamferCorner; 2] = [ChamferCorner::Point, ChamferCorner::Facet];
+
+fn fillet_corner_label(corner: &FilletCorner) -> &'static str {
+    match corner {
+        FilletCorner::Setback => "Setback",
+        FilletCorner::RollingBall => "Rolling ball",
+    }
+}
+
+fn chamfer_corner_label(corner: &ChamferCorner) -> &'static str {
+    match corner {
+        ChamferCorner::Point => "Point",
+        ChamferCorner::Facet => "Facet",
+    }
+}
 
 /// The Fillet, Chamfer, Draft, Offset faces, Offset solid, Scale, Move
 /// faces, Delete faces and Thickness editors; `true` when it changed the
@@ -31,6 +49,7 @@ pub(super) fn dressup_editor(
             radius,
             edges,
             follow_tangent,
+            corner,
             ..
         } => {
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
@@ -38,6 +57,7 @@ pub(super) fn dressup_editor(
             changed |= edge_sel_editor(f, ctx, edges, true);
             if !matches!(edges, EdgeSel::BetweenFaces(_)) {
                 changed |= tangent_row(f, follow_tangent);
+                changed |= pick(f, "Corners", &FILLET_CORNERS, corner, fillet_corner_label);
             }
         }
         DesignFeature::Chamfer {
@@ -48,6 +68,7 @@ pub(super) fn dressup_editor(
             flip,
             edges,
             follow_tangent,
+            corner,
             ..
         } => {
             changed |= pick(f, "Type", &ChamferMode::ALL, mode, |candidate| {
@@ -69,6 +90,7 @@ pub(super) fn dressup_editor(
             }
             changed |= edge_sel_editor(f, ctx, edges, false);
             changed |= tangent_row(f, follow_tangent);
+            changed |= pick(f, "Corners", &CHAMFER_CORNERS, corner, chamfer_corner_label);
         }
         DesignFeature::Draft {
             angle_deg,

@@ -386,6 +386,13 @@ edge (Flip direction takes the other) and keeps it on that side all along
 a tangent chain, even where the faces change from a flat side to a round
 and on.
 
+**Corners** says how a vertex closes where the rounds or bevels meet. A
+fillet's Setback stops each round short of the corner and fills the gap
+with one smooth patch; Rolling ball, where the rounds would meet along the
+curves where they cross, is not built yet and says so. A chamfer's Point
+mitres the bevels into one point; Facet ends them on a small flat facet,
+a triangle where three meet (not yet on a padded solid's corners).
+
 A fillet's Edges choice **Between two faces** rounds between two picked
 faces that need share no edge: the ball rolls between them, and the round
 fills or takes off what lies between it and where the faces' surfaces
