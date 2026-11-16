@@ -868,6 +868,7 @@ mod tests {
             radius: 1.0,
             edges: crate::feature::EdgeSel::Edges(vec![edge]),
             follow_tangent: false,
+            corner: Default::default(),
             refine: false,
         };
         let key = crate::build::edge_op(&fillet)

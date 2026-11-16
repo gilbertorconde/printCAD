@@ -537,6 +537,29 @@ impl ThicknessJoin {
     }
 }
 
+/// How a fillet closes a vertex where its rounds meet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
+pub enum FilletCorner {
+    /// Each round stops short of the vertex and one patch, tangent to them
+    /// all, fills the opening.
+    #[default]
+    Setback,
+    /// The ball rolls through the corner: no round stops short, and the
+    /// rounds meet along the curves where they cross.
+    RollingBall,
+}
+
+/// How a chamfer closes a vertex where three or more of its bevels meet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
+pub enum ChamferCorner {
+    /// The bevels mitre into one point.
+    #[default]
+    Point,
+    /// Each bevel stops at a small flat facet across the corner: a
+    /// triangle where three bevels meet.
+    Facet,
+}
+
 /// Chamfer sizing, mirroring the three standard input styles.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ChamferSpec {
@@ -555,17 +578,20 @@ impl SolidOp {
             SolidOp::Fillet {
                 edges,
                 follow_tangent,
+                corner,
                 ..
             } => SolidOp::Fillet {
                 radius: 0.0,
                 edges: edges.clone(),
                 follow_tangent: *follow_tangent,
+                corner: *corner,
             },
             SolidOp::Chamfer {
                 spec,
                 flip,
                 edges,
                 follow_tangent,
+                corner,
             } => SolidOp::Chamfer {
                 spec: match *spec {
                     ChamferSpec::EqualDistance { .. } => {
@@ -586,6 +612,7 @@ impl SolidOp {
                 flip: *flip,
                 edges: edges.clone(),
                 follow_tangent: *follow_tangent,
+                corner: *corner,
             },
             _ => return None,
         };
@@ -709,6 +736,8 @@ pub enum SolidOp {
         edges: EdgeSelection,
         #[serde(default)]
         follow_tangent: bool,
+        #[serde(default)]
+        corner: FilletCorner,
     },
     /// Round between two faces of the running solid, which need share no
     /// edge: the ball rolling between them, its round filling or taking off
@@ -721,6 +750,8 @@ pub enum SolidOp {
         edges: EdgeSelection,
         #[serde(default)]
         follow_tangent: bool,
+        #[serde(default)]
+        corner: ChamferCorner,
     },
     /// Tilt the selected faces by `angle_deg` about their intersection with
     /// the neutral plane.

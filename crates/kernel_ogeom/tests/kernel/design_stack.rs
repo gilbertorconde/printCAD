@@ -246,6 +246,7 @@ fn fillet_feature_rounds_the_pad_through_the_full_stack() {
             radius: 2.0,
             edges: wb_design::EdgeSel::All,
             follow_tangent: false,
+            corner: Default::default(),
             refine: false,
         },
     );
@@ -586,6 +587,7 @@ fn bore_rim_fillets() {
                 direction: [0.0, 1.0, 0.0],
             }]),
             follow_tangent: false,
+            corner: Default::default(),
             refine: false,
         },
     );
@@ -621,6 +623,7 @@ fn a_fillet_found_by_position_carries_a_warning() {
             direction: [1.0, 0.0, 0.0],
         }]),
         follow_tangent: false,
+        corner: Default::default(),
         refine: false,
     };
     let round = doc.add_in(body, "Fillet", fillet([7, 8]));
@@ -2223,6 +2226,7 @@ fn rounded_corner_and(dress_up: DesignFeature) -> (Document, BodyId) {
                 direction: [0.0, 0.0, 1.0],
             }]),
             follow_tangent: false,
+            corner: Default::default(),
             refine: false,
         },
     );
@@ -2266,6 +2270,7 @@ fn top_chain() -> Vec<wb_design::EdgePick> {
 #[test]
 fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
     let fillet = |edges: Vec<wb_design::EdgePick>, follow_tangent| DesignFeature::Fillet {
+        corner: Default::default(),
         refine: false,
         radius: 1.0,
         edges: wb_design::EdgeSel::Edges(edges),
@@ -2316,6 +2321,7 @@ fn a_two_distance_chamfer_keeps_its_sides_along_a_tangent_chain() {
         flip,
         edges: wb_design::EdgeSel::Edges(vec![top_chain()[0]]),
         follow_tangent: true,
+        corner: Default::default(),
         refine: false,
     };
     // The top inset by h along the chain: a (20 - h) square whose rounded
@@ -2994,6 +3000,7 @@ fn a_fillet_follows_its_edge_by_name_when_the_pad_grows() {
             radius: 2.0,
             edges: wb_design::EdgeSel::Edges(vec![pick]),
             follow_tangent: false,
+            corner: Default::default(),
             refine: false,
         },
     );
@@ -4636,6 +4643,7 @@ fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
                 pick([20.0, 20.0, 5.0], [0.0, 0.0, 1.0]),
             ]),
             follow_tangent: true,
+            corner: Default::default(),
             refine: false,
         },
     );
@@ -5032,6 +5040,7 @@ fn a_fillet_between_two_faces_rounds_across_a_groove() {
             face([30.0, 10.0, 10.0], [0.0, 0.0, 1.0]),
         ]),
         follow_tangent: false,
+        corner: Default::default(),
         refine: false,
     };
     let fillet = doc.add_in(body, "Fillet", between(3.0));

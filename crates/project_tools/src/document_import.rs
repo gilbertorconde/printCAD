@@ -1554,6 +1554,7 @@ impl<'a> Importer<'a> {
                 radius: size("Radius")?,
                 edges,
                 follow_tangent: true,
+                corner: Default::default(),
                 refine,
             }));
         }
@@ -1583,6 +1584,7 @@ impl<'a> Importer<'a> {
             flip: optional_bool(object, "FlipDirection", false)?,
             edges,
             follow_tangent: true,
+            corner: Default::default(),
             refine,
         }))
     }

@@ -66,6 +66,7 @@ fn fillet(radius: f64, edges: EdgeSelection, follow: bool) -> SolidOp {
         radius,
         edges,
         follow_tangent: follow,
+        corner: Default::default(),
     }
 }
 fn chamfer(distance: f64, edges: EdgeSelection, follow: bool) -> SolidOp {
@@ -74,6 +75,7 @@ fn chamfer(distance: f64, edges: EdgeSelection, follow: bool) -> SolidOp {
         flip: false,
         edges,
         follow_tangent: follow,
+        corner: Default::default(),
     }
 }
 fn picked(probes: &[([f64; 3], [f64; 3])]) -> EdgeSelection {
@@ -823,6 +825,7 @@ fn any_edge_chamfers_in_every_spelling() {
                 flip: false,
                 edges: EdgeSelection::Near(vec![near]),
                 follow_tangent: false,
+                corner: Default::default(),
             });
             match try_chain(&chain) {
                 Ok(r) if is_sound(&r.brep_blob) => {}

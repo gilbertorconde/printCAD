@@ -2007,6 +2007,10 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         refine: bool,
+        /// How the rounds close a vertex where they meet.
+        #[serde(default)]
+        #[walk(setting)]
+        corner: kernel_api::FilletCorner,
     },
     Chamfer {
         #[walk(length("size", "Size"))]
@@ -2034,6 +2038,10 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         refine: bool,
+        /// How the bevels close a vertex where three or more meet.
+        #[serde(default)]
+        #[walk(setting)]
+        corner: kernel_api::ChamferCorner,
     },
     Draft {
         #[walk(angle("angle", "Angle"))]

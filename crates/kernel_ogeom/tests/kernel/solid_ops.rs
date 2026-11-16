@@ -271,6 +271,7 @@ fn an_edge_pick_far_from_every_edge_fails() {
                 radius: 2.0,
                 edges: EdgeSelection::Near(vec![point]),
                 follow_tangent: false,
+                corner: Default::default(),
             },
         ])
     };
@@ -300,6 +301,7 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
                     direction,
                 }]),
                 follow_tangent: false,
+                corner: Default::default(),
             },
         ])?;
         let volume = volume(&result.brep_blob);
@@ -427,6 +429,7 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
                 radius: 12.0,
                 edges: near_top_edge(),
                 follow_tangent: false,
+                corner: Default::default(),
             },
         ),
         (
@@ -436,6 +439,7 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
                 flip: false,
                 edges: near_top_edge(),
                 follow_tangent: false,
+                corner: Default::default(),
             },
         ),
     ] {
@@ -472,12 +476,14 @@ fn a_refused_dress_up_names_its_failing_edge() {
         radius: size,
         edges: picks(),
         follow_tangent: false,
+        corner: Default::default(),
     };
     let chamfer = |size: f64| SolidOp::Chamfer {
         spec: ChamferSpec::EqualDistance { distance: size },
         flip: false,
         edges: picks(),
         follow_tangent: false,
+        corner: Default::default(),
     };
     for dress_up in [&fillet as &dyn Fn(f64) -> SolidOp, &chamfer] {
         let at = |size: f64| try_chain(&[block(), step.clone(), dress_up(size)]);
@@ -524,6 +530,7 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
             radius: 1.5,
             edges: EdgeSelection::All,
             follow_tangent: false,
+            corner: Default::default(),
         },
     ])
     .expect_err("top and bottom bands overlap on the 2 mm sides");
@@ -637,6 +644,7 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
             radius: 2.0,
             edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
             follow_tangent: false,
+            corner: Default::default(),
         },
     ]);
     assert_eq!(
@@ -661,6 +669,7 @@ fn chamfers_of_one_face_meet_mitred_at_its_corners() {
             flip: false,
             edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
             follow_tangent: false,
+            corner: Default::default(),
         },
     ]);
     assert_eq!(
@@ -695,6 +704,7 @@ fn fillets_of_three_edges_round_their_corner() {
                         [20.0, 20.0, 5.0],
                     ]),
                     follow_tangent: false,
+                    corner: Default::default(),
                 },
             ],
             &fine_detail(),
@@ -881,6 +891,7 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
         radius: 1.0,
         edges: EdgeSelection::All,
         follow_tangent: false,
+        corner: Default::default(),
     });
     let cylinders = chain(&ops)
         .mesh
@@ -891,6 +902,60 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
         })
         .count();
     assert_eq!(cylinders, 24, "one round per edge of the step");
+}
+
+/// Rolling-ball corners on the refined step: the concave rounds run
+/// through the inner corners and the convex ones sweep into them, every
+/// face analytic, still one cylinder per edge.
+#[test]
+#[ignore = "kernel: rolling-ball fillet corners (FilletCorner::RollingBall) are not built yet"]
+fn rolling_ball_corners_on_the_step_are_analytic() {
+    use kernel_api::{FaceSurface, FilletCorner};
+    let mut ops = three_step_pads();
+    ops.push(SolidOp::Fillet {
+        radius: 1.0,
+        edges: EdgeSelection::All,
+        follow_tangent: false,
+        corner: FilletCorner::RollingBall,
+    });
+    let built = chain(&ops);
+    let surfaces = &built.mesh.face_surfaces;
+    assert!(
+        !surfaces.iter().any(|s| matches!(s, FaceSurface::Other)),
+        "no free-form patch"
+    );
+    let cylinders = surfaces
+        .iter()
+        .filter(|s| matches!(s, FaceSurface::Cylinder { .. }))
+        .count();
+    assert_eq!(cylinders, 24);
+    assert!(super::common::is_sound(&built.brep_blob));
+}
+
+/// A box chamfered on every edge with facet corners: each corner gains a
+/// triangle, and the facet takes off the tetrahedron d³/12 past the point
+/// the mitred bevels meet at.
+#[test]
+#[ignore = "kernel: facet chamfer corners refuse a solid whose cap reuses another face's edges at a moved location, as every pad's does"]
+fn facet_corners_cut_a_triangle_off_each_corner_of_a_box() {
+    use kernel_api::ChamferCorner;
+    let chamfered = |corner| {
+        chain(&[
+            block(),
+            SolidOp::Chamfer {
+                spec: ChamferSpec::EqualDistance { distance: 1.0 },
+                flip: false,
+                edges: EdgeSelection::All,
+                follow_tangent: false,
+                corner,
+            },
+        ])
+    };
+    let point = chamfered(ChamferCorner::Point);
+    let facet = chamfered(ChamferCorner::Facet);
+    assert_eq!(face_count(&facet.mesh), face_count(&point.mesh) + 8);
+    let taken = volume(&point.brep_blob) - volume(&facet.brep_blob);
+    assert!((taken - 8.0 / 12.0).abs() < 1e-6, "{taken}");
 }
 
 /// Each face of a mesh says what surface it was cut from: a cylinder's side
@@ -3022,6 +3087,7 @@ fn a_cylinder_bevels_every_edge_and_its_top_face_s_leaving_the_seam() {
                 flip: false,
                 edges: edges.clone(),
                 follow_tangent: false,
+                corner: Default::default(),
             },
         ];
         let got = volume_of(&ops).unwrap_or_else(|e| panic!("{edges:?}: {e}"));
@@ -3106,6 +3172,7 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
             radius: 0.5,
             edges: EdgeSelection::Near(points),
             follow_tangent,
+            corner: Default::default(),
         });
         volume(&try_chain(&ops).expect("the seam rounds").brep_blob)
     };
@@ -3141,6 +3208,7 @@ fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
                 faces: [0, 0],
             }]),
             follow_tangent: true,
+            corner: Default::default(),
         },
     ];
     let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");
