@@ -2455,6 +2455,7 @@ fn a_fillet_previews_the_rounded_body_over_the_body_before_it() {
             radius: 2.0,
             edges: EdgeSelection::All,
             follow_tangent: false,
+            corner: Default::default(),
         },
     ];
     let built = new_kernel()
