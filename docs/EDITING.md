@@ -384,7 +384,11 @@ filleted corner and the sides past it). A chamfer by two distances, or by
 a distance and an angle, measures its first distance on one face of the
 edge (Flip direction takes the other) and keeps it on that side all along
 a tangent chain, even where the faces change from a flat side to a round
-and on.
+and on. A chamfer's **Auto**, a new one's, bevels its size each way, but a
+face too narrow for it takes the bevel only as far as it goes while the
+other face's leg goes on, edge by edge; its handle drags until every face
+has run out. A chamfer by two distances has a handle on each face, each
+stopping where its face runs out.
 
 A fillet's Type is **Auto** for a new one: one radius, but on a single
 edge a face too narrow for it takes the round only as far as it goes,

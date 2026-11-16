@@ -135,6 +135,9 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                         distance: *size as f64,
                     }
                 }
+                crate::feature::ChamferMode::Auto => kernel_api::ChamferSpec::Auto {
+                    distance: *size as f64,
+                },
                 crate::feature::ChamferMode::TwoDistances => {
                     kernel_api::ChamferSpec::TwoDistances {
                         distance1: *size as f64,

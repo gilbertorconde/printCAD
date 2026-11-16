@@ -757,6 +757,9 @@ fn half() -> f32 {
 /// Chamfer sizing style.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum ChamferMode {
+    /// One size, each face's leg stopping where the face runs out while
+    /// the other's goes on.
+    Auto,
     #[default]
     EqualDistance,
     TwoDistances,
@@ -764,7 +767,8 @@ pub enum ChamferMode {
 }
 
 impl ChamferMode {
-    pub const ALL: [ChamferMode; 3] = [
+    pub const ALL: [ChamferMode; 4] = [
+        ChamferMode::Auto,
         ChamferMode::EqualDistance,
         ChamferMode::TwoDistances,
         ChamferMode::DistanceAngle,
@@ -772,6 +776,7 @@ impl ChamferMode {
 
     pub fn label(&self) -> &'static str {
         match self {
+            ChamferMode::Auto => "Auto",
             ChamferMode::EqualDistance => "Equal distance",
             ChamferMode::TwoDistances => "Two distances",
             ChamferMode::DistanceAngle => "Distance + angle",

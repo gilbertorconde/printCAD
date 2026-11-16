@@ -4240,7 +4240,7 @@ Notes:
 - Without `edges` it bevels every edge of the solid (`edges = "All"`); `size` is 1 mm when left out. In the app, edges selected in the view are taken instead.
 - `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
 - Edges running on tangentially are taken too (`follow_tangent`, on by default).
-- `mode` is EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with `angle_deg`).
+- `mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far as a face too narrow for it goes, edge by edge.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.fillet`.
 

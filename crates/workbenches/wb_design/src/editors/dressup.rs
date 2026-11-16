@@ -110,7 +110,7 @@ pub(super) fn dressup_editor(
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
             changed |= mm_drag_upto(f, fx, size, ("Size:", "size"), most.and_then(|m| m.first));
             match mode {
-                ChamferMode::EqualDistance => {}
+                ChamferMode::Auto | ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {
                     let most = most.and_then(|m| m.second);
                     changed |= mm_drag_upto(f, fx, size2, ("Size 2:", "size2"), most);

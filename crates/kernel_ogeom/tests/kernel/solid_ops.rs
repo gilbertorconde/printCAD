@@ -1104,6 +1104,79 @@ fn an_auto_round_stops_at_a_narrow_face_and_grows_on_the_other() {
         .unwrap_or_else(|e| panic!("{} builds: {e}", largest - 0.01));
 }
 
+/// An automatic chamfer on the top front edge of a plate 4 mm thick, as
+/// the automatic round: one that fits both faces bevels its size each way;
+/// one too wide for the top stops its leg at the plate's back edge and
+/// goes on down the front, a 4 by 10 triangle taken off. Previewed, each
+/// face's limit is read, and two distances' limits are each face's own,
+/// whatever the distances are.
+#[test]
+fn an_auto_chamfer_stops_at_a_narrow_face_and_grows_on_the_other() {
+    let plate = || box_of(20.0, 4.0, 20.0);
+    let bevel = |spec| SolidOp::Chamfer {
+        spec,
+        flip: false,
+        edges: EdgeSelection::Near(vec![[10.0, 0.0, 20.0]]),
+        follow_tangent: false,
+        corner: Default::default(),
+    };
+    let auto = |distance| bevel(ChamferSpec::Auto { distance });
+    let taken = |op| 1600.0 - volume(&chain(&[plate(), op]).brep_blob);
+    assert!(
+        (taken(auto(3.0)) - 90.0).abs() < 1e-6,
+        "{}",
+        taken(auto(3.0))
+    );
+    assert!(
+        (taken(auto(10.0)) - 400.0).abs() < 1e-3,
+        "{}",
+        taken(auto(10.0))
+    );
+
+    let limit_of = |op: SolidOp| {
+        let detail = kernel_api::TessellationSettings::default();
+        let ops = [plate(), op];
+        new_kernel()
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(1..2)))
+            .expect("a small bevel builds")
+            .size_limit
+            .expect("the preview's limit")
+    };
+    let read = |limit: &kernel_api::SizeLimit| {
+        let sides = limit.sides.expect("the faces beside the edge");
+        let mut read: Vec<([i64; 3], f64)> = sides
+            .sides
+            .iter()
+            .map(|s| (s.direction.map(|c| c.round() as i64), s.largest.unwrap()))
+            .collect();
+        read.sort_by(|a, b| a.1.total_cmp(&b.1));
+        read
+    };
+    let automatic = limit_of(auto(1.0));
+    let faces = read(&automatic);
+    assert_eq!((faces[0].0, faces[1].0), ([0, 1, 0], [0, 0, -1]));
+    assert!(
+        (faces[0].1 - 4.0).abs() < 1e-3 && (faces[1].1 - 20.0).abs() < 1e-3,
+        "{faces:?}"
+    );
+    let largest = automatic.largest.expect("a size both faces stop");
+    assert!((largest - faces[1].1).abs() < 1e-9);
+    try_chain(&[plate(), auto(largest - 0.01)])
+        .unwrap_or_else(|e| panic!("{} builds: {e}", largest - 0.01));
+
+    let two = |distance1, distance2| {
+        bevel(ChamferSpec::TwoDistances {
+            distance1,
+            distance2,
+        })
+    };
+    let (small, large) = (limit_of(two(1.0, 1.0)), limit_of(two(0.5, 3.0)));
+    assert_eq!(small.key, large.key, "the limits hold for any distances");
+    assert_eq!(read(&small), read(&large));
+    let first = small.sides.unwrap().sides[0].largest;
+    assert_eq!(small.largest, first, "the first distance stops at its face");
+}
+
 /// Rounds of two distances on several edges go to the kernel together, so
 /// they close the corners where they meet.
 #[test]

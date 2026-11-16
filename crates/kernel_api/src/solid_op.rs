@@ -586,14 +586,27 @@ pub enum ChamferCorner {
 /// Chamfer sizing, mirroring the three standard input styles.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ChamferSpec {
-    EqualDistance { distance: f64 },
-    TwoDistances { distance1: f64, distance2: f64 },
-    DistanceAngle { distance: f64, angle_deg: f64 },
+    EqualDistance {
+        distance: f64,
+    },
+    /// `distance` on each face, or as far as a face too narrow for it goes,
+    /// edge by edge.
+    Auto {
+        distance: f64,
+    },
+    TwoDistances {
+        distance1: f64,
+        distance2: f64,
+    },
+    DistanceAngle {
+        distance: f64,
+        angle_deg: f64,
+    },
 }
 
 impl SolidOp {
     /// What a fillet's or chamfer's largest size depends on, hashed: the
-    /// op with its size left out (with two distances, their ratio kept).
+    /// op with its sizes left out.
     /// `None` for any other op.
     pub fn size_limit_key(&self) -> Option<u64> {
         use std::hash::{Hash, Hasher};
@@ -625,12 +638,11 @@ impl SolidOp {
                     ChamferSpec::EqualDistance { .. } => {
                         ChamferSpec::EqualDistance { distance: 0.0 }
                     }
-                    ChamferSpec::TwoDistances {
-                        distance1,
-                        distance2,
-                    } => ChamferSpec::TwoDistances {
+                    ChamferSpec::Auto { .. } => ChamferSpec::Auto { distance: 0.0 },
+                    // Each face's limit is its own, whatever the distances.
+                    ChamferSpec::TwoDistances { .. } => ChamferSpec::TwoDistances {
                         distance1: 0.0,
-                        distance2: distance2 / distance1,
+                        distance2: 0.0,
                     },
                     ChamferSpec::DistanceAngle { angle_deg, .. } => ChamferSpec::DistanceAngle {
                         distance: 0.0,

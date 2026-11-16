@@ -369,7 +369,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Chamfer {
                         size: 1.0,
-                        mode: ChamferMode::EqualDistance,
+                        mode: ChamferMode::Auto,
                         size2: 1.0,
                         angle_deg: 45.0,
                         flip: false,
