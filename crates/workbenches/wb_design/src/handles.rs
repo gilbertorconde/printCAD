@@ -17,7 +17,7 @@ use glam::Vec3;
 use serde_json::Value;
 
 use crate::feature::{
-    DesignFeature, EdgeSel, ExtrudeDirection, ExtrudeMode, FilletMode, RevolveMode,
+    ChamferMode, DesignFeature, EdgeSel, ExtrudeDirection, ExtrudeMode, FilletMode, RevolveMode,
 };
 
 /// How close to a handle, in logical pixels, a press takes hold of it.
@@ -324,11 +324,20 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
         }
         DesignFeature::Draft { .. } => out.push(draft_handle(&maker, &part, eye)),
         DesignFeature::Primitive { .. } => out.extend(primitive_handles(&maker, &part)),
-        DesignFeature::Fillet { edges, mode, .. } => match side_handles(&maker, &part, *mode) {
-            Some(two) => out.extend(two),
-            None => out.push(edge_handle(&maker, edges, "/radius", eye)),
-        },
-        DesignFeature::Chamfer { edges, .. } => out.push(edge_handle(&maker, edges, "/size", eye)),
+        DesignFeature::Fillet { edges, mode, .. } => {
+            let two = *mode == FilletMode::TwoDistances;
+            match side_handles(&maker, &part, two, ["/radius", "/radius2"]) {
+                Some(both) => out.extend(both),
+                None => out.push(edge_handle(&maker, edges, "/radius", eye)),
+            }
+        }
+        DesignFeature::Chamfer { edges, mode, .. } => {
+            let two = *mode == ChamferMode::TwoDistances;
+            match side_handles(&maker, &part, two, ["/size", "/size2"]) {
+                Some(both) => out.extend(both),
+                None => out.push(edge_handle(&maker, edges, "/size", eye)),
+            }
+        }
         _ => {}
     }
     out.into_iter().flatten().collect()
@@ -769,23 +778,25 @@ fn edge_handle(maker: &Maker, edges: &EdgeSel, pointer: &str, eye: Vec3) -> Opti
     Some(handle)
 }
 
-/// A fillet of two distances': one on each face beside its edge, running
-/// from the edge the way the face does, each stopping where its face runs
-/// out. `None` until a preview build has read the faces for the fillet as
-/// it stands, or for any other fillet.
+/// A fillet's or chamfer's of two distances (`two`), on the numbers at
+/// `pointers`: one on each face beside its (first) edge, running from the
+/// edge the way the face does, each stopping where its face runs out.
+/// `None` until a preview build has read the faces for the feature as it
+/// stands, or without two distances.
 fn side_handles(
     maker: &Maker,
     part: &DesignFeature,
-    mode: FilletMode,
+    two: bool,
+    pointers: [&str; 2],
 ) -> Option<Vec<Option<Handle>>> {
-    if mode != FilletMode::TwoDistances {
+    if !two {
         return None;
     }
     let key = crate::build::edge_op(part).ok()??.size_limit_key()?;
     let limit = maker.document.size_limit(maker.feature)?;
     let sides = (limit.key == key).then_some(limit.sides?)?;
     let origin = maker.world64(sides.at);
-    let handles = ["/radius", "/radius2"]
+    let handles = pointers
         .into_iter()
         .zip(sides.sides)
         .map(|(pointer, side)| {

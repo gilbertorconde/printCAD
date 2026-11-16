@@ -46,13 +46,18 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
     let limit = document
         .size_limit(feature)
         .filter(|limit| limit.key == key);
-    // A fillet's two distances each stop where their own face runs out.
-    if let DesignFeature::Fillet {
-        mode: FilletMode::TwoDistances,
-        ..
-    } = part
-        && let Some(sides) = limit.and_then(|limit| limit.sides)
-    {
+    // Two distances each stop where their own face runs out.
+    let two = matches!(
+        part,
+        DesignFeature::Fillet {
+            mode: FilletMode::TwoDistances,
+            ..
+        } | DesignFeature::Chamfer {
+            mode: ChamferMode::TwoDistances,
+            ..
+        }
+    );
+    if two && let Some(sides) = limit.and_then(|limit| limit.sides) {
         let [first, second] = sides.sides.map(|side| {
             side.largest
                 .map(|most| hundredths_below(most as f32))

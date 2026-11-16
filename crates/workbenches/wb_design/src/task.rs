@@ -981,25 +981,22 @@ mod tests {
         assert_eq!(radius, 9.0, "typed, not held to the limit");
     }
 
-    /// A fillet of two distances has a handle on each face beside its
-    /// edge, running the way the face does and stopping where that face
-    /// runs out, whatever the other distance; a new size of either keeps
-    /// the limits found.
+    /// A fillet or chamfer of two distances has a handle on each face
+    /// beside its edge, running the way the face does and stopping where
+    /// that face runs out, whatever the other distance; a new size of
+    /// either keeps the limits found.
     #[test]
-    fn each_of_a_fillet_s_two_distances_drags_on_its_own_face_to_its_own_limit() {
-        let Scene {
-            mut doc,
-            pad: pad_id,
-            ..
-        } = scene();
-        let body = doc.get_feature_meta(pad_id).unwrap().body;
-        let fillet = |radius: f32, radius2: f32| DesignFeature::Fillet {
-            radius,
-            edges: crate::feature::EdgeSel::Edges(vec![crate::feature::EdgePick {
+    fn each_of_two_distances_drags_on_its_own_face_to_its_own_limit() {
+        fn edges() -> crate::feature::EdgeSel {
+            crate::feature::EdgeSel::Edges(vec![crate::feature::EdgePick {
                 point: [5.0, 0.0, 10.0],
                 direction: [1.0, 0.0, 0.0],
                 faces: [0; 2],
-            }]),
+            }])
+        }
+        let fillet = |radius: f32, radius2: f32| DesignFeature::Fillet {
+            radius,
+            edges: edges(),
             follow_tangent: false,
             corner: Default::default(),
             refine: false,
@@ -1009,55 +1006,79 @@ mod tests {
             profile: Default::default(),
             rho: 0.5,
         };
-        let key = |f: &DesignFeature| {
-            crate::build::edge_op(f)
-                .unwrap()
-                .unwrap()
-                .size_limit_key()
-                .unwrap()
+        let chamfer = |size: f32, size2: f32| DesignFeature::Chamfer {
+            size,
+            mode: crate::feature::ChamferMode::TwoDistances,
+            size2,
+            angle_deg: 45.0,
+            flip: false,
+            edges: edges(),
+            follow_tangent: false,
+            corner: Default::default(),
+            refine: false,
         };
-        let first = fillet(1.0, 1.0);
-        let id = doc
-            .add_feature_in_body(first.clone(), "Fillet".into(), body)
-            .unwrap();
-        let side = |direction, largest| kernel_api::RoundSide { direction, largest };
-        let built = kernel_api::SolidBuildResult {
-            size_limit: Some(kernel_api::SizeLimit {
-                op_index: 0,
-                key: key(&first),
-                largest: Some(3.0),
-                sides: Some(kernel_api::RoundSides {
-                    at: [5.0, 0.0, 10.0],
-                    sides: [
-                        side([0.0, 1.0, 0.0], Some(3.0)),
-                        side([0.0, 0.0, -1.0], Some(7.0)),
-                    ],
+        type Made = fn(f32, f32) -> DesignFeature;
+        let cases: [(Made, [&str; 2]); 2] = [
+            (fillet, ["/Fillet/radius", "/Fillet/radius2"]),
+            (chamfer, ["/Chamfer/size", "/Chamfer/size2"]),
+        ];
+        for (made, [first_pointer, second_pointer]) in cases {
+            let Scene {
+                mut doc,
+                pad: pad_id,
+                ..
+            } = scene();
+            let body = doc.get_feature_meta(pad_id).unwrap().body;
+            let key = |f: &DesignFeature| {
+                crate::build::edge_op(f)
+                    .unwrap()
+                    .unwrap()
+                    .size_limit_key()
+                    .unwrap()
+            };
+            let first = made(1.0, 1.0);
+            let id = doc
+                .add_feature_in_body(first.clone(), "Dress-up".into(), body)
+                .unwrap();
+            let side = |direction, largest| kernel_api::RoundSide { direction, largest };
+            let built = kernel_api::SolidBuildResult {
+                size_limit: Some(kernel_api::SizeLimit {
+                    op_index: 0,
+                    key: key(&first),
+                    largest: Some(3.0),
+                    sides: Some(kernel_api::RoundSides {
+                        at: [5.0, 0.0, 10.0],
+                        sides: [
+                            side([0.0, 1.0, 0.0], Some(3.0)),
+                            side([0.0, 0.0, -1.0], Some(7.0)),
+                        ],
+                    }),
                 }),
-            }),
-            ..Default::default()
-        };
-        doc.store_size_limit(&[id], &built);
-        let moved = fillet(2.5, 6.0);
-        assert_eq!(key(&moved), key(&first), "the limits hold for any sizes");
-        doc.update_feature_data(id, moved.to_json()).unwrap();
-        let eye = glam::Vec3::new(5.0, -50.0, 50.0);
-        let handles = crate::handles::handles_of(&doc, id, eye);
-        let found: Vec<(String, [f32; 3], f32, f32)> = handles
-            .iter()
-            .map(|h| match h.shape {
-                crate::handles::Shape::Line { dir, .. } => {
-                    (h.pointer.clone(), dir.to_array(), h.value, h.stop)
-                }
-                _ => panic!("a line handle"),
-            })
-            .collect();
-        assert_eq!(
-            found,
-            vec![
-                ("/Fillet/radius".into(), [0.0, 1.0, 0.0], 2.5, 3.0),
-                ("/Fillet/radius2".into(), [0.0, 0.0, -1.0], 6.0, 7.0),
-            ]
-        );
+                ..Default::default()
+            };
+            doc.store_size_limit(&[id], &built);
+            let moved = made(2.5, 6.0);
+            assert_eq!(key(&moved), key(&first), "the limits hold for any sizes");
+            doc.update_feature_data(id, moved.to_json()).unwrap();
+            let eye = glam::Vec3::new(5.0, -50.0, 50.0);
+            let found: Vec<(String, [f32; 3], f32, f32)> =
+                crate::handles::handles_of(&doc, id, eye)
+                    .iter()
+                    .map(|h| match h.shape {
+                        crate::handles::Shape::Line { dir, .. } => {
+                            (h.pointer.clone(), dir.to_array(), h.value, h.stop)
+                        }
+                        _ => panic!("a line handle"),
+                    })
+                    .collect();
+            assert_eq!(
+                found,
+                vec![
+                    (first_pointer.into(), [0.0, 1.0, 0.0], 2.5, 3.0),
+                    (second_pointer.into(), [0.0, 0.0, -1.0], 6.0, 7.0),
+                ]
+            );
+        }
     }
 
     /// The body menu's Split makes two pieces, hides the body and opens

@@ -367,22 +367,52 @@ fn auto_round(
 }
 
 /// How far a round's contact goes on `face`, then on the edge's other
-/// face, before running off it: each read with the other contact kept at
-/// a sliver, so only its own face stops it. `None` where it runs on past
-/// the solid's size or the kernel cannot read it.
+/// face, before running off it.
 fn side_limits(model: &Model, solid: &Shape, edge: &Shape, face: &Shape) -> [Option<f64>; 2] {
+    sides_reach(model, solid, |on_face, on_other, up_to| {
+        largest_fillet_distances(model, solid, edge, face, on_face, on_other, up_to, tol())
+    })
+}
+
+/// How far a bevel's leg goes on `face`, then on the edge's other face,
+/// before running off it.
+fn chamfer_side_limits(
+    model: &Model,
+    solid: &Shape,
+    edge: &Shape,
+    face: &Shape,
+) -> [Option<f64>; 2] {
+    sides_reach(model, solid, |on_face, on_other, up_to| {
+        let legs = Chamfer::Distances {
+            face: face.clone(),
+            on_face,
+            on_other,
+        };
+        largest_chamfer_distance(model, solid, edge, &legs, up_to, tol())
+    })
+}
+
+/// Each face's own limit, as `reach` reads the largest common scale of
+/// two distances up to a bound: each read with the other face's distance
+/// kept at a sliver, so only its own face stops it. `None` where it runs
+/// on past the solid's size or the kernel cannot read it.
+fn sides_reach(
+    model: &Model,
+    solid: &Shape,
+    reach: impl Fn(f64, f64, f64) -> ogeom::core::OgeomResult<Option<f64>>,
+) -> [Option<f64>; 2] {
     const SLIVER: f64 = 1e-5;
     let Some(span) = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())
     else {
         return [None, None];
     };
-    let reach = |on_face: f64, on_other: f64| {
-        largest_fillet_distances(model, solid, edge, face, on_face, on_other, span, tol())
+    let read = |on_face: f64, on_other: f64| {
+        reach(on_face, on_other, span)
             .ok()
             .flatten()
             .filter(|scale| *scale < span * (1.0 - 1e-9))
     };
-    [reach(1.0, SLIVER), reach(SLIVER, 1.0)]
+    [read(1.0, SLIVER), read(SLIVER, 1.0)]
 }
 
 /// The faces beside the one edge a round of distances takes, as its drag
@@ -397,15 +427,27 @@ fn round_sides(
     flip: bool,
 ) -> Option<kernel_api::RoundSides> {
     let (edge, face) = distances_seat(model, solid, edges, follow_tangent, flip).ok()?;
-    let other = faces_of_edge(model, solid, &edge)
+    let limits = side_limits(model, solid, &edge, &face);
+    edge_sides(model, solid, &edge, &face, limits)
+}
+
+/// The faces beside `edge`, `face` first, as drag handles read them: a
+/// point on the edge, the way each face runs from it, and `limits`.
+fn edge_sides(
+    model: &mut Model,
+    solid: &Shape,
+    edge: &Shape,
+    face: &Shape,
+    limits: [Option<f64>; 2],
+) -> Option<kernel_api::RoundSides> {
+    let other = faces_of_edge(model, solid, edge)
         .ok()?
         .into_iter()
-        .find(|f| !f.is_same(&face))?;
-    let probe = failing_edge(model, &edge, [0, 0], 0, 1, String::new()).probe;
+        .find(|f| !f.is_same(face))?;
+    let probe = failing_edge(model, edge, [0, 0], 0, 1, String::new()).probe;
     let (at, along) = (point(probe.point), vector(probe.direction));
-    let limits = side_limits(model, solid, &edge, &face);
     let mut sides = Vec::with_capacity(2);
-    for (side, largest) in [(&face, limits[0]), (&other, limits[1])] {
+    for (side, largest) in [(face, limits[0]), (&other, limits[1])] {
         let (_, normal) = crate::probe::outward_at(model, side, at).ok()?;
         let across = normal.cross(along);
         let length = across.magnitude();
@@ -431,6 +473,77 @@ fn round_sides(
         at: array(at),
         sides: [sides[0], sides[1]],
     })
+}
+
+/// A chamfer's sides, for two distances or an automatic size: each face's
+/// limit the least over the chamfer's edges, the faces read at its first
+/// edge; and its first size at the limit: two distances' first face's,
+/// an automatic size's where every face of every edge has run out
+/// (`None` where one never does).
+fn chamfer_sides(
+    model: &mut Model,
+    solid: &Shape,
+    spec: &ChamferSpec,
+    flip: bool,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+) -> Option<(Option<f64>, Option<kernel_api::RoundSides>)> {
+    let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer").ok()?;
+    let faces = match spec {
+        ChamferSpec::Auto { .. } => chain
+            .iter()
+            .map(|edge| adjacent_face(model, solid, edge, false))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?,
+        _ => reference_faces(model, solid, &chain, flip).ok()?,
+    };
+    let limits: Vec<[Option<f64>; 2]> = chain
+        .iter()
+        .zip(&faces)
+        .map(|(edge, face)| chamfer_side_limits(model, solid, edge, face))
+        .collect();
+    let least = |i: usize| limits.iter().filter_map(|l| l[i]).reduce(f64::min);
+    let (first, second) = (least(0), least(1));
+    let largest = match spec {
+        ChamferSpec::Auto { .. } => {
+            let every: Vec<Option<f64>> = limits.iter().flatten().copied().collect();
+            if every.iter().all(Option::is_none) {
+                largest_size(
+                    model,
+                    solid,
+                    &auto_as_equal(spec, flip, edges, follow_tangent),
+                )
+            } else if every.iter().any(Option::is_none) {
+                None
+            } else {
+                every.into_iter().flatten().reduce(f64::max)
+            }
+        }
+        _ => first,
+    };
+    let sides = edge_sides(model, solid, &chain[0], &faces[0], [first, second]);
+    Some((largest, sides))
+}
+
+/// An automatic chamfer read as the equal-distance one it is while no
+/// face runs out.
+fn auto_as_equal(
+    spec: &ChamferSpec,
+    flip: bool,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+) -> kernel_api::SolidOp {
+    let distance = match spec {
+        ChamferSpec::Auto { distance } => *distance,
+        _ => 0.0,
+    };
+    kernel_api::SolidOp::Chamfer {
+        spec: ChamferSpec::EqualDistance { distance },
+        flip,
+        edges: edges.clone(),
+        follow_tangent,
+        corner: Default::default(),
+    }
 }
 
 /// The kernel's section for `profile`.
@@ -1007,9 +1120,9 @@ pub fn chamfer(
     corner: ChamferCorner,
 ) -> Result<Shape, Refusal> {
     let asked = match spec {
-        ChamferSpec::EqualDistance { distance } | ChamferSpec::DistanceAngle { distance, .. } => {
-            *distance
-        }
+        ChamferSpec::EqualDistance { distance }
+        | ChamferSpec::Auto { distance }
+        | ChamferSpec::DistanceAngle { distance, .. } => *distance,
         ChamferSpec::TwoDistances { distance1, .. } => *distance1,
     };
     let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer")?;
@@ -1083,13 +1196,14 @@ fn chamfer_specs(
     chain: Vec<Shape>,
 ) -> Result<Vec<(Shape, Chamfer)>, String> {
     let faces = match spec {
-        ChamferSpec::EqualDistance { .. } => Vec::new(),
+        ChamferSpec::EqualDistance { .. } | ChamferSpec::Auto { .. } => Vec::new(),
         _ => reference_faces(model, solid, &chain, flip)?,
     };
     let mut specs = Vec::with_capacity(chain.len());
     for (i, edge) in chain.iter().cloned().enumerate() {
         let spec = match spec {
             ChamferSpec::EqualDistance { distance } => Chamfer::Symmetric(*distance),
+            ChamferSpec::Auto { distance } => auto_bevel(model, solid, &edge, *distance)?,
             ChamferSpec::TwoDistances {
                 distance1,
                 distance2,
@@ -1110,6 +1224,28 @@ fn chamfer_specs(
         specs.push((edge, spec));
     }
     Ok(specs)
+}
+
+/// An automatic bevel of `edge`: `distance` on each face, or as far as a
+/// face too narrow for it goes.
+fn auto_bevel(
+    model: &Model,
+    solid: &Shape,
+    edge: &Shape,
+    distance: f64,
+) -> Result<Chamfer, String> {
+    let face = adjacent_face(model, solid, edge, false)?;
+    let [on_face, on_other] = chamfer_side_limits(model, solid, edge, &face)
+        .map(|most| distance.min(most.unwrap_or(distance)));
+    Ok(if on_face >= distance && on_other >= distance {
+        Chamfer::Symmetric(distance)
+    } else {
+        Chamfer::Distances {
+            face,
+            on_face,
+            on_other,
+        }
+    })
 }
 
 /// The largest first size `op`, a fillet or chamfer, builds at on
@@ -1150,6 +1286,24 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Lim
             return (None, None);
         }
     }
+    if let kernel_api::SolidOp::Chamfer {
+        spec: spec @ (ChamferSpec::Auto { .. } | ChamferSpec::TwoDistances { .. }),
+        flip,
+        edges,
+        follow_tangent,
+        ..
+    } = op
+        && let Some(read) = chamfer_sides(
+            &mut model.clone(),
+            solid,
+            spec,
+            *flip,
+            edges,
+            *follow_tangent,
+        )
+    {
+        return read;
+    }
     (largest_size(model, solid, op), None)
 }
 
@@ -1184,6 +1338,7 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
             let specs = chamfer_specs(&mut model, solid, spec, *flip, chain).ok()?;
             let first = match spec {
                 ChamferSpec::EqualDistance { distance }
+                | ChamferSpec::Auto { distance }
                 | ChamferSpec::DistanceAngle { distance, .. } => *distance,
                 ChamferSpec::TwoDistances { distance1, .. } => *distance1,
             };

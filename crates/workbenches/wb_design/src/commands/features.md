@@ -512,8 +512,9 @@ assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
 
 ## design.chamfer
 
-`mode` is EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with
-`angle_deg`).
+`mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`)
+or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far
+as a face too narrow for it goes, edge by edge.
 
 See also: `design.fillet`
 
