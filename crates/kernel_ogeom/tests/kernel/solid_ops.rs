@@ -2445,35 +2445,57 @@ fn a_build_previews_the_feature_it_is_asked_for() {
     );
 }
 
-/// A round has no tool of its own: its preview draws the rounded body over
-/// the body before it, which edges are still picked on.
+/// A round or bevel has no tool of its own: its preview draws what it
+/// takes off over the body after it, as a pocket's does, or, where it
+/// only adds (an inside round), what it adds over the body before it.
 #[test]
-fn a_fillet_previews_the_rounded_body_over_the_body_before_it() {
-    let ops = [
+fn a_dress_up_previews_what_it_takes_off_or_adds() {
+    let preview_of = |ops: &[SolidOp], at: std::ops::Range<usize>| {
+        let built = new_kernel()
+            .execute_solid_chain(
+                kernel_ogeom::ChainRequest::new(ops, &TessellationSettings::default())
+                    .preview(Some(at)),
+            )
+            .expect("it builds");
+        let preview = built.preview.expect("a preview");
+        let whole = volume(&built.brep_blob);
+        (preview, whole)
+    };
+
+    let bevelled = [
         block(),
-        SolidOp::Fillet {
-            radius: 2.0,
+        SolidOp::Chamfer {
+            spec: ChamferSpec::EqualDistance { distance: 1.0 },
+            flip: false,
             edges: EdgeSelection::All,
             follow_tangent: false,
             corner: Default::default(),
         },
     ];
-    let built = new_kernel()
-        .execute_solid_chain(
-            kernel_ogeom::ChainRequest::new(&ops, &TessellationSettings::default())
-                .preview(Some(1..2)),
-        )
-        .expect("a rounded block");
-    let preview = built.preview.expect("a preview");
-    assert!(!preview.cuts);
+    let (preview, whole) = preview_of(&bevelled, 1..2);
+    assert!(preview.cuts, "a bevel takes material off");
+    let shown = preview.shown.expect("the body after it");
+    assert!((volume(&shown.brep_blob) - whole).abs() < 1e-6);
+    let taken = mesh_volume(&preview.tool);
+    assert!((taken - (4000.0 - whole)).abs() < 0.05, "{taken}");
+
+    let mut inside = three_step_pads();
+    let rounded_at = inside.len();
+    inside.push(SolidOp::Fillet {
+        radius: 1.0,
+        edges: EdgeSelection::Near(vec![[0.0, 0.0, 7.0]]),
+        follow_tangent: false,
+        corner: Default::default(),
+    });
+    let (preview, whole) = preview_of(&inside, rounded_at..rounded_at + 1);
+    assert!(!preview.cuts, "an inside round only adds");
     let shown = preview.shown.expect("the body before it");
-    assert!((volume(&shown.brep_blob) - 4000.0).abs() < 1e-6);
-    assert_eq!(
-        face_count(&preview.tool),
-        face_count(&built.mesh),
-        "the tool is the rounded body"
-    );
-    assert!(face_count(&preview.tool) > 6);
+    // The round's (1 - pi/4) r^2 along 14 mm, its mesh's chords a few
+    // percent off the curve.
+    let added = mesh_volume(&preview.tool);
+    let exact = whole - volume(&shown.brep_blob);
+    assert!((exact - (1.0 - std::f64::consts::FRAC_PI_4) * 14.0).abs() < 1e-6);
+    assert!((added - exact).abs() < 0.05 * exact, "{added} for {exact}");
 }
 
 /// A sweep of `wires` on `plane`, extruded as `termination` says.
