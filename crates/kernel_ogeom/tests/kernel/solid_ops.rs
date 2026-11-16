@@ -2380,6 +2380,36 @@ fn a_build_previews_the_feature_it_is_asked_for() {
     );
 }
 
+/// A round has no tool of its own: its preview draws the rounded body over
+/// the body before it, which edges are still picked on.
+#[test]
+fn a_fillet_previews_the_rounded_body_over_the_body_before_it() {
+    let ops = [
+        block(),
+        SolidOp::Fillet {
+            radius: 2.0,
+            edges: EdgeSelection::All,
+            follow_tangent: false,
+        },
+    ];
+    let built = new_kernel()
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&ops, &TessellationSettings::default())
+                .preview(Some(1..2)),
+        )
+        .expect("a rounded block");
+    let preview = built.preview.expect("a preview");
+    assert!(!preview.cuts);
+    let shown = preview.shown.expect("the body before it");
+    assert!((volume(&shown.brep_blob) - 4000.0).abs() < 1e-6);
+    assert_eq!(
+        face_count(&preview.tool),
+        face_count(&built.mesh),
+        "the tool is the rounded body"
+    );
+    assert!(face_count(&preview.tool) > 6);
+}
+
 /// A sweep of `wires` on `plane`, extruded as `termination` says.
 fn extrude_on(
     plane: ProfilePlane,

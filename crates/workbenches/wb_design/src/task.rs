@@ -848,6 +848,48 @@ mod tests {
         assert_eq!(wb.tab.hovered_failing, Some(1));
     }
 
+    /// A chamfer's sizes, bound to formulas, are lengths above zero: a drag
+    /// stops short of zero instead of going negative.
+    #[test]
+    fn a_chamfer_s_sizes_stop_above_zero() {
+        let Scene {
+            mut doc,
+            pad: pad_id,
+            ..
+        } = scene();
+        let body = doc.get_feature_meta(pad_id).unwrap().body;
+        let chamfer = serde_json::from_value::<DesignFeature>(serde_json::json!({
+            "Chamfer": {"size": 1.0, "size2": 2.0, "mode": "TwoDistances", "edges": "All"}
+        }))
+        .unwrap();
+        let id = doc
+            .add_feature_in_body(chamfer, "Chamfer".into(), body)
+            .unwrap();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        let widgets = wb.task_widgets(&mut ctx, id);
+        let sizes: Vec<_> = bench_api::walk_widgets(&widgets)
+            .into_iter()
+            .filter_map(|w| match w {
+                Widget::Quantity(q) if q.label.starts_with("Size") => Some(q.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sizes.len(), 2, "both sizes shown");
+        for size in sizes {
+            assert!(size.bind.is_some(), "{} takes a formula", size.label);
+            assert!(
+                size.min.is_some_and(|m| m > 0.0),
+                "{}: {:?}",
+                size.label,
+                size.min
+            );
+        }
+    }
+
     /// With the largest radius the preview build found, the radius field
     /// and the view's handle stop a drag there, while a typed radius goes
     /// past it (and is refused by the build).

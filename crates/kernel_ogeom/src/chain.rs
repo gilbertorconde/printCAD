@@ -425,6 +425,9 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
     let mut after: Option<Shape> = None;
     let mut preview_tools: Vec<Shape> = Vec::new();
     let mut preview_cuts = false;
+    // A previewed round or bevel has no tool of its own: the body after it
+    // is drawn as one, over the body before it.
+    let mut preview_dresses_up = false;
     let unanswered = |after_op: usize| {
         if after_op == 0 {
             "there is no solid before it".to_string()
@@ -628,6 +631,11 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             }
         }
         let mut tool_snapshot: Option<ToolSnapshot> = None;
+        preview_dresses_up |= previewing(index)
+            && matches!(
+                solid_op,
+                SolidOp::Fillet { .. } | SolidOp::Chamfer { .. } | SolidOp::BlendFaces { .. }
+            );
         // Keep a feature's tool when it is the one previewed.
         let mut keep = |tool: &Shape, op: BooleanOp| {
             if previewing(index) {
@@ -1174,6 +1182,12 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             )
         })
         .or_else(|| tess::solid_bounds(&model, &final_shape, &mesh));
+    if preview_tools.is_empty()
+        && preview_dresses_up
+        && let Some(after) = after.clone()
+    {
+        preview_tools.push(after);
+    }
     // A preview that cannot be made leaves the build as it is.
     let preview = (!preview_tools.is_empty())
         .then(|| {

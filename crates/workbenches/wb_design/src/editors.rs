@@ -179,15 +179,10 @@ impl<'a> Formulas<'a> {
             .cloned()
     }
 
-    /// The field `label` as a formula field, when the feature has the
-    /// parameter formulas call `name` (after the step's prefix); an empty
-    /// `name` never binds. `Some(changed)` when it did, the value set by
-    /// hand coming back.
-    fn show(&mut self, f: &mut Form, field: (&str, &str), value: f64) -> Option<(bool, f64)> {
-        self.show_within(f, field, value, Bounds::default())
-    }
-
-    /// As [`Self::show`], the field held within `bounds`.
+    /// The field `label` as a formula field held within `bounds`, when the
+    /// feature has the parameter formulas call `name` (after the step's
+    /// prefix); an empty `name` never binds. `Some(changed)` when it did,
+    /// the value set by hand coming back.
     fn show_within(
         &mut self,
         f: &mut Form,
@@ -210,7 +205,7 @@ impl<'a> Formulas<'a> {
         Some(self.show_param(f, label, p, value, bounds))
     }
 
-    /// As [`Self::show`], for the parameter formulas call `name` whatever
+    /// As [`Self::show_within`], for the parameter formulas call `name` whatever
     /// the prefix (a primitive's `radius`, a step's `step2_length`).
     fn show_named(
         &mut self,
@@ -279,6 +274,13 @@ pub(super) struct Bounds {
     drag_max: Option<f64>,
 }
 
+/// A length above zero, as a plain length field holds it.
+const LENGTH: Bounds = Bounds {
+    min: Some(0.001),
+    max: Some(1.0e6),
+    drag_max: None,
+};
+
 impl Bounds {
     pub(super) fn within(min: f64, max: f64) -> Self {
         Self {
@@ -303,7 +305,7 @@ enum Kind {
 /// A number under `label` as `kind` reads it, dragged `speed` a point.
 fn quantity(label: &str, value: f64, kind: Kind, speed: f64) -> Quantity {
     let (dim, min, max) = match kind {
-        Kind::Mm => (Dim::Length, Some(0.001), Some(1.0e6)),
+        Kind::Mm => (Dim::Length, LENGTH.min, LENGTH.max),
         Kind::Offset => (Dim::Length, Some(-1.0e6), Some(1.0e6)),
         Kind::Degrees => (Dim::Angle, None, None),
         Kind::Plain => (Dim::Number, None, None),
@@ -360,7 +362,11 @@ fn bound_or(
     value: f64,
     (kind, speed): (Kind, f64),
 ) -> Option<f64> {
-    match fx.show(f, (label, name), value) {
+    let bounds = match kind {
+        Kind::Mm => LENGTH,
+        _ => Bounds::default(),
+    };
+    match fx.show_within(f, (label, name), value, bounds) {
         Some((true, v)) => Some(v),
         Some((false, _)) => None,
         None => number(f, label, value, kind, speed),
@@ -394,7 +400,7 @@ fn mm_drag_upto(
     let most = most.map(f64::from);
     let bounds = Bounds {
         drag_max: most,
-        ..Bounds::default()
+        ..LENGTH
     };
     let set = match fx.show_within(f, field, f64::from(*value), bounds) {
         Some((true, v)) => Some(v),
