@@ -6,11 +6,15 @@
 //! edge at once, resolved on the solid as it stands, so blends and bevels
 //! that meet at a vertex close their corner between them.
 
-use kernel_api::{ChamferCorner, ChamferSpec, EdgeSelection, FilletCorner, ThicknessJoin};
+use kernel_api::{
+    ChamferCorner, ChamferSpec, EdgeSelection, FilletCorner, RoundDistances, RoundProfile,
+    ThicknessJoin,
+};
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
-    BlendRefusal, Chamfer, chamfer_edges_checked, chamfer_edges_with, fillet_edges,
-    fillet_edges_checked, largest_chamfer_distance, largest_fillet_radius_all,
+    BlendRefusal, Chamfer, chamfer_edges_checked, chamfer_edges_with, fillet_edge_distances,
+    fillet_edges, fillet_edges_checked, largest_chamfer_distance, largest_fillet_distances,
+    largest_fillet_radius_all,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -248,7 +252,24 @@ pub fn fillet(
     edges: &EdgeSelection,
     follow_tangent: bool,
     corner: FilletCorner,
+    distances: Option<RoundDistances>,
 ) -> Result<Shape, Refusal> {
+    if let Some(distances) = distances {
+        let (edge, face) = distances_seat(model, solid, edges, follow_tangent, distances.flip)?;
+        let built = fillet_edge_distances(
+            model,
+            solid,
+            &edge,
+            &face,
+            radius,
+            distances.other,
+            profile(distances.profile),
+            tol(),
+        )
+        .map_err(|e| format!("fillet with two distances failed: {e}"))?;
+        crate::naming::record(&built.history);
+        return Ok(built.shape);
+    }
     if corner == FilletCorner::RollingBall {
         return Err("the kernel does not build rolling-ball corners yet; \
                     choose setback corners"
@@ -279,6 +300,36 @@ pub fn fillet(
                 fillet_edges(m, solid, &pick(picked), radius * share, tol()).map(|_| ())
             },
         )?),
+    }
+}
+
+/// The edge a round of two distances takes and the face its radius is
+/// measured on. The kernel rounds one such edge at a time, so a selection
+/// of more is refused.
+fn distances_seat(
+    model: &mut Model,
+    solid: &Shape,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+    flip: bool,
+) -> Result<(Shape, Shape), String> {
+    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
+    let [edge] = chain.as_slice() else {
+        return Err(format!(
+            "a fillet with two distances rounds one edge, this one selects {}: \
+             the kernel does not round several such edges together yet",
+            chain.len()
+        ));
+    };
+    let face = adjacent_face(model, solid, edge, flip)?;
+    Ok((edge.clone(), face))
+}
+
+/// The kernel's section for `profile`.
+fn profile(profile: RoundProfile) -> ogeom::fillet::RoundProfile {
+    match profile {
+        RoundProfile::Elliptical => ogeom::fillet::RoundProfile::Elliptical,
+        RoundProfile::Conic { rho } => ogeom::fillet::RoundProfile::Conic(rho),
     }
 }
 
@@ -963,6 +1014,48 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Opt
     let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
     let mut model = model.clone();
     let (read, builds): (f64, Box<dyn Fn(f64) -> bool>) = match op {
+        kernel_api::SolidOp::Fillet {
+            radius,
+            edges,
+            follow_tangent,
+            distances: Some(distances),
+            ..
+        } => {
+            if *radius <= 0.0 {
+                return None;
+            }
+            let (edge, face) =
+                distances_seat(&mut model, solid, edges, *follow_tangent, distances.flip).ok()?;
+            let (first, other, profile) = (*radius, distances.other, profile(distances.profile));
+            let scale = largest_fillet_distances(
+                &model,
+                solid,
+                &edge,
+                &face,
+                first,
+                other,
+                span / first,
+                tol(),
+            )
+            .ok()??;
+            let model = model.clone();
+            (
+                scale * first,
+                Box::new(move |r| {
+                    fillet_edge_distances(
+                        &mut model.clone(),
+                        solid,
+                        &edge,
+                        &face,
+                        r,
+                        other * r / first,
+                        profile,
+                        tol(),
+                    )
+                    .is_ok()
+                }),
+            )
+        }
         kernel_api::SolidOp::Fillet {
             edges,
             follow_tangent,

@@ -471,6 +471,10 @@ See also: `doc.faces`
 A radius larger than the faces beside an edge can take fails at
 `pc.doc.rebuild()`.
 
+`mode` is Radius or TwoDistances: `radius` on one face, `radius2` on the
+other (`flip` swaps them), its `profile` Elliptical or Conic (with `rho`
+strictly between 0 and 1, 0.5 when left out). Two distances round one edge.
+
 See also: `design.chamfer`
 
 ### One top edge of a block rounded
@@ -485,6 +489,22 @@ pc.design.fillet{body = body, radius = 3,
 assert(#pc.doc.rebuild() == 0, "the fillet builds")
 assert(#pc.doc.faces{body = body} == 7, "six faces and the round")
 local taken = (9 - math.pi * 9 / 4) * 40
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
+```
+
+### One edge rounded 2 mm into one face and 4 mm into the other
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+pc.design.fillet{body = body, radius = 2, mode = "TwoDistances", radius2 = 4,
+  edges = {Edges = {{point = {20, 0, 10}, direction = {1, 0, 0}}}}}
+assert(#pc.doc.rebuild() == 0, "the fillet builds")
+-- A quarter ellipse's corner, 2 x 4, along the edge.
+local taken = (8 - math.pi * 8 / 4) * 40
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
 ```

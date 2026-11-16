@@ -272,6 +272,7 @@ fn an_edge_pick_far_from_every_edge_fails() {
                 edges: EdgeSelection::Near(vec![point]),
                 follow_tangent: false,
                 corner: Default::default(),
+                distances: None,
             },
         ])
     };
@@ -302,6 +303,7 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
                 }]),
                 follow_tangent: false,
                 corner: Default::default(),
+                distances: None,
             },
         ])?;
         let volume = volume(&result.brep_blob);
@@ -430,6 +432,7 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
                 edges: near_top_edge(),
                 follow_tangent: false,
                 corner: Default::default(),
+                distances: None,
             },
         ),
         (
@@ -477,6 +480,7 @@ fn a_refused_dress_up_names_its_failing_edge() {
         edges: picks(),
         follow_tangent: false,
         corner: Default::default(),
+        distances: None,
     };
     let chamfer = |size: f64| SolidOp::Chamfer {
         spec: ChamferSpec::EqualDistance { distance: size },
@@ -531,6 +535,7 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
             edges: EdgeSelection::All,
             follow_tangent: false,
             corner: Default::default(),
+            distances: None,
         },
     ])
     .expect_err("top and bottom bands overlap on the 2 mm sides");
@@ -645,6 +650,7 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
             edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
             follow_tangent: false,
             corner: Default::default(),
+            distances: None,
         },
     ]);
     assert_eq!(
@@ -705,6 +711,7 @@ fn fillets_of_three_edges_round_their_corner() {
                     ]),
                     follow_tangent: false,
                     corner: Default::default(),
+                    distances: None,
                 },
             ],
             &fine_detail(),
@@ -892,6 +899,7 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
         edges: EdgeSelection::All,
         follow_tangent: false,
         corner: Default::default(),
+        distances: None,
     });
     let cylinders = chain(&ops)
         .mesh
@@ -917,6 +925,7 @@ fn rolling_ball_corners_on_the_step_are_analytic() {
         edges: EdgeSelection::All,
         follow_tangent: false,
         corner: FilletCorner::RollingBall,
+        distances: None,
     });
     let built = chain(&ops);
     let surfaces = &built.mesh.face_surfaces;
@@ -956,6 +965,94 @@ fn facet_corners_cut_a_triangle_off_each_corner_of_a_box() {
     assert_eq!(face_count(&facet.mesh), face_count(&point.mesh) + 8);
     let taken = volume(&point.brep_blob) - volume(&facet.brep_blob);
     assert!((taken - 8.0 / 12.0).abs() < 1e-6, "{taken}");
+}
+
+/// A round on one upright edge of a 20 mm cube meeting one face 2 mm from
+/// the edge and the other 5 mm.
+fn cube_rounded(profile: kernel_api::RoundProfile, flip: bool) -> kernel_api::SolidBuildResult {
+    chain(&[
+        box_of(20.0, 20.0, 20.0),
+        SolidOp::Fillet {
+            radius: 2.0,
+            edges: EdgeSelection::Near(vec![[20.0, 20.0, 10.0]]),
+            follow_tangent: false,
+            corner: Default::default(),
+            distances: Some(kernel_api::RoundDistances {
+                other: 5.0,
+                flip,
+                profile,
+            }),
+        },
+    ])
+}
+
+/// What a round of two distances takes off is the corner of its section's
+/// legs less the conic under them, swept along the edge: a quarter
+/// ellipse's corner for the elliptical section, 1/6 of the legs' rectangle
+/// for the parabola (a parabola's segment is 2/3 of its tangent triangle).
+/// Flipped, the 2 mm lands on the other face.
+#[test]
+fn a_round_of_two_distances_takes_off_its_conic_corner() {
+    use kernel_api::RoundProfile;
+    let cube = 8000.0;
+    let taken = |built: &kernel_api::SolidBuildResult| cube - volume(&built.brep_blob);
+    let legs = 2.0 * 5.0;
+    let elliptical = cube_rounded(RoundProfile::Elliptical, false);
+    let want = legs * (1.0 - std::f64::consts::FRAC_PI_4) * 20.0;
+    assert!(
+        (taken(&elliptical) - want).abs() < want * 1e-4,
+        "{}",
+        taken(&elliptical)
+    );
+    let parabola = cube_rounded(RoundProfile::Conic { rho: 0.5 }, false);
+    let want = legs / 6.0 * 20.0;
+    assert!(
+        (taken(&parabola) - want).abs() < want * 1e-4,
+        "{}",
+        taken(&parabola)
+    );
+    // How far each upright face reaches toward the rounded edge.
+    let reach = |built: &kernel_api::SolidBuildResult| {
+        let on = |axis: usize| {
+            built
+                .mesh
+                .positions
+                .iter()
+                .filter(|p| (p[axis] - 20.0).abs() < 1e-4)
+                .map(|p| p[1 - axis])
+                .fold(f32::MIN, f32::max)
+        };
+        [on(0), on(1)]
+    };
+    let flipped = cube_rounded(RoundProfile::Elliptical, true);
+    let [a, b] = reach(&elliptical);
+    assert!(
+        (a.min(b) - 15.0).abs() < 1e-3 && (a.max(b) - 18.0).abs() < 1e-3,
+        "{a} {b}"
+    );
+    assert_eq!(reach(&flipped), [b, a]);
+}
+
+/// Rounds of two distances on several edges go to the kernel together, so
+/// they close the corners where they meet.
+#[test]
+#[ignore = "kernel: a round of two distances rounds one edge per call; there is no call for several edges with their corners"]
+fn rounds_of_two_distances_on_every_edge_of_a_cube_build() {
+    let built = try_chain(&[
+        box_of(20.0, 20.0, 20.0),
+        SolidOp::Fillet {
+            radius: 2.0,
+            edges: EdgeSelection::All,
+            follow_tangent: false,
+            corner: Default::default(),
+            distances: Some(kernel_api::RoundDistances {
+                other: 3.0,
+                flip: false,
+                profile: kernel_api::RoundProfile::Elliptical,
+            }),
+        },
+    ]);
+    assert!(built.is_ok(), "{:?}", built.err());
 }
 
 /// Each face of a mesh says what surface it was cut from: a cylinder's side
@@ -2486,6 +2583,7 @@ fn a_dress_up_previews_what_it_takes_off_or_adds() {
         edges: EdgeSelection::Near(vec![[0.0, 0.0, 7.0]]),
         follow_tangent: false,
         corner: Default::default(),
+        distances: None,
     });
     let (preview, whole) = preview_of(&inside, rounded_at..rounded_at + 1);
     assert!(!preview.cuts, "an inside round only adds");
@@ -3226,6 +3324,7 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
             edges: EdgeSelection::Near(points),
             follow_tangent,
             corner: Default::default(),
+            distances: None,
         });
         volume(&try_chain(&ops).expect("the seam rounds").brep_blob)
     };
@@ -3262,6 +3361,7 @@ fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
             }]),
             follow_tangent: true,
             corner: Default::default(),
+            distances: None,
         },
     ];
     let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");

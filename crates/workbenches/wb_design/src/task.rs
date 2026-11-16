@@ -912,6 +912,11 @@ mod tests {
             follow_tangent: false,
             corner: Default::default(),
             refine: false,
+            mode: Default::default(),
+            radius2: 0.0,
+            flip: false,
+            profile: Default::default(),
+            rho: 0.5,
         };
         let key = crate::build::edge_op(&fillet)
             .unwrap()

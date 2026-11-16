@@ -549,6 +549,29 @@ pub enum FilletCorner {
     RollingBall,
 }
 
+/// The section of a round set back a different distance on each face.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum RoundProfile {
+    /// The ellipse tangent to each face at its distance: with equal
+    /// distances, the circular round.
+    #[default]
+    Elliptical,
+    /// The conic tangent to each face at its distance whose middle stands
+    /// the share `rho` of the way from the chord between the contacts to
+    /// the edge: near 0 a bevel, 0.5 a parabola, near 1 the sharp edge.
+    Conic { rho: f64 },
+}
+
+/// A round meeting its faces at two distances: the fillet's `radius` on
+/// the reference face, `other` on the face across the edge.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RoundDistances {
+    pub other: f64,
+    /// Measure `radius` on the edge's other face.
+    pub flip: bool,
+    pub profile: RoundProfile,
+}
+
 /// How a chamfer closes a vertex where three or more of its bevels meet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
 pub enum ChamferCorner {
@@ -576,15 +599,20 @@ impl SolidOp {
         use std::hash::{Hash, Hasher};
         let sized = match self {
             SolidOp::Fillet {
+                radius,
                 edges,
                 follow_tangent,
                 corner,
-                ..
+                distances,
             } => SolidOp::Fillet {
                 radius: 0.0,
                 edges: edges.clone(),
                 follow_tangent: *follow_tangent,
                 corner: *corner,
+                distances: distances.map(|d| RoundDistances {
+                    other: d.other / radius,
+                    ..d
+                }),
             },
             SolidOp::Chamfer {
                 spec,
@@ -730,7 +758,8 @@ pub enum SolidOp {
     },
     /// Round the selected edges; with `follow_tangent`, every edge meeting
     /// one of them tangentially joins the selection, and so on along the
-    /// chain.
+    /// chain. With `distances`, the round meets one face `radius` from the
+    /// edge and the other `distances.other`.
     Fillet {
         radius: f64,
         edges: EdgeSelection,
@@ -738,6 +767,8 @@ pub enum SolidOp {
         follow_tangent: bool,
         #[serde(default)]
         corner: FilletCorner,
+        #[serde(default)]
+        distances: Option<RoundDistances>,
     },
     /// Round between two faces of the running solid, which need share no
     /// edge: the ball rolling between them, its round filling or taking off

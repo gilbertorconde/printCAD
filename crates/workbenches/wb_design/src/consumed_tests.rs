@@ -36,6 +36,11 @@ fn only_a_feature_made_from_a_sketch_consumes_it() {
         follow_tangent: false,
         corner: Default::default(),
         refine: false,
+        mode: Default::default(),
+        radius2: 0.0,
+        flip: false,
+        profile: Default::default(),
+        rho: 0.5,
     };
     let fillet = doc
         .add_feature_in_body(fillet, "Fillet".into(), body)

@@ -814,10 +814,19 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 edges,
                 follow_tangent,
                 corner,
+                distances,
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
-                ops::dressup::fillet(&mut model, &solid, *radius, edges, *follow_tangent, *corner)
-                    .map_err(refused)?
+                ops::dressup::fillet(
+                    &mut model,
+                    &solid,
+                    *radius,
+                    edges,
+                    *follow_tangent,
+                    *corner,
+                    *distances,
+                )
+                .map_err(refused)?
             }
             SolidOp::BlendFaces { radius, faces } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;

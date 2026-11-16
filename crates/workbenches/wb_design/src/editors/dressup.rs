@@ -6,7 +6,9 @@ use bench_api::Select;
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 use kernel_api::{ChamferCorner, FilletCorner};
 
-use crate::feature::{ChamferMode, DesignFeature, EdgePick, EdgeSel, ExtrudeMode, FacePick};
+use crate::feature::{
+    ChamferMode, DesignFeature, EdgePick, EdgeSel, ExtrudeMode, FacePick, FilletMode, FilletProfile,
+};
 use crate::form::Form;
 
 use super::{
@@ -50,14 +52,45 @@ pub(super) fn dressup_editor(
             edges,
             follow_tangent,
             corner,
+            mode,
+            radius2,
+            flip,
+            profile,
+            rho,
             ..
         } => {
+            let between = matches!(edges, EdgeSel::BetweenFaces(_));
+            if !between {
+                let was = *mode;
+                changed |= pick(f, "Type", &FilletMode::ALL, mode, |candidate| {
+                    candidate.label()
+                });
+                if was != *mode && *radius2 <= 0.0 {
+                    *radius2 = *radius;
+                }
+            }
+            let two = !between && *mode == FilletMode::TwoDistances;
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
-            changed |= mm_drag_upto(f, fx, radius, ("Radius:", "radius"), most.map(|m| m.first));
+            let label = if two { "Distance 1:" } else { "Radius:" };
+            changed |= mm_drag_upto(f, fx, radius, (label, "radius"), most.map(|m| m.first));
+            if two {
+                let most = most.and_then(|m| m.second);
+                changed |= mm_drag_upto(f, fx, radius2, ("Distance 2:", "radius2"), most);
+                changed |= f.check(flip, "Flip direction", "");
+                changed |= pick(f, "Profile", &FilletProfile::ALL, profile, |candidate| {
+                    candidate.label()
+                });
+                if *profile == FilletProfile::Conic && number_drag(f, fx, rho, ("Rho:", "rho")) {
+                    *rho = rho.clamp(0.01, 0.99);
+                    changed = true;
+                }
+            }
             changed |= edge_sel_editor(f, ctx, edges, true);
-            if !matches!(edges, EdgeSel::BetweenFaces(_)) {
+            if !between {
                 changed |= tangent_row(f, follow_tangent);
-                changed |= pick(f, "Corners", &FILLET_CORNERS, corner, fillet_corner_label);
+                if !two {
+                    changed |= pick(f, "Corners", &FILLET_CORNERS, corner, fillet_corner_label);
+                }
             }
         }
         DesignFeature::Chamfer {

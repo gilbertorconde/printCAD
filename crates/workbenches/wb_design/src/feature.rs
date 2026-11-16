@@ -701,6 +701,51 @@ impl PipeCorner {
     }
 }
 
+/// Fillet sizing style.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum FilletMode {
+    #[default]
+    Radius,
+    /// One distance on each face from the edge.
+    TwoDistances,
+}
+
+impl FilletMode {
+    pub const ALL: [FilletMode; 2] = [FilletMode::Radius, FilletMode::TwoDistances];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            FilletMode::Radius => "Radius",
+            FilletMode::TwoDistances => "Two distances",
+        }
+    }
+}
+
+/// The section of a fillet of two distances.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum FilletProfile {
+    /// The ellipse tangent to each face at its distance.
+    #[default]
+    Elliptical,
+    /// A conic whose fullness `rho` sets.
+    Conic,
+}
+
+impl FilletProfile {
+    pub const ALL: [FilletProfile; 2] = [FilletProfile::Elliptical, FilletProfile::Conic];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            FilletProfile::Elliptical => "Elliptical",
+            FilletProfile::Conic => "Conic",
+        }
+    }
+}
+
+fn half() -> f32 {
+    0.5
+}
+
 /// Chamfer sizing style.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum ChamferMode {
@@ -2011,6 +2056,27 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         corner: kernel_api::FilletCorner,
+        /// One radius, or `radius` on one face and `radius2` on the other.
+        #[serde(default)]
+        #[walk(setting)]
+        mode: FilletMode,
+        /// With two distances, the distance on the face across the edge.
+        #[serde(default)]
+        #[walk(length("radius2", "Second distance"))]
+        radius2: f32,
+        /// With two distances, measure `radius` on the edge's other face.
+        #[serde(default)]
+        #[walk(setting)]
+        flip: bool,
+        /// With two distances, the round's section.
+        #[serde(default)]
+        #[walk(setting)]
+        profile: FilletProfile,
+        /// A conic section's fullness, strictly between 0 and 1: near 0 a
+        /// bevel, 0.5 a parabola, near 1 the sharp edge.
+        #[serde(default = "half")]
+        #[walk(number("rho", "Rho"))]
+        rho: f32,
     },
     Chamfer {
         #[walk(length("size", "Size"))]
