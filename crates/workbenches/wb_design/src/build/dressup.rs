@@ -67,7 +67,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                 return Err("fillet radius must be positive".into());
             }
             let distances = match mode {
-                crate::feature::FilletMode::Radius => None,
+                crate::feature::FilletMode::Radius | crate::feature::FilletMode::Auto => None,
                 crate::feature::FilletMode::TwoDistances => {
                     if *radius2 <= 0.0 {
                         return Err("a fillet's second distance must be positive".into());
@@ -111,6 +111,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                     follow_tangent: *follow_tangent,
                     corner: *corner,
                     distances,
+                    auto: *mode == crate::feature::FilletMode::Auto,
                 },
             }
         }

@@ -354,7 +354,7 @@ impl DesignWorkbench {
                         follow_tangent: true,
                         corner: Default::default(),
                         refine: false,
-                        mode: Default::default(),
+                        mode: crate::feature::FilletMode::Auto,
                         radius2: 0.0,
                         flip: false,
                         profile: Default::default(),

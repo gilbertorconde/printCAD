@@ -72,7 +72,7 @@ pub(super) fn dressup_editor(
             let two = !between && *mode == FilletMode::TwoDistances;
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
             let label = if two { "Distance 1:" } else { "Radius:" };
-            changed |= mm_drag_upto(f, fx, radius, (label, "radius"), most.map(|m| m.first));
+            changed |= mm_drag_upto(f, fx, radius, (label, "radius"), most.and_then(|m| m.first));
             if two {
                 let most = most.and_then(|m| m.second);
                 changed |= mm_drag_upto(f, fx, radius2, ("Distance 2:", "radius2"), most);
@@ -108,7 +108,7 @@ pub(super) fn dressup_editor(
                 candidate.label()
             });
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
-            changed |= mm_drag_upto(f, fx, size, ("Size:", "size"), most.map(|m| m.first));
+            changed |= mm_drag_upto(f, fx, size, ("Size:", "size"), most.and_then(|m| m.first));
             match mode {
                 ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {

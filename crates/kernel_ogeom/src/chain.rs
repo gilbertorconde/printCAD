@@ -96,7 +96,7 @@ pub struct ChainCache {
     every_edit: bool,
     /// The largest sizes of previewed fillets and chamfers, newest last,
     /// by the history before them and the op's size-free key.
-    limits: Vec<(u64, Option<f64>)>,
+    limits: Vec<(u64, ops::dressup::Limits)>,
 }
 
 /// What a build made of its edited op (the first that differs from the
@@ -615,10 +615,10 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                         .find(|(k, _)| *k == held)
                         .map(|(_, l)| *l)
                 });
-                let largest =
+                let (largest, sides) =
                     known.unwrap_or_else(|| ops::dressup::size_limit(&model, shape, solid_op));
                 if let (Some(cache), Some(held), None) = (cache.as_deref_mut(), held, known) {
-                    cache.limits.push((held, largest));
+                    cache.limits.push((held, (largest, sides)));
                     if cache.limits.len() > KEPT_LIMITS {
                         cache.limits.remove(0);
                     }
@@ -627,6 +627,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     op_index: index,
                     key,
                     largest,
+                    sides,
                 });
             }
         }
@@ -815,6 +816,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 follow_tangent,
                 corner,
                 distances,
+                auto,
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
                 ops::dressup::fillet(
@@ -825,6 +827,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     *follow_tangent,
                     *corner,
                     *distances,
+                    *auto,
                 )
                 .map_err(refused)?
             }

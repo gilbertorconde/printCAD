@@ -468,12 +468,13 @@ See also: `doc.faces`
 
 ## design.fillet
 
-A radius larger than the faces beside an edge can take fails at
-`pc.doc.rebuild()`.
-
-`mode` is Radius or TwoDistances: `radius` on one face, `radius2` on the
-other (`flip` swaps them), its `profile` Elliptical or Conic (with `rho`
-strictly between 0 and 1, 0.5 when left out). Two distances round one edge.
+`mode` is Auto (when left out), Radius or TwoDistances. Auto on one edge
+takes each face's contact `radius` from the edge or as far as the face
+goes, whichever is less; with Radius, a radius larger than the faces
+beside an edge can take fails at `pc.doc.rebuild()`. TwoDistances puts `radius` on one face and
+`radius2` on the other (`flip` swaps them), its `profile` Elliptical or
+Conic (with `rho` strictly between 0 and 1, 0.5 when left out), on one
+edge.
 
 See also: `design.chamfer`
 

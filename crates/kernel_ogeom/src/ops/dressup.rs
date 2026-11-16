@@ -245,6 +245,7 @@ impl From<String> for Refusal {
 /// The most edges a refusal is tried edge by edge for.
 const DIAGNOSED_EDGES: usize = 64;
 
+#[allow(clippy::too_many_arguments, reason = "the fillet op's own fields")]
 pub fn fillet(
     model: &mut Model,
     solid: &Shape,
@@ -253,6 +254,7 @@ pub fn fillet(
     follow_tangent: bool,
     corner: FilletCorner,
     distances: Option<RoundDistances>,
+    auto: bool,
 ) -> Result<Shape, Refusal> {
     if let Some(distances) = distances {
         let (edge, face) = distances_seat(model, solid, edges, follow_tangent, distances.flip)?;
@@ -269,6 +271,9 @@ pub fn fillet(
         .map_err(|e| format!("fillet with two distances failed: {e}"))?;
         crate::naming::record(&built.history);
         return Ok(built.shape);
+    }
+    if auto && let Some(shape) = auto_round(model, solid, radius, edges, follow_tangent)? {
+        return Ok(shape);
     }
     if corner == FilletCorner::RollingBall {
         return Err("the kernel does not build rolling-ball corners yet; \
@@ -323,6 +328,109 @@ fn distances_seat(
     };
     let face = adjacent_face(model, solid, edge, flip)?;
     Ok((edge.clone(), face))
+}
+
+/// An automatic round of one edge too wide for a face beside it: each
+/// contact `radius` from the edge, or as far as its face goes, the round
+/// elliptical between them. `None` where the round fits both faces or
+/// takes more than one edge, for the round of one radius to build.
+fn auto_round(
+    model: &mut Model,
+    solid: &Shape,
+    radius: f64,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+) -> Result<Option<Shape>, String> {
+    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
+    let [edge] = chain.as_slice() else {
+        return Ok(None);
+    };
+    let face = adjacent_face(model, solid, edge, false)?;
+    let [on_face, on_other] =
+        side_limits(model, solid, edge, &face).map(|most| radius.min(most.unwrap_or(radius)));
+    if on_face >= radius && on_other >= radius {
+        return Ok(None);
+    }
+    let built = fillet_edge_distances(
+        model,
+        solid,
+        edge,
+        &face,
+        on_face,
+        on_other,
+        ogeom::fillet::RoundProfile::Elliptical,
+        tol(),
+    )
+    .map_err(|e| format!("fillet failed: {e}"))?;
+    crate::naming::record(&built.history);
+    Ok(Some(built.shape))
+}
+
+/// How far a round's contact goes on `face`, then on the edge's other
+/// face, before running off it: each read with the other contact kept at
+/// a sliver, so only its own face stops it. `None` where it runs on past
+/// the solid's size or the kernel cannot read it.
+fn side_limits(model: &Model, solid: &Shape, edge: &Shape, face: &Shape) -> [Option<f64>; 2] {
+    const SLIVER: f64 = 1e-5;
+    let Some(span) = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())
+    else {
+        return [None, None];
+    };
+    let reach = |on_face: f64, on_other: f64| {
+        largest_fillet_distances(model, solid, edge, face, on_face, on_other, span, tol())
+            .ok()
+            .flatten()
+            .filter(|scale| *scale < span * (1.0 - 1e-9))
+    };
+    [reach(1.0, SLIVER), reach(SLIVER, 1.0)]
+}
+
+/// The faces beside the one edge a round of distances takes, as its drag
+/// handles read them: where on the edge, which way each face runs from
+/// it, and how far each contact goes. `flip` puts the edge's other face
+/// first, as the round's first distance does.
+fn round_sides(
+    model: &mut Model,
+    solid: &Shape,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+    flip: bool,
+) -> Option<kernel_api::RoundSides> {
+    let (edge, face) = distances_seat(model, solid, edges, follow_tangent, flip).ok()?;
+    let other = faces_of_edge(model, solid, &edge)
+        .ok()?
+        .into_iter()
+        .find(|f| !f.is_same(&face))?;
+    let probe = failing_edge(model, &edge, [0, 0], 0, 1, String::new()).probe;
+    let (at, along) = (point(probe.point), vector(probe.direction));
+    let limits = side_limits(model, solid, &edge, &face);
+    let mut sides = Vec::with_capacity(2);
+    for (side, largest) in [(&face, limits[0]), (&other, limits[1])] {
+        let (_, normal) = crate::probe::outward_at(model, side, at).ok()?;
+        let across = normal.cross(along);
+        let length = across.magnitude();
+        if length < 1e-9 {
+            return None;
+        }
+        let across = across * (1.0 / length);
+        // Of the two ways square to the edge, the one staying on the face.
+        let mut off = |sign: f64| {
+            distance_to(model, at + across * (0.01 * sign), side).unwrap_or(f64::INFINITY)
+        };
+        let direction = if off(1.0) <= off(-1.0) {
+            across
+        } else {
+            -across
+        };
+        sides.push(kernel_api::RoundSide {
+            direction: array(direction),
+            largest,
+        });
+    }
+    Some(kernel_api::RoundSides {
+        at: array(at),
+        sides: [sides[0], sides[1]],
+    })
 }
 
 /// The kernel's section for `profile`.
@@ -1010,52 +1118,46 @@ fn chamfer_specs(
 /// build at it and found by halving below it where that build fails.
 /// `None` where every size short of the solid's diagonal builds, where
 /// none does, or for any other op.
-pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Option<f64> {
+/// What [`size_limit`] reads: the op's first size at its limit, and the
+/// faces beside a round of distances' one edge.
+pub type Limits = (Option<f64>, Option<kernel_api::RoundSides>);
+
+pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Limits {
+    if let kernel_api::SolidOp::Fillet {
+        edges,
+        follow_tangent,
+        distances,
+        auto,
+        ..
+    } = op
+        && (distances.is_some() || *auto)
+    {
+        let flip = distances.is_some_and(|d| d.flip);
+        let sides = round_sides(&mut model.clone(), solid, edges, *follow_tangent, flip);
+        if let Some(sides) = sides {
+            let [first, second] = sides.sides.map(|side| side.largest);
+            // Two distances stop each at its own face; one size grows on
+            // until both faces have run out.
+            let largest = match (distances.is_some(), first, second) {
+                (true, first, _) => first,
+                // Neither face runs out: what stops the round is its own.
+                (false, None, None) => largest_size(model, solid, op),
+                (false, first, second) => first.zip(second).map(|(a, b)| a.max(b)),
+            };
+            return (largest, Some(sides));
+        }
+        if distances.is_some() {
+            return (None, None);
+        }
+    }
+    (largest_size(model, solid, op), None)
+}
+
+/// [`size_limit`]'s first size for an op of one size.
+fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Option<f64> {
     let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
     let mut model = model.clone();
     let (read, builds): (f64, Box<dyn Fn(f64) -> bool>) = match op {
-        kernel_api::SolidOp::Fillet {
-            radius,
-            edges,
-            follow_tangent,
-            distances: Some(distances),
-            ..
-        } => {
-            if *radius <= 0.0 {
-                return None;
-            }
-            let (edge, face) =
-                distances_seat(&mut model, solid, edges, *follow_tangent, distances.flip).ok()?;
-            let (first, other, profile) = (*radius, distances.other, profile(distances.profile));
-            let scale = largest_fillet_distances(
-                &model,
-                solid,
-                &edge,
-                &face,
-                first,
-                other,
-                span / first,
-                tol(),
-            )
-            .ok()??;
-            let model = model.clone();
-            (
-                scale * first,
-                Box::new(move |r| {
-                    fillet_edge_distances(
-                        &mut model.clone(),
-                        solid,
-                        &edge,
-                        &face,
-                        r,
-                        other * r / first,
-                        profile,
-                        tol(),
-                    )
-                    .is_ok()
-                }),
-            )
-        }
         kernel_api::SolidOp::Fillet {
             edges,
             follow_tangent,
