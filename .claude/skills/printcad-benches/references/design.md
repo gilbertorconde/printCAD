@@ -2,8 +2,9 @@
 
 - `workbenches/wb_design`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
   Primitive/Hole/Fillet/Chamfer/Draft/Thickness/Offset solid/Scale/patterns/Boolean/Split/Piece features
-  (`feature.rs`; every one that fuses or cuts carries `refine`, which the
-  build follows with a `SolidOp::Refine` merging coplanar faces; the
+  (`feature.rs`; every one that fuses or cuts, and Fillet and Chamfer,
+  carries `refine`, which the build follows with a `SolidOp::Refine`
+  merging faces on one surface and then edges continuing one curve; the
   Preferences switch is only the default for new features, so geometry
   never depends on who rebuilds it; and an optional `boolean_tolerance`,
   the Advanced group's, which wraps each of the feature's ops in

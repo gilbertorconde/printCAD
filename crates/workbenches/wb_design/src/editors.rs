@@ -960,14 +960,17 @@ pub fn feature_editor(
             "Keep only the material the feature and the body share, cutting the rest away",
         );
     }
-    // Every feature that fuses or cuts can merge the coplanar faces it
-    // leaves; new ones take the preference, this switch changes one.
+    // Every feature that fuses, cuts, rounds or bevels can merge the faces
+    // it leaves split on one surface; new ones take the preference, this
+    // switch changes one.
     if feature.can_refine() {
         let mut refine = feature.refine();
         if f.check(&mut refine, "Refine result", "") {
             feature.set_refine(refine);
             changed = true;
         }
+    }
+    if feature.has_boolean() {
         changed |= advanced_editor(f, fx, feature);
     }
     changed

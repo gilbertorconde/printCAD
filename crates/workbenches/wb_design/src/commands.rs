@@ -1308,6 +1308,7 @@ mod tests {
                 direction: [1.0, 0.0, 0.0],
             }]),
             follow_tangent: false,
+            refine: false,
         };
         let id = s
             .doc

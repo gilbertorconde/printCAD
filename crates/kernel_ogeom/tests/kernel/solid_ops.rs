@@ -800,6 +800,99 @@ fn a_refine_after_a_feature_looks_only_around_what_it_made() {
     );
 }
 
+/// Three pads, each refined, stepping up to the right: box A x -15..15
+/// z 0..7, B x 0..15 z 7..14, C x 7..15 z 14..21, all y -7..7.
+fn three_step_pads() -> Vec<SolidOp> {
+    let pad = |x0: f64, z: f64, op| {
+        let mut pad = blind_pad(vec![rect_wire(x0, -7.0, 15.0, 7.0)], 7.0, op);
+        if let SolidOp::Sweep { profile, .. } = &mut pad {
+            profile.plane.origin = [0.0, 0.0, z];
+        }
+        pad
+    };
+    vec![
+        pad(-15.0, 0.0, BooleanOp::NewSolid),
+        SolidOp::Refine,
+        pad(0.0, 7.0, BooleanOp::Fuse),
+        SolidOp::Refine,
+        pad(7.0, 14.0, BooleanOp::Fuse),
+        SolidOp::Refine,
+    ]
+}
+
+/// The vertical edges of a snapshot's shape lying on the plane x = 15,
+/// each as its lowest and highest z.
+fn vertical_edges_at_x15(blob: &[u8]) -> Vec<(f64, f64)> {
+    use ogeom::topo::{NodeData, ShapeType, explore_unique};
+    let (model, shape) = super::common::read_shape(blob);
+    explore_unique(&model, &shape, ShapeType::Edge)
+        .unwrap()
+        .iter()
+        .filter_map(|edge| {
+            let ends: Vec<[f64; 3]> = explore_unique(&model, edge, ShapeType::Vertex)
+                .unwrap()
+                .iter()
+                .filter_map(|v| match model.node(v).map(|n| n.data()) {
+                    Some(NodeData::Vertex(d)) => {
+                        let p = v.transform(model.datums()).unwrap().apply(d.point);
+                        Some([p.x, p.y, p.z])
+                    }
+                    _ => None,
+                })
+                .collect();
+            let [a, b] = ends.as_slice() else { return None };
+            let on_side = (a[0] - 15.0).abs() < 1e-6 && (b[0] - 15.0).abs() < 1e-6;
+            let upright = (a[1] - b[1]).abs() < 1e-6 && (a[2] - b[2]).abs() > 1e-6;
+            (on_side && upright).then(|| (a[2].min(b[2]), a[2].max(b[2])))
+        })
+        .collect()
+}
+
+/// Merging faces across a seam leaves the edges along it in pieces where
+/// the seam met them; the refine joins them, so the stepped part's right
+/// side is bounded by two whole 21 mm uprights and the part has the ten
+/// faces its outline gives it.
+#[test]
+fn refining_joins_the_edges_a_merged_seam_leaves_split() {
+    let built = chain(&three_step_pads());
+    assert_eq!(
+        super::common::count_shapes(&built.brep_blob, ogeom::topo::ShapeType::Face),
+        10,
+        "three tops, three risers counting the right side, bottom, left, front, back"
+    );
+    let mut uprights = vertical_edges_at_x15(&built.brep_blob);
+    uprights.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(uprights.len(), 2, "one edge per corner: {uprights:?}");
+    for (low, high) in uprights {
+        assert!(
+            low.abs() < 1e-6 && (high - 21.0).abs() < 1e-6,
+            "{low}..{high}"
+        );
+    }
+}
+
+/// Rounding every edge of the refined step gives one cylinder per straight
+/// edge of its outline, a prism on eight corners: 24, no upright rounded
+/// in pieces.
+#[test]
+fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
+    let mut ops = three_step_pads();
+    ops.push(SolidOp::Fillet {
+        radius: 1.0,
+        edges: EdgeSelection::All,
+        follow_tangent: false,
+    });
+    let cylinders = chain(&ops)
+        .mesh
+        .face_surfaces
+        .iter()
+        .filter(|s| {
+            matches!(s, kernel_api::FaceSurface::Cylinder { radius, .. } if (radius - 1.0).abs() < 1e-4)
+        })
+        .count();
+    assert_eq!(cylinders, 24, "one round per edge of the step");
+}
+
 /// Each face of a mesh says what surface it was cut from: a cylinder's side
 /// knows its axis and radius, its caps are planes facing out.
 #[test]

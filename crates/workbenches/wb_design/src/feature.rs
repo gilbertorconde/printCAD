@@ -2003,6 +2003,10 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         follow_tangent: bool,
+        /// Merge the faces the round or bevel leaves split on one surface.
+        #[serde(default)]
+        #[walk(setting)]
+        refine: bool,
     },
     Chamfer {
         #[walk(length("size", "Size"))]
@@ -2026,6 +2030,10 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         follow_tangent: bool,
+        /// Merge the faces the round or bevel leaves split on one surface.
+        #[serde(default)]
+        #[walk(setting)]
+        refine: bool,
     },
     Draft {
         #[walk(angle("angle", "Angle"))]
@@ -2715,13 +2723,19 @@ impl DesignFeature {
     /// Whether the feature merges the coplanar faces its fuse or cut
     /// leaves behind.
     pub fn refine(&self) -> bool {
-        self.fuse_settings().is_some_and(|(refine, _)| refine)
+        match self {
+            DesignFeature::Fillet { refine, .. } | DesignFeature::Chamfer { refine, .. } => *refine,
+            _ => self.fuse_settings().is_some_and(|(refine, _)| refine),
+        }
     }
 
     /// Set whether the feature refines its result. A feature that neither
-    /// fuses nor cuts has nothing to refine and is left as it is.
+    /// fuses, cuts, rounds nor bevels has nothing to refine and is left as
+    /// it is.
     pub fn set_refine(&mut self, on: bool) {
-        if let Some((refine, _)) = self.fuse_settings_mut() {
+        if let DesignFeature::Fillet { refine, .. } | DesignFeature::Chamfer { refine, .. } = self {
+            *refine = on;
+        } else if let Some((refine, _)) = self.fuse_settings_mut() {
             *refine = on;
         }
     }
@@ -2745,6 +2759,15 @@ impl DesignFeature {
 
     /// Whether the feature has a refine switch at all.
     pub fn can_refine(&self) -> bool {
+        self.has_boolean()
+            || matches!(
+                self,
+                DesignFeature::Fillet { .. } | DesignFeature::Chamfer { .. }
+            )
+    }
+
+    /// Whether the feature fuses or cuts, and so has a boolean tolerance.
+    pub fn has_boolean(&self) -> bool {
         self.fuse_settings().is_some()
     }
 

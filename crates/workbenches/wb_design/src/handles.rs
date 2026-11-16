@@ -1084,6 +1084,7 @@ mod tests {
             radius: 2.0,
             edges,
             follow_tangent: false,
+            refine: false,
         };
         let eye = Vec3::new(10.0, -50.0, 50.0);
         let handle_of = |doc: &mut Document, edges| {

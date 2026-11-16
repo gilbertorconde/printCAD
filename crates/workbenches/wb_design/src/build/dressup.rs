@@ -55,6 +55,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             radius,
             edges,
             follow_tangent,
+            ..
         } => {
             if *radius <= 0.0 {
                 return Err("fillet radius must be positive".into());
@@ -87,6 +88,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             flip,
             edges,
             follow_tangent,
+            ..
         } => {
             if *size <= 0.0 {
                 return Err("chamfer size must be positive".into());

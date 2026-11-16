@@ -862,9 +862,17 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     ),
                     None => ogeom::heal::unify_same_domain(&mut model, &solid, ops::tol()),
                 }
-                .map(|(built, _)| {
+                .and_then(|(built, _)| {
                     naming::record(&built.history);
-                    built.shape
+                    // Faces merged across a seam leave the edges that ran
+                    // along it split where the seam met them: one straight
+                    // side in pieces, which a later round would follow as
+                    // pieces. The kernel joins only edges that continue one
+                    // curve, so the rest of the part is left as it is.
+                    let (joined, _) =
+                        ogeom::heal::merge_edges(&mut model, &built.shape, ops::tol())?;
+                    naming::record(&joined.history);
+                    Ok(joined.shape)
                 })
                 .map_err(|e| err(format!("refine failed: {e}")))?
             }

@@ -352,6 +352,7 @@ impl DesignWorkbench {
                         radius: 1.0,
                         edges,
                         follow_tangent: true,
+                        refine: false,
                     },
                     "Fillet",
                 )
@@ -368,6 +369,7 @@ impl DesignWorkbench {
                         flip: false,
                         edges,
                         follow_tangent: true,
+                        refine: false,
                     },
                     "Chamfer",
                 )
