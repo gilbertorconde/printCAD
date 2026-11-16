@@ -9,7 +9,7 @@ use kernel_api::{
 };
 use kernel_api::{Profile, TopoName, naming as names};
 use ogeom::math::Point;
-use ogeom::topo::{Model, Shape};
+use ogeom::topo::{Model, Shape, ShapeType, explore_unique};
 
 use crate::convert::{array, point, vector};
 use crate::naming::{self, NameMap};
@@ -425,8 +425,8 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
     let mut after: Option<Shape> = None;
     let mut preview_tools: Vec<Shape> = Vec::new();
     let mut preview_cuts = false;
-    // A previewed round or bevel has no tool of its own: the body after it
-    // is drawn as one, over the body before it.
+    // A previewed round or bevel has no tool of its own: what it takes off
+    // or adds is drawn as one (`dress_up_tool`).
     let mut preview_dresses_up = false;
     let unanswered = |after_op: usize| {
         if after_op == 0 {
@@ -1194,9 +1194,10 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         .or_else(|| tess::solid_bounds(&model, &final_shape, &mesh));
     if preview_tools.is_empty()
         && preview_dresses_up
-        && let Some(after) = after.clone()
+        && let Some((tool, cuts)) = dress_up_tool(&mut model, before.as_ref(), after.as_ref())
     {
-        preview_tools.push(after);
+        preview_tools.push(tool);
+        preview_cuts = cuts;
     }
     // A preview that cannot be made leaves the build as it is.
     let preview = (!preview_tools.is_empty())
@@ -1270,7 +1271,7 @@ fn compact(model: &mut Model, roots: &[Shape]) {
 /// each face faces and the kind of its surface. Equal for the same solid however its curves and surfaces
 /// record their parameter ranges, which a snapshot would tell apart.
 fn fingerprint(model: &Model, shape: &Shape) -> Option<u64> {
-    use ogeom::topo::{NodeData, ShapeType, explore_unique};
+    use ogeom::topo::NodeData;
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let micrometres = |p: Point| array(p).map(|c| (c * 1e3).round() as i64);
@@ -1390,6 +1391,29 @@ fn ask(
             *answer = noting(|| crate::probe::answer(model, shape, &probe.probe));
         }
     }
+}
+
+/// The tool a round or bevel would have had: what it takes off the body
+/// (a cut, shown over the body after it, as a pocket's), else what it
+/// adds (shown over the body before it, as a pad's). `None` when it
+/// changes nothing or the difference does not build.
+fn dress_up_tool(
+    model: &mut Model,
+    before: Option<&Shape>,
+    after: Option<&Shape>,
+) -> Option<(Shape, bool)> {
+    let (before, after) = (before?, after?);
+    let some_faces = |model: &Model, shape: &Shape| {
+        explore_unique(model, shape, ShapeType::Face).is_ok_and(|faces| !faces.is_empty())
+    };
+    for (from, take, cuts) in [(before, after, true), (after, before, false)] {
+        if let Ok(built) = ogeom::boolean::cut(model, from, take, ops::tol())
+            && some_faces(model, &built.shape)
+        {
+            return Some((built.shape, cuts));
+        }
+    }
+    None
 }
 
 /// The preview of a feature: its tools meshed as one, and the body to show
