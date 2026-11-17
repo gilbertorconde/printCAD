@@ -2002,6 +2002,8 @@ pub struct Tab<'a> {
     /// An icon before the label, in its tint: something to know about
     /// what the tab holds.
     mark: Option<(&'a str, Color32)>,
+    /// Picked up and moved along its strip by a drag ([`TabReorder`]).
+    draggable: bool,
 }
 
 /// What a click on a tab asked for.
@@ -2028,7 +2030,15 @@ impl<'a> Tab<'a> {
             dirty: false,
             close: None,
             mark: None,
+            draggable: false,
         }
+    }
+
+    /// A drag picks the tab up to move it along its strip; a
+    /// [`TabReorder`] over the strip's tabs says where it lands.
+    pub fn draggable(mut self) -> Self {
+        self.draggable = true;
+        self
     }
 
     pub fn width(mut self, width: f32) -> Self {
@@ -2078,8 +2088,12 @@ impl<'a> Tab<'a> {
                     .layout_no_wrap(self.label.to_string(), font.clone(), text_color);
             text.size().x + 2.0 * TAB_PAD + leading + trailing
         });
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(width, self.height), Sense::click());
+        let sense = if self.draggable {
+            Sense::click_and_drag()
+        } else {
+            Sense::click()
+        };
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, self.height), sense);
         response.widget_info(|| {
             WidgetInfo::selected(WidgetType::Button, ui.is_enabled(), self.active, self.label)
         });
@@ -2157,6 +2171,77 @@ impl<'a> Tab<'a> {
             response,
         }
     }
+}
+
+/// Moving tabs along a strip by dragging: each [`Tab::draggable`] tab's
+/// response goes in as it is drawn, and [`TabReorder::finish`] marks
+/// where a held tab would land and, on release, says where it went.
+#[derive(Default)]
+pub struct TabReorder {
+    rects: Vec<egui::Rect>,
+    held: Option<usize>,
+    dropped: bool,
+}
+
+impl TabReorder {
+    pub fn push(&mut self, tab: &TabResponse) {
+        let response = &tab.response;
+        if response.dragged() || response.drag_stopped() {
+            self.held = Some(self.rects.len());
+            self.dropped = response.drag_stopped();
+        }
+        self.rects.push(response.rect);
+    }
+
+    /// While a tab is held, a line where it would go; on its release, the
+    /// tab's index and the index it takes in the reordered strip, when it
+    /// moved.
+    pub fn finish(self, ui: &Ui) -> Option<(usize, usize)> {
+        let from = self.held?;
+        let pointer = ui.ctx().pointer_latest_pos()?;
+        let gap = insertion_at(&self.rects, pointer);
+        if self.dropped {
+            let to = landing(from, gap);
+            return (to != from).then_some((from, to));
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        if landing(from, gap) != from {
+            let x = match self.rects.get(gap) {
+                Some(rect) => rect.left() - 1.0,
+                None => self.rects.last().map_or(0.0, |r| r.right() + 1.0),
+            };
+            let row = self.rects.get(gap).or(self.rects.last()).copied();
+            if let Some(row) = row {
+                ui.painter()
+                    .vline(x, row.y_range(), Stroke::new(2.0, ACCENT));
+            }
+        }
+        None
+    }
+}
+
+/// The gap a pointer is over, `0..=rects.len()`: before the tab whose
+/// left half it is on, after the one whose right half, the rows of a
+/// wrapped strip told apart by height.
+fn insertion_at(rects: &[egui::Rect], pointer: egui::Pos2) -> usize {
+    let nearest = rects.iter().enumerate().min_by(|(_, a), (_, b)| {
+        let d = |r: &egui::Rect| {
+            let dy = (pointer.y - r.center().y).abs() * 4.0;
+            let dx = (pointer.x - r.x_range().clamp(pointer.x)).abs();
+            dx + dy
+        };
+        d(a).total_cmp(&d(b))
+    });
+    match nearest {
+        Some((i, rect)) if pointer.x < rect.center().x => i,
+        Some((i, _)) => i + 1,
+        None => 0,
+    }
+}
+
+/// Where the tab at `from` ends up when put in gap `gap`.
+fn landing(from: usize, gap: usize) -> usize {
+    if gap > from { gap - 1 } else { gap }
 }
 
 /// The "+" at the end of a tab strip.
@@ -2855,5 +2940,36 @@ mod tests {
                 if up { "up" } else { "down" }
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tab_reorder_tests {
+    use super::{insertion_at, landing};
+    use egui::{Rect, pos2, vec2};
+
+    #[test]
+    fn a_dropped_tab_lands_in_the_gap_under_the_pointer_on_its_own_row() {
+        // Two rows of three 100-wide tabs, as a wrapped strip lays them.
+        let rects: Vec<Rect> = (0..6)
+            .map(|i| {
+                Rect::from_min_size(
+                    pos2((i % 3) as f32 * 100.0, (i / 3) as f32 * 30.0),
+                    vec2(98.0, 28.0),
+                )
+            })
+            .collect();
+        let gap = |x: f32, y: f32| insertion_at(&rects, pos2(x, y));
+        assert_eq!(gap(10.0, 14.0), 0, "left half of the first");
+        assert_eq!(gap(160.0, 14.0), 2, "right half of the second");
+        assert_eq!(gap(500.0, 14.0), 3, "past the end of the first row");
+        assert_eq!(gap(10.0, 44.0), 3, "start of the second row");
+        assert_eq!(gap(500.0, 44.0), 6, "past the last");
+        // The first tab dropped after the third takes the third's place;
+        // the last dropped before the first takes the first's.
+        assert_eq!(landing(0, 3), 2);
+        assert_eq!(landing(5, 0), 0);
+        assert_eq!(landing(2, 2), 2, "its own left gap leaves it where it is");
+        assert_eq!(landing(2, 3), 2, "and so does its right");
     }
 }

@@ -130,7 +130,9 @@ fn configure(&self, context: &mut WorkbenchContext) {
   tabs restores the dropdown. With Tool panels off, the toolbar keeps its
   draggable groups and saved positions: row 0 holds the workbench switcher
   beside the workbench's first row, and rows 1 and 2 are its others. Tabs and tool panels scroll
-  horizontally when the window is narrow.
+  horizontally when the window is narrow. Dragging a workbench tab moves it;
+  the order is saved in `UserSettings.workbench_order` and the dropdown
+  follows it. Document and chat tabs move the same way.
 - The workbench menu lists tools by category. A tool that
   only looks at the model takes `core_document::INSPECT_CATEGORY`, and
   the Inspect menu lists it among every workbench's checks.

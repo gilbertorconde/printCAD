@@ -237,6 +237,12 @@ pub enum UiCommand {
     DismissFileNotice,
     CloseTab(uuid::Uuid),
     SelectTab(uuid::Uuid),
+    /// A document's tab dragged to another place in the strip, `to` its
+    /// index there.
+    MoveTab {
+        tab: uuid::Uuid,
+        to: usize,
+    },
     /// The next (`1`) or previous (`-1`) tab, wrapping.
     CycleTab(i32),
     /// One of a bench's own menu entries was picked.
@@ -404,6 +410,11 @@ pub enum UiCommand {
     /// Start a chat from an earlier visit, its conversation coming back.
     WakeChat(String),
     CloseChat(String),
+    /// A chat's tab dragged to index `to` of the strip.
+    MoveChat {
+        chat: String,
+        to: usize,
+    },
     /// Read the closed chats again, for the history the assistant opens.
     ShowChatHistory,
     /// Reopen a closed chat on the document on screen: kept with `file`

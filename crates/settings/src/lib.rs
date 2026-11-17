@@ -75,6 +75,11 @@ pub struct UserSettings {
     /// Choose a workbench from tabs instead of a dropdown.
     #[serde(default = "default_workbench_tabs")]
     pub workbench_tabs: bool,
+    /// The workbenches' order in the tabs and the switcher, by id, as the
+    /// user dragged them; benches it does not name follow in the order
+    /// they registered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workbench_order: Vec<String>,
     /// Show tool panels with pinned buttons and category menus; off by
     /// default, leaving the draggable toolbar groups.
     #[serde(default)]
@@ -542,6 +547,7 @@ impl Default for UserSettings {
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
             workbench_tabs: true,
+            workbench_order: Vec::new(),
             tabbed_tool_ribbon: false,
             tool_panel_pins: BTreeMap::new(),
             recent_commands: Vec::new(),

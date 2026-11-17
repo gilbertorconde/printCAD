@@ -440,6 +440,7 @@ impl UiLayer {
                 keymap: &f.keymap,
                 layout: &settings.toolbars.rows,
                 workbench_tabs: settings.workbench_tabs,
+                workbench_order: &settings.workbench_order,
                 panels: settings.tabbed_tool_ribbon,
                 pins: &settings.tool_panel_pins,
             },
