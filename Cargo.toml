@@ -81,7 +81,7 @@ usvg = { version = "0.48", default-features = false }
 tiny-skia = "0.12"
 rustc-hash = "2.1"
 rayon = "1.12"
-ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "623e80faad8ae168b1736fd92970dd410b25c397" }
+ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "546e5c2a26b7add8882f29aeded71e2cf1959954" }
 sixdof = { version = "0.2", features = ["magellan"] }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
 # Published for workbench packages under these names; `exhaustive` lets the

@@ -126,4 +126,6 @@ if (total > totalBudget) {
   failed = true;
   console.error(`the suite took ${total.toFixed(1)} s, over its ${totalBudget} s budget`);
 }
-process.exit(failed ? 1 : 0);
+// Set rather than exited with: an exit drops what is still on its way
+// down a pipe, the summary above with it.
+process.exitCode = failed ? 1 : 0;

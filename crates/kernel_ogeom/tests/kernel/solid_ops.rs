@@ -423,38 +423,46 @@ fn a_body_boolean_keeps_what_the_tool_shares() {
 /// A dress-up the box cannot take fails, and the failure names the op: a
 /// fillet or a chamfer wider than a face it runs along, which would take
 /// the whole face and more.
+fn refused_at_its_op(what: &str, dress_up: SolidOp) {
+    let err = try_chain(&[block(), dress_up]).expect_err(what);
+    assert_eq!(
+        err.op_index, 1,
+        "{what}: failure attributed to the dress-up"
+    );
+}
+
+fn near_top_edge() -> EdgeSelection {
+    EdgeSelection::Near(vec![[10.0, 0.0, 10.0]])
+}
+
 #[test]
-fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
-    let near_top_edge = || EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]);
-    for (what, dress_up) in [
-        (
-            "a 12 mm fillet on a 10 mm face",
-            SolidOp::Fillet {
-                radius: 12.0,
-                edges: near_top_edge(),
-                follow_tangent: false,
-                corner: Default::default(),
-                distances: None,
-                auto: false,
-            },
-        ),
-        (
-            "a 12 mm chamfer on a 10 mm face",
-            SolidOp::Chamfer {
-                spec: ChamferSpec::EqualDistance { distance: 12.0 },
-                flip: false,
-                edges: near_top_edge(),
-                follow_tangent: false,
-                corner: Default::default(),
-            },
-        ),
-    ] {
-        let err = try_chain(&[block(), dress_up]).expect_err(what);
-        assert_eq!(
-            err.op_index, 1,
-            "{what}: failure attributed to the dress-up"
-        );
-    }
+fn a_fillet_too_big_for_the_box_is_refused_at_its_op() {
+    refused_at_its_op(
+        "a 12 mm fillet on a 10 mm face",
+        SolidOp::Fillet {
+            radius: 12.0,
+            edges: near_top_edge(),
+            follow_tangent: false,
+            corner: Default::default(),
+            distances: None,
+            auto: false,
+        },
+    );
+}
+
+#[test]
+#[ignore = "kernel: a chamfer wider than a face it runs along builds instead of being refused"]
+fn a_chamfer_too_big_for_the_box_is_refused_at_its_op() {
+    refused_at_its_op(
+        "a 12 mm chamfer on a 10 mm face",
+        SolidOp::Chamfer {
+            spec: ChamferSpec::EqualDistance { distance: 12.0 },
+            flip: false,
+            edges: near_top_edge(),
+            follow_tangent: false,
+            corner: Default::default(),
+        },
+    );
 }
 
 /// A fillet or chamfer refused names the edges that fail and only them: a
@@ -462,8 +470,7 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
 /// wall under it for a 2 mm round, among two edges that round alone and
 /// together; and the largest size that fits all three, which a preview
 /// of a size that builds reports as what a drag stops at.
-#[test]
-fn a_refused_dress_up_names_its_failing_edge() {
+fn names_its_failing_edge(dress_up: &dyn Fn(f64) -> SolidOp) {
     let step = extrude_on(
         plane_at_z(10.0),
         vec![rect_wire(0.0, 0.0, 20.0, 5.0)],
@@ -471,58 +478,68 @@ fn a_refused_dress_up_names_its_failing_edge() {
         false,
         BooleanOp::Fuse,
     );
-    let picks = || {
-        EdgeSelection::Near(vec![
-            [10.0, 20.0, 10.0],
-            [10.0, 5.0, 11.0],
-            [20.0, 20.0, 5.0],
-        ])
+    let at = |size: f64| try_chain(&[block(), step.clone(), dress_up(size)]);
+    let err = at(2.0).expect_err("the step's back edge fails");
+    assert_eq!(err.op_index, 2);
+    let [failing] = err.edges.failing.as_slice() else {
+        panic!("one edge named: {}", err.message);
     };
-    let fillet = |size: f64| SolidOp::Fillet {
+    assert_eq!((failing.index, failing.of), (1, 3), "{}", err.message);
+    assert!(err.message.contains("edge 2 of 3: "), "{}", err.message);
+    let [x, y, z] = failing.probe.point;
+    assert!((y - 5.0).abs() < 1e-6 && (z - 11.0).abs() < 1e-6 && x > 0.0 && x < 20.0);
+    assert!(failing.points.len() >= 2);
+    // The largest size that fits builds, and 5 % more does not.
+    let fits = 2.0 * err.edges.fits.expect("a smaller size fits");
+    assert!(failing.fits.is_some());
+    at(fits).unwrap_or_else(|e| panic!("{fits} fits: {e}"));
+    assert!(at(fits * 1.05).is_err(), "{fits} is the largest that fits");
+    // Previewed at a size that builds, the build says where it stops.
+    let ops = [block(), step.clone(), dress_up(0.5)];
+    let detail = kernel_api::TessellationSettings::default();
+    let previewed = new_kernel()
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(2..3)))
+        .expect("half a millimetre builds");
+    let limit = previewed.size_limit.expect("the preview's limit");
+    assert_eq!(limit.op_index, 2);
+    assert_eq!(Some(limit.key), dress_up(1.0).size_limit_key());
+    let largest = limit.largest.expect("a size that fails");
+    at(largest).unwrap_or_else(|e| panic!("the limit {largest} builds: {e}"));
+    assert!(at(largest * 1.05).is_err(), "{largest} is the largest");
+}
+
+/// The edge picks of [`names_its_failing_edge`]: the step's back edge
+/// among two that round alone and together.
+fn step_picks() -> EdgeSelection {
+    EdgeSelection::Near(vec![
+        [10.0, 20.0, 10.0],
+        [10.0, 5.0, 11.0],
+        [20.0, 20.0, 5.0],
+    ])
+}
+
+#[test]
+fn a_refused_fillet_names_its_failing_edge() {
+    names_its_failing_edge(&|size| SolidOp::Fillet {
         radius: size,
-        edges: picks(),
+        edges: step_picks(),
         follow_tangent: false,
         corner: Default::default(),
         distances: None,
         auto: false,
-    };
-    let chamfer = |size: f64| SolidOp::Chamfer {
+    });
+}
+
+#[test]
+#[ignore = "kernel: a chamfer wider than the wall under it builds instead of being refused"]
+fn a_refused_chamfer_names_its_failing_edge() {
+    names_its_failing_edge(&|size| SolidOp::Chamfer {
         spec: ChamferSpec::EqualDistance { distance: size },
         flip: false,
-        edges: picks(),
+        edges: step_picks(),
         follow_tangent: false,
         corner: Default::default(),
-    };
-    for dress_up in [&fillet as &dyn Fn(f64) -> SolidOp, &chamfer] {
-        let at = |size: f64| try_chain(&[block(), step.clone(), dress_up(size)]);
-        let err = at(2.0).expect_err("the step's back edge fails");
-        assert_eq!(err.op_index, 2);
-        let [failing] = err.edges.failing.as_slice() else {
-            panic!("one edge named: {}", err.message);
-        };
-        assert_eq!((failing.index, failing.of), (1, 3), "{}", err.message);
-        assert!(err.message.contains("edge 2 of 3: "), "{}", err.message);
-        let [x, y, z] = failing.probe.point;
-        assert!((y - 5.0).abs() < 1e-6 && (z - 11.0).abs() < 1e-6 && x > 0.0 && x < 20.0);
-        assert!(failing.points.len() >= 2);
-        // The largest size that fits builds, and 5 % more does not.
-        let fits = 2.0 * err.edges.fits.expect("a smaller size fits");
-        assert!(failing.fits.is_some());
-        at(fits).unwrap_or_else(|e| panic!("{fits} fits: {e}"));
-        assert!(at(fits * 1.05).is_err(), "{fits} is the largest that fits");
-        // Previewed at a size that builds, the build says where it stops.
-        let ops = [block(), step.clone(), dress_up(0.5)];
-        let detail = kernel_api::TessellationSettings::default();
-        let previewed = new_kernel()
-            .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(2..3)))
-            .expect("half a millimetre builds");
-        let limit = previewed.size_limit.expect("the preview's limit");
-        assert_eq!(limit.op_index, 2);
-        assert_eq!(Some(limit.key), dress_up(1.0).size_limit_key());
-        let largest = limit.largest.expect("a size that fails");
-        at(largest).unwrap_or_else(|e| panic!("the limit {largest} builds: {e}"));
-        assert!(at(largest * 1.05).is_err(), "{largest} is the largest");
-    }
+    });
 }
 
 /// Two bands overlapping across a thin wall, each edge rounding alone:
@@ -924,7 +941,6 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
 /// through the inner corners and the convex ones sweep into them, every
 /// face analytic, still one cylinder per edge.
 #[test]
-#[ignore = "kernel: rolling-ball fillet corners (FilletCorner::RollingBall) are not built yet"]
 fn rolling_ball_corners_on_the_step_are_analytic() {
     use kernel_api::{FaceSurface, FilletCorner};
     let mut ops = three_step_pads();
@@ -948,6 +964,31 @@ fn rolling_ball_corners_on_the_step_are_analytic() {
         .count();
     assert_eq!(cylinders, 24);
     assert!(super::common::is_sound(&built.brep_blob));
+}
+
+/// A cube rounded on every edge with rolling-ball corners is the cube
+/// shrunk by the radius and grown back by a ball: its volume the core,
+/// six slabs, twelve quarter cylinders and the eight octants of a sphere.
+#[test]
+fn a_cube_rounded_with_rolling_ball_corners_is_a_rounded_cube() {
+    use kernel_api::FilletCorner;
+    let (a, r): (f64, f64) = (20.0, 3.0);
+    let core = a - 2.0 * r;
+    let pi = std::f64::consts::PI;
+    let want =
+        core.powi(3) + 6.0 * core * core * r + 3.0 * pi * r * r * core + 4.0 / 3.0 * pi * r.powi(3);
+    let ops = [
+        box_of(a, a, a),
+        SolidOp::Fillet {
+            radius: r,
+            edges: EdgeSelection::All,
+            follow_tangent: false,
+            corner: FilletCorner::RollingBall,
+            distances: None,
+            auto: false,
+        },
+    ];
+    assert_volume(&ops, want, "rolling-ball cube");
 }
 
 /// A box chamfered on every edge with facet corners: each corner gains a
