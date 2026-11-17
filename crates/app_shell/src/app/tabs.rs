@@ -128,6 +128,18 @@ impl PrintCadApp {
         self.redraw_needed = true;
     }
 
+    /// Move a tab to index `to` of the strip; the one on screen stays so.
+    pub(crate) fn move_tab(&mut self, tab: Uuid, to: usize) {
+        let Some(from) = self.tab_index_of(tab) else {
+            return;
+        };
+        let active = self.tabs[self.active_tab].tab;
+        let slot = self.tabs.remove(from);
+        self.tabs.insert(to.min(self.tabs.len()), slot);
+        self.active_tab = self.tab_index_of(active).unwrap_or(0);
+        self.redraw_needed = true;
+    }
+
     /// Bring the tab after (or before) the active one on screen, wrapping.
     pub(crate) fn cycle_tab(&mut self, delta: i32) {
         self.switch_tab(cycled(self.active_tab, delta, self.tabs.len()));

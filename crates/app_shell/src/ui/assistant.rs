@@ -354,12 +354,15 @@ fn tab_strip(
         // Room is left for New chat, the history and Rules after the tabs.
         let available = ui.available_width() - HEADER_BUTTONS;
         let width = (available / chats.len().max(1) as f32).clamp(CHAT_TAB_MIN, CHAT_TAB_MAX);
+        let mut reorder = ui_kit::widgets::TabReorder::default();
         for chat in chats {
             let on = state.active.as_deref() == Some(chat.id.as_str());
             let tab = Tab::new(&chat.title, on)
                 .width(width)
                 .closable("Close the chat and its agent")
+                .draggable()
                 .show(ui);
+            reorder.push(&tab);
             if tab.closed {
                 commands.push(UiCommand::CloseChat(chat.id.clone()));
             } else if tab.selected {
@@ -409,6 +412,12 @@ fn tab_strip(
                 false => format!("{} · double click to rename", chat.agent),
             };
             tab.response.on_hover_text(hover);
+        }
+        if let Some((from, to)) = reorder.finish(ui) {
+            commands.push(UiCommand::MoveChat {
+                chat: chats[from].id.clone(),
+                to,
+            });
         }
         let plus = tab_plus(ui, TAB_BAR - 8.0).on_hover_text("New chat");
         if icon_button(ui, "history", "Past chats").clicked() {

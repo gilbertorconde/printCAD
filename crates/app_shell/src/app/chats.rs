@@ -905,6 +905,18 @@ impl PrintCadApp {
 
     /// Close a chat: its agent's program ends with it, and the chat goes
     /// to the history, from which it can be reopened.
+    /// Move a chat to index `to` of the strip, kept in that order with
+    /// its document.
+    pub(crate) fn move_chat(&mut self, id: &str, to: usize) {
+        let Some(from) = self.agents.chats.iter().position(|c| c.id == id) else {
+            return;
+        };
+        let chat = self.agents.chats.remove(from);
+        let to = to.min(self.agents.chats.len());
+        self.agents.chats.insert(to, chat);
+        self.persist_chats();
+    }
+
     pub(crate) fn close_chat(&mut self, id: &str) {
         self.cancel_chat(id);
         let Some(index) = self.agents.chats.iter().position(|c| c.id == id) else {

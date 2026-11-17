@@ -1,10 +1,10 @@
 //! The strip of open documents under the menu bar: one tab per document,
 //! the one on screen lit, a dot for unsaved edits, a close on each and a
-//! plus at the end.
+//! plus at the end. A drag moves a tab along the strip.
 
 use egui::Ui;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{Tab, tab_plus};
+use ui_kit::widgets::{Tab, TabReorder, tab_plus};
 use uuid::Uuid;
 
 use super::UiCommand;
@@ -40,13 +40,16 @@ pub fn draw_tab_bar(ui: &mut Ui, tabs: &[TabInfo], commands: &mut Vec<UiCommand>
                 ui.spacing_mut().item_spacing.x = 2.0;
                 let available = ui.available_width() - 32.0;
                 let width = (available / tabs.len().max(1) as f32).clamp(TAB_MIN, TAB_MAX);
+                let mut reorder = TabReorder::default();
                 for tab in tabs {
                     let mut shown = Tab::new(&tab.name, tab.active)
                         .width(width)
                         .dirty(tab.dirty)
                         .marked(tab.read_only.then_some(("lock", WARNING)))
                         .closable("Close tab  (Ctrl+W)")
+                        .draggable()
                         .show(ui);
+                    reorder.push(&shown);
                     if tab.read_only {
                         shown.response = shown
                             .response
@@ -57,6 +60,12 @@ pub fn draw_tab_bar(ui: &mut Ui, tabs: &[TabInfo], commands: &mut Vec<UiCommand>
                     } else if shown.selected {
                         commands.push(UiCommand::SelectTab(tab.tab));
                     }
+                }
+                if let Some((from, to)) = reorder.finish(ui) {
+                    commands.push(UiCommand::MoveTab {
+                        tab: tabs[from].tab,
+                        to,
+                    });
                 }
                 if tab_plus(ui, TAB_BAR - 8.0)
                     .on_hover_text("New tab  (Ctrl+T)")

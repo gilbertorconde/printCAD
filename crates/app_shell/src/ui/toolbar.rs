@@ -25,6 +25,8 @@ pub struct ToolbarInputs<'a> {
     pub layout: &'a [Vec<String>],
     /// Choose a workbench through tabs rather than the dropdown.
     pub workbench_tabs: bool,
+    /// The user's order of the workbenches, by id.
+    pub workbench_order: &'a [String],
     /// Show category panels with pinned tools and dropdown menus.
     pub panels: bool,
     /// Host-owned pin choices, seeded from settings each frame.
@@ -601,8 +603,21 @@ impl ToolPanels<'_> {
     }
 }
 
-fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
-    let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
+/// The registered workbenches in the user's order: those `order` names
+/// first, as it lists them, then the rest as they registered.
+fn ordered_workbenches(order: &[String]) -> Vec<core_document::WorkbenchDescriptor> {
+    let mut benches = REGISTERED_WORKBENCHES.lock().unwrap().clone();
+    benches.sort_by_key(|wb| {
+        order
+            .iter()
+            .position(|id| id == wb.id.as_str())
+            .unwrap_or(usize::MAX)
+    });
+    benches
+}
+
+fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench, order: &[String]) {
+    let workbenches = ordered_workbenches(order);
     let (current, icon) = workbenches
         .iter()
         .find(|wb| wb.id == active_workbench.0)
@@ -872,6 +887,7 @@ pub fn draw_toolbars(
         keymap,
         layout,
         workbench_tabs,
+        workbench_order,
         panels,
         pins,
     } = inputs;
@@ -909,11 +925,15 @@ pub fn draw_toolbars(
                     .id_salt("workbench_tabs_scroll")
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            for wb in REGISTERED_WORKBENCHES.lock().unwrap().iter() {
+                            let benches = ordered_workbenches(workbench_order);
+                            let mut reorder = ui_kit::widgets::TabReorder::default();
+                            for wb in &benches {
                                 let selected = active_workbench.0 == wb.id;
                                 let tab = ui_kit::widgets::Tab::new(&wb.label, selected)
                                     .marked(Some((wb.icon, ACCENT)))
+                                    .draggable()
                                     .show(ui);
+                                reorder.push(&tab);
                                 super::widget_map::note(
                                     ui.ctx(),
                                     || format!("tab:{}", wb.id.as_str()),
@@ -924,6 +944,16 @@ pub fn draw_toolbars(
                                     *active_workbench =
                                         ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
                                 }
+                            }
+                            if let Some((from, to)) = reorder.finish(ui) {
+                                let mut order: Vec<String> =
+                                    benches.iter().map(|wb| wb.id.as_str().to_owned()).collect();
+                                let moved = order.remove(from);
+                                order.insert(to, moved);
+                                commands.push(UiCommand::EditSettings(SettingsEdit::set(
+                                    |s| &mut s.workbench_order,
+                                    order,
+                                )));
                             }
                         });
                     });
@@ -957,7 +987,7 @@ pub fn draw_toolbars(
                             // Without the bench tabs, the switcher leads the
                             // row, set off as a panel is.
                             if !workbench_tabs {
-                                workbench_combo(ui, active_workbench);
+                                workbench_combo(ui, active_workbench, workbench_order);
                                 ui.add_space(PANEL_PADDING);
                                 vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
                                 ui.add_space(PANEL_PADDING);
@@ -1021,7 +1051,9 @@ pub fn draw_toolbars(
                         ui.add_space(2.0);
                     }
                     match &group.content {
-                        GroupContent::Workbench => workbench_combo(ui, active_workbench),
+                        GroupContent::Workbench => {
+                            workbench_combo(ui, active_workbench, workbench_order)
+                        }
                         GroupContent::Tools(members) => {
                             let order: Vec<usize> = if reversed {
                                 members.iter().rev().copied().collect()
