@@ -991,11 +991,10 @@ fn a_cube_rounded_with_rolling_ball_corners_is_a_rounded_cube() {
     assert_volume(&ops, want, "rolling-ball cube");
 }
 
-/// A box chamfered on every edge with facet corners: each corner gains a
-/// triangle, and the facet takes off the tetrahedron d³/12 past the point
-/// the mitred bevels meet at.
+/// A box chamfered on every edge, its corners as facets against points:
+/// each corner gains a triangle, and the facet takes off the tetrahedron
+/// d³/12 past the point the mitred bevels meet at.
 #[test]
-#[ignore = "kernel: facet chamfer corners refuse a solid whose cap reuses another face's edges at a moved location, as every pad's does"]
 fn facet_corners_cut_a_triangle_off_each_corner_of_a_box() {
     use kernel_api::ChamferCorner;
     let chamfered = |corner| {
