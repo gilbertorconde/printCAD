@@ -1379,7 +1379,7 @@ impl SketchWorkbench {
                 && let Some(cursor) = Self::cursor_to_sketch(ctx, &feature.plane, viewport_pos)
             {
                 let tol = Self::snap_tolerance(ctx, &feature.plane);
-                if self.node_right_click(&feature, cursor, tol) {
+                if self.node_right_click(ctx, &feature, cursor, tol) {
                     return InputResult::ignored();
                 }
             }

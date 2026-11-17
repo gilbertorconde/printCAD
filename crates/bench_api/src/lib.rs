@@ -2730,6 +2730,9 @@ pub enum MenuScope {
     TreeBody(String),
     StartPage,
     EditMenu,
+    /// A menu the package opened itself with [`Request::OpenMenu`] (from
+    /// 0.1.8), by the tag it gave it.
+    Popup(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2744,6 +2747,10 @@ pub struct MenuItem {
     pub enabled: bool,
     #[serde(default)]
     pub separator_before: bool,
+    /// Drawn ticked, the choice that stands among the entries (from
+    /// 0.1.8).
+    #[serde(default)]
+    pub checked: bool,
 }
 
 impl Default for MenuItem {
@@ -2755,6 +2762,7 @@ impl Default for MenuItem {
             hint: None,
             enabled: yes(),
             separator_before: false,
+            checked: false,
         }
     }
 }
@@ -2814,6 +2822,15 @@ pub enum Request {
     /// bench made, to paste into a spreadsheet.
     CopyText {
         text: String,
+    },
+    /// Open a menu of `items` at the pointer (from 0.1.8), for something
+    /// the package draws itself: a right click on a handle of its own. The
+    /// pick comes back as `menu_command` with [`MenuScope::Popup`] and
+    /// `tag`; Escape or a click elsewhere puts the menu away and says
+    /// nothing.
+    OpenMenu {
+        tag: String,
+        items: Vec<MenuItem>,
     },
 }
 

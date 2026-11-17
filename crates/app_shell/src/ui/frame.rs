@@ -889,6 +889,9 @@ impl UiLayer {
             };
             legend::draw(ctx, viewport, map, lift, inputs.document.display_unit());
         }
+        if let Some(menu) = &inputs.bench_menu {
+            context_menu::draw_bench_menu(ctx, menu, &mut out.commands);
+        }
         if let Some(menu) = &inputs.viewport_menu {
             let mut local = None;
             context_menu::draw(

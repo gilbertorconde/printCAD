@@ -1,7 +1,7 @@
 //! Splines edited by their nodes, and the path tool that draws them: a
 //! double click brings a spline into node form, a node's press shows and
 //! carries its handles, a handle's drag holds its node and the other
-//! handle in line, a right click's card sets a node's kind, and the path
+//! handle in line, a right click's menu sets a node's kind, and the path
 //! tool's press places a node whose drag pulls its handles. Clicks land
 //! through the view's pixels, so where they land is held to 1e-3 mm.
 
@@ -139,7 +139,8 @@ fn a_node_carries_its_handles_and_a_handle_turns_about_its_node() {
     );
 }
 
-/// A right click on a node opens its card; making it a corner frees its
+/// A right click on a node opens the menu of its kinds at the pointer, the
+/// one it is ticked; making it a corner frees its
 /// handles, so dragging one leaves the other where it is. Escape ends the
 /// edit.
 #[test]
@@ -148,13 +149,17 @@ fn a_right_click_breaks_a_node_s_handles_apart() {
     let node = nodes::nodes_of(&h.sketch(), id).unwrap().nodes[2];
     let p = at(&h.sketch(), node.point);
     h.right_click(p.x, p.y, "sketch.select");
-    let card = h.card().expect("the node's card");
-    assert_eq!((card.title.as_str(), card.ok_only), ("Node", true));
-    h.card_event(bench_api::PanelEvent::Choice {
-        id: "node.kind".into(),
-        index: 0,
-    });
-    h.close_card(true);
+    let (_, items) = h.menu.clone().expect("the node's menu");
+    let entries: Vec<(&str, bool)> = items
+        .iter()
+        .map(|i| (i.label.as_str(), i.checked))
+        .collect();
+    assert_eq!(
+        entries,
+        [("Corner", false), ("Smooth", true), ("Symmetric", false)],
+        "its kinds, the one it is ticked"
+    );
+    h.menu_pick("sketch.node.corner");
     assert_eq!(nodes::kind_of(&h.sketch(), &node), NodeKind::Corner);
 
     let sketch = h.sketch();

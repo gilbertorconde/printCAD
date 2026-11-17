@@ -44,6 +44,8 @@ struct Probe {
     /// its last OK kept.
     card: Option<String>,
     card_size: Option<f64>,
+    /// The tag of the menu of its own whose entry was last picked.
+    picked: Option<String>,
 }
 
 impl Bench for Probe {
@@ -233,6 +235,26 @@ impl Bench for Probe {
                 Ok(Value::Null)
             }
             "test.probe.opened" => Ok(json!(self.opened)),
+            "test.probe.menu" => {
+                host::request(Request::OpenMenu {
+                    tag: "handle-7".into(),
+                    items: vec![
+                        MenuItem {
+                            id: "test.probe.flip".into(),
+                            label: "Flip".into(),
+                            checked: true,
+                            ..Default::default()
+                        },
+                        MenuItem {
+                            id: "test.probe.keep".into(),
+                            label: "Keep".into(),
+                            ..Default::default()
+                        },
+                    ],
+                });
+                Ok(Value::Null)
+            }
+            "test.probe.picked" => Ok(json!(self.picked)),
             "test.probe.field" => {
                 self.field = Some(HeightField::new([0.0; 3], 3, 3, 1.0, &[0.0; 9], &[])?);
                 Ok(Value::Null)
@@ -244,6 +266,16 @@ impl Bench for Probe {
                 Ok(Value::Null)
             }
             _ => Err(format!("no command `{id}`")),
+        }
+    }
+
+    fn menu_command(&mut self, id: &str, scope: &MenuScope) -> bool {
+        match (id, scope) {
+            ("test.probe.flip", MenuScope::Popup(tag)) => {
+                self.picked = Some(tag.clone());
+                true
+            }
+            _ => false,
         }
     }
 

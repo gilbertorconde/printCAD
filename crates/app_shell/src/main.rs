@@ -377,6 +377,15 @@ impl PrintCadApp {
     /// Call on_deactivate on a workbench. It runs inside a switch, so its
     /// requests apply except another switch.
     fn call_workbench_deactivate(&mut self, wb_id: &WorkbenchId) {
+        // A menu the bench opened goes with it.
+        if self
+            .session
+            .bench_menu
+            .as_ref()
+            .is_some_and(|m| &m.bench == wb_id)
+        {
+            self.session.bench_menu = None;
+        }
         let params = self.interaction_ctx_params();
         if let Some(((), outcome)) =
             self.with_workbench_ctx(wb_id, params, |wb, ctx| wb.on_deactivate(ctx))

@@ -4,7 +4,7 @@ mod combo_view;
 mod command_palette;
 mod context_menu;
 mod variables_view;
-pub use context_menu::{OtherPick, ViewportMenu};
+pub use context_menu::{BenchMenu, OtherPick, ViewportMenu};
 mod commands;
 mod console_view;
 mod details_modal;

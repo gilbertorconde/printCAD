@@ -5,13 +5,13 @@
 //! dragging a handle holds its node where it is, the other handle
 //! following as the node's kind says (in line with it when smooth,
 //! mirrored when symmetric, free at a corner). A right click on a node
-//! opens a card to make it a corner, smooth or symmetric. Escape, another
-//! tool or a click on anything else ends the edit.
+//! opens a menu at the pointer (`HostRequest::OpenMenu`) to make it a
+//! corner, smooth or symmetric, its kind ticked. Escape, another tool or a
+//! click on anything else ends the edit.
 
 use std::collections::HashSet;
 
-use bench_api::{FloatingCard, PanelEvent, panel};
-use core_document::{HostRequest, WorkbenchRuntimeContext};
+use core_document::{HostRequest, MenuItem, WorkbenchRuntimeContext};
 use uuid::Uuid;
 
 use crate::feature::SketchFeature;
@@ -26,8 +26,6 @@ pub(crate) struct NodeEdit {
     pub spline: Uuid,
     /// The node picked, its handles shown.
     pub node: Option<Uuid>,
-    /// The node whose kind the card is open on.
-    pub card: Option<Uuid>,
 }
 
 /// What the view draws for the spline under node edit.
@@ -41,7 +39,12 @@ pub(crate) struct NodeView {
     pub hidden: HashSet<Uuid>,
 }
 
-const NODE_CARD: &str = "sketch.node";
+/// The node menu's entries, by kind, the id its pick comes back as.
+const KIND_COMMANDS: [(NodeKind, &str); 3] = [
+    (NodeKind::Corner, "sketch.node.corner"),
+    (NodeKind::Smooth, "sketch.node.smooth"),
+    (NodeKind::Symmetric, "sketch.node.symmetric"),
+];
 
 impl SketchWorkbench {
     /// The spline's nodes, while it is under node edit and still a path.
@@ -64,11 +67,7 @@ impl SketchWorkbench {
                     ctx.log_info("The spline is now nodes and handles, the curve as it was");
                 }
                 self.tab.selected.clear();
-                self.tab.node_edit = Some(NodeEdit {
-                    spline,
-                    node: None,
-                    card: None,
-                });
+                self.tab.node_edit = Some(NodeEdit { spline, node: None });
             }
             Err(why) => ctx.log_warn(why),
         }
@@ -161,9 +160,11 @@ impl SketchWorkbench {
     }
 
     /// A right click at `cursor` while a spline is under node edit: on a
-    /// node, its card opens. Answers whether it did.
+    /// node with both handles, the menu of its kinds opens at the pointer,
+    /// the node picked. Answers whether it did.
     pub(crate) fn node_right_click(
         &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
         feature: &SketchFeature,
         cursor: Vec2D,
         tol: f64,
@@ -181,11 +182,50 @@ impl SketchWorkbench {
         if node.before.is_none() || node.after.is_none() {
             return false;
         }
+        let kind = nodes::kind_of(&feature.sketch, node);
+        let items = KIND_COMMANDS
+            .iter()
+            .map(|(k, id)| MenuItem::new(*id, k.label()).checked(*k == kind))
+            .collect();
+        ctx.request(HostRequest::OpenMenu {
+            bench: core_document::WorkbenchId::new(crate::KIND),
+            tag: node.point.to_string(),
+            items,
+        });
         self.tab.node_edit = Some(NodeEdit {
             node: Some(node.point),
-            card: Some(node.point),
             ..edit
         });
+        true
+    }
+
+    /// A pick from a node's menu: node `tag` of the spline under edit made
+    /// the kind `id` names. Answers whether `id` is one of the menu's.
+    pub(crate) fn node_command(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: &str,
+        tag: &str,
+    ) -> bool {
+        let Some(&(kind, _)) = KIND_COMMANDS.iter().find(|(_, c)| *c == id) else {
+            return false;
+        };
+        let (Some(edit), Ok(point)) = (self.tab.node_edit, Uuid::parse_str(tag)) else {
+            return true;
+        };
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return true;
+        };
+        let Some(node) =
+            nodes::nodes_of(&feature.sketch, edit.spline).and_then(|n| n.node(point).copied())
+        else {
+            return true;
+        };
+        if nodes::set_kind(&mut feature.sketch, &node, kind) {
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+            ctx.request(HostRequest::JournalLabel(format!("{} node", kind.label())));
+        }
         true
     }
 
@@ -193,67 +233,6 @@ impl SketchWorkbench {
     pub(crate) fn node_view(&self, feature: &SketchFeature) -> Option<NodeView> {
         let (edit, nodes) = self.edited_nodes(feature)?;
         Some(node_view(&feature.sketch, &edit, &nodes))
-    }
-
-    /// The card of the node right-clicked: its kind, OK only.
-    pub(crate) fn node_card(&self, ctx: &WorkbenchRuntimeContext) -> Option<FloatingCard> {
-        let feature = self.get_active_sketch(ctx)?;
-        let (edit, nodes) = self.edited_nodes(&feature)?;
-        let node = nodes.node(edit.card?)?;
-        let kind = nodes::kind_of(&feature.sketch, node);
-        let chosen = NodeKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
-        let choice = panel::segmented(
-            "node.kind",
-            "Handles",
-            NodeKind::ALL.iter().map(|k| k.label()),
-            chosen,
-        );
-        let at = feature.sketch.point_position(node.point)?;
-        let plane = &feature.plane;
-        let world = std::array::from_fn(|i| {
-            (plane.origin[i] + plane.x_axis[i] * at.x + plane.y_axis[i] * at.y) as f32
-        });
-        let mut card = panel::floating_card(NODE_CARD, "Node", world, None, [choice.into()]);
-        card.icon = Some(crate::registration::tool_icon("sketch.bspline").into());
-        card.ok_only = true;
-        Some(card)
-    }
-
-    /// A change on the node's card. Answers whether it was one.
-    pub(crate) fn node_event(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        event: &PanelEvent,
-    ) -> bool {
-        let Some(edit) = self.tab.node_edit else {
-            return false;
-        };
-        match event {
-            PanelEvent::CardClose { id, .. } if id == NODE_CARD => {
-                self.tab.node_edit = Some(NodeEdit { card: None, ..edit });
-                true
-            }
-            PanelEvent::Choice { id, index } if id == "node.kind" => {
-                let (Some(point), Some(&kind)) = (edit.card, NodeKind::ALL.get(*index)) else {
-                    return true;
-                };
-                let Some(mut feature) = self.get_active_sketch(ctx) else {
-                    return true;
-                };
-                let Some(node) = nodes::nodes_of(&feature.sketch, edit.spline)
-                    .and_then(|n| n.node(point).copied())
-                else {
-                    return true;
-                };
-                if nodes::set_kind(&mut feature.sketch, &node, kind) {
-                    self.solve(ctx, &mut feature);
-                    self.store_sketch(ctx, feature);
-                    ctx.request(HostRequest::JournalLabel(format!("{} node", kind.label())));
-                }
-                true
-            }
-            _ => false,
-        }
     }
 }
 

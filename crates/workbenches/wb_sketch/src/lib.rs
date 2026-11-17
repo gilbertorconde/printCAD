@@ -1222,13 +1222,11 @@ impl SketchWorkbench {
 
 impl Workbench for SketchWorkbench {
     fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
-        self.corner_card(ctx)
-            .or_else(|| self.node_card(ctx))
-            .or_else(|| self.dimension_card(ctx))
+        self.corner_card(ctx).or_else(|| self.dimension_card(ctx))
     }
 
     fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
-        if !self.corner_event(ctx, event) && !self.node_event(ctx, event) {
+        if !self.corner_event(ctx, event) {
             self.dimension_event(ctx, event);
         }
     }
@@ -1377,6 +1375,7 @@ impl Workbench for SketchWorkbench {
             (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
             (MenuScope::EditMenu, "edit.cut") => self.clipboard_copy(ctx, true),
             (MenuScope::EditMenu, "edit.paste") => self.clipboard_paste(ctx),
+            (MenuScope::Popup(tag), _) => self.node_command(ctx, id, tag),
             _ => false,
         }
     }

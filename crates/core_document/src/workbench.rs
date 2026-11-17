@@ -588,6 +588,10 @@ pub enum MenuScope {
     /// The Edit menu's clipboard entries, run on the active bench:
     /// `edit.cut`, `edit.copy`, `edit.paste`.
     EditMenu,
+    /// A menu the bench opened itself at the pointer
+    /// ([`HostRequest::OpenMenu`](crate::HostRequest::OpenMenu)), by the
+    /// tag it gave it: only that bench hears its pick.
+    Popup(String),
 }
 
 /// One entry a bench contributes to a contextual menu. Picking it calls
@@ -602,6 +606,8 @@ pub struct MenuItem {
     pub hint: Option<String>,
     pub enabled: bool,
     pub separator_before: bool,
+    /// Drawn ticked: the choice that stands among the entries.
+    pub checked: bool,
 }
 
 impl MenuItem {
@@ -613,7 +619,13 @@ impl MenuItem {
             hint: None,
             enabled: true,
             separator_before: false,
+            checked: false,
         }
+    }
+
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self
     }
 
     pub fn icon(mut self, icon: &'static str) -> Self {

@@ -76,9 +76,9 @@ joined to it by a line. Drag the node and its handles come with it; drag
 a handle and the node stays put. A node is **Smooth** (its handles held
 in one line through it, so the other handle turns with the one dragged),
 **Symmetric** (mirrored through it) or a **Corner** (each handle on its
-own). Right click a node for a card to change it; nodes that were smooth
-on the curve come out smooth. Escape, another tool or a click on anything
-else ends the edit. The **Path** tool draws a path directly: click to
+own). Right click a node for a menu of the three, its own ticked; nodes
+that were smooth on the curve come out smooth. Escape, another tool or a
+click on anything else ends the edit. The **Path** tool draws a path directly: click to
 place a corner node, press and drag to place a smooth node and pull its
 handles out (the other mirrored), click the first node to close the
 path, and Enter, a right click or a second click on the last node

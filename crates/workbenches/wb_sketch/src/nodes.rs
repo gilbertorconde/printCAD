@@ -59,8 +59,6 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
-    pub const ALL: [NodeKind; 3] = [NodeKind::Corner, NodeKind::Smooth, NodeKind::Symmetric];
-
     pub fn label(self) -> &'static str {
         match self {
             NodeKind::Corner => "Corner",

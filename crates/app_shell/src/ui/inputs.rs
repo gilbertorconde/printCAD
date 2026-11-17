@@ -146,6 +146,8 @@ pub struct UiFrameInputs<'a> {
     pub reveal_face_maker: bool,
     /// The context menu a right click asked for, if one is open.
     pub viewport_menu: Option<super::ViewportMenu>,
+    /// The menu a bench opened at the pointer, if one is open.
+    pub bench_menu: Option<super::BenchMenu>,
     /// The faces selected in the view, in the order picked: each its body
     /// and index in the body's mesh.
     pub picked_faces: Vec<(core_document::BodyId, u32)>,

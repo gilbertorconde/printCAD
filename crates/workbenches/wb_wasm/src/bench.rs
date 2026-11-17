@@ -372,6 +372,23 @@ impl WasmWorkbench {
         }
     }
 
+    /// A package's menu entry as the host draws it, its icon the package's.
+    fn menu_item(&self, item: bench_api::MenuItem) -> MenuItem {
+        let mut out = MenuItem::new(item.id, item.label)
+            .enabled(item.enabled)
+            .checked(item.checked);
+        if let Some(icon) = item.icon {
+            out = out.icon(self.icon(&icon));
+        }
+        if let Some(hint) = item.hint {
+            out = out.hint(hint);
+        }
+        if item.separator_before {
+            out = out.separator_before();
+        }
+        out
+    }
+
     /// Hand what a call asked for to the host through `ctx`.
     fn settle_aftermath(
         &self,
@@ -385,7 +402,8 @@ impl WasmWorkbench {
             inner.info.clear();
         }
         for request in aftermath.requests {
-            match convert::request(request, self.id(), &self.package.granted) {
+            let item = |item| self.menu_item(item);
+            match convert::request(request, self.id(), &self.package.granted, &item) {
                 Ok(request) => ctx.request(request),
                 Err(e) => ctx.log_warn(format!("{}: {e}", self.descriptor.label)),
             }
@@ -900,19 +918,7 @@ impl Workbench for WasmWorkbench {
             .and_then(|json| parse::<Vec<bench_api::MenuItem>>(self.id(), "menu items", &json))
             .unwrap_or_default()
             .into_iter()
-            .map(|item| {
-                let mut out = MenuItem::new(item.id, item.label).enabled(item.enabled);
-                if let Some(icon) = item.icon {
-                    out = out.icon(self.icon(&icon));
-                }
-                if let Some(hint) = item.hint {
-                    out = out.hint(hint);
-                }
-                if item.separator_before {
-                    out = out.separator_before();
-                }
-                out
-            })
+            .map(|item| self.menu_item(item))
             .collect()
     }
 

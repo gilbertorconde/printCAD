@@ -1160,6 +1160,60 @@ fn an_animating_frame_is_asked_for_each_frame_while_its_bench_is_on_screen() {
     );
 }
 
+/// A menu a package opens for something of its own reaches the host as
+/// the host's request, its entries and the ticked one as the package
+/// gave them, and the entry picked comes back to the package with the
+/// menu's tag.
+#[test]
+fn a_package_s_own_menu_opens_and_its_pick_comes_back() {
+    use core_document::runtime::HostRequest;
+    let package = installed("tests/probe", "probe.wasm", "probe-menu");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("probe");
+    let bench = WorkbenchId::new("test.probe");
+    let mut ctx =
+        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    let wb = registry.workbench_mut(&bench).unwrap();
+    wb.run_command("test.probe.menu", &Default::default(), &mut ctx)
+        .unwrap();
+    let requests = ctx.take_requests();
+    let [
+        HostRequest::OpenMenu {
+            bench: from,
+            tag,
+            items,
+        },
+    ] = requests.as_slice()
+    else {
+        panic!("one menu: {requests:?}");
+    };
+    assert_eq!((from, tag.as_str()), (&bench, "handle-7"));
+    let entries: Vec<(&str, &str, bool)> = items
+        .iter()
+        .map(|i| (i.id.as_str(), i.label.as_str(), i.checked))
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            ("test.probe.flip", "Flip", true),
+            ("test.probe.keep", "Keep", false)
+        ]
+    );
+    let scope = core_document::MenuScope::Popup(tag.clone());
+    assert!(
+        wb.on_command("test.probe.flip", &scope, &mut ctx),
+        "the package's entry"
+    );
+    assert!(
+        !wb.on_command("test.probe.other", &scope, &mut ctx),
+        "not one of its"
+    );
+    let picked = wb
+        .run_command("test.probe.picked", &Default::default(), &mut ctx)
+        .unwrap();
+    assert_eq!(picked, json!("handle-7"));
+}
+
 /// Files a package makes reach the save dialogs, and the files a user
 /// picks for it reach the package, only as the user allowed.
 #[test]

@@ -49,6 +49,12 @@ pub(crate) struct DocumentSession {
     /// The context menu a right click on a body asked for, until it is
     /// used or dismissed.
     pub viewport_menu: Option<crate::ui::ViewportMenu>,
+    /// The menu a bench opened at the pointer, until it is used or
+    /// dismissed.
+    pub bench_menu: Option<crate::ui::BenchMenu>,
+    /// How many menus benches have opened: a right click that opened one
+    /// opens no body menu as well.
+    pub bench_menus_opened: u64,
     /// Workbench to return to when an edit session finishes, when the flow
     /// was started from another workbench.
     pub return_workbench: Option<ActiveWorkbench>,
@@ -146,6 +152,8 @@ impl DocumentSession {
             pending_sketch_creation: None,
             plane_session_open: false,
             viewport_menu: None,
+            bench_menu: None,
+            bench_menus_opened: 0,
             return_workbench: None,
             last_tool: None,
             task_open: false,
