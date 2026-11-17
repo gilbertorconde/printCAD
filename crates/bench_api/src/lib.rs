@@ -850,6 +850,9 @@ pub struct FloatingCard {
     /// The line under the widgets of a readout card, in place of OK and
     /// Cancel: what the keys do (`Tab next · Enter places it`).
     pub hint: Option<String>,
+    /// OK alone, no Cancel: Escape is OK too, and only a refused card is
+    /// dropped. For what a step already made leaves to set.
+    pub ok_only: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

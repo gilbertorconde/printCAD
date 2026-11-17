@@ -394,13 +394,15 @@ impl SketchWorkbench {
             && (std::mem::take(&mut self.tab.arc_click)
                 || matches!(self.tab.tool_state, ToolState::PolylineFrom { .. }));
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
-        if !arc
-            && typed.is_empty()
-            && self
-                .open_corner_task(ctx, &feature, tool, cursor, &settings)
-                .or_else(|| self.open_rect_task(ctx, &feature, tool, cursor, &settings))
-                .is_some()
-        {
+        let card = !arc
+            && ((typed.is_empty()
+                && self
+                    .open_corner_task(ctx, &feature, tool, cursor, &settings)
+                    .is_some())
+                || self
+                    .open_rect_task(ctx, &feature, tool, cursor, &settings, &typed, constrain)
+                    .is_some());
+        if card {
             return InputResult::consumed();
         }
         let state_before = self.tab.tool_state.clone();
@@ -1837,12 +1839,11 @@ impl SketchWorkbench {
         // panel can change them afterwards.
         // An open corner's card has the keys (the host keeps Enter and
         // Escape for its OK and Cancel, and applies it before a click in
-        // the view goes on); another tool, or an edit from elsewhere, puts
-        // it away.
-        if self.tab.corner_task.is_some() {
-            if active_tool.map(str::to_string) != self.tab.activated_tool
-                || self.drop_stale_corner(ctx)
-            {
+        // the view goes on); another tool takes it as it stands, as OK
+        // does, and an edit from elsewhere puts it away.
+        if self.tab.corner_task.is_some() && !self.drop_stale_corner(ctx) {
+            if active_tool.map(str::to_string) != self.tab.activated_tool {
+                self.store_corner(ctx, false);
                 self.discard_corner();
             } else {
                 return match event {

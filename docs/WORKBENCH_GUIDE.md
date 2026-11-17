@@ -478,9 +478,12 @@ to the new one as `ctx.attach_request`.
   Cancel, and a click elsewhere in the view is OK unless the card's
   `refusal` holds OK back. Keep the edit in the bench until OK; the host
   makes what OK writes one undo step and takes back anything written
-  while the card was open on Cancel. A feature with more to set (a pad,
-  a fillet on a solid, anything with several sections or picks) is a
-  task, not a card.
+  while the card was open on Cancel. A card with `ok_only` has no
+  Cancel: Escape is OK too, for what a step already made leaves to set.
+  Whatever else puts a card away (the edit finished, another tool or
+  bench picked) is OK; only a refused card is then dropped. A feature
+  with more to set (a pad, a fillet on a solid, anything with several
+  sections or picks) is a task, not a card.
 - `ui_left_panel` draws above the model tree, and not while the left
   panel is folded to its icons.
 - `viewport` is asked once a frame while the workbench is active and

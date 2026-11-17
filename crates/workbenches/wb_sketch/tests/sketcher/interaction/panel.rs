@@ -515,20 +515,25 @@ fn a_fillet_waits_in_its_card_until_ok_and_replays() {
     super::recording::assert_replays(&h.recorded, before, id, &h.sketch());
 }
 
-/// Cancel (or Escape), another tool and an edit from elsewhere each put
-/// an open chamfer away, storing and recording nothing.
+/// An open chamfer picked away from by another tool is cut at its size,
+/// as OK cuts it; closed unaccepted (what a refused card's Escape does) or
+/// put away by an edit from elsewhere, nothing is cut or recorded.
 #[test]
-fn an_open_chamfer_goes_with_cancel_a_tool_or_an_outside_edit() {
+fn an_open_chamfer_is_cut_by_another_tool_and_dropped_otherwise() {
     type Leave = fn(&mut Harness);
-    let ways: [(&str, Leave); 3] = [
-        ("cancel", |h| h.close_card(false)),
-        ("tool", |h| h.activate("sketch.line")),
-        ("outside", |h| {
-            h.edit_sketch(|s| s.name = "renamed".into());
-            h.mouse_move(5.0, 5.0, "sketch.chamfer");
-        }),
+    let ways: [(&str, Leave, bool); 3] = [
+        ("unaccepted", |h| h.close_card(false), false),
+        ("tool", |h| h.mouse_move(5.0, 5.0, "sketch.line"), true),
+        (
+            "outside",
+            |h| {
+                h.edit_sketch(|s| s.name = "renamed".into());
+                h.mouse_move(5.0, 5.0, "sketch.chamfer");
+            },
+            false,
+        ),
     ];
-    for (what, leave) in ways {
+    for (what, leave, cut) in ways {
         let mut h = Harness::sketching();
         h.full_click(0.0, 0.0, "sketch.rect");
         h.full_click(20.0, 12.0, "sketch.rect");
@@ -540,7 +545,12 @@ fn an_open_chamfer_goes_with_cancel_a_tool_or_an_outside_edit() {
         leave(&mut h);
         assert!(h.card().is_none(), "{what}: put away");
         let now = (h.counts(), h.sketch().constraints.len());
-        assert_eq!(now, drawn, "{what}: nothing cut");
-        assert_eq!(h.recorded.len(), recorded, "{what}: nothing recorded");
+        if cut {
+            assert_eq!(all_lines(&h.sketch()).len(), 5, "{what}: the corner cut");
+            assert_eq!(h.recorded.len(), recorded + 1, "{what}: recorded");
+        } else {
+            assert_eq!(now, drawn, "{what}: nothing cut");
+            assert_eq!(h.recorded.len(), recorded, "{what}: nothing recorded");
+        }
     }
 }

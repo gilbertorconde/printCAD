@@ -321,7 +321,9 @@ pub fn draw(
                                     .add_enabled_ui(!refused, |ui| primary_button(ui, ok_label))
                                     .inner
                                     .clicked();
-                                cancel = secondary_button(ui, "Cancel").clicked();
+                                if !card.ok_only {
+                                    cancel = secondary_button(ui, "Cancel").clicked();
+                                }
                             });
                         }
                     }
@@ -337,8 +339,13 @@ pub fn draw(
             wb.card_event(&mut pctx, event);
         }
     }
-    let close = if cancel || (keys && escape) {
+    // Escape is Cancel, or OK on a card with no Cancel unless OK is
+    // held back.
+    let escaped = keys && escape;
+    let close = if cancel || (escaped && (!card.ok_only || refused)) {
         Some(false)
+    } else if escaped {
+        Some(true)
     } else {
         (!refused && (ok || (keys && enter))).then_some(true)
     };
@@ -479,6 +486,80 @@ mod tests {
             });
             assert_eq!(cards, [egui::Id::new(("floating_card", want))], "{bench}");
             assert_eq!(shown.close, (!reads).then_some(true), "Enter on {want}");
+        }
+    }
+
+    /// Escape is a card's Cancel, and OK on a card with no Cancel, which
+    /// draws OK alone; refused, even that card is dropped.
+    #[test]
+    fn escape_is_ok_on_a_card_with_no_cancel() {
+        let viewport = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+        let escape = egui::Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        for (ok_only, refused, want) in [
+            (false, false, Some(false)),
+            (true, false, Some(true)),
+            (true, true, Some(false)),
+        ] {
+            let card = bench_api::FloatingCard {
+                id: "edit".into(),
+                title: "Wall".into(),
+                screen: Some([300.0, 200.0]),
+                widgets: vec![value("w")],
+                ok_only,
+                refusal: refused.then(|| "Enter a wall greater than zero".into()),
+                ..Default::default()
+            };
+            let mut registry = core_document::DocumentService::default();
+            registry
+                .register_workbench(Box::new(Bench {
+                    id: "wb.carded",
+                    card: Some(card),
+                }))
+                .unwrap();
+            let ctx = Context::default();
+            ui_kit::theme::apply_theme(&ctx);
+            let mut document = core_document::Document::new("t");
+            let mut state = CardState::default();
+            let active = ActiveWorkbench(core_document::WorkbenchId::from("wb.carded"));
+            let mut last = None;
+            for frame in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(viewport),
+                    events: if frame == 2 {
+                        vec![escape.clone()]
+                    } else {
+                        vec![]
+                    },
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    last = draw(
+                        ui.ctx(),
+                        viewport,
+                        Drawn {
+                            lines: &[],
+                            marks: &[],
+                            labels: &[],
+                        },
+                        &mut state,
+                        None,
+                        &active,
+                        &mut document,
+                        &mut registry,
+                        &HostCtxParams::default(),
+                        None,
+                    );
+                });
+                output.textures_delta.clear();
+            }
+            let shown = last.expect("the card");
+            assert_eq!(shown.close, want, "ok_only {ok_only}, refused {refused}");
         }
     }
 

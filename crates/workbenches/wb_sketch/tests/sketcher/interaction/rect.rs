@@ -151,56 +151,64 @@ fn a_typed_corner_on_a_point_reuses_it() {
     assert_eq!(h.counts().0, 4, "four corners, the point among them");
 }
 
-/// A rectangle's last click opens a card by it, its width taking the
-/// keys, nothing stored until OK: a size below zero or a wall with no
-/// room says why and holds OK back, Cancel leaves nothing, and OK stores
-/// the sizes typed as dimensions in one undo step and one recorded call
-/// that replays to the same sketch.
+/// A frame's last click opens its card with only what the clicks left to
+/// set, the wall, the tool's setting in it: nothing is stored until OK, a
+/// wall that cannot be is refused, and OK writes the frame as one undo
+/// step whose recording replays. A plain rectangle's clicks set it whole:
+/// it opens no card and is stored at its last click.
 #[test]
-fn a_rectangle_waits_in_its_card_until_ok_and_replays() {
+fn a_frame_waits_in_its_card_for_its_wall_and_replays() {
     let (mut h, id, before) = super::recording::session_on_a_sketch();
     h.ok_new_dimensions = false;
     h.full_click(0.0, 0.0, "sketch.rect:frame");
     h.full_click(10.0, 6.0, "sketch.rect:frame");
     let card = h.card().expect("the card");
     assert_eq!(
-        (card.title.as_str(), card.focus.as_deref(), card.refusal),
-        ("Frame", Some("rect.width"), None)
+        (
+            card.title.as_str(),
+            card.focus.as_deref(),
+            card.refusal,
+            card.ok_only
+        ),
+        ("Frame", Some("rect.size"), None, true)
     );
+    assert_eq!(card.widgets.len(), 1, "the wall alone");
     assert_eq!(h.counts(), (0, 0, 0, 0), "nothing stored before OK");
-    h.close_card(false);
-    assert_eq!(h.counts(), (0, 0, 0, 0), "Cancel leaves nothing");
-    assert!(h.card().is_none());
-
-    h.full_click(0.0, 0.0, "sketch.rect:frame");
-    h.full_click(10.0, 6.0, "sketch.rect:frame");
-    for (field, refused) in [
-        ("rect.width", "-3"),
-        ("rect.size", "4"),
-        ("rect.height", "x"),
-    ] {
-        h.card_type(field, refused);
-        assert!(h.card().unwrap().refusal.is_some(), "{refused}: says why");
-        h.close_card(true);
-        assert_eq!(h.counts(), (0, 0, 0, 0), "{refused}: nothing applied");
-        h.card_type(field, if field == "rect.size" { "1" } else { "8" });
-    }
-    h.card_type("rect.width", "16");
+    h.card_type("rect.size", "-3");
+    assert!(
+        h.card().unwrap().refusal.is_some(),
+        "a wall below zero says why"
+    );
+    h.close_card(true);
+    assert_eq!(h.counts(), (0, 0, 0, 0), "nothing applied while refused");
+    h.card_type("rect.size", "1");
     let closed = h.gestures_closed;
     h.close_card(true);
     assert_eq!(h.gestures_closed, closed + 1, "OK is one undo step");
     let sketch = h.sketch();
     assert_eq!(all_lines(&sketch).len(), 8, "a frame");
-    let held = |want: f64| {
-        sketch.constraints.iter().any(|c| match c.kind {
-            wb_sketch::sketch::ConstraintKind::Length { length, .. } => {
-                (length - want).abs() < 1e-9
-            }
-            _ => false,
-        })
-    };
-    assert!(held(16.0) && held(8.0), "the sizes typed are held");
     super::recording::assert_replays(&h.recorded, before, id, &sketch);
+
+    h.full_click(20.0, 0.0, "sketch.rect");
+    h.full_click(30.0, 6.0, "sketch.rect");
+    assert!(h.card().is_none(), "a plain rectangle opens none");
+    assert_eq!(all_lines(&h.sketch()).len(), 12, "stored at its last click");
+}
+
+/// A frame waiting in its card is kept when another tool is picked,
+/// as OK keeps it: only Cancel or Escape drops it. The click with the new
+/// tool then draws as it would anyway.
+#[test]
+fn a_frame_in_its_card_is_kept_when_another_tool_is_picked() {
+    let (mut h, ..) = super::recording::session_on_a_sketch();
+    h.ok_new_dimensions = false;
+    h.full_click(0.0, 0.0, "sketch.rect:frame");
+    h.full_click(10.0, 6.0, "sketch.rect:frame");
+    assert!(h.card().is_some(), "the card waits");
+    assert_eq!(h.counts(), (0, 0, 0, 0), "nothing stored before OK");
+    h.full_click(30.0, 0.0, "sketch.circle");
+    assert!(h.card().is_none(), "the card went with the tool");
+    assert_eq!(all_lines(&h.sketch()).len(), 8, "the frame stayed");
 }
 
 /// Auto remove redundants on, a rectangle drawn onto another's wall (its
@@ -236,6 +244,8 @@ fn a_rectangle_on_another_s_wall_drops_the_constraint_it_repeats() {
     for (tool, clicks) in cases {
         for remove in [true, false] {
             let (mut h, id, before) = super::recording::session_on_a_sketch();
+            // Each rectangle its own undo step, as a mouse-up frame closes it.
+            h.frames_close = true;
             h.wb.options.auto_remove_redundant = remove;
             for (x, y) in clicks {
                 h.full_click(x, y, tool);
@@ -284,6 +294,8 @@ fn a_shape_against_an_existing_line_reuses_it_when_asked() {
     for (tool, clicks) in cases {
         for reuse in [true, false] {
             let (mut h, id, before) = super::recording::session_on_a_sketch();
+            // Each shape its own undo step, as a mouse-up frame closes it.
+            h.frames_close = true;
             h.wb.options.reuse_lines = reuse;
             h.wb.tool_params_mut().slot_width = 10.0;
             // On grid points, so a derived corner lands exactly on a held one.
