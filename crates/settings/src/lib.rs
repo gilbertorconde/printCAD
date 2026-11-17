@@ -72,6 +72,9 @@ pub struct UserSettings {
     /// Where the toolbar groups sit, as the user dragged them.
     #[serde(default)]
     pub toolbars: ToolbarLayout,
+    /// The left panel folded to a bar of the history's icons.
+    #[serde(default)]
+    pub left_panel_folded: bool,
     /// Choose a workbench from tabs instead of a dropdown.
     #[serde(default = "default_workbench_tabs")]
     pub workbench_tabs: bool,
@@ -546,6 +549,7 @@ impl Default for UserSettings {
             ai: AiSettings::default(),
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
+            left_panel_folded: false,
             workbench_tabs: true,
             workbench_order: Vec::new(),
             tabbed_tool_ribbon: false,

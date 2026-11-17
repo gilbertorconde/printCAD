@@ -1960,6 +1960,8 @@ See also `pc.doc.save_section`.
 
 `pc.view.origin_planes`: Origin planes.
 
+`pc.view.left_panel`: Fold the left panel.
+
 `pc.view.fullscreen`: Full screen.
 
 ### file

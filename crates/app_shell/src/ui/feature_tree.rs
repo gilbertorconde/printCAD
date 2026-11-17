@@ -13,6 +13,7 @@ use super::keymap::Keymap;
 
 mod menus;
 mod model;
+pub use model::RailItem;
 
 use menus::*;
 pub(crate) use model::feature_info;
@@ -1416,6 +1417,42 @@ mod tests {
         assert_eq!(linked[0].id, TreeItemId::Feature(joint));
         assert!(linked[0].linked);
         assert_eq!(linked[0].label, "Mate 1 (Part)");
+    }
+
+    /// The folded bar lists each body and then its history in the tree's
+    /// order, the bodies set apart and what lies past a tip marked faint.
+    #[test]
+    fn the_folded_bar_lists_each_body_then_its_history() {
+        let mut doc = Document::new("t");
+        let feature = |doc: &mut Document, body, name: &str| {
+            doc.add_feature_of_kind(
+                core_document::WorkbenchId::new("test.thing"),
+                name.into(),
+                Some(body),
+                Vec::new(),
+                serde_json::json!({}),
+                core_document::FeatureOrigin::default(),
+            )
+        };
+        let first = doc.create_body(Some("First".into()));
+        let a = feature(&mut doc, first, "A");
+        let b = feature(&mut doc, first, "B");
+        let second = doc.create_body(Some("Second".into()));
+        let c = feature(&mut doc, second, "C");
+        doc.set_body_tip(first, Some(a));
+        let rail = tree(&doc).rail();
+        let row = |item: &RailItem| (item.id, item.body, item.after_tip);
+        assert_eq!(
+            rail.iter().map(row).collect::<Vec<_>>(),
+            [
+                (TreeItemId::Body(first), true, false),
+                (TreeItemId::Feature(a), false, false),
+                (TreeItemId::Feature(b), false, true),
+                (TreeItemId::Body(second), true, false),
+                (TreeItemId::Feature(c), false, false),
+            ]
+        );
+        assert_eq!(rail[1].label, "A", "named on hover as its row is");
     }
 
     /// A feature no loaded bench claims names the package it needs, says

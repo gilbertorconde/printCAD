@@ -43,6 +43,8 @@ const SKIP = new Set([
 // Icons authored in this repo (not part of the source set) that the table
 // must keep.
 const LOCAL = new Set([
+  "panel-left-close",
+  "panel-left-open",
   "select",
   "expression",
   "dimensional-constraint",

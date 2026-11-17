@@ -481,7 +481,8 @@ to the new one as `ctx.attach_request`.
   while the card was open on Cancel. A feature with more to set (a pad,
   a fillet on a solid, anything with several sections or picks) is a
   task, not a card.
-- `ui_left_panel` draws above the model tree.
+- `ui_left_panel` draws above the model tree, and not while the left
+  panel is folded to its icons.
 - `viewport` is asked once a frame while the workbench is active and
   returns one `ViewportOutput`; fill the fields you draw and leave the
   rest at `..Default::default()`. `meshes` draw in the scene and turn

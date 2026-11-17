@@ -215,6 +215,38 @@ impl DocumentTree {
         }
     }
 
+    /// The folded left bar's icons: every body and the features of its
+    /// history in the tree's order, a feature listed under another body
+    /// left out where it is only linked.
+    pub fn rail(&self) -> Vec<RailItem> {
+        fn walk(nodes: &[TreeNode], out: &mut Vec<RailItem>) {
+            for node in nodes {
+                let shown = !node.linked
+                    && matches!(
+                        node.id,
+                        TreeItemId::Body(_)
+                            | TreeItemId::Feature(_)
+                            | TreeItemId::ImportedObject(_)
+                            | TreeItemId::Component(_)
+                    );
+                if shown {
+                    out.push(RailItem {
+                        id: node.id,
+                        label: node.label.clone(),
+                        icon: node.icon,
+                        tint: rail_tint(node),
+                        body: matches!(node.id, TreeItemId::Body(_)),
+                        after_tip: node.after_tip,
+                    });
+                }
+                walk(&node.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.nodes, &mut out);
+        out
+    }
+
     pub fn document_label(&self) -> &str {
         &self.document_label
     }
@@ -996,4 +1028,34 @@ pub(super) fn build_imported_node(
         problem: None,
         history_body: None,
     })
+}
+
+/// One icon of the folded left bar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RailItem {
+    pub id: TreeItemId,
+    pub label: String,
+    pub icon: &'static str,
+    pub tint: egui::Color32,
+    /// A body: the bar sets it off from the history before it.
+    pub body: bool,
+    /// Past its body's tip, left out of the build: drawn faint.
+    pub after_tip: bool,
+}
+
+/// The tint a row's icon takes in the tree, an edit aside.
+fn rail_tint(node: &TreeNode) -> egui::Color32 {
+    if node.mesh {
+        MESH
+    } else if node.accent_icon {
+        ACCENT
+    } else if node.error.is_some() || node.defect {
+        DANGER
+    } else if node.warning.is_some() {
+        WARNING
+    } else if node.is_tip {
+        SUCCESS
+    } else {
+        TEXT2
+    }
 }
