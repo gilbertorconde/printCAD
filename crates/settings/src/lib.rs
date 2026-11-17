@@ -830,6 +830,10 @@ pub struct RenderingSettings {
     /// origin in their own colours, with the grid or without it.
     #[serde(default)]
     pub show_origin_lines: bool,
+    /// Whether a solid cut by the clipping plane shows a hatched cap of
+    /// material on the plane; off, its inside shows through the cut.
+    #[serde(default = "default_solid_section_caps")]
+    pub solid_section_caps: bool,
     /// Colours the user keeps to pick again, in the order added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_colors: Vec<[f32; 3]>,
@@ -838,6 +842,10 @@ pub struct RenderingSettings {
     /// triangles. The solid itself is exact whatever this is.
     #[serde(default = "default_curve_step_deg")]
     pub curve_step_deg: f32,
+}
+
+fn default_solid_section_caps() -> bool {
+    true
 }
 
 fn default_show_annotations() -> bool {
@@ -972,6 +980,7 @@ impl Default for RenderingSettings {
             grid_style: GridStyle::default(),
             show_origin_planes: false,
             show_origin_lines: false,
+            solid_section_caps: default_solid_section_caps(),
             custom_colors: Vec::new(),
             curve_step_deg: default_curve_step_deg(),
         }

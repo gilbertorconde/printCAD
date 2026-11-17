@@ -665,6 +665,7 @@ fn reset_group(state: &mut PreferencesState) {
             state.draft.rendering.grid_style = defaults.rendering.grid_style;
             state.draft.rendering.show_origin_planes = defaults.rendering.show_origin_planes;
             state.draft.rendering.show_origin_lines = defaults.rendering.show_origin_lines;
+            state.draft.rendering.solid_section_caps = defaults.rendering.solid_section_caps;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
             state.draft.rendering.curve_step_deg = defaults.rendering.curve_step_deg;
             state.draft.rendering.selection_color = defaults.rendering.selection_color;
@@ -1297,6 +1298,10 @@ fn display_page(
                     PrefRow::toggle("Origin planes", &mut draft.rendering.show_origin_planes),
                     PrefRow::toggle("Origin lines", &mut draft.rendering.show_origin_lines)
                         .hint("The world axes through the origin on the grid's plane"),
+                    PrefRow::toggle("Solid section", &mut draft.rendering.solid_section_caps).hint(
+                        "A part cut by the clipping plane shows a hatched cap of material; \
+                             off, its inside shows through the cut",
+                    ),
                 ],
                 filter,
             );

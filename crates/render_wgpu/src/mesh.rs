@@ -559,6 +559,11 @@ pub(crate) enum MeshPipelineMode {
     /// Standard solid mesh pass (triangle list, fill, no culling, depth
     /// write on).
     Solid,
+    /// A solid cut by the clipping plane whose caps stand on the plane
+    /// (`SectionLook::solid`), drawn after the solid pass: its back faces
+    /// where the stencil says its inside is what shows, at the depth of
+    /// the plane in front of them, so the cap hides what lies behind it.
+    SolidCut,
     /// Triangle wireframe overlay drawn on top of the solid pass with depth
     /// bias.
     WireframeTriangles,
@@ -583,6 +588,7 @@ pub(crate) enum MeshPipelineMode {
 /// and the pick pass, out of the shared [`MeshCache`].
 pub(crate) struct MeshRenderer {
     solid: wgpu::RenderPipeline,
+    solid_cut: wgpu::RenderPipeline,
     wireframe: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
     translucent: wgpu::RenderPipeline,
@@ -614,7 +620,13 @@ pub(crate) const PICK_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R
 /// The pick pass's third attachment, where the device numbers primitives:
 /// the triangle under each texel, plus one.
 pub(crate) const PICK_PRIMITIVE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
-pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The scene's depth, with the stencil that marks where a solid's cap of
+/// section shows (`MeshPipelineMode::SolidCut`). Every device has it; its
+/// depth is as fine as a 32-bit float's where the scene's depths gather,
+/// toward 1.
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+/// The pick pass's depth test, which needs no stencil.
+pub(crate) const PICK_DEPTH_TEST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// The scene's shaders with the pick stage that writes the triangle drawn,
 /// which needs the device's primitive index.
@@ -741,6 +753,7 @@ impl MeshRenderer {
         };
         Self {
             solid: pipeline(MeshPipelineMode::Solid),
+            solid_cut: pipeline(MeshPipelineMode::SolidCut),
             wireframe: pipeline(MeshPipelineMode::WireframeTriangles),
             edges: pipeline(MeshPipelineMode::Edges),
             translucent: pipeline(MeshPipelineMode::Translucent),
@@ -857,6 +870,35 @@ impl MeshRenderer {
         pass.draw(0..6, 0..cached.edge_segments);
     }
 
+    /// The caps of section of the opaque bodies cut with their caps on
+    /// the plane, after the solid pass has marked where each shows.
+    fn draw_caps(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        cache: &MeshCache,
+        frame: &FrameSubmission,
+        visible: &[bool],
+        opaque: &dyn Fn(&BodySubmission) -> bool,
+    ) {
+        let mut set = false;
+        for (i, body) in frame.bodies.iter().enumerate() {
+            let reference = cap_reference(frame, i);
+            if reference == 0 || !visible[i] || !opaque(body) {
+                continue;
+            }
+            let Some(cached) = cache.of(body).filter(|c| c.index_count > 0) else {
+                continue;
+            };
+            if !set {
+                pass.set_pipeline(&self.solid_cut);
+                set = true;
+            }
+            pass.set_stencil_reference(reference);
+            self.draw_body(pass, cached, i);
+        }
+        pass.set_stencil_reference(0);
+    }
+
     /// Draw the scene into `pass`, its viewport already set. Every pass
     /// shares one frustum-culling verdict per body.
     pub(crate) fn draw(
@@ -936,6 +978,7 @@ impl MeshRenderer {
                 };
                 stats.bodies_drawn += 1;
                 stats.triangle_indices += u64::from(cached.index_count);
+                pass.set_stencil_reference(cap_reference(frame, i));
                 self.draw_body(pass, cached, i);
             }
         };
@@ -944,6 +987,7 @@ impl MeshRenderer {
         // bodies follow, each in its own pipeline.
         let opaque = |b: &BodySubmission| !b.is_wireframe && !b.on_top && b.opacity >= 1.0;
         faces(pass, &mut stats, &self.solid, &opaque);
+        self.draw_caps(pass, cache, frame, &visible, &opaque);
 
         // The frame says whether edges draw (the draw style); the
         // experiment hook PRINTCAD_NO_EDGES=1 forces them off.
@@ -1217,6 +1261,7 @@ fn mesh_pipeline(
     // front.
     let cull_mode = match mode {
         M::WireframeTriangles | M::TranslucentFront => Some(wgpu::Face::Back),
+        M::SolidCut => Some(wgpu::Face::Front),
         _ => None,
     };
     let polygon_mode = if mode == M::WireframeTriangles && polygon_line {
@@ -1226,6 +1271,7 @@ fn mesh_pipeline(
     };
     let (depth_write, depth_compare) = match mode {
         M::Solid => (true, wgpu::CompareFunction::Less),
+        M::SolidCut => (true, wgpu::CompareFunction::Always),
         M::OnTop => (false, wgpu::CompareFunction::Always),
         M::Translucent | M::TranslucentFront | M::WireframeTriangles | M::Edges => {
             (false, wgpu::CompareFunction::LessEqual)
@@ -1249,6 +1295,8 @@ fn mesh_pipeline(
         ("vs_edge", "fs_edge")
     } else if matches!(mode, MeshPipelineMode::WireframeTriangles) {
         ("vs_mesh", "fs_wire")
+    } else if mode == M::SolidCut {
+        ("vs_mesh", "fs_mesh_cut")
     } else {
         ("vs_mesh", "fs_mesh")
     };
@@ -1274,7 +1322,7 @@ fn mesh_pipeline(
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(depth_write),
             depth_compare: Some(depth_compare),
-            stencil: wgpu::StencilState::default(),
+            stencil: stencil_of(mode),
             bias,
         }),
         multisample: wgpu::MultisampleState {
@@ -1295,6 +1343,50 @@ fn mesh_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// The stencil reference of body `i` of `frame`: one to 255 for a body
+/// whose cap stands on the clipping plane, zero for any other. Two such
+/// bodies share one only past 255 of them.
+fn cap_reference(frame: &FrameSubmission, i: usize) -> u32 {
+    let capped = |b: &BodySubmission| b.section.solid && !b.section.open && !b.section.uncut;
+    if frame.clip_plane.is_none() || !capped(&frame.bodies[i]) {
+        return 0;
+    }
+    let n = frame.bodies[..i].iter().filter(|b| capped(b)).count();
+    (n % 255) as u32 + 1
+}
+
+/// The solid pass leaves in the stencil, under each pixel, the reference
+/// of the body whose back face shows there (zero where a front face
+/// does); the cap pass draws a body's cap where its own reference stands.
+fn stencil_of(mode: MeshPipelineMode) -> wgpu::StencilState {
+    let face = |compare, pass_op| wgpu::StencilFaceState {
+        compare,
+        fail_op: wgpu::StencilOperation::Keep,
+        depth_fail_op: wgpu::StencilOperation::Keep,
+        pass_op,
+    };
+    let (front, back) = match mode {
+        MeshPipelineMode::Solid => (
+            face(wgpu::CompareFunction::Always, wgpu::StencilOperation::Zero),
+            face(
+                wgpu::CompareFunction::Always,
+                wgpu::StencilOperation::Replace,
+            ),
+        ),
+        MeshPipelineMode::SolidCut => {
+            let equal = face(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep);
+            (equal, equal)
+        }
+        _ => return wgpu::StencilState::default(),
+    };
+    wgpu::StencilState {
+        front,
+        back,
+        read_mask: 0xff,
+        write_mask: 0xff,
+    }
 }
 
 fn pick_pipeline(
@@ -1336,7 +1428,7 @@ fn pick_pipeline(
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
+            format: PICK_DEPTH_TEST_FORMAT,
             depth_write_enabled: Some(true),
             depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),

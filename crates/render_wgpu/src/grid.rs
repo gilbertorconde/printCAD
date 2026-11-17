@@ -1,5 +1,6 @@
-//! Plane patches with three decades of antialiased lines and origin axes.
-use crate::mesh::{DEPTH_FORMAT, NO_CLIP, NO_WEDGE};
+//! Plane patches with three decades of antialiased lines and origin axes,
+//! whole under the clipping plane: it cuts the parts, not the room.
+use crate::mesh::DEPTH_FORMAT;
 use crate::{FrameSubmission, GridSubmission};
 use egui_wgpu::wgpu;
 use wgpu::util::DeviceExt;
@@ -9,7 +10,6 @@ use wgpu::util::DeviceExt;
 struct GridUniform {
     view_proj: [[f32; 4]; 4],
     camera_step: [f32; 4],
-    clip_plane: [f32; 4],
     anchor_radius: [f32; 4],
     u_minor: [f32; 4],
     v_major: [f32; 4],
@@ -19,7 +19,6 @@ struct GridUniform {
     u_axis_color: [f32; 4],
     v_axis_color: [f32; 4],
     dash: [f32; 4],
-    clip_wedge: [f32; 4],
     fade: [f32; 4],
 }
 impl GridUniform {
@@ -47,7 +46,6 @@ impl GridUniform {
         Self {
             view_proj: frame.view_proj,
             camera_step: with(frame.camera_pos, grid.step),
-            clip_plane: frame.clip_plane.unwrap_or(NO_CLIP),
             anchor_radius: with(anchor, grid.radius),
             u_minor: with(grid.u, grid.minor_alpha),
             v_major: with(grid.v, grid.major_alpha),
@@ -57,7 +55,6 @@ impl GridUniform {
             u_axis_color: with(grid.u_axis_color, -node[0] as f32),
             v_axis_color: with(grid.v_axis_color, -node[1] as f32),
             dash: [grid.dash[0], grid.dash[1], 0.0, 0.0],
-            clip_wedge: frame.clip_wedge.unwrap_or(NO_WEDGE),
             fade: grid.fade_px,
         }
     }
