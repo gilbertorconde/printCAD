@@ -208,201 +208,235 @@ pub(super) fn hole_editor(
         changed |= mm_drag(f, fx, diameter, ("Diameter:", "diameter"));
     }
 
-    changed |= f.check(through_all, "Through all", "");
-    if !*through_all {
-        changed |= mm_drag(f, fx, depth, ("Depth:", "depth"));
-        let point_label = match drill_point {
-            DrillPoint::Flat => "Flat".to_string(),
-            DrillPoint::Angled { angle_deg } => format!("{angle_deg}°"),
+    let summary = if *through_all {
+        "through all".to_string()
+    } else {
+        let point = match drill_point {
+            DrillPoint::Flat => "flat".to_string(),
+            DrillPoint::Angled { angle_deg } => format!("{angle_deg}° point"),
         };
-        let points: Vec<DrillPoint> = std::iter::once(DrillPoint::Flat)
-            .chain(POINT_ANGLES.map(|angle_deg| DrillPoint::Angled { angle_deg }))
-            .collect();
-        let names = points
-            .iter()
-            .map(|p| match p {
+        format!("{:.2} mm · {point}", depth)
+    };
+    changed |= f.section("Depth", &summary, true, |f| {
+        let mut changed = false;
+        changed |= f.check(through_all, "Through all", "");
+        if !*through_all {
+            changed |= mm_drag(f, fx, depth, ("Depth:", "depth"));
+            let point_label = match drill_point {
                 DrillPoint::Flat => "Flat".to_string(),
                 DrillPoint::Angled { angle_deg } => format!("{angle_deg}°"),
-            })
-            .collect();
-        let at = points.iter().position(|p| p == drill_point);
-        if let Some(i) = choice_shown(f, "Drill point", point_label, names, at) {
-            *drill_point = points[i];
-            changed = true;
-        }
-        if let DrillPoint::Angled { angle_deg } = drill_point {
-            changed |= deg_drag(
-                f,
-                fx,
-                angle_deg,
-                ("Point angle:", "point_angle"),
-                10.0..=170.0,
-            );
-            changed |= f.check(
-                point_in_depth,
-                "Point within the depth",
-                "The depth runs to the tip of the point, not to the wall's end",
-            );
-        }
-    }
-    let standard_taper = *threaded && thread.as_ref().is_some_and(|t| t.standard.is_tapered());
-    if !standard_taper {
-        changed |= deg_drag(f, fx, taper_deg, ("Taper:", "taper"), -44.0..=44.0);
-    }
-
-    let metric = thread.as_ref().is_some_and(|t| t.standard.is_metric());
-    let profiles = user_cut_profiles();
-    let current = profiles
-        .iter()
-        .find(|p| p.cut == *cut)
-        .map_or_else(|| cut.label().to_string(), |p| p.name.clone());
-    {
-        // Sized from the diameter the hole is drilled at, a standard
-        // size's as much as a custom one.
-        let mut options = vec![
-            HoleCut::None,
-            HoleCut::Counterbore {
-                diameter: drilled * 2.0,
-                depth: 2.0,
-            },
-            HoleCut::Spotface {
-                diameter: drilled * 2.0,
-                depth: 0.5,
-            },
-            HoleCut::Countersink {
-                diameter: drilled * 2.0,
-                angle_deg: 90.0,
-            },
-            HoleCut::Counterdrill {
-                diameter: drilled * 1.5,
-                depth: 2.0,
-                angle_deg: 90.0,
-            },
-        ];
-        if metric {
-            options.extend(ScrewSeat::ALL.map(|seat| HoleCut::Seat { seat }));
-        }
-        let builtin = options.len();
-        let at = options
-            .iter()
-            .position(|candidate| match (&*cut, candidate) {
-                (HoleCut::Seat { seat: a }, HoleCut::Seat { seat: b }) => a == b,
-                (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
-            })
-            .or_else(|| {
-                profiles
-                    .iter()
-                    .position(|p| p.cut == *cut)
-                    .map(|i| builtin + i)
-            });
-        let mut names: Vec<String> = options.iter().map(|c| c.label().to_string()).collect();
-        names.extend(profiles.iter().map(|p| p.name.clone()));
-        let picked = f.select(
-            "Hole cut",
-            bench_api::Select {
-                label: "Hole cut".into(),
-                selected: at.unwrap_or(names.len()),
-                options: names,
-                width: Some(super::CHOICE_WIDTH),
-                text: Some(current),
-                separated: if profiles.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![builtin]
-                },
-                ..Default::default()
-            },
-        );
-        match picked {
-            Some(i) if i < builtin => {
-                *cut = options[i];
-                changed = true;
-            }
-            Some(i) => {
-                *cut = profiles[i - builtin].cut;
-                changed = true;
-            }
-            None => {}
-        }
-    }
-    match cut {
-        HoleCut::None => {}
-        HoleCut::Counterbore { diameter, depth } => {
-            changed |= mm_drag(f, fx, diameter, ("Bore Ø:", "counterbore_diameter"));
-            changed |= mm_drag(f, fx, depth, ("Bore depth:", "counterbore_depth"));
-        }
-        HoleCut::Spotface { diameter, depth } => {
-            changed |= mm_drag(f, fx, diameter, ("Spot Ø:", "spotface_diameter"));
-            changed |= mm_drag(f, fx, depth, ("Spot depth:", "spotface_depth"));
-        }
-        HoleCut::Countersink {
-            diameter,
-            angle_deg,
-        } => {
-            changed |= mm_drag(f, fx, diameter, ("Sink Ø:", "countersink_diameter"));
-            changed |= deg_drag(
-                f,
-                fx,
-                angle_deg,
-                ("Sink angle:", "countersink_angle"),
-                10.0..=170.0,
-            );
-        }
-        HoleCut::Counterdrill {
-            diameter,
-            depth,
-            angle_deg,
-        } => {
-            changed |= mm_drag(
-                f,
-                fx,
-                diameter,
-                ("Counterdrill Ø:", "counterdrill_diameter"),
-            );
-            changed |= mm_drag(f, fx, depth, ("Counterdrill depth:", "counterdrill_depth"));
-            changed |= deg_drag(
-                f,
-                fx,
-                angle_deg,
-                ("Counterdrill angle:", "counterdrill_angle"),
-                10.0..=170.0,
-            );
-        }
-        HoleCut::Seat { seat } => {
-            let made = thread
-                .as_ref()
-                .filter(|t| t.standard.is_metric())
-                .and_then(|t| t.resolve().ok())
-                .and_then(|size| seat.cut(size.major));
-            let text = match made {
-                Some(HoleCut::Counterbore { diameter, depth }) => {
-                    format!("Counterbore Ø {diameter:.1} mm, {depth:.1} mm deep")
-                }
-                Some(HoleCut::Countersink {
-                    diameter,
-                    angle_deg,
-                }) => format!("Countersink Ø {diameter:.1} mm at {angle_deg}°"),
-                _ => "No seat for this size".to_string(),
             };
-            summary_line(f, &text);
+            let points: Vec<DrillPoint> = std::iter::once(DrillPoint::Flat)
+                .chain(POINT_ANGLES.map(|angle_deg| DrillPoint::Angled { angle_deg }))
+                .collect();
+            let names = points
+                .iter()
+                .map(|p| match p {
+                    DrillPoint::Flat => "Flat".to_string(),
+                    DrillPoint::Angled { angle_deg } => format!("{angle_deg}°"),
+                })
+                .collect();
+            let at = points.iter().position(|p| p == drill_point);
+            if let Some(i) = choice_shown(f, "Drill point", point_label, names, at) {
+                *drill_point = points[i];
+                changed = true;
+            }
+            if let DrillPoint::Angled { angle_deg } = drill_point {
+                changed |= deg_drag(
+                    f,
+                    fx,
+                    angle_deg,
+                    ("Point angle:", "point_angle"),
+                    10.0..=170.0,
+                );
+                changed |= f.check(
+                    point_in_depth,
+                    "Point within the depth",
+                    "The depth runs to the tip of the point, not to the wall's end",
+                );
+            }
         }
+        let standard_taper = *threaded && thread.as_ref().is_some_and(|t| t.standard.is_tapered());
+        if !standard_taper {
+            changed |= deg_drag(f, fx, taper_deg, ("Taper:", "taper"), -44.0..=44.0);
+        }
+
+        changed
+    });
+    let summary = cut.label().to_string();
+    changed |= f.section("Hole cut", &summary, true, |f| {
+        let mut changed = false;
+        let metric = thread.as_ref().is_some_and(|t| t.standard.is_metric());
+        let profiles = user_cut_profiles();
+        let current = profiles
+            .iter()
+            .find(|p| p.cut == *cut)
+            .map_or_else(|| cut.label().to_string(), |p| p.name.clone());
+        {
+            // Sized from the diameter the hole is drilled at, a standard
+            // size's as much as a custom one.
+            let mut options = vec![
+                HoleCut::None,
+                HoleCut::Counterbore {
+                    diameter: drilled * 2.0,
+                    depth: 2.0,
+                },
+                HoleCut::Spotface {
+                    diameter: drilled * 2.0,
+                    depth: 0.5,
+                },
+                HoleCut::Countersink {
+                    diameter: drilled * 2.0,
+                    angle_deg: 90.0,
+                },
+                HoleCut::Counterdrill {
+                    diameter: drilled * 1.5,
+                    depth: 2.0,
+                    angle_deg: 90.0,
+                },
+            ];
+            if metric {
+                options.extend(ScrewSeat::ALL.map(|seat| HoleCut::Seat { seat }));
+            }
+            let builtin = options.len();
+            let at = options
+                .iter()
+                .position(|candidate| match (&*cut, candidate) {
+                    (HoleCut::Seat { seat: a }, HoleCut::Seat { seat: b }) => a == b,
+                    (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
+                })
+                .or_else(|| {
+                    profiles
+                        .iter()
+                        .position(|p| p.cut == *cut)
+                        .map(|i| builtin + i)
+                });
+            let mut names: Vec<String> = options.iter().map(|c| c.label().to_string()).collect();
+            names.extend(profiles.iter().map(|p| p.name.clone()));
+            let picked = f.select(
+                "Hole cut",
+                bench_api::Select {
+                    label: "Hole cut".into(),
+                    selected: at.unwrap_or(names.len()),
+                    options: names,
+                    width: Some(super::CHOICE_WIDTH),
+                    text: Some(current),
+                    separated: if profiles.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![builtin]
+                    },
+                    ..Default::default()
+                },
+            );
+            match picked {
+                Some(i) if i < builtin => {
+                    *cut = options[i];
+                    changed = true;
+                }
+                Some(i) => {
+                    *cut = profiles[i - builtin].cut;
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+        match cut {
+            HoleCut::None => {}
+            HoleCut::Counterbore { diameter, depth } => {
+                changed |= mm_drag(f, fx, diameter, ("Bore Ø:", "counterbore_diameter"));
+                changed |= mm_drag(f, fx, depth, ("Bore depth:", "counterbore_depth"));
+            }
+            HoleCut::Spotface { diameter, depth } => {
+                changed |= mm_drag(f, fx, diameter, ("Spot Ø:", "spotface_diameter"));
+                changed |= mm_drag(f, fx, depth, ("Spot depth:", "spotface_depth"));
+            }
+            HoleCut::Countersink {
+                diameter,
+                angle_deg,
+            } => {
+                changed |= mm_drag(f, fx, diameter, ("Sink Ø:", "countersink_diameter"));
+                changed |= deg_drag(
+                    f,
+                    fx,
+                    angle_deg,
+                    ("Sink angle:", "countersink_angle"),
+                    10.0..=170.0,
+                );
+            }
+            HoleCut::Counterdrill {
+                diameter,
+                depth,
+                angle_deg,
+            } => {
+                changed |= mm_drag(
+                    f,
+                    fx,
+                    diameter,
+                    ("Counterdrill Ø:", "counterdrill_diameter"),
+                );
+                changed |= mm_drag(f, fx, depth, ("Counterdrill depth:", "counterdrill_depth"));
+                changed |= deg_drag(
+                    f,
+                    fx,
+                    angle_deg,
+                    ("Counterdrill angle:", "counterdrill_angle"),
+                    10.0..=170.0,
+                );
+            }
+            HoleCut::Seat { seat } => {
+                let made = thread
+                    .as_ref()
+                    .filter(|t| t.standard.is_metric())
+                    .and_then(|t| t.resolve().ok())
+                    .and_then(|size| seat.cut(size.major));
+                let text = match made {
+                    Some(HoleCut::Counterbore { diameter, depth }) => {
+                        format!("Counterbore Ø {diameter:.1} mm, {depth:.1} mm deep")
+                    }
+                    Some(HoleCut::Countersink {
+                        diameter,
+                        angle_deg,
+                    }) => format!("Countersink Ø {diameter:.1} mm at {angle_deg}°"),
+                    _ => "No seat for this size".to_string(),
+                };
+                summary_line(f, &text);
+            }
+        }
+        changed
+    });
+    let summary = if nut_trap.is_some() { "on" } else { "off" }.to_string();
+    changed |= f.section("Nut trap", &summary, nut_trap.is_some(), |f| {
+        let mut changed = false;
+        let nominal = thread
+            .as_ref()
+            .filter(|t| t.standard.is_metric())
+            .and_then(|t| t.resolve().ok())
+            .map(|size| size.major);
+        changed |= nut_trap_editor(f, fx, nut_trap, nominal, *through_all);
+        changed
+    });
+    let summary = match (*reversed, start.moves()) {
+        (false, false) => "on the profile",
+        (true, false) => "reversed",
+        (false, true) => "moved",
+        (true, true) => "moved, reversed",
     }
-    let nominal = thread
-        .as_ref()
-        .filter(|t| t.standard.is_metric())
-        .and_then(|t| t.resolve().ok())
-        .map(|size| size.major);
-    changed |= nut_trap_editor(f, fx, nut_trap, nominal, *through_all);
-    changed |= f.check(reversed, "Reversed", "");
-    changed |= start_rows(
-        f,
-        ctx,
-        body,
-        fx,
-        &mut start.at,
-        &mut start.face,
-        &mut start.offset,
-    );
+    .to_string();
+    changed |= f.section("Start", &summary, *reversed || start.moves(), |f| {
+        let mut changed = false;
+        changed |= f.check(reversed, "Reversed", "");
+        changed |= start_rows(
+            f,
+            ctx,
+            body,
+            fx,
+            &mut start.at,
+            &mut start.face,
+            &mut start.offset,
+        );
+        changed
+    });
     changed
 }
 

@@ -21,6 +21,8 @@ pub(crate) struct Form<'e> {
     /// Why freezing a borrow failed, by the borrow, kept by the bench
     /// between passes until the next try.
     pub(crate) freeze_errors: HashMap<core_document::FeatureId, String>,
+    /// The field last edited, by its label: what a drawing lights.
+    pub(crate) focus: Option<String>,
 }
 
 impl<'e> Form<'e> {
@@ -29,6 +31,7 @@ impl<'e> Form<'e> {
         Self {
             form: panel::Form::declare(),
             freeze_errors: HashMap::new(),
+            focus: None,
         }
     }
 
@@ -37,6 +40,7 @@ impl<'e> Form<'e> {
         Self {
             form: panel::Form::apply(event),
             freeze_errors: HashMap::new(),
+            focus: None,
         }
     }
 
@@ -186,6 +190,11 @@ impl<'e> Form<'e> {
             primary: true,
             ..Default::default()
         });
+    }
+
+    /// A drawing, `Widget::Diagram`, at the panel's width.
+    pub(crate) fn drawing(&mut self, diagram: Widget) {
+        self.push(diagram);
     }
 
     /// A note card.

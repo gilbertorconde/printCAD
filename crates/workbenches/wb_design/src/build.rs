@@ -23,8 +23,8 @@ use extrude::{plan_extrude, start_face_is_flat};
 use holes::{Bore, bore_drawn};
 pub use holes::{NutPocket, hole_diameter, nut_pocket};
 pub(crate) use holes::{
-    copied_thread_lines, cosmetic_thread_lines, hole_centers, hole_plane, threaded_bores,
-    threaded_bores_of,
+    copied_thread_lines, cosmetic_thread_lines, hole_centers, hole_plane, hole_taper_deg,
+    threaded_bores, threaded_bores_of,
 };
 use holes::{cross3, hole_ops};
 pub(crate) use inputs::bodies_reach;

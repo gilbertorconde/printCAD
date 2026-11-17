@@ -289,6 +289,10 @@ struct Tab {
     /// until the next try.
     #[cfg(feature = "egui")]
     freeze_errors: std::collections::HashMap<FeatureId, String>,
+    /// The open task's field last edited, by its label, and the feature
+    /// it belongs to: the task's drawing lights its measures.
+    #[cfg(feature = "egui")]
+    task_focus: Option<(FeatureId, String)>,
     /// A value typed for a handle taken: the handle, and the text so far.
     /// It stays open past the release until Enter, Escape or a click.
     typed: Option<(handles::Handle, String)>,
