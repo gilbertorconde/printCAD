@@ -52,18 +52,18 @@ A rectangle's preview is the rectangle the click makes. A rounded
 rectangle whose corners do not fit its radius, or a frame with no room
 for its wall, draws dashed, and the click adds nothing.
 
-The click that finishes a rectangle opens a card beside it, the view
-showing the rectangle solved. The width has the keys with its value
-selected; the height, and a rounded rectangle's radius or a frame's wall,
-are on the card too, each taking a unit or a formula. A size typed there
-places the rectangle and holds it by a dimension, as Enter does on the
-card by the cursor; one left alone follows the click. A size that does
-not fit says why and holds OK back. **OK**, Enter or a click elsewhere
-in the view stores it as one undo step (the click goes on to start the
-next shape); **Cancel**, Escape, another tool or an edit from elsewhere
-leaves nothing. A click with typed values stores at once, since they
-already say the sizes. A recording of the card is the `sketch.draw` call
-with the sizes as its typed values.
+A shape's sizes go in the card by the cursor before its last click (Tab
+moves on, Enter holds them by dimensions). A tool whose clicks set the
+whole shape stores it at its last click. One that leaves more to set
+opens a second card beside the shape after it: a rounded rectangle's
+radius, a frame's wall. That card has only what is left to set, the
+tool's setting in it with the keys and its value selected (a unit or a
+formula works too), and the view shows the shape solved at it. A value
+that does not fit says why and holds OK back. There is no Cancel: **OK**,
+Enter, Escape, a click elsewhere in the view, another tool or finishing
+the sketch all store it as one undo step, at the setting as it opened
+when nothing was changed. Only an edit from elsewhere (an undo) puts it
+away. A recording of it is the `sketch.draw` call with that setting.
 
 A spline drawn through points keeps passing through them as they move.
 While a constraint reads the curve (a point on it, a tangent, its length)
@@ -360,10 +360,11 @@ not cut at once: a card opens beside the corner, naming the two curves,
 and the view shows the corner cut and solved. The radius or length has
 the keys with its value selected, so typing replaces it (a unit or a
 formula works too); Keep it is on the card as well. A size the curves
-cannot take says why and holds OK back. **OK**, Enter or a click
-elsewhere in the view cuts it as one undo step; **Cancel**, Escape,
-another tool or an edit from elsewhere puts it away and leaves the sketch
-as it was. The size carries on to the next corner. A script's
+cannot take says why and holds OK back. As with a shape's card there is
+no Cancel: **OK**, Enter, Escape, a click elsewhere in the view, another
+tool or finishing the sketch cuts it as one undo step; an edit from
+elsewhere puts it away and leaves the sketch as it was. The size carries
+on to the next corner. A script's
 `sketch.draw` with `tool = "fillet"` still cuts at once, and a recording
 of the card is that call with the size applied.
 

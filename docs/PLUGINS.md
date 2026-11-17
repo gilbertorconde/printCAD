@@ -538,6 +538,11 @@ afresh. `panel::floating_card` builds one. A package using it needs
 the frame shows, or any card event while it shows none, never reaches the
 package.
 
+A card with `ok_only` (from 0.1.8) has OK alone: Escape is OK too, and
+only a refused card is dropped, for what a step already made leaves to
+set. On any card, the edit finished or another tool or bench picked
+while it shows is OK, or its drop while refused.
+
 A card with a `hint` (from 0.1.8) is a readout instead: the values a
 tool is drawing with, which the package types into through its own key
 events. The host writes the hint (`Tab next · Enter places it`) where OK

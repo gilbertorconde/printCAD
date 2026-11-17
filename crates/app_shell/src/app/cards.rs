@@ -63,4 +63,13 @@ impl PrintCadApp {
         self.redraw_needed = true;
         true
     }
+
+    /// Close a card something other than its own buttons ends (the edit
+    /// finished, another tool or bench picked): taken as it stands, as OK
+    /// takes it, and dropped only when its OK is held back.
+    pub(crate) fn settle_card(&mut self) {
+        if !self.close_card(true) {
+            self.close_card(false);
+        }
+    }
 }

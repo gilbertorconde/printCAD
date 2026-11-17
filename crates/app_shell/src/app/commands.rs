@@ -423,6 +423,7 @@ impl PrintCadApp {
     /// When the editing flow was started from another workbench (a new
     /// sketch made from a solid bench), jump back to it.
     pub(crate) fn finish_active_workbench_editing(&mut self) {
+        self.settle_card();
         let wb_id = self.session.active_workbench.0.clone();
         let edited = self
             .registry

@@ -464,6 +464,9 @@ impl PrintCadApp {
 
         let commands;
         let card_shown;
+        // The tool and bench the UI picked this frame while a card was
+        // open: the card is taken first, then they land again.
+        let mut picked_over_card = None;
         // The cursor is on the scene itself, not on a menu or card over it.
         let over_scene;
 
@@ -700,6 +703,15 @@ impl PrintCadApp {
                     self.session.last_tool =
                         Some((ui_result.active_workbench.0.clone(), started.clone()));
                 }
+                if self.session.card.is_some()
+                    && (ui_result.active_tool.active_ids != self.session.active_tool.active_ids
+                        || ui_result.active_workbench != self.session.active_workbench)
+                {
+                    picked_over_card = Some((
+                        ui_result.active_tool.clone(),
+                        ui_result.active_workbench.clone(),
+                    ));
+                }
                 self.session.active_tool = ui_result.active_tool;
                 self.session.active_workbench = ui_result.active_workbench;
                 self.session.task_open = ui_result.task_open;
@@ -911,6 +923,18 @@ impl PrintCadApp {
             .and_then(|body| self.face_ref_under_cursor(body));
         self.session.hover.vertex = self.vertex_under_cursor();
 
+        // Another tool or bench picked takes an open card as OK would; the
+        // pick lands again after, over any tool the card hands back on OK.
+        // The card the UI drew this frame is the one just closed then.
+        let card_shown = match picked_over_card {
+            Some((tool, bench)) => {
+                self.settle_card();
+                self.session.active_tool = tool;
+                self.session.active_workbench = bench;
+                None
+            }
+            None => card_shown,
+        };
         // Apply this frame's UI actions now that the renderer borrow is over.
         self.follow_card(card_shown);
         let mut commands = commands;

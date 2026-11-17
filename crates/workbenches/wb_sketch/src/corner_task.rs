@@ -1,15 +1,18 @@
-//! The fillet, chamfer and rectangle card: a corner picked in the view,
-//! or a rectangle's last click, opens a card beside it, its sizes typed
-//! straight away (a corner's size and Keep corner; a rectangle's width,
-//! height and a rounded one's radius or a frame's wall), the view showing
-//! the solved result, until OK writes it or Cancel drops it.
+//! The card for what a click leaves to set: a corner picked by the fillet
+//! or chamfer tool, or the last click of a rounded rectangle or a frame,
+//! opens a card beside it with that size (a corner's size and Keep corner,
+//! the rounded corners' radius, the frame's wall), the tool's own setting
+//! in it and the keys on it, the view showing the solved result. OK or
+//! Enter writes it, and so does anything else that puts it away (another
+//! tool, the sketch finished, a click in the view): left as it opened, the
+//! setting is what it writes. A tool whose clicks set everything, a plain
+//! rectangle among them, opens no card.
 //!
 //! The draft is the click itself, run again on the sketch as the click
-//! found it with the sizes now set (`step::click`, as the recorded
-//! `sketch.draw` call replays it: a rectangle's sizes as the click's typed
-//! values, which hold it by dimensions, its radius or wall as the tool's
-//! setting), so what the view shows, what Apply stores and what a replay
-//! makes are one result.
+//! found it with the size now set (`step::click`, as the recorded
+//! `sketch.draw` call replays it: sizes typed before the click as its
+//! typed values, the radius or wall as the tool's setting), so what the
+//! view shows, what OK stores and what a replay makes are one result.
 
 use std::collections::HashSet;
 
@@ -30,12 +33,13 @@ use crate::{DrawRecord, SketchWorkbench, solver};
 enum Subject {
     /// The two curves a corner joins.
     Corner([Uuid; 2]),
-    /// A rectangle: its kind and its typed sizes, each field's text and
-    /// the value it was set to in the card (none while it follows the
-    /// click).
+    /// A rectangle with more to set than its clicks: its kind, and the
+    /// sizes typed before its last click with whether Enter held them by
+    /// dimensions.
     Rect {
         kind: Kind,
-        fields: Vec<(FieldKind, String, Option<f64>)>,
+        typed: Vec<(FieldKind, f64)>,
+        constrain: bool,
     },
 }
 
@@ -92,14 +96,13 @@ impl CornerTask {
             .map_or(0.0, |p| p.get(&self.settings.params))
     }
 
-    /// The card's typed sizes as the click takes them.
-    fn typed(&self) -> Vec<(FieldKind, f64)> {
+    /// The sizes typed before the click, and whether they hold it.
+    fn typed(&self) -> (&[(FieldKind, f64)], bool) {
         match &self.subject {
-            Subject::Rect { fields, .. } => fields
-                .iter()
-                .filter_map(|(kind, _, value)| Some((*kind, (*value)?)))
-                .collect(),
-            Subject::Corner(_) => Vec::new(),
+            Subject::Rect {
+                typed, constrain, ..
+            } => (typed, *constrain),
+            Subject::Corner(_) => (&[], false),
         }
     }
 
@@ -112,32 +115,18 @@ impl CornerTask {
                 return Err(param.refusal().into());
             }
         }
-        if let Subject::Rect { fields, .. } = &self.subject
-            && let Some((kind, ..)) = fields
-                .iter()
-                .find(|(_, _, v)| v.is_some_and(|v| !(v.is_finite() && v >= 1e-6)))
-        {
-            return Err(format!(
-                "Enter a {} greater than zero",
-                if *kind == FieldKind::Height {
-                    "height"
-                } else {
-                    "width"
-                }
-            ));
-        }
         let mut feature = self.base.clone();
         let mut state = self.state.clone();
         let mut capture = crate::ovp::DimCapture::default();
-        let typed = self.typed();
+        let (typed, constrain) = self.typed();
         let outcome = step::click(
             &mut state,
             &mut capture,
             &self.tool,
             &mut feature.sketch,
             self.cursor,
-            &typed,
-            !typed.is_empty(),
+            typed,
+            constrain,
             &self.settings,
             &self.selected,
         );
@@ -213,13 +202,6 @@ impl SizeParam {
 const CORNER_CARD: &str = "sketch.corner";
 const RECT_CARD: &str = "sketch.rect";
 
-fn field_id(kind: FieldKind) -> &'static str {
-    match kind {
-        FieldKind::Height => "rect.height",
-        _ => "rect.width",
-    }
-}
-
 impl SketchWorkbench {
     /// A fillet or chamfer click that resolves a corner opens its task
     /// rather than cutting at once. `None` when the click only picks a
@@ -252,10 +234,12 @@ impl SketchWorkbench {
         Some(())
     }
 
-    /// A plain click that finishes a rectangle opens its card rather than
-    /// storing it at once. `None` when the click only picks a corner, is
-    /// refused (which the tool's own click says), or comes after typed
-    /// values, which already say the sizes.
+    /// The last click of a rectangle with more to set than its clicks (a
+    /// rounded one's radius, a frame's wall) opens its card rather than
+    /// storing it at once, holding the sizes typed before it. `None` for
+    /// a rectangle its clicks set whole, a click that only picks a corner,
+    /// or one refused (which the tool's own click says).
+    #[allow(clippy::too_many_arguments, reason = "the click as the tool takes it")]
     pub(crate) fn open_rect_task(
         &mut self,
         ctx: &WorkbenchRuntimeContext,
@@ -263,14 +247,16 @@ impl SketchWorkbench {
         tool: &str,
         cursor: Vec2D,
         settings: &StepSettings,
+        typed: &[(FieldKind, f64)],
+        constrain: bool,
     ) -> Option<()> {
         let kind = Kind::of(tool)?;
-        if self.tab.dim_capture.has_pending() {
+        if !matches!(kind, Kind::Rounded | Kind::Frame) || self.tab.dim_capture.has_pending() {
             return None;
         }
         let sketch = &feature.sketch;
-        let (at, tol) = step::land(&self.tab.tool_state, sketch, tool, cursor, &[], settings);
-        let proposal = crate::rect::propose(
+        let (at, tol) = step::land(&self.tab.tool_state, sketch, tool, cursor, typed, settings);
+        crate::rect::propose(
             &self.tab.tool_state,
             sketch,
             at,
@@ -279,24 +265,17 @@ impl SketchWorkbench {
             &settings.params,
         )
         .ok()?;
-        let (first, second) = proposal.size();
-        let fields = crate::ovp::fields_for(&self.tab.tool_state, Some(tool))
-            .iter()
-            .map(|&field| {
-                let value = match (field, &self.tab.tool_state) {
-                    (FieldKind::Height, _) | (_, ToolState::Rect3B { .. }) => second,
-                    _ => first,
-                };
-                (field, crate::glyphs::fmt_num(value), None)
-            })
-            .collect();
         self.open_card(
             ctx,
             feature,
             tool,
             cursor,
             settings,
-            Subject::Rect { kind, fields },
+            Subject::Rect {
+                kind,
+                typed: typed.to_vec(),
+                constrain,
+            },
         );
         Some(())
     }
@@ -375,6 +354,14 @@ impl SketchWorkbench {
     /// `sketch.draw` call that makes it. Nothing happens while the result
     /// is refused.
     pub(crate) fn apply_corner(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.store_corner(ctx, true);
+    }
+
+    /// [`apply_corner`](Self::apply_corner); with `hand_back`, a finished
+    /// rectangle gives the pointer back to Select when Continue drawing
+    /// is off, which a card taken because another tool was picked leaves
+    /// to that tool.
+    pub(crate) fn store_corner(&mut self, ctx: &mut WorkbenchRuntimeContext, hand_back: bool) {
         if self.drop_stale_corner(ctx) {
             return;
         }
@@ -398,25 +385,12 @@ impl SketchWorkbench {
             None if task.bevel() => "Chamfer",
             None => "Fillet",
         };
-        let typed = task.typed();
         if let Some(mut record) = task.record.take() {
             let params = step::params_to_json(&task.settings.params);
             if params.is_empty() {
                 record.settings.remove("params");
             } else {
                 record.settings.insert("params".into(), params.into());
-            }
-            // Sizes set in the card are the click's typed values, held by
-            // dimensions as Enter holds them.
-            if !typed.is_empty()
-                && let Some(event) = record.events.last_mut()
-            {
-                let values: serde_json::Map<String, serde_json::Value> = typed
-                    .iter()
-                    .map(|(k, v)| (step::field_name(*k).to_string(), serde_json::json!(v)))
-                    .collect();
-                let (x, y) = (task.cursor.x, task.cursor.y);
-                *event = serde_json::json!({"x": x, "y": y, "typed": values, "constrain": true});
             }
             record.changed = true;
             self.tab.draw_record = Some(record);
@@ -430,7 +404,7 @@ impl SketchWorkbench {
         ctx.request(HostRequest::JournalLabel(label.into()));
         // With Continue drawing off, a finished rectangle hands the
         // pointer back to the Select tool, as a stored one does.
-        if task.rect().is_some() && !self.options.continue_drawing {
+        if hand_back && task.rect().is_some() && !self.options.continue_drawing {
             ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
     }
@@ -479,25 +453,13 @@ impl SketchWorkbench {
                 };
                 (CORNER_CARD, title, icon, "corner.size")
             }
-            Subject::Rect { fields, .. } => {
-                for (kind, text, _) in fields {
-                    let label = if *kind == FieldKind::Height {
-                        "Height"
-                    } else {
-                        "Width"
-                    };
-                    let mut entry = panel::entry_with(field_id(*kind), label, text, "A size");
-                    entry.live = true;
-                    entry.mono = true;
-                    entry.formulas = true;
-                    blocks.push(entry.into());
-                }
+            Subject::Rect { .. } => {
                 blocks.extend(size.map(Into::into));
                 (
                     RECT_CARD,
                     idle_name(&task.tool),
                     crate::registration::tool_icon(&task.tool),
-                    "rect.width",
+                    "rect.size",
                 )
             }
         };
@@ -515,6 +477,7 @@ impl SketchWorkbench {
         let mut card = panel::floating_card(id, title, at, Some(focus), blocks);
         card.icon = Some(icon.into());
         card.refusal = refusal;
+        card.ok_only = true;
         Some(card)
     }
 
@@ -558,22 +521,6 @@ impl SketchWorkbench {
                         return true;
                     }
                     (Ok(_), None) => return true,
-                }
-            }
-            PanelEvent::Text { id, value } if id == "rect.width" || id == "rect.height" => {
-                let Subject::Rect { fields, .. } = &mut task.subject else {
-                    return true;
-                };
-                let parsed = length(value);
-                for (kind, text, typed) in fields.iter_mut() {
-                    if field_id(*kind) == id {
-                        text.clone_from(value);
-                        *typed = parsed.as_ref().ok().copied();
-                    }
-                }
-                if let Err(why) = parsed {
-                    task.working = Err(why);
-                    return true;
                 }
             }
             PanelEvent::Toggle { id, on } if id == "corner.keep" => {
