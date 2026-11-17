@@ -186,6 +186,19 @@ impl<'a> Canvas<'a> {
             self.min = [0.0; 2];
             self.max = [1.0; 2];
         }
+        // Room for each note's words round where they sit, at about the
+        // size they take in a drawing the panel's width.
+        let (tall, char_wide) = (self.extent() * 0.05, self.extent() * 0.025);
+        let words: Vec<([f32; 2], usize)> = self
+            .callouts
+            .iter()
+            .map(|c| (c.at, c.text.chars().count()))
+            .collect();
+        for (at, chars) in words {
+            let half = char_wide * chars as f32 / 2.0 + char_wide;
+            self.cover([at[0] - half, at[1] - tall]);
+            self.cover([at[0] + half, at[1] + tall]);
+        }
         let margin = self.margin();
         let shift = self.shift();
         let mv = |p: &mut [f32; 2]| {
@@ -1078,9 +1091,10 @@ impl Hole {
                 c.callout(
                     &[keys[1], "Hole cut"],
                     [-(r + self.r) / 2.0, -h / 2.0],
-                    [-w - so, -h / 2.0 + so * 0.4],
+                    [-w - so * left, -h / 2.0 + so * 0.4],
                     deg(angle),
                 );
+                left += 1.4;
             }
             Mouth::Drill { r, depth, angle } => {
                 c.dim(
@@ -1166,8 +1180,9 @@ impl Hole {
                 );
             }
             let y = match self.tapped {
-                Some(run) => -run * 0.5,
-                // Along the thread, near the shank's end.
+                Some(run) => -run * 0.2,
+                // Along the thread, near the shank's end, and within the
+                // part, clear of the note under it.
                 None => {
                     let tip = self.screw_tip(screw.major);
                     let start = if self.seated_from_far_side() {
@@ -1175,13 +1190,25 @@ impl Hole {
                     } else {
                         self.mouth_floor()
                     };
-                    tip + (start - tip) * 0.3
+                    (tip + (start - tip) * 0.3).max(bottom + so)
                 }
             };
+            // The words right of the depth's measure, their leader kept off
+            // its words, which sit halfway down it.
+            let (x0, x1) = (screw.major / 2.0, w + so * 2.6);
+            let mut at_y = y + so * 0.5;
+            if let Some(depth) = self.depth {
+                let words = -depth / 2.0;
+                let along = (w + so - x0) / (x1 - x0);
+                let leader = |at_y: f64| y + (at_y - y) * along;
+                while (leader(at_y) - words).abs() < so * 0.9 || (at_y - words).abs() < so * 0.9 {
+                    at_y += so * 0.5;
+                }
+            }
             c.callout(
                 &["Size", "Standard", "Class", "Left-hand thread"],
-                [screw.major / 2.0, y],
-                [w + so * 2.6, (y + so * 1.5).min(-so * 0.2)],
+                [x0, y],
+                [x1, at_y],
                 screw.designation.clone(),
             );
         }
