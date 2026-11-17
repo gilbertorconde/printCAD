@@ -332,6 +332,14 @@ pub const ICONS: &[(&str, &str)] = &[
     ("offset-solid", include_str!("../icons/offset-solid.svg")),
     ("open", include_str!("../icons/open.svg")),
     ("pad", include_str!("../icons/pad.svg")),
+    (
+        "panel-left-close",
+        include_str!("../icons/panel-left-close.svg"),
+    ),
+    (
+        "panel-left-open",
+        include_str!("../icons/panel-left-open.svg"),
+    ),
     ("paste", include_str!("../icons/paste.svg")),
     ("path-pattern", include_str!("../icons/path-pattern.svg")),
     ("pentagon", include_str!("../icons/pentagon.svg")),

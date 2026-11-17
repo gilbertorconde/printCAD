@@ -624,9 +624,16 @@ impl UiLayer {
                 keymap: &f.keymap,
                 read_only: inputs.file.read_only,
                 read_only_links: inputs.file.read_only_links,
+                folded: inputs.settings.left_panel_folded,
             },
         );
         let commands = &mut out.commands;
+        if let Some(folded) = combo.fold {
+            commands.push(UiCommand::EditSettings(SettingsEdit::set(
+                |s| &mut s.left_panel_folded,
+                folded,
+            )));
+        }
         apply_writeback(&combo.writeback, commands, &mut out.tree_selection);
         out.tree_hovered = combo.tree_hovered;
         // An explicit tree click wins over a panel-created feature.

@@ -11,7 +11,7 @@ use core_document::{Chord, DocumentService, KeyCode, WorkbenchId};
 use settings::KeyboardSettings;
 
 use super::feature_tree::{TreeFeatureCommand, TreeItemId};
-use super::{EditCommand, FileCommand, UiCommand};
+use super::{EditCommand, FileCommand, SettingsEdit, UiCommand};
 use crate::orientation_cube::CameraSnapView;
 
 /// An application command a key can run.
@@ -59,6 +59,7 @@ pub enum HostAction {
     Annotations,
     Grid,
     OriginPlanes,
+    LeftPanel,
     Fullscreen,
     Recompute,
     Repeat,
@@ -285,6 +286,13 @@ const HOST: &[HostSpec] = {
             "Origin planes",
             "View",
             &[],
+        ),
+        spec(
+            LeftPanel,
+            "view.left_panel",
+            "Fold the left panel",
+            "View",
+            &["Ctrl+B"],
         ),
         anywhere(spec(
             Fullscreen,
@@ -861,6 +869,9 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Annotations => C(UiCommand::ToggleAnnotations),
         Grid => C(UiCommand::ToggleGrid),
         OriginPlanes => C(UiCommand::ToggleOriginPlanes),
+        LeftPanel => C(UiCommand::EditSettings(SettingsEdit::new(|s| {
+            s.left_panel_folded = !s.left_panel_folded;
+        }))),
         Fullscreen => C(UiCommand::ToggleFullscreen),
         Recompute => C(UiCommand::RecomputeAll),
         Repeat => C(UiCommand::RepeatLastTool),

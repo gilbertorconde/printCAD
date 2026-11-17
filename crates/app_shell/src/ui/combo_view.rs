@@ -1,5 +1,6 @@
 //! The left "combo view": the model tree with a filter, the details line,
-//! and the active workbench's left-panel content beneath.
+//! and the active workbench's left-panel content beneath; folded, a bar of
+//! the bodies' and features' icons in the tree's order.
 
 use egui::RichText;
 use ui_kit::tokens::*;
@@ -41,6 +42,8 @@ pub struct ComboViewResult {
     pub commands: Vec<super::UiCommand>,
     /// A tree menu entry that changes the window.
     pub local: Option<super::MenuLocal>,
+    /// The panel asked to fold (`true`) or unfold.
+    pub fold: Option<bool>,
     pub parameter: Option<(
         core_document::FeatureId,
         core_document::Parameter,
@@ -85,6 +88,8 @@ pub struct ComboViewInputs<'a> {
     pub read_only: bool,
     /// Linked parts whose file cannot be written in place.
     pub read_only_links: &'a [core_document::BodyId],
+    /// Folded to the bar of icons.
+    pub folded: bool,
 }
 
 pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
@@ -111,8 +116,32 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         tree_share,
         read_only,
         read_only_links,
+        folded,
     } = inputs;
     let mut result = ComboViewResult::default();
+    let fold_keys = keymap
+        .text("view.left_panel")
+        .map(|k| format!("  ({k})"))
+        .unwrap_or_default();
+    if folded {
+        let tree_model = feature_tree::DocumentTree::build(document, registry);
+        let selected =
+            active_tree_selection.or_else(|| active_document_object.map(TreeItemId::from));
+        let reveal = reveal_body.is_some() || reveal_face_maker;
+        draw_rail(
+            ui,
+            &tree_model.rail(),
+            RailState {
+                selected,
+                editing: editing_feature.map(TreeItemId::from),
+                lit: face_maker.map(TreeItemId::from),
+                reveal,
+                unfold_hint: &format!("Unfold the left panel{fold_keys}"),
+            },
+            &mut result,
+        );
+        return result;
+    }
 
     egui::Panel::left("combo_view")
         .resizable(true)
@@ -158,6 +187,10 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     .color(TEXT1),
             );
             h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let fold = format!("Fold the panel to its icons{fold_keys}");
+                if ui_kit::widgets::icon_button(ui, "panel-left-close", &fold).clicked() {
+                    result.fold = Some(true);
+                }
                 // An exact footprint: a frame grown inside the header would
                 // take the header's full height.
                 let (rect, _) =
@@ -378,6 +411,141 @@ fn divider(ui: &mut egui::Ui, total: f32, share: &mut f32) {
     if response.double_clicked() {
         *share = TREE_SHARE;
     }
+}
+
+/// The folded panel's width: one icon and its margin.
+const RAIL_WIDTH: f32 = 40.0;
+/// Each icon's row in the bar, and the icon in it.
+const RAIL_ROW: f32 = 30.0;
+const RAIL_ICON: f32 = 18.0;
+
+/// What the folded bar marks.
+struct RailState<'a> {
+    selected: Option<TreeItemId>,
+    editing: Option<TreeItemId>,
+    /// The feature that made the face picked in the view.
+    lit: Option<TreeItemId>,
+    /// Scroll the selected icon into view.
+    reveal: bool,
+    unfold_hint: &'a str,
+}
+
+/// The folded panel: its unfold button, then a scrolling column of the
+/// bodies' and features' icons, each named on hover, clicked to select and
+/// double-clicked to edit as its tree row is.
+fn draw_rail(
+    ui: &mut egui::Ui,
+    items: &[feature_tree::RailItem],
+    state: RailState<'_>,
+    result: &mut ComboViewResult,
+) {
+    egui::Panel::left("combo_rail")
+        .resizable(false)
+        .exact_size(RAIL_WIDTH)
+        .frame(egui::Frame::new().fill(BG1))
+        .show(ui, |ui| {
+            ui.set_clip_rect(ui.max_rect());
+            let rect = ui.max_rect();
+            ui.painter().vline(
+                rect.right() - 0.5,
+                rect.y_range(),
+                egui::Stroke::new(1.0, BORDER),
+            );
+            let (header, _) = ui.allocate_exact_size(
+                egui::Vec2::new(ui.available_width(), TAB_BAR),
+                egui::Sense::hover(),
+            );
+            ui.painter().hline(
+                header.x_range(),
+                header.bottom() - 0.5,
+                egui::Stroke::new(1.0, BORDER),
+            );
+            // The button's own 20 px square, in the middle of the header.
+            let button = egui::Rect::from_center_size(header.center(), egui::Vec2::splat(20.0));
+            let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(button));
+            if ui_kit::widgets::icon_button(&mut slot, "panel-left-open", state.unfold_hint)
+                .clicked()
+            {
+                result.fold = Some(false);
+            }
+            egui::ScrollArea::vertical()
+                .id_salt("model_rail")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.add_space(SPACE_1);
+                    for (i, item) in items.iter().enumerate() {
+                        if item.body && i > 0 {
+                            let (gap, _) = ui.allocate_exact_size(
+                                egui::Vec2::new(ui.available_width(), SPACE_2),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().hline(
+                                gap.shrink2(egui::Vec2::new(8.0, 0.0)).x_range(),
+                                gap.center().y,
+                                egui::Stroke::new(1.0, BORDER),
+                            );
+                        }
+                        rail_icon(ui, item, &state, result);
+                    }
+                });
+        });
+}
+
+fn rail_icon(
+    ui: &mut egui::Ui,
+    item: &feature_tree::RailItem,
+    state: &RailState<'_>,
+    result: &mut ComboViewResult,
+) {
+    let (row, response) = ui.allocate_exact_size(
+        egui::Vec2::new(ui.available_width(), RAIL_ROW),
+        egui::Sense::click(),
+    );
+    let cell = egui::Rect::from_center_size(row.center(), egui::Vec2::splat(RAIL_ROW));
+    let selected = state.selected == Some(item.id);
+    let editing = state.editing == Some(item.id);
+    let painter = ui.painter();
+    if selected || editing || response.hovered() {
+        painter.rect_filled(cell, RADIUS_SM, BG2);
+    }
+    if selected || editing {
+        painter.vline(
+            row.left() + 2.0,
+            cell.shrink(6.0).y_range(),
+            egui::Stroke::new(2.0, ACCENT),
+        );
+    } else if state.lit == Some(item.id) {
+        painter.rect_stroke(
+            cell,
+            RADIUS_SM,
+            egui::Stroke::new(1.0, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let tint = match (editing, item.after_tip) {
+        (true, _) => ACCENT,
+        (false, true) => item.tint.gamma_multiply(0.4),
+        (false, false) => item.tint,
+    };
+    if let Some(texture) = ui_kit::icon::texture(ui.ctx(), item.icon) {
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let icon = egui::Rect::from_center_size(cell.center(), egui::Vec2::splat(RAIL_ICON));
+        painter.image(texture.id(), icon, uv, tint);
+    }
+    if selected && state.reveal {
+        response.scroll_to_me(None);
+    }
+    if response.hovered() {
+        result.tree_hovered = Some(item.id);
+    }
+    if response.double_clicked() {
+        result.tree_activation = Some(item.id);
+    } else if response.clicked() {
+        result.tree_selection = Some(item.id);
+    }
+    response.on_hover_text(&item.label);
 }
 
 #[cfg(test)]

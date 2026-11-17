@@ -175,6 +175,13 @@ View keys:
 | Rear, bottom, left | 4, 5, 6 |
 | Orthographic, perspective | O, P |
 | Full screen | F11 |
+| Fold the left panel to its icons, unfold it | Ctrl+B |
+
+The button at the top right of the left panel folds it to a narrow bar
+of the bodies' and features' icons in the tree's order, scrolling when
+they run past it: hover one for its name, click to select it, double
+click to edit it. The bar's own button, or Ctrl+B again, unfolds it, and
+the choice is kept for the next start.
 
 Right click the status bar to choose which of its readouts show. Its
 quick measure (off until turned on there) reads the selection: an edge's
