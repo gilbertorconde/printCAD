@@ -17,6 +17,10 @@ pub struct Appearance {
     /// The dimension, extension and leader lines' width in pixels.
     pub dimension_width: f32,
     pub dimension_dashed: bool,
+    /// The two axes draw across the view; off, an axis shows only while
+    /// hovered or picked. The sketch's own, whatever the 3D view's origin
+    /// lines are set to.
+    pub origin_lines: bool,
     /// The two axes' width in pixels while not picked.
     pub axis_width: f32,
     pub axis_dashed: bool,
@@ -37,6 +41,7 @@ impl Default for Appearance {
             label_mono: true,
             dimension_width: 1.0,
             dimension_dashed: false,
+            origin_lines: true,
             axis_width: 1.0,
             axis_dashed: false,
             grid_opacity: 0.3,

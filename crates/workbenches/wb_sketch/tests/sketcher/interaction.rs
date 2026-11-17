@@ -926,6 +926,29 @@ fn the_drawing_follows_each_change_before_the_next_frame() {
     }
 }
 
+/// The axes draw across the view by the sketch's own Origin lines switch;
+/// with it off, an axis shows only while it is picked.
+#[test]
+fn the_axes_hide_with_origin_lines_off_but_while_picked() {
+    let pal = core_document::SketchPalette::default();
+    let lines =
+        |h: &mut Harness, color: [f32; 3]| h.overlays().iter().filter(|o| o.color == color).count();
+    let mut h = Harness::sketching();
+    assert!(h.wb.options.appearance.origin_lines, "on by default");
+    assert_eq!(
+        (lines(&mut h, pal.axis_x), lines(&mut h, pal.axis_y)),
+        (1, 1)
+    );
+    h.wb.options.appearance.origin_lines = false;
+    assert_eq!(
+        (lines(&mut h, pal.axis_x), lines(&mut h, pal.axis_y)),
+        (0, 0)
+    );
+    h.activate("sketch.select_x_axis");
+    assert_eq!(lines(&mut h, pal.selected), 1, "the picked X axis shows");
+    assert_eq!(lines(&mut h, pal.axis_y), 0, "the Y axis stays hidden");
+}
+
 /// A closed outline is shaded while it is edited, meshed once for as long
 /// as it stays the same; an open one is not. A drag keeps the shading of
 /// its start and its release shades the sketch it leaves, as the closed

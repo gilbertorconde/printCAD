@@ -672,7 +672,8 @@ fn push_axes(
         ),
     ];
     for (id, a, b, base, shown) in axes {
-        if !shown {
+        let picked = selected.contains(&id) || hovered == Some(id);
+        if !shown || !(look.origin_lines || picked) {
             continue;
         }
         let (color, thickness, alpha) = state(id, base);
