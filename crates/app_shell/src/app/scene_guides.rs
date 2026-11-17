@@ -383,7 +383,12 @@ impl OriginPlanes {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
-                section: Default::default(),
+                // Guides of the room, as the grid is: the clipping plane
+                // cuts the parts, not them.
+                section: render_wgpu::SectionLook {
+                    uncut: true,
+                    ..Default::default()
+                },
             };
             let opacity = if hovered == Some(*plane) {
                 ORIGIN_PLANE_HOVER_OPACITY
