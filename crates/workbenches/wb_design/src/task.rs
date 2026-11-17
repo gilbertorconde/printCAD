@@ -273,8 +273,32 @@ impl DesignWorkbench {
             self.tab.hovered_failing = *index;
             return;
         }
+        if let PanelEvent::DiagramPress {
+            id: drawing,
+            x,
+            y,
+            released: true,
+            ..
+        } = event
+            && drawing == editors::HOLE_FIGURE
+        {
+            let measure = ctx
+                .document
+                .get_feature_data(id)
+                .and_then(|d| DesignFeature::from_json(d).ok())
+                .and_then(|feature| editors::hole_measure_at(&feature, [*x, *y]));
+            self.tab.task_focus = measure.map(|m| (id, m));
+            return;
+        }
         let mut f = Form::apply(event);
         self.task_pass(&mut f, ctx, id);
+        if !matches!(
+            event,
+            PanelEvent::Hover { .. } | PanelEvent::DiagramPress { .. }
+        ) {
+            let key = editors::hole_field_key(event.id()).to_string();
+            self.tab.task_focus = Some((id, key));
+        }
     }
 
     /// One pass over the task's panel: the editors declare their widgets,
@@ -284,6 +308,12 @@ impl DesignWorkbench {
             return;
         };
         f.freeze_errors = std::mem::take(&mut self.tab.freeze_errors);
+        f.focus = self
+            .tab
+            .task_focus
+            .as_ref()
+            .filter(|(feature, _)| *feature == id)
+            .map(|(_, key)| key.clone());
         match self.tab.task.as_ref().map(|t| t.kind.clone()) {
             Some(TaskKind::Datum) => self.datum_card(f, ctx, id, &node),
             _ => self.part_card(f, ctx, id, &node),
@@ -405,6 +435,9 @@ impl DesignWorkbench {
         let Some(body) = node.body else {
             return;
         };
+        if let Some(drawing) = editors::hole_figure(&feature, f.focus.as_deref()) {
+            f.drawing(drawing);
+        }
         self.name_row(f, ctx, feature_id, &node.name);
         self.repair_notice(f, ctx);
         let deps_before = feature.dependencies();

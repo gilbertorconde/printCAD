@@ -49,7 +49,7 @@ pub fn hole_diameter(feature: &DesignFeature) -> f32 {
 
 /// The angle a hole's wall leans in by toward its bottom, degrees: a
 /// tapped tapered thread's own, else the hole's.
-pub(super) fn hole_taper_deg(feature: &DesignFeature) -> f64 {
+pub(crate) fn hole_taper_deg(feature: &DesignFeature) -> f64 {
     let DesignFeature::Hole {
         thread,
         threaded,

@@ -17,6 +17,10 @@ mod borrow;
 mod dressup;
 mod extrude;
 mod hole;
+mod hole_figure;
+pub(crate) use hole_figure::{
+    FIGURE as HOLE_FIGURE, field_key as hole_field_key, hole_figure, measure_at as hole_measure_at,
+};
 mod patterns;
 mod primitive;
 mod project;
