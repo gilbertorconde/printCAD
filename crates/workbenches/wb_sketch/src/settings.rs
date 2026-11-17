@@ -117,7 +117,13 @@ const SPLINES: [Switch; 6] = [
     ("spline_knots", "Show knots", "", |o| &mut o.spline_knots),
 ];
 
-const APPEARANCE: [Switch; 2] = [
+const APPEARANCE: [Switch; 3] = [
+    (
+        "origin_lines",
+        "Origin lines",
+        "The sketch's axes across the view, whatever the 3D view's origin lines are set to; off, an axis shows only while hovered or picked",
+        |o| &mut o.appearance.origin_lines,
+    ),
     (
         "dimension_dashed",
         "Dashed dimension lines",
@@ -387,6 +393,7 @@ pub(crate) fn widgets(options: &SketchOptions, snap: bool) -> Vec<Widget> {
         ),
         number(options, "dimension_width"),
         switches(options, &["dimension_dashed"]).remove(0),
+        switches(options, &["origin_lines"]).remove(0),
         number(options, "axis_width"),
         switches(options, &["axis_dashed"]).remove(0),
         number(options, "grid_opacity"),

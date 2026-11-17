@@ -822,6 +822,10 @@ pub struct RenderingSettings {
     /// squares around it.
     #[serde(default)]
     pub show_origin_planes: bool,
+    /// Whether the two world axes on the grid's plane draw through the
+    /// origin in their own colours, with the grid or without it.
+    #[serde(default)]
+    pub show_origin_lines: bool,
     /// Colours the user keeps to pick again, in the order added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_colors: Vec<[f32; 3]>,
@@ -963,6 +967,7 @@ impl Default for RenderingSettings {
             grid_opacity: default_grid_opacity(),
             grid_style: GridStyle::default(),
             show_origin_planes: false,
+            show_origin_lines: false,
             custom_colors: Vec::new(),
             curve_step_deg: default_curve_step_deg(),
         }

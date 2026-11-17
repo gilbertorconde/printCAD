@@ -1338,7 +1338,7 @@ impl PrintCadApp {
                 .push(scene_guides::bench_grid(&guides, grid));
         }
         if !editing {
-            if rendering.show_grid && data.view_grid.is_none() {
+            if (rendering.show_grid || rendering.show_origin_lines) && data.view_grid.is_none() {
                 self.frame_submission
                     .grids
                     .push(self.session.view.grid_plane.grid(
@@ -1432,7 +1432,7 @@ impl PrintCadApp {
             add(([-half; 3], [half; 3]));
         }
         let rendering = &self.user_settings.rendering;
-        if rendering.show_grid && !self.sketch_editing_active() {
+        if (rendering.show_grid || rendering.show_origin_lines) && !self.sketch_editing_active() {
             let camera = &self.session.view.camera;
             let (_, screen_up) = camera.view_basis();
             if let Some(ends) = self.session.view.grid_plane.orthographic_reach(

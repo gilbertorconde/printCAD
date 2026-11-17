@@ -34,6 +34,11 @@ How documents, bodies, sketches and features behave in the app.
 - The ground grid and the origin planes start hidden. View › Grid and
   View › Origin planes turn them on. While New sketch waits for a plane,
   the origin planes show, and a click on one picks it.
+- The origin lines (the two world axes on the grid's plane, in their
+  colours) start hidden too: Origin lines under Preferences › Display ›
+  Rendering turns them on, with the grid or without it. A sketch keeps
+  its own switch, Origin lines on its Preferences page, on by default;
+  off, a sketch axis shows only while hovered or picked.
 
 ## Import
 

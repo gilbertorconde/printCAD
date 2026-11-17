@@ -196,16 +196,25 @@ struct GridLook {
 }
 
 /// The grid through the origin square to `up`, its lines a unit apart
-/// and every power of ten of it.
+/// and every power of ten of it, as far as the settings show it: its
+/// lines with the grid on, its axes with the origin lines.
 fn scene_grid(view: &GuideView, up: Vec3, look: &settings::RenderingSettings) -> GridSubmission {
     let [(u, u_color), (v, v_color)] = axes_across(up);
-    let opacity = look.grid_opacity.clamp(0.0, 1.0);
+    let opacity = if look.show_grid {
+        look.grid_opacity.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let look = GridLook {
         color: look.grid_color,
         minor_alpha: GRID_MINOR_ALPHA * opacity,
         major_alpha: GRID_MAJOR_ALPHA * opacity,
         axis_colors: [rgb(u_color), rgb(v_color)],
-        axis_alpha: GRID_AXIS_ALPHA,
+        axis_alpha: if look.show_origin_lines {
+            GRID_AXIS_ALPHA
+        } else {
+            0.0
+        },
         dash: look.grid_style.dash(),
     };
     plane_grid(view, Vec3::ZERO, u, v, 1.0, look)
@@ -481,6 +490,27 @@ mod tests {
         assert_eq!(grid.step, 10.0);
         // The patch reaches past the viewport whichever way it is turned.
         assert!(grid.radius >= 0.5 * 1600.0);
+    }
+
+    #[test]
+    fn the_grid_and_its_origin_lines_show_each_by_its_own_switch() {
+        let view = top_view(PixelSize::Flat(0.5));
+        let drawn = |show_grid, show_origin_lines| {
+            let look = settings::RenderingSettings {
+                show_grid,
+                show_origin_lines,
+                ..Default::default()
+            };
+            let grid = scene_grid(&view, Vec3::Z, &look);
+            (grid.major_alpha > 0.0, grid.axis_alpha > 0.0)
+        };
+        assert_eq!(
+            drawn(true, false),
+            (true, false),
+            "lines, no axes: the default"
+        );
+        assert_eq!(drawn(true, true), (true, true));
+        assert_eq!(drawn(false, true), (false, true), "the axes alone");
     }
 
     #[test]
