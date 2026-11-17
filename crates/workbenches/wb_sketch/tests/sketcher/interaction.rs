@@ -66,9 +66,9 @@ struct Harness {
     gestures_closed: usize,
     /// The floating card on screen, by id.
     card_open: Option<String>,
-    /// A new dimension's or rectangle's card gets OK at once, keeping
-    /// what the click made, as Enter would; off, a test works the card
-    /// itself.
+    /// A new dimension's or a drawn shape's card (a rectangle's, an
+    /// offset's) gets OK at once, keeping what the click made, as Enter
+    /// would; off, a test works the card itself.
     ok_new_dimensions: bool,
 }
 
@@ -159,7 +159,7 @@ impl Harness {
         });
         self.frame();
         if self.ok_new_dimensions
-            && (self.wb.pending_dim_edit().is_some_and(|e| e.new) || self.wb.rect_card_open())
+            && (self.wb.pending_dim_edit().is_some_and(|e| e.new) || self.wb.shape_card_open())
         {
             self.close_card(true);
         }
@@ -1821,6 +1821,41 @@ fn offset_rectangle_end_to_end_produces_closed_loop() {
     for (x, y) in [(2.0, 2.0), (10.0, 2.0), (10.0, 6.0), (2.0, 6.0)] {
         assert!(h.point_at(x, y), "offset corner ({x}, {y}) 2mm inside");
     }
+}
+
+/// The offset's click opens its card with the distance as the tool has
+/// it, Round and Both sides: nothing is copied until OK, a distance the
+/// card changes and Both sides show at once, and OK copies at them as one
+/// undo step, the setting carried on to the tool.
+#[test]
+fn an_offset_waits_in_its_card_for_its_distance() {
+    let mut h = Harness::sketching();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.rect");
+    h.box_select(-2.0, -2.0, 14.0, 10.0);
+    h.wb.tool_params_mut().offset_distance = 2.0;
+    h.ok_new_dimensions = false;
+    h.click(6.0, 4.0, "sketch.offset");
+    let card = h.card().expect("the card");
+    assert_eq!(
+        (card.title.as_str(), card.focus.as_deref(), card.ok_only),
+        ("Offset", Some("offset.size"), true)
+    );
+    assert_eq!(h.counts().1, 4, "nothing copied before OK");
+    h.card_type("offset.size", "1");
+    h.card_event(bench_api::PanelEvent::Toggle {
+        id: "offset.both".into(),
+        on: true,
+    });
+    let closed = h.gestures_closed;
+    h.close_card(true);
+    assert_eq!(h.gestures_closed, closed + 1, "OK is one undo step");
+    assert_eq!(h.counts().1, 12, "copied to both sides");
+    for (x, y) in [(1.0, 1.0), (-1.0, -1.0), (13.0, 9.0)] {
+        assert!(h.point_at(x, y), "a corner 1 mm in or out at ({x}, {y})");
+    }
+    let params = h.wb.tool_params_mut();
+    assert_eq!((params.offset_distance, params.offset_both), (1.0, true));
 }
 
 #[test]

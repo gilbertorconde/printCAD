@@ -56,7 +56,7 @@ A shape's sizes go in the card by the cursor before its last click (Tab
 moves on, Enter holds them by dimensions). A tool whose clicks set the
 whole shape stores it at its last click. One that leaves more to set
 opens a second card beside the shape after it: a rounded rectangle's
-radius, a frame's wall. That card has only what is left to set, the
+radius, a frame's wall, an offset's distance. That card has only what is left to set, the
 tool's setting in it with the keys and its value selected (a unit or a
 formula works too), and the view shows the shape solved at it. A value
 that does not fit says why and holds OK back. There is no Cancel: **OK**,
@@ -391,8 +391,14 @@ Rotate:
 - **Follow the original**: the copies stay the original's size, spaced by
   one pitch, as the original changes.
 
-Offset can round its corners, go to both sides, replace the original, or
-stay held to the original by one dimension. Symmetry can keep the original
+Offset copies the selected curves to the side of its click. The click
+opens a card beside it with the distance as the Tool section has it (the
+keys on it, a unit or a formula works too), Round and Both sides, the view
+showing the copies; as with a shape's card there is no Cancel, and OK,
+Enter, Escape, a click elsewhere, another tool or finishing the sketch
+copy at what the card shows, carried on to the tool. A frame round any
+outline is its offset with the original kept. Offset can also replace the
+original, or stay held to it by one dimension (both in the Tool section). Symmetry can keep the original
 and hold the image to it with symmetric constraints. Copies, patterns and
 arrays keep text as text.
 

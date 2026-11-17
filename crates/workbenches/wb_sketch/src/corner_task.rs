@@ -1,7 +1,9 @@
 //! The card for what a click leaves to set: a corner picked by the fillet
-//! or chamfer tool, or the last click of a rounded rectangle or a frame,
-//! opens a card beside it with that size (a corner's size and Keep corner,
-//! the rounded corners' radius, the frame's wall), the tool's own setting
+//! or chamfer tool, the last click of a rounded rectangle or a frame, or
+//! the offset's click on its side, opens a card beside it with that size
+//! (a corner's size and Keep corner, the rounded corners' radius, the
+//! frame's wall, the offset's distance with Round and Both sides), the
+//! tool's own setting
 //! in it and the keys on it, the view showing the solved result. OK or
 //! Enter writes it, and so does anything else that puts it away (another
 //! tool, the sketch finished, a click in the view): left as it opened, the
@@ -41,6 +43,8 @@ enum Subject {
         typed: Vec<(FieldKind, f64)>,
         constrain: bool,
     },
+    /// The selected curves copied at a distance on the click's side.
+    Offset,
 }
 
 /// A corner or rectangle open in its card.
@@ -77,13 +81,14 @@ impl CornerTask {
     fn rect(&self) -> Option<Kind> {
         match self.subject {
             Subject::Rect { kind, .. } => Some(kind),
-            Subject::Corner(_) => None,
+            Subject::Corner(_) | Subject::Offset => None,
         }
     }
 
     /// The tool setting the card's size field edits, if it has one.
     fn size_param(&self) -> Option<SizeParam> {
         Some(match self.rect() {
+            None if matches!(self.subject, Subject::Offset) => SizeParam::Offset,
             None if self.bevel() => SizeParam::Chamfer,
             None | Some(Kind::Rounded) => SizeParam::Fillet,
             Some(Kind::Frame) => SizeParam::Wall,
@@ -102,7 +107,7 @@ impl CornerTask {
             Subject::Rect {
                 typed, constrain, ..
             } => (typed, *constrain),
-            Subject::Corner(_) => (&[], false),
+            Subject::Corner(_) | Subject::Offset => (&[], false),
         }
     }
 
@@ -137,6 +142,7 @@ impl CornerTask {
                 .unwrap_or_else(|| match self.subject {
                     Subject::Corner(_) => "These curves cannot be joined at this size".into(),
                     Subject::Rect { .. } => "No rectangle fits these sizes".into(),
+                    Subject::Offset => "These curves cannot be offset by this distance".into(),
                 }));
         }
         if auto_update
@@ -150,6 +156,7 @@ impl CornerTask {
                 Subject::Rect { .. } => {
                     "The constraints cannot be solved with this rectangle".into()
                 }
+                Subject::Offset => "The constraints cannot be solved with this offset".into(),
             });
         }
         Ok(feature)
@@ -162,6 +169,7 @@ enum SizeParam {
     Fillet,
     Chamfer,
     Wall,
+    Offset,
 }
 
 impl SizeParam {
@@ -169,7 +177,7 @@ impl SizeParam {
         match self {
             SizeParam::Fillet => p.fillet_radius,
             SizeParam::Chamfer => p.chamfer_length,
-            SizeParam::Wall => p.offset_distance,
+            SizeParam::Wall | SizeParam::Offset => p.offset_distance,
         }
     }
 
@@ -177,7 +185,7 @@ impl SizeParam {
         match self {
             SizeParam::Fillet => p.fillet_radius = value,
             SizeParam::Chamfer => p.chamfer_length = value,
-            SizeParam::Wall => p.offset_distance = value,
+            SizeParam::Wall | SizeParam::Offset => p.offset_distance = value,
         }
     }
 
@@ -186,6 +194,7 @@ impl SizeParam {
             SizeParam::Fillet => "Radius",
             SizeParam::Chamfer => "Length",
             SizeParam::Wall => "Wall",
+            SizeParam::Offset => "Distance",
         }
     }
 
@@ -194,6 +203,7 @@ impl SizeParam {
             SizeParam::Fillet => "Enter a radius greater than zero",
             SizeParam::Chamfer => "Enter a length greater than zero",
             SizeParam::Wall => "Enter a wall greater than zero",
+            SizeParam::Offset => "Enter a distance greater than zero",
         }
     }
 }
@@ -201,6 +211,7 @@ impl SizeParam {
 /// The card's id and field ids for a corner and for a rectangle.
 const CORNER_CARD: &str = "sketch.corner";
 const RECT_CARD: &str = "sketch.rect";
+const OFFSET_CARD: &str = "sketch.offset";
 
 impl SketchWorkbench {
     /// A fillet or chamfer click that resolves a corner opens its task
@@ -231,6 +242,41 @@ impl SketchWorkbench {
             settings,
             Subject::Corner(curves),
         );
+        Some(())
+    }
+
+    /// The offset's click opens its card rather than copying at once.
+    /// `None` when the click would copy nothing (no curve selected that it
+    /// takes), which the tool's own click says.
+    pub(crate) fn open_offset_task(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        tool: &str,
+        cursor: Vec2D,
+        settings: &StepSettings,
+    ) -> Option<()> {
+        if tool != "sketch.offset" {
+            return None;
+        }
+        let mut trial = feature.sketch.clone();
+        let mut state = self.tab.tool_state.clone();
+        let selected: HashSet<Uuid> = self.tab.selected.iter().copied().collect();
+        let outcome = step::click(
+            &mut state,
+            &mut crate::ovp::DimCapture::default(),
+            tool,
+            &mut trial,
+            cursor,
+            &[],
+            false,
+            settings,
+            &selected,
+        );
+        if !outcome.changed {
+            return None;
+        }
+        self.open_card(ctx, feature, tool, cursor, settings, Subject::Offset);
         Some(())
     }
 
@@ -309,12 +355,13 @@ impl SketchWorkbench {
         self.tab.last_diagnosis = None;
     }
 
-    /// Whether a rectangle waits in its card.
-    pub fn rect_card_open(&self) -> bool {
+    /// Whether a shape the tool drew (a rectangle, an offset) waits in its
+    /// card, rather than a picked corner.
+    pub fn shape_card_open(&self) -> bool {
         self.tab
             .corner_task
             .as_ref()
-            .is_some_and(|t| t.rect().is_some())
+            .is_some_and(|t| !matches!(t.subject, Subject::Corner(_)))
     }
 
     /// The sketch as an open card's draft makes it, a corner's or a
@@ -382,6 +429,7 @@ impl SketchWorkbench {
         }
         let label = match task.rect() {
             Some(_) => idle_name(&task.tool),
+            None if matches!(task.subject, Subject::Offset) => "Offset",
             None if task.bevel() => "Chamfer",
             None => "Fillet",
         };
@@ -415,10 +463,10 @@ impl SketchWorkbench {
     pub(crate) fn corner_card(&self, ctx: &WorkbenchRuntimeContext) -> Option<FloatingCard> {
         let task = self.tab.corner_task.as_ref()?;
         let size = task.size_param().map(|param| {
-            let id = if task.rect().is_some() {
-                "rect.size"
-            } else {
-                "corner.size"
+            let id = match task.subject {
+                Subject::Rect { .. } => "rect.size",
+                Subject::Offset => "offset.size",
+                Subject::Corner(_) => "corner.size",
             };
             let mut size = panel::entry_with(id, param.label(), &task.size_text, "A size");
             size.live = true;
@@ -452,6 +500,16 @@ impl SketchWorkbench {
                     ("Fillet", "sketch-fillet")
                 };
                 (CORNER_CARD, title, icon, "corner.size")
+            }
+            Subject::Offset => {
+                blocks.extend(size.map(Into::into));
+                let params = &task.settings.params;
+                blocks.push(
+                    panel::check("offset.round", "Corners", "Round", params.offset_round).into(),
+                );
+                blocks
+                    .push(panel::check("offset.both", "Sides", "Both", params.offset_both).into());
+                (OFFSET_CARD, "Offset", "offset-geometry", "offset.size")
             }
             Subject::Rect { .. } => {
                 blocks.extend(size.map(Into::into));
@@ -504,7 +562,9 @@ impl SketchWorkbench {
                 })
         };
         match event {
-            PanelEvent::CardClose { id, accept } if id == CORNER_CARD || id == RECT_CARD => {
+            PanelEvent::CardClose { id, accept }
+                if id == CORNER_CARD || id == RECT_CARD || id == OFFSET_CARD =>
+            {
                 if *accept {
                     self.apply_corner(ctx);
                 } else {
@@ -512,7 +572,9 @@ impl SketchWorkbench {
                 }
                 return true;
             }
-            PanelEvent::Text { id, value } if id == "corner.size" || id == "rect.size" => {
+            PanelEvent::Text { id, value }
+                if id == "corner.size" || id == "rect.size" || id == "offset.size" =>
+            {
                 task.size_text.clone_from(value);
                 match (length(value), task.size_param()) {
                     (Ok(v), Some(param)) => param.set(&mut self.tab.tool_params, v),
@@ -526,7 +588,16 @@ impl SketchWorkbench {
             PanelEvent::Toggle { id, on } if id == "corner.keep" => {
                 self.tab.tool_params.corner_keep = *on;
             }
-            _ if event.id().starts_with("corner.") || event.id().starts_with("rect.") => {
+            PanelEvent::Toggle { id, on } if id == "offset.round" => {
+                self.tab.tool_params.offset_round = *on;
+            }
+            PanelEvent::Toggle { id, on } if id == "offset.both" => {
+                self.tab.tool_params.offset_both = *on;
+            }
+            _ if ["corner.", "rect.", "offset."]
+                .iter()
+                .any(|prefix| event.id().starts_with(prefix)) =>
+            {
                 return true;
             }
             _ => return false,
@@ -545,6 +616,8 @@ impl SketchWorkbench {
             params.chamfer_length = p.chamfer_length;
             params.corner_keep = p.corner_keep;
             params.offset_distance = p.offset_distance;
+            params.offset_round = p.offset_round;
+            params.offset_both = p.offset_both;
             task.working = task.calculate(auto_update);
             self.tab.last_diagnosis = None;
         }
