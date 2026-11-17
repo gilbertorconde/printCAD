@@ -1131,15 +1131,17 @@ pub fn chamfer(
     };
     let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer")?;
     let specs = chamfer_specs(model, solid, spec, flip, chain)?;
-    if corner == ChamferCorner::Facet {
+    // The kernel's plain chamfer closes a corner of three bevels with a
+    // facet; the mitre to one point is asked for by name.
+    if corner == ChamferCorner::Point {
         let built = ogeom::fillet::chamfer_edges_cornered(
             model,
             solid,
             &specs,
-            ogeom::fillet::ChamferCorner::Facet,
+            ogeom::fillet::ChamferCorner::Point,
             tol(),
         )
-        .map_err(|e| format!("chamfer corners as facets: {e}"))?;
+        .map_err(|e| format!("chamfer corners to a point: {e}"))?;
         crate::naming::record(&built.history);
         return Ok(built.shape);
     }
