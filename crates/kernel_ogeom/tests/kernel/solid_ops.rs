@@ -924,7 +924,6 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
 /// through the inner corners and the convex ones sweep into them, every
 /// face analytic, still one cylinder per edge.
 #[test]
-#[ignore = "kernel: rolling-ball fillet corners (FilletCorner::RollingBall) are not built yet"]
 fn rolling_ball_corners_on_the_step_are_analytic() {
     use kernel_api::{FaceSurface, FilletCorner};
     let mut ops = three_step_pads();
@@ -948,6 +947,31 @@ fn rolling_ball_corners_on_the_step_are_analytic() {
         .count();
     assert_eq!(cylinders, 24);
     assert!(super::common::is_sound(&built.brep_blob));
+}
+
+/// A cube rounded on every edge with rolling-ball corners is the cube
+/// shrunk by the radius and grown back by a ball: its volume the core,
+/// six slabs, twelve quarter cylinders and the eight octants of a sphere.
+#[test]
+fn a_cube_rounded_with_rolling_ball_corners_is_a_rounded_cube() {
+    use kernel_api::FilletCorner;
+    let (a, r): (f64, f64) = (20.0, 3.0);
+    let core = a - 2.0 * r;
+    let pi = std::f64::consts::PI;
+    let want =
+        core.powi(3) + 6.0 * core * core * r + 3.0 * pi * r * r * core + 4.0 / 3.0 * pi * r.powi(3);
+    let ops = [
+        box_of(a, a, a),
+        SolidOp::Fillet {
+            radius: r,
+            edges: EdgeSelection::All,
+            follow_tangent: false,
+            corner: FilletCorner::RollingBall,
+            distances: None,
+            auto: false,
+        },
+    ];
+    assert_volume(&ops, want, "rolling-ball cube");
 }
 
 /// A box chamfered on every edge with facet corners: each corner gains a

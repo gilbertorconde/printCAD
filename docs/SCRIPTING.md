@@ -4205,23 +4205,25 @@ Notes:
 - `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
 - Edges running on tangentially are taken too (`follow_tangent`, on by default).
 - `mode` is Auto (when left out), Radius or TwoDistances. Auto on one edge takes each face's contact `radius` from the edge or as far as the face goes, whichever is less; with Radius, a radius larger than the faces beside an edge can take fails at `pc.doc.rebuild()`. TwoDistances puts `radius` on one face and `radius2` on the other (`flip` swaps them), its `profile` Elliptical or Conic (with `rho` strictly between 0 and 1, 0.5 when left out), on one edge.
+- `corner` says how a vertex where rounds meet closes: Setback (when left out) stops each round short and fills the gap with one patch; RollingBall runs the rounds into it and closes it with the ball's sphere or torus, on corners of three edges between flat faces.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.chamfer`.
 
-Example: One top edge of a block rounded.
+Example: Every edge of a cube rounded with rolling-ball corners.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
-pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
-local pad = pc.design.pad{sketch = s, length = 10}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+local pad = pc.design.pad{sketch = s, length = 20}
 local body = pc.doc.feature{id = pad}.body
-pc.design.fillet{body = body, radius = 3,
-  edges = {Edges = {{point = {20, 0, 10}, direction = {1, 0, 0}}}}}
+pc.design.fillet{body = body, radius = 3, mode = "Radius", corner = "RollingBall"}
 assert(#pc.doc.rebuild() == 0, "the fillet builds")
-assert(#pc.doc.faces{body = body} == 7, "six faces and the round")
-local taken = (9 - math.pi * 9 / 4) * 40
+-- The cube shrunk by the radius and grown back by a ball.
+local core = 20 - 6
+local want = core ^ 3 + 6 * core ^ 2 * 3 + 3 * math.pi * 9 * core
+  + 4 / 3 * math.pi * 27
 local volume = pc.doc.measure{body = body}.volume
-assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
+assert(math.abs(volume - want) < 0.01, volume)
 ```
 
 `pc.design.chamfer`: Bevel edges.

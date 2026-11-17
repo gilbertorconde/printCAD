@@ -13,8 +13,8 @@ use kernel_api::{
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
     BlendRefusal, Chamfer, chamfer_edges_checked, chamfer_edges_with, fillet_edge_distances,
-    fillet_edges, fillet_edges_checked, largest_chamfer_distance, largest_fillet_distances,
-    largest_fillet_radius_all,
+    fillet_edges_corner, fillet_edges_corner_checked, largest_chamfer_distance,
+    largest_fillet_distances, largest_fillet_radius_all,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -275,16 +275,11 @@ pub fn fillet(
     if auto && let Some(shape) = auto_round(model, solid, radius, edges, follow_tangent)? {
         return Ok(shape);
     }
-    if corner == FilletCorner::RollingBall {
-        return Err("the kernel does not build rolling-ball corners yet; \
-                    choose setback corners"
-            .to_string()
-            .into());
-    }
+    let corner = kernel_corner(corner);
     let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
     let pick =
         |picked: &[usize]| -> Vec<Shape> { picked.iter().map(|&i| chain[i].clone()).collect() };
-    match fillet_edges_checked(model, solid, &chain, radius, tol()) {
+    match fillet_edges_corner_checked(model, solid, &chain, radius, corner, tol()) {
         Ok(built) => {
             crate::naming::record(&built.history);
             Ok(built.shape)
@@ -302,9 +297,18 @@ pub fn fillet(
                     .map(|fits| fits.map(|r| r / radius))
             },
             |m, picked, share| {
-                fillet_edges(m, solid, &pick(picked), radius * share, tol()).map(|_| ())
+                fillet_edges_corner(m, solid, &pick(picked), radius * share, corner, tol())
+                    .map(|_| ())
             },
         )?),
+    }
+}
+
+/// The kernel's spelling of how a fillet closes its corners.
+fn kernel_corner(corner: FilletCorner) -> ogeom::fillet::FilletCorner {
+    match corner {
+        FilletCorner::Setback => ogeom::fillet::FilletCorner::Setback,
+        FilletCorner::RollingBall => ogeom::fillet::FilletCorner::Rolling,
     }
 }
 
@@ -1315,15 +1319,17 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
         kernel_api::SolidOp::Fillet {
             edges,
             follow_tangent,
+            corner,
             ..
         } => {
             let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "fillet").ok()?;
             let read = largest_fillet_radius_all(&model, solid, &chain, span, tol()).ok()??;
             let model = model.clone();
+            let corner = kernel_corner(*corner);
             (
                 read,
                 Box::new(move |r| {
-                    fillet_edges(&mut model.clone(), solid, &chain, r, tol()).is_ok()
+                    fillet_edges_corner(&mut model.clone(), solid, &chain, r, corner, tol()).is_ok()
                 }),
             )
         }

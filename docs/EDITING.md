@@ -409,8 +409,10 @@ a time for now; a selection of more says so.
 
 **Corners** says how a vertex closes where the rounds or bevels meet. A
 fillet's Setback stops each round short of the corner and fills the gap
-with one smooth patch; Rolling ball, where the rounds would meet along the
-curves where they cross, is not built yet and says so. A chamfer's Point
+with one smooth patch; Rolling ball runs every round into the corner, the
+rounds meeting along the curves where they cross and the ball's sphere or
+torus closing what is left, on corners of three edges between flat faces
+(other corners say so). A chamfer's Point
 mitres the bevels into one point; Facet ends them on a small flat facet,
 a triangle where three meet (not yet on a padded solid's corners).
 

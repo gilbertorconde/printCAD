@@ -476,7 +476,29 @@ beside an edge can take fails at `pc.doc.rebuild()`. TwoDistances puts `radius` 
 Conic (with `rho` strictly between 0 and 1, 0.5 when left out), on one
 edge.
 
+`corner` says how a vertex where rounds meet closes: Setback (when left
+out) stops each round short and fills the gap with one patch; RollingBall
+runs the rounds into it and closes it with the ball's sphere or torus, on
+corners of three edges between flat faces.
+
 See also: `design.chamfer`
+
+### Every edge of a cube rounded with rolling-ball corners
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+local pad = pc.design.pad{sketch = s, length = 20}
+local body = pc.doc.feature{id = pad}.body
+pc.design.fillet{body = body, radius = 3, mode = "Radius", corner = "RollingBall"}
+assert(#pc.doc.rebuild() == 0, "the fillet builds")
+-- The cube shrunk by the radius and grown back by a ball.
+local core = 20 - 6
+local want = core ^ 3 + 6 * core ^ 2 * 3 + 3 * math.pi * 9 * core
+  + 4 / 3 * math.pi * 27
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - want) < 0.01, volume)
+```
 
 ### One top edge of a block rounded
 
