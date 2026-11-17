@@ -163,7 +163,12 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "Drag elements by a step, the rest of the sketch following its constraints",
         ))
         .param("items", ParamKind::List, "The elements to drag")
-        .param("by", ParamKind::List, "The step, {x, y}"),
+        .param("by", ParamKind::List, "The step, {x, y}")
+        .optional(
+            "held",
+            ParamKind::List,
+            "Points held where they are while the rest follows (none)",
+        ),
         editing(drag),
     );
     t.add_free(
@@ -380,9 +385,13 @@ fn drag(
         .cloned()
         .unwrap_or(Value::Null)])))
     .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
+    let still = match args.get("held") {
+        Some(held) => ids(Some(held), "held", sketch)?,
+        None => Vec::new(),
+    };
     let targets = crate::step::drag_targets(sketch, &items);
     crate::step::drag(sketch, &targets, by);
-    let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
+    let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).chain(still).collect();
     crate::solver::solve_holding(sketch, &held);
     Ok(Value::Null)
 }

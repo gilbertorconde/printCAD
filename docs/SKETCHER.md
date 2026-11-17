@@ -37,6 +37,7 @@ back to Select, a line after its first segment.
 | Circle | C | Center and rim, Three points |
 | Ellipse | E | Center and axes, Three points, Arc of ellipse, Arc of parabola, Arc of hyperbola |
 | B-spline | B | Open, Periodic, Through points, Closed through points |
+| Path | | |
 | Rectangle | R | Two corners, Center and corner, Rounded, Three corners, Center and two corners, Frame |
 | Regular polygon | G | Triangle to octagon (the Tool section sets any count from 3 to 12) |
 | Slot | S | Straight slot, Arc slot |
@@ -64,6 +65,25 @@ Enter, Escape, a click elsewhere in the view, another tool or finishing
 the sketch all store it as one undo step, at the setting as it opened
 when nothing was changed. Only an edit from elsewhere (an undo) puts it
 away. A recording of it is the `sketch.draw` call with that setting.
+
+**Paths and nodes.** A spline can be edited by its nodes, as vector
+drawings edit paths. Double click a spline in the Select tool: it shows
+its nodes as squares, the curve kept; one that is not yet a chain of
+cubic pieces is rewritten as one (more control points, the same curve; a
+spline drawn through points stops passing through them, and one with
+weights is refused). Click a node to pick it: its two handles show, each
+joined to it by a line. Drag the node and its handles come with it; drag
+a handle and the node stays put. A node is **Smooth** (its handles held
+in one line through it, so the other handle turns with the one dragged),
+**Symmetric** (mirrored through it) or a **Corner** (each handle on its
+own). Right click a node for a card to change it; nodes that were smooth
+on the curve come out smooth. Escape, another tool or a click on anything
+else ends the edit. The **Path** tool draws a path directly: click to
+place a corner node, press and drag to place a smooth node and pull its
+handles out (the other mirrored), click the first node to close the
+path, and Enter, a right click or a second click on the last node
+finishes it open. A closed path's first and last nodes are one point, so
+it closes a profile.
 
 A spline drawn through points keeps passing through them as they move.
 While a constraint reads the curve (a point on it, a tangent, its length)

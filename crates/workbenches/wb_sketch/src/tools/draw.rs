@@ -435,6 +435,160 @@ pub(super) fn bspline(
     ToolEffect::none()
 }
 
+/// The path tool's click: a node at `cursor`, or the path closed when it
+/// lands on the first of two or more nodes, or finished open when it lands
+/// again on the last.
+pub(super) fn path(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f64,
+) -> ToolEffect {
+    let target = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+    let node = super::PathNode {
+        at: target,
+        out: None,
+    };
+    let ToolState::PathDraw { nodes } = state else {
+        *state = ToolState::PathDraw { nodes: vec![node] };
+        return ToolEffect::none();
+    };
+    let near = |t: &SnapTarget| {
+        t.position(sketch)
+            .is_some_and(|p| (p - cursor).to_glam().length() <= snap_tol)
+    };
+    if nodes.len() >= 2 && near(&nodes[0].at) {
+        return path_finish(state, sketch, true);
+    }
+    if nodes.last().is_some_and(|last| near(&last.at)) {
+        return if nodes.len() >= 2 {
+            path_finish(state, sketch, false)
+        } else {
+            ToolEffect::none()
+        };
+    }
+    nodes.push(node);
+    ToolEffect::none()
+}
+
+/// The control points of the path through `nodes` (where each stands and
+/// the handle dragged from it), closed back to the first when `closed`:
+/// node, handle out, handle in, node, … A dragged node's handle toward the
+/// start mirrors the one dragged out; an undragged node's handles stand a
+/// third of the way along the pieces either side, so pieces between two
+/// such nodes are straight.
+fn path_control(at: &[Vec2D], out: &[Option<Vec2D>], closed: bool) -> Vec<Vec2D> {
+    let n = at.len();
+    let pieces = if closed { n } else { n - 1 };
+    let mut control = vec![at[0]];
+    for i in 0..pieces {
+        let (a, b) = (i, (i + 1) % n);
+        let third = (at[b] - at[a]).to_glam() / 3.0;
+        let after = out[a].unwrap_or(at[a] + Vec2D::from_glam(third));
+        let before = match out[b] {
+            Some(o) => at[b] + (at[b] - o),
+            None => at[b] - Vec2D::from_glam(third),
+        };
+        control.extend([after, before, at[b]]);
+    }
+    control
+}
+
+/// The path the tool's nodes so far make, with the next node at `next`
+/// when the pointer is out: the curve sampled, and the last node's handle
+/// lines while it has them.
+pub fn path_preview(
+    sketch: &Sketch,
+    nodes: &[super::PathNode],
+    next: Option<Vec2D>,
+) -> (Vec<Vec2D>, Vec<[Vec2D; 2]>) {
+    let mut at: Vec<Vec2D> = nodes.iter().filter_map(|n| n.at.position(sketch)).collect();
+    let mut out: Vec<Option<Vec2D>> = nodes.iter().map(|n| n.out).collect();
+    if at.len() != nodes.len() {
+        return (Vec::new(), Vec::new());
+    }
+    let mut handles = Vec::new();
+    if let (Some(node), Some(Some(o))) = (at.last().copied(), out.last().copied()) {
+        handles.push([node, o]);
+        handles.push([node, node + (node - o)]);
+    }
+    if let Some(next) = next {
+        at.push(next);
+        out.push(None);
+    }
+    if at.len() < 2 {
+        return (Vec::new(), handles);
+    }
+    let control = path_control(&at, &out, false);
+    let curve = bezier_samples(&control, 24);
+    (curve, handles)
+}
+
+/// The chain of cubic pieces over `control` (node, handle, handle, node,
+/// …), `steps` samples a piece.
+fn bezier_samples(control: &[Vec2D], steps: usize) -> Vec<Vec2D> {
+    let mut points = vec![control[0]];
+    for piece in control.windows(4).step_by(3) {
+        let [p0, p1, p2, p3] = [piece[0], piece[1], piece[2], piece[3]].map(Vec2D::to_glam);
+        for s in 1..=steps {
+            let t = s as f64 / steps as f64;
+            let u = 1.0 - t;
+            let p = p0 * (u * u * u)
+                + p1 * (3.0 * u * u * t)
+                + p2 * (3.0 * u * t * t)
+                + p3 * (t * t * t);
+            points.push(Vec2D::from_glam(p));
+        }
+    }
+    points
+}
+
+/// Make the path the tool's nodes place, closed back to the first when
+/// `closed`: a cubic spline in node form, every node a point of the sketch
+/// (one a click snapped to kept), its handles new points, each node a drag
+/// pulled out held smooth. Fewer than two nodes make nothing.
+pub(super) fn path_finish(state: &mut ToolState, sketch: &mut Sketch, closed: bool) -> ToolEffect {
+    let ToolState::PathDraw { nodes } = std::mem::take(state) else {
+        return ToolEffect::none();
+    };
+    if nodes.len() < 2 {
+        return ToolEffect::none();
+    }
+    let Some(at) = nodes
+        .iter()
+        .map(|n| n.at.position(sketch))
+        .collect::<Option<Vec<Vec2D>>>()
+    else {
+        return ToolEffect::none();
+    };
+    let out: Vec<Option<Vec2D>> = nodes.iter().map(|n| n.out).collect();
+    let control = path_control(&at, &out, closed);
+    let node_ids: Vec<Uuid> = nodes.iter().map(|n| materialize(sketch, n.at)).collect();
+    let n = node_ids.len();
+    let ids: Vec<Uuid> = control
+        .iter()
+        .enumerate()
+        .map(|(i, p)| match (i % 3, i / 3) {
+            (0, k) => node_ids[k % n],
+            _ => sketch.add_geometry(GeometryElement::Point(Point::new(*p))),
+        })
+        .collect();
+    let pieces = (ids.len() - 1) / 3;
+    let spline = sketch.add_geometry(GeometryElement::BSpline(BSpline {
+        knots: crate::nodes::path_knots(pieces),
+        ..BSpline::new(ids, false)
+    }));
+    if let Some(path) = crate::nodes::nodes_of(sketch, spline) {
+        for (node, placed) in path.nodes.iter().zip(&nodes) {
+            if placed.out.is_some() {
+                crate::nodes::set_kind(sketch, node, crate::nodes::NodeKind::Smooth);
+            }
+        }
+    }
+    let shape = if closed { "Closed path" } else { "Path" };
+    ToolEffect::changed(format!("{shape} of {n} nodes"))
+}
+
 /// Arc of a parabola or a hyperbola: the vertex (parabola) or centre
 /// (hyperbola), then the focus or the branch's vertex, which set the axis;
 /// then the arc's start, which on a hyperbola also sets how wide it opens,

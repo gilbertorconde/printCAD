@@ -58,7 +58,9 @@ impl SketchWorkbench {
         }
         if matches!(
             self.tab.tool_state,
-            ToolState::LineFrom { chain: true, .. } | ToolState::BSplineDraw { .. }
+            ToolState::LineFrom { chain: true, .. }
+                | ToolState::BSplineDraw { .. }
+                | ToolState::PathDraw { .. }
         ) {
             if !typed {
                 key("Enter", "finish");
@@ -842,6 +844,7 @@ impl SketchWorkbench {
             self.options.arc_helpers,
             self.options.spline_polygon,
             self.tool_proposal(ctx, feature).as_ref(),
+            self.node_view(feature).as_ref(),
         )
     }
 }

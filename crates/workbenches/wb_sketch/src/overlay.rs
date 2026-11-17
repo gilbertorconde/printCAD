@@ -193,6 +193,64 @@ fn push_point_marker(out: &mut Overlays, proj: &SketchProjector, pos: Vec2D, col
     push_dot(out, proj, pos, color, POINT_RADIUS_PX);
 }
 
+/// How far a node's square reaches from its middle, in pixels.
+const NODE_HALF_PX: f32 = 4.0;
+
+/// The picked node's handles, each a thin line from its node.
+fn push_handle_lines(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    sketch: &Sketch,
+    view: &crate::node_edit::NodeView,
+) {
+    for (handle, node) in &view.handles {
+        let ends = [*handle, *node].map(|id| sketch.point_position(id).and_then(|p| proj.to_px(p)));
+        if let [Some(a), Some(b)] = ends {
+            out.lines
+                .push(ScreenSpaceOverlay::new(a, b, pal.construction, 1.0).with_alpha(0.9));
+        }
+    }
+}
+
+/// A square round each node of the path under node edit, filled in the
+/// selection colour on the picked one.
+fn push_node_squares(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    sketch: &Sketch,
+    view: &crate::node_edit::NodeView,
+    selected: &HashSet<Uuid>,
+    hovered: Option<Uuid>,
+) {
+    for (node, picked) in &view.nodes {
+        let Some(c) = sketch.point_position(*node).and_then(|p| proj.to_px(p)) else {
+            continue;
+        };
+        let color = if *picked || selected.contains(node) {
+            pal.selected
+        } else if hovered == Some(*node) {
+            pal.preselect
+        } else {
+            pal.geometry
+        };
+        let h = NODE_HALF_PX;
+        let corners = [[-h, -h], [h, -h], [h, h], [-h, h]].map(|[x, y]| [c[0] + x, c[1] + y]);
+        for i in 0..4 {
+            out.lines.push(ScreenSpaceOverlay::new(
+                corners[i],
+                corners[(i + 1) % 4],
+                color,
+                1.5,
+            ));
+        }
+        if *picked {
+            out.marks.push(ScreenSpaceMark::dot(c, h - 1.0, color));
+        }
+    }
+}
+
 fn push_dot(out: &mut Overlays, proj: &SketchProjector, pos: Vec2D, color: [f32; 3], radius: f32) {
     if let Some(px) = proj.to_px(pos) {
         out.marks.push(ScreenSpaceMark::dot(px, radius, color));
@@ -1398,6 +1456,35 @@ fn push_preview(
                 );
             }
         }
+        ToolState::PathDraw { nodes } => {
+            // While a drag pulls the last node's handle the pointer is that
+            // handle, not the next node.
+            let pulling = nodes.last().and_then(|n| n.out) == Some(cursor);
+            let next = (!pulling).then_some(cursor);
+            let (curve, handles) = crate::tools::path_preview(sketch, nodes, next);
+            push_polyline(
+                &mut out.lines,
+                proj,
+                curve.into_iter(),
+                pal.preview,
+                1.5,
+                false,
+            );
+            for [node, handle] in handles {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [node, handle].into_iter(),
+                    pal.construction,
+                    1.0,
+                    false,
+                );
+                push_point_marker(out, proj, handle, pal.preview);
+            }
+            for node in nodes.iter().filter_map(|n| pos(&n.at)) {
+                push_point_marker(out, proj, node, pal.preview);
+            }
+        }
         ToolState::TranslateFrom { base } => {
             push_polyline(
                 &mut out.lines,
@@ -1709,6 +1796,7 @@ pub fn build_overlays(
     arc_helpers: bool,
     spline_polygon: bool,
     proposed: Option<&Proposed>,
+    nodes: Option<&crate::node_edit::NodeView>,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
@@ -1741,12 +1829,26 @@ pub fn build_overlays(
             glow.extend(block.elements.iter().copied());
         }
     }
+    let node_points: HashSet<Uuid> = nodes
+        .map(|v| v.nodes.iter().map(|(p, _)| *p).collect())
+        .unwrap_or_default();
     for pass_points in [false, true] {
+        if pass_points && let Some(view) = nodes {
+            push_handle_lines(&mut out, proj, pal, sketch, view);
+        }
         for geom in order.iter().copied() {
             if matches!(geom, GeometryElement::Point(_)) != pass_points {
                 continue;
             }
             if pass_points && sketch.derived.contains(&geom.id()) {
+                continue;
+            }
+            // A path under node edit shows its nodes as squares and only
+            // the picked node's handles.
+            if pass_points
+                && (node_points.contains(&geom.id())
+                    || nodes.is_some_and(|v| v.hidden.contains(&geom.id())))
+            {
                 continue;
             }
             let mut style = element_style(sketch, geom.id(), selected, hovered, locked, pal);
@@ -1761,17 +1863,12 @@ pub fn build_overlays(
                 style.color = pal.constraint;
                 style.thickness = 2.5;
             }
-            push_element(
-                &mut out,
-                proj,
-                pal,
-                sketch,
-                geom,
-                style,
-                &centers,
-                spline_polygon,
-            );
+            let polygon = spline_polygon && nodes.is_none_or(|v| v.spline != geom.id());
+            push_element(&mut out, proj, pal, sketch, geom, style, &centers, polygon);
         }
+    }
+    if let Some(view) = nodes {
+        push_node_squares(&mut out, proj, pal, sketch, view, selected, hovered);
     }
 
     // Where the profile stops: each loose end ringed, while no shape is

@@ -171,7 +171,9 @@ Clicks short of a shape make nothing, without an error.
 Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6,
 `fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer
 takes one click on the corner. A bspline ends with the word "finish" in
-`points`.
+`points`, and so does an open path; a path's click on its first node closes
+it, and a click with `drag = {x, y}` places a smooth node whose handle the
+drag pulled there.
 
 A value typed at a click (`typed = {length = 20}`) sets the shape's size; with
 `constrain = true` it is kept as a dimension. The names are length, angle,
@@ -193,6 +195,18 @@ local pad = pc.design.pad{sketch = s, length = 1}
 assert(#pc.doc.rebuild() == 0)
 local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - (20 * 6 + math.pi * 3 ^ 2)) < 1e-3, m.volume)
+```
+
+### A closed path padded
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.draw{sketch = s, tool = "path", points = {
+  {0, 0}, {20, 0}, {x = 20, y = 20, drag = {10, 30}}, {0, 20}, {0, 0}}}
+local pad = pc.design.pad{sketch = s, length = 2}
+assert(#pc.doc.rebuild() == 0, "the path closes a profile")
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(m.volume > 20 * 20 * 2, m.volume)
 ```
 
 ## sketch.drag

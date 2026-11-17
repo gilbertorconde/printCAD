@@ -342,6 +342,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ),
     ("paste", include_str!("../icons/paste.svg")),
     ("path-pattern", include_str!("../icons/path-pattern.svg")),
+    ("pen-path", include_str!("../icons/pen-path.svg")),
     ("pentagon", include_str!("../icons/pentagon.svg")),
     (
         "periodic-bspline",
