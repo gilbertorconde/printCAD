@@ -219,6 +219,7 @@ impl PrintCadApp {
         // renderer so panning/orbiting never re-uploads the static mesh.
         let scene_clip = self.scene_clip();
         let section = self.session.view.section.clone();
+        let solid_caps = self.user_settings.rendering.solid_section_caps;
         let mut imported_meshes: Vec<BodySubmission> = self
             .session
             .document
@@ -417,12 +418,14 @@ impl PrintCadApp {
                         open,
                         hatch: None,
                         uncut,
+                        solid: solid_caps,
                     },
                 }
             })
             .collect();
         // Where several closed bodies are cut, each cap hatches at its own
-        // angle, so nested parts read apart.
+        // angle, so nested parts read apart; a solid cap hatches whatever
+        // the count, as a section of material does.
         if self.frame_submission.clip_plane.is_some() {
             let capped: Vec<usize> = (0..imported_meshes.len())
                 .filter(|i| {
@@ -430,7 +433,7 @@ impl PrintCadApp {
                     !look.open && !look.uncut
                 })
                 .collect();
-            if capped.len() > 1 {
+            if capped.len() > 1 || solid_caps {
                 const ANGLES: [f32; 4] = [0.785, -0.785, 0.262, -1.309];
                 for (n, i) in capped.into_iter().enumerate() {
                     imported_meshes[i].section.hatch = Some(ANGLES[n % ANGLES.len()]);

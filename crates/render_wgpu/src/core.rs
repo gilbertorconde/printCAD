@@ -10,8 +10,8 @@ use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
 use crate::mesh::{
-    DEPTH_FORMAT, DrawStats, MeshCache, MeshRenderer, PICK_DEPTH_FORMAT, PICK_ID_FORMAT,
-    PICK_PRIMITIVE_FORMAT, Pane,
+    DEPTH_FORMAT, DrawStats, MeshCache, MeshRenderer, PICK_DEPTH_FORMAT, PICK_DEPTH_TEST_FORMAT,
+    PICK_ID_FORMAT, PICK_PRIMITIVE_FORMAT, Pane,
 };
 use crate::readback::{self, CaptureRequest, Done, PickRequest, Polled, Readback};
 use crate::{
@@ -623,7 +623,10 @@ impl RendererCore {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -909,8 +912,8 @@ fn create_targets(
         let view = texture.create_view(&Default::default());
         (texture, view)
     });
-    let pick_depth_test_view =
-        texture("pick depth test", DEPTH_FORMAT, 1, attachment).create_view(&Default::default());
+    let pick_depth_test_view = texture("pick depth test", PICK_DEPTH_TEST_FORMAT, 1, attachment)
+        .create_view(&Default::default());
     Targets {
         scene,
         scene_view,
@@ -1077,6 +1080,7 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         body.section.open.hash(&mut h);
         body.section.hatch.map(f32::to_bits).hash(&mut h);
         body.section.uncut.hash(&mut h);
+        body.section.solid.hash(&mut h);
         body.scalar.is_some().hash(&mut h);
         if let Some(field) = &body.scalar {
             field.revision.hash(&mut h);

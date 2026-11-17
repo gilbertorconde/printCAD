@@ -244,6 +244,10 @@ pub struct SectionLook {
     /// The clipping plane leaves it whole: it draws and picks uncut, a
     /// shaft through a cut housing.
     pub uncut: bool,
+    /// Its cap stands on the clipping plane, hiding what lies behind it
+    /// as a face there would; otherwise the cap is its inside drawn flat
+    /// where it is, which shows the inside's edges through the cut.
+    pub solid: bool,
 }
 
 /// Values in mesh vertex order, painted through evenly spaced RGB ramp stops.

@@ -180,6 +180,50 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
     return shade_mesh(in, front, draw.scalar.w >= 0.0);
 }
 
+// A solid's cap of section on the clipping plane: its back faces, drawn
+// where the solid pass's stencil says its inside is what shows, at the
+// depth of the point on the plane in front of them, so the cap hides what
+// lies behind it (the inside's edges) as a face there would.
+struct CutOut {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+@fragment
+fn fs_mesh_cut(in: MeshOut, @builtin(front_facing) front: bool) -> CutOut {
+    var out: CutOut;
+    out.color = shade_mesh(in, front, draw.scalar.w >= 0.0);
+    var plane = frame.clip_plane;
+    if (on_wedge_cap(in.world)) {
+        plane = frame.clip_wedge;
+    }
+    out.depth = clamp(plane_depth(plane, in.world), 0.0, in.position.z);
+    return out;
+}
+
+// The depth of the point on `plane` that the same pixel as `p` sees: along
+// the line of world points the view projects onto that pixel, whatever
+// the projection.
+fn plane_depth(plane: vec4<f32>, p: vec3<f32>) -> f32 {
+    let m = frame.view_proj;
+    let c = m * vec4<f32>(p, 1.0);
+    let r0 = vec3<f32>(m[0][0], m[1][0], m[2][0]);
+    let r1 = vec3<f32>(m[0][1], m[1][1], m[2][1]);
+    let r3 = vec3<f32>(m[0][3], m[1][3], m[2][3]);
+    // Moving along `ray` keeps x / w and y / w where they are.
+    let ray = cross(c.w * r0 - c.x * r3, c.w * r1 - c.y * r3);
+    let along = dot(plane.xyz, ray);
+    if (abs(along) < 1e-12) {
+        return c.z / c.w;
+    }
+    let q = p - ray * (clip_distance(plane, p) / along);
+    let cq = m * vec4<f32>(q, 1.0);
+    if (cq.w <= 0.0) {
+        return 0.0;
+    }
+    return cq.z / cq.w;
+}
+
 @fragment
 fn fs_wire(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return shade_mesh(in, front, false);
