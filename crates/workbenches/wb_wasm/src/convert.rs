@@ -180,6 +180,7 @@ pub(crate) fn request(
     request: bench_api::Request,
     bench: &str,
     granted: &bench_api::Capabilities,
+    menu_item: &dyn Fn(bench_api::MenuItem) -> core_document::MenuItem,
 ) -> Result<HostRequest, String> {
     use bench_api::Request as R;
     Ok(match request {
@@ -234,6 +235,11 @@ pub(crate) fn request(
             }
         }
         R::CopyText { text } => HostRequest::CopyText(text),
+        R::OpenMenu { tag, items } => HostRequest::OpenMenu {
+            bench: core_document::WorkbenchId::new(bench),
+            tag,
+            items: items.into_iter().map(menu_item).collect(),
+        },
     })
 }
 
@@ -278,6 +284,7 @@ pub(crate) fn menu_scope(scope: &core_document::MenuScope) -> Option<bench_api::
         M::TreeBody(b) => bench_api::MenuScope::TreeBody(b.0.to_string()),
         M::StartPage => bench_api::MenuScope::StartPage,
         M::EditMenu => bench_api::MenuScope::EditMenu,
+        M::Popup(tag) => bench_api::MenuScope::Popup(tag.clone()),
         M::TreeComponent(_) => return None,
     })
 }

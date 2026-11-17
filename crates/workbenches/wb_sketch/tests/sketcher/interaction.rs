@@ -15,6 +15,7 @@ use wb_sketch::sketch::{GeometryElement, Sketch};
 use wb_sketch::{SketchFeature, SketchWorkbench};
 
 mod chain;
+mod nodes;
 mod panel;
 mod rect;
 
@@ -40,6 +41,8 @@ struct Harness {
     vp: [[f32; 4]; 4],
     /// The tool the workbench last asked the host to make active.
     tool_request: Option<String>,
+    /// The menu the bench last asked the host to open: its tag and entries.
+    menu: Option<(String, Vec<core_document::MenuItem>)>,
     /// Whether the workbench has asked the host to turn the view.
     view_turned: bool,
     /// The kernel the host hands the bench, when a test has a model.
@@ -80,6 +83,7 @@ impl Harness {
             active_object: None,
             vp: view_proj(),
             tool_request: None,
+            menu: None,
             view_turned: false,
             kernel: None,
             edges: Vec::new(),
@@ -153,6 +157,14 @@ impl Harness {
         self.view_turned |= requests
             .iter()
             .any(|r| matches!(r, core_document::HostRequest::OrientCamera(_)));
+        if let Some((tag, items)) = requests.iter().find_map(|r| match r {
+            core_document::HostRequest::OpenMenu { tag, items, .. } => {
+                Some((tag.clone(), items.clone()))
+            }
+            _ => None,
+        }) {
+            self.menu = Some((tag, items));
+        }
         self.tool_request = requests.into_iter().find_map(|r| match r {
             core_document::HostRequest::ActivateTool(tool) => Some(tool),
             _ => None,
@@ -440,6 +452,14 @@ impl Harness {
 
     /// The bench's floating card, as the host asks for it each frame: one
     /// that opens closes the undo step before it.
+    /// The entry `id` of the menu the bench opened picked, as the host
+    /// hands it back: `on_command` with the menu's tag.
+    fn menu_pick(&mut self, id: &str) {
+        let (tag, _) = self.menu.take().expect("an open menu");
+        let scope = core_document::MenuScope::Popup(tag);
+        self.with_ctx(|wb, ctx| assert!(wb.on_command(id, &scope, ctx), "{id} is the bench's"));
+    }
+
     fn card(&mut self) -> Option<bench_api::FloatingCard> {
         let card = self.with_ctx(|wb, ctx| wb.floating_card(ctx));
         let id = card.as_ref().map(|c| c.id.clone());

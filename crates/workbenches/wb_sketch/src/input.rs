@@ -52,6 +52,7 @@ impl SketchWorkbench {
             elements: moving,
             delta: Vec2D::new(0.0, 0.0),
             target: None,
+            held: Vec::new(),
         });
     }
 
@@ -741,6 +742,15 @@ impl SketchWorkbench {
         // The line tool: a press on the end it draws from, dragged, is an
         // arc tangent to what ends there; a press anywhere else clicks, and
         // dragged from a first point draws the line to where it is let go.
+        // The path tool places a node on the press; a drag before the
+        // release pulls its handle out.
+        if tool == Some("sketch.path") {
+            let result = self.apply_tool_click(ctx, "sketch.path", cursor, false);
+            if matches!(self.tab.tool_state, ToolState::PathDraw { .. }) {
+                self.tab.path_press = Some((viewport_pos, false));
+            }
+            return result;
+        }
         if tool == Some("sketch.line") {
             let on_end = match self.tab.tool_state {
                 ToolState::LineFrom {
@@ -803,6 +813,13 @@ impl SketchWorkbench {
                 if let Some(hit) = self.glyph_hit(ctx, &feature, viewport_pos) {
                     return self.handle_glyph_press(ctx, &feature, hit, cursor);
                 }
+                // A spline under node edit takes its nodes, shown handles and
+                // itself; anything else ends the edit.
+                if self.tab.node_edit.is_some()
+                    && let Some(result) = self.node_press(&feature, cursor, tol)
+                {
+                    return result;
+                }
                 let now = Instant::now();
                 match snap::hit_test(&feature.sketch, cursor, tol) {
                     Some(id) => {
@@ -815,6 +832,16 @@ impl SketchWorkbench {
                                 .is_some_and(|(last, t)| {
                                     last == id && now.duration_since(t) < DOUBLE_CLICK_WINDOW
                                 });
+                        // A double click on a spline edits it by its nodes.
+                        if double
+                            && matches!(
+                                feature.sketch.get_geometry(id),
+                                Some(sketch::GeometryElement::BSpline(_))
+                            )
+                            && !feature.sketch.is_external(id)
+                        {
+                            return self.enter_node_edit(ctx, feature, id);
+                        }
                         if double
                             && !matches!(
                                 feature.sketch.get_geometry(id),
@@ -979,6 +1006,17 @@ impl SketchWorkbench {
                 .track(&tab.tool_state, &feature.sketch, cursor);
         }
 
+        // A path tool press that moves far enough pulls the handle of the
+        // node it placed, its other handle mirrored.
+        if tool == Some("sketch.path")
+            && let (Some((at, dragged)), Some(cursor)) = (self.tab.path_press, self.tab.cursor)
+            && (dragged || (viewport_pos.0 - at.0).hypot(viewport_pos.1 - at.1) > LINE_DRAG_PX)
+        {
+            let tab = &mut *self.tab;
+            tab.path_press = Some((at, true));
+            tools::path_drag(&mut tab.tool_state, &feature.sketch, cursor);
+            return InputResult::consumed();
+        }
         // A line tool press that moves far enough is a drag; from an end
         // something runs into, the drag draws a tangent arc.
         let tab = &mut *self.tab;
@@ -1025,7 +1063,12 @@ impl SketchWorkbench {
             step::drag(&mut feature.sketch, &drag.points, delta);
             // The dragged points stay under the cursor and the rest gives
             // way; constraints hold during a drag whatever auto update says.
-            let held: Vec<Uuid> = drag.points.iter().map(|(id, _)| *id).collect();
+            let held: Vec<Uuid> = drag
+                .points
+                .iter()
+                .map(|(id, _)| *id)
+                .chain(drag.held.iter().copied())
+                .collect();
             // A point dragged alone rests on what it is over, lit, the
             // rest timed from when it got there.
             let over = match drag.points.as_slice() {
@@ -1093,6 +1136,25 @@ impl SketchWorkbench {
     }
 
     pub(crate) fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        // A path tool drag lands: the node's handle rests where the drag
+        // let go, and the node's click records it.
+        if let Some((_, dragged)) = self.tab.path_press.take() {
+            if dragged {
+                let pulled = match &self.tab.tool_state {
+                    ToolState::PathDraw { nodes } => nodes.last().and_then(|n| n.out),
+                    _ => None,
+                };
+                if let (Some(out), Some(record)) = (pulled, self.tab.draw_record.as_mut())
+                    && let Some(event) = record.events.last_mut()
+                {
+                    if let serde_json::Value::Array(xy) = event.clone() {
+                        *event = serde_json::json!({"x": xy[0], "y": xy[1]});
+                    }
+                    event["drag"] = serde_json::json!([out.x, out.y]);
+                }
+            }
+            return InputResult::consumed();
+        }
         // A line tool drag lands: the arc, or the line, ends where it is let go.
         if let Some(press) = self.tab.line_press.take()
             && press.dragged
@@ -1140,13 +1202,17 @@ impl SketchWorkbench {
             if drag.moved
                 && let Some(sketch_id) = self.tab.active_sketch_id
             {
+                let mut args = serde_json::json!({
+                    "sketch": sketch_id.0.to_string(),
+                    "items": ids_json(&drag.elements),
+                    "by": [drag.delta.x, drag.delta.y],
+                });
+                if !drag.held.is_empty() {
+                    args["held"] = ids_json(&drag.held);
+                }
                 ctx.record(
                     "sketch.drag",
-                    commands::object(serde_json::json!({
-                        "sketch": sketch_id.0.to_string(),
-                        "items": ids_json(&drag.elements),
-                        "by": [drag.delta.x, drag.delta.y],
-                    })),
+                    commands::object(args),
                     serde_json::Value::Null,
                 );
                 self.join_dropped(ctx, sketch_id, &drag);
@@ -1265,7 +1331,7 @@ impl SketchWorkbench {
                 self.tab.tool_state = ToolState::Idle;
                 InputResult::consumed()
             }
-            ToolState::BSplineDraw { .. } => {
+            ToolState::BSplineDraw { .. } | ToolState::PathDraw { .. } => {
                 let Some(mut feature) = self.get_active_sketch(ctx) else {
                     self.tab.tool_state = ToolState::Idle;
                     return InputResult::consumed();
@@ -1307,6 +1373,16 @@ impl SketchWorkbench {
         };
         let travelled = (viewport_pos.0 - press.0).hypot(viewport_pos.1 - press.1);
         if travelled <= CLICK_SLOP_PX && self.tab.tool_state.is_idle() {
+            // On a node of a spline under node edit, its card opens.
+            if self.tab.node_edit.is_some()
+                && let Some(feature) = self.get_active_sketch(ctx)
+                && let Some(cursor) = Self::cursor_to_sketch(ctx, &feature.plane, viewport_pos)
+            {
+                let tol = Self::snap_tolerance(ctx, &feature.plane);
+                if self.node_right_click(ctx, &feature, cursor, tol) {
+                    return InputResult::ignored();
+                }
+            }
             ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
         // Never consumed: the camera still has a pan to finish.
@@ -1352,6 +1428,9 @@ impl SketchWorkbench {
         // Escape is an open dimension card's Cancel.
         if self.tab.dim_edit.is_some() {
             self.cancel_dim_edit(ctx);
+            return InputResult::consumed();
+        }
+        if self.tab.dragging.is_none() && self.leave_node_edit() {
             return InputResult::consumed();
         }
         if self.tab.calibrating.take().is_some() {
@@ -1841,6 +1920,10 @@ impl SketchWorkbench {
         // Escape for its OK and Cancel, and applies it before a click in
         // the view goes on); another tool takes it as it stands, as OK
         // does, and an edit from elsewhere puts it away.
+        // A node edit is the select tool's.
+        if self.tab.node_edit.is_some() && active_tool.is_some_and(|t| t != "sketch.select") {
+            self.leave_node_edit();
+        }
         if self.tab.corner_task.is_some() && !self.drop_stale_corner(ctx) {
             if active_tool.map(str::to_string) != self.tab.activated_tool {
                 self.store_corner(ctx, false);

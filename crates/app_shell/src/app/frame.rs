@@ -641,6 +641,7 @@ impl PrintCadApp {
                             &mut self.session.selection.reveal_face_maker,
                         ),
                         viewport_menu: self.session.viewport_menu.clone(),
+                        bench_menu: self.session.bench_menu.clone(),
                         picked_faces,
                         picked_edges: self
                             .session
@@ -1555,6 +1556,7 @@ impl PrintCadApp {
         if self.input.mouse_buttons_down > 0
             || self.sketch_editing_active()
             || self.session.viewport_menu.is_some()
+            || self.session.bench_menu.is_some()
         {
             return None;
         }

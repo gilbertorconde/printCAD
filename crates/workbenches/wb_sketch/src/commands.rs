@@ -732,6 +732,27 @@ fn draw(
                     crate::solver::solve(sketch);
                 }
             }
+            // A path node a drag pulled a handle from.
+            click if tool == "sketch.path" && click.get("drag").is_some() => {
+                let (at, typed, constrain) = click_of(click)?;
+                let drag = points(Some(&json!([click["drag"]])))
+                    .map_err(|_| CommandError::bad("points", "a drag is [x, y]"))?[0];
+                let outcome = step::click(
+                    &mut state,
+                    &mut capture,
+                    &tool,
+                    sketch,
+                    at,
+                    &typed,
+                    constrain,
+                    &settings,
+                    &selected,
+                );
+                crate::tools::path_drag(&mut state, sketch, drag);
+                if outcome.changed {
+                    crate::solver::solve(sketch);
+                }
+            }
             click => {
                 let (at, typed, constrain) = click_of(click)?;
                 let outcome = step::click(
@@ -792,6 +813,7 @@ const DRAW_TOOLS: &[&str] = &[
     "parabola",
     "hyperbola",
     "bspline",
+    "path",
     "polygon",
     "slot",
     "arc_slot",

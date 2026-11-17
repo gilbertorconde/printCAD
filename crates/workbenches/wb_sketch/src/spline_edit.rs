@@ -574,6 +574,42 @@ pub fn change_degree(sketch: &mut Sketch, items: &HashSet<Uuid>, by: i32) -> Too
     ToolEffect::changed(message)
 }
 
+/// Rewrite `spline` exactly as a chain of cubic Bézier pieces, its nodes
+/// on the curve between them: every inner knot standing three times, the
+/// degree raised to three where it is lower (exactly) or lowered to it
+/// where higher (the nearest cubic). A closed spline is laid open at its
+/// start, its first and last control point one point; one drawn through
+/// points stops passing through them. A spline with weights is refused,
+/// as no cubic pieces keep them.
+pub fn to_node_form(sketch: &mut Sketch, spline: Uuid) -> Result<(), String> {
+    let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline).cloned() else {
+        return Err("Not a spline".into());
+    };
+    let lift = lifted(sketch, &b).ok_or("This spline cannot be read")?;
+    if lift.rational {
+        return Err("A spline with weights has no nodes to edit: its weights would be lost".into());
+    }
+    let mut made = if lift.degree == 3 {
+        lift
+    } else {
+        let raise = 3_usize.saturating_sub(lift.degree);
+        let inner: Vec<(f64, usize)> = lift
+            .interior()
+            .into_iter()
+            .map(|(k, m)| (k, (m + raise).clamp(1, 3)))
+            .collect();
+        lift.refit(3, &inner)
+            .ok_or("This spline cannot be made cubic")?
+    };
+    for (k, m) in made.interior() {
+        for _ in m..3 {
+            insert_knot(&mut made.knots, &mut made.control, 3, k);
+        }
+    }
+    store(sketch, spline, made, &|_| None);
+    Ok(())
+}
+
 /// The knot values inside a spline's domain and how many times each
 /// stands, over its parameter as stored.
 pub fn knots_of(sketch: &Sketch, spline: Uuid) -> Vec<(f64, usize)> {

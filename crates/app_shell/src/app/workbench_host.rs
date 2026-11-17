@@ -360,6 +360,19 @@ impl PrintCadApp {
     /// One request, as the host answers it.
     pub(crate) fn apply_host_request(&mut self, request: HostRequest, site: HookSite) {
         match request {
+            HostRequest::OpenMenu { bench, tag, items } => {
+                if let Some(at) = self.pointer_in_points() {
+                    self.session.viewport_menu = None;
+                    self.session.bench_menu = Some(crate::ui::BenchMenu {
+                        bench,
+                        tag,
+                        items,
+                        at,
+                    });
+                    self.session.bench_menus_opened += 1;
+                    self.redraw_needed = true;
+                }
+            }
             HostRequest::ActivateTool(tool) => {
                 self.session.active_tool.active_ids.clear();
                 self.session.active_tool.active_ids.insert(tool);

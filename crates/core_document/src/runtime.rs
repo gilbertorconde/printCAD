@@ -475,6 +475,17 @@ pub enum HostRequest {
     },
     /// Put this text on the system clipboard.
     CopyText(String),
+    /// Open a menu of `items` at the pointer, for something the bench
+    /// itself draws (a right click on a node of its own). The pick comes
+    /// back to `bench`'s `on_command` with [`MenuScope::Popup`] and `tag`;
+    /// Escape or a click elsewhere puts the menu away and says nothing.
+    ///
+    /// [`MenuScope::Popup`]: crate::MenuScope::Popup
+    OpenMenu {
+        bench: crate::WorkbenchId,
+        tag: String,
+        items: Vec<crate::MenuItem>,
+    },
 }
 
 impl HostRequest {
@@ -496,7 +507,8 @@ impl HostRequest {
             | HostRequest::SaveFiles(_)
             | HostRequest::OpenFile { .. }
             | HostRequest::RecordAnimation { .. }
-            | HostRequest::CopyText(_) => 5,
+            | HostRequest::CopyText(_)
+            | HostRequest::OpenMenu { .. } => 5,
         }
     }
 }

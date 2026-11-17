@@ -147,6 +147,9 @@ pub enum ToolState {
     },
     /// B-spline tool: control points accumulated so far.
     BSplineDraw { points: Vec<SnapTarget> },
+    /// Path tool: the nodes placed so far, each with the handle a drag
+    /// from it pulled out.
+    PathDraw { nodes: Vec<PathNode> },
     /// Translate tool: base point picked.
     TranslateFrom { base: Vec2D },
     /// Rotate tool: pivot picked.
@@ -426,6 +429,10 @@ impl ToolState {
             } => Some("Polyline: click where the reversed arc ends; M for lines"),
             ToolState::BSplineDraw { .. } => Some(
                 "Spline: click its points; Enter/right-click finishes (degree, closed: tool settings)",
+            ),
+            ToolState::PathDraw { .. } => Some(
+                "Path: click a node, drag to pull its handles; click the first node to close, \
+                 Enter/right-click finishes",
             ),
             ToolState::TranslateFrom { .. } => Some("Move: click the destination"),
             ToolState::RotateCenter { .. } => Some("Rotate: click the angle reference"),
@@ -715,6 +722,7 @@ fn run_click(
         "sketch.ellipse3" => draw::ellipse3(state, sketch, cursor, snap_tol),
         "sketch.ellipse_arc" => draw::ellipse_arc(state, sketch, cursor, snap_tol),
         "sketch.bspline" => draw::bspline(state, sketch, cursor, snap_tol),
+        "sketch.path" => draw::path(state, sketch, cursor, snap_tol),
         "sketch.parabola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Parabola),
         "sketch.hyperbola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Hyperbola),
         "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params.polygon_sides),
@@ -857,6 +865,27 @@ pub fn set_polyline_segment(state: &mut ToolState, to: PolySegment) {
     }
 }
 
+/// A node the path tool placed: where, and where a drag from it pulled
+/// its handle toward the end (the other mirrored through it); `None` for a
+/// click that did not drag, a corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PathNode {
+    pub at: SnapTarget,
+    pub out: Option<Vec2D>,
+}
+
+/// A drag from the path's last node to `at` pulls its handle there.
+pub fn path_drag(state: &mut ToolState, sketch: &Sketch, at: Vec2D) {
+    if let ToolState::PathDraw { nodes } = state
+        && let Some(last) = nodes.last_mut()
+        && let Some(node) = last.at.position(sketch)
+    {
+        last.out = ((at - node).to_glam().length() > 1e-9).then_some(at);
+    }
+}
+
+pub use draw::path_preview;
+
 /// Finish a multi-click sequence (right-click or Enter): completes an
 /// in-progress B-spline, drops any other pending state.
 pub fn finish_click_sequence(
@@ -866,6 +895,7 @@ pub fn finish_click_sequence(
 ) -> ToolEffect {
     match state {
         ToolState::BSplineDraw { .. } => draw::bspline_finish(state, sketch, params),
+        ToolState::PathDraw { .. } => draw::path_finish(state, sketch, false),
         _ => {
             *state = ToolState::Idle;
             ToolEffect::none()

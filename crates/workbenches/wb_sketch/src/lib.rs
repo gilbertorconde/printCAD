@@ -24,6 +24,7 @@ mod dxf;
 mod external;
 mod external_follow;
 mod external_ref;
+mod node_edit;
 use external_follow::{
     Projection, follow_references, project_source_in, projection_key, solid_built_from,
 };
@@ -38,6 +39,7 @@ mod input;
 pub mod internal;
 mod measure;
 mod model_picks;
+pub mod nodes;
 pub mod operations;
 mod overlay;
 mod ovp;
@@ -309,6 +311,9 @@ struct DragState {
     /// A point dragged alone: the point or curve it is over, and since
     /// when. Let go there after the delay, the point is joined to it.
     target: Option<(Uuid, Instant)>,
+    /// Points held where they are while the rest follows: a handle's node
+    /// while the handle is dragged.
+    held: Vec<Uuid>,
 }
 
 /// A shape the active tool is drawing, as a recording will say it: the
@@ -537,6 +542,9 @@ struct Tab {
     /// A left press of the line tool, held to tell a click from a drag:
     /// dragged from the end it draws from, it draws an arc.
     line_press: Option<LinePress>,
+    /// A left press of the path tool that placed a node: where it landed,
+    /// in viewport pixels, and whether a drag is pulling its handle.
+    path_press: Option<((f32, f32), bool)>,
     /// The line tool's next click is its arc (`step::line_arc_click`).
     arc_click: bool,
     /// The segments the line or polyline gesture has committed, each with
@@ -684,6 +692,8 @@ struct Tab {
     draw_record: Option<DrawRecord>,
     /// A fillet or chamfer open in its card, its result previewed.
     corner_task: Option<corner_task::CornerTask>,
+    /// The spline being edited by its nodes.
+    node_edit: Option<node_edit::NodeEdit>,
     /// The open dimension task's draft, beside its `dim_edit`.
     dim_draft: Option<dimension_task::DimensionDraft>,
     /// The last wall thickness check, drawn until the sketch changes, the
@@ -871,6 +881,7 @@ impl SketchWorkbench {
     fn clear_interaction_state(&mut self) {
         self.tab.tool_state = ToolState::Idle;
         self.tab.corner_task = None;
+        self.tab.node_edit = None;
         self.tab.selected.clear();
         self.tab.hovered = None;
         self.tab.hover_from_panel = false;
@@ -1364,6 +1375,7 @@ impl Workbench for SketchWorkbench {
             (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
             (MenuScope::EditMenu, "edit.cut") => self.clipboard_copy(ctx, true),
             (MenuScope::EditMenu, "edit.paste") => self.clipboard_paste(ctx),
+            (MenuScope::Popup(tag), _) => self.node_command(ctx, id, tag),
             _ => false,
         }
     }
@@ -2190,6 +2202,7 @@ pub(crate) fn is_draw_tool(tool: &str) -> bool {
             | "sketch.parabola"
             | "sketch.hyperbola"
             | "sketch.bspline"
+            | "sketch.path"
             | "sketch.rect"
             | "sketch.rect_center"
             | "sketch.rect3"

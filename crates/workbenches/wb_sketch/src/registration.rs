@@ -14,6 +14,7 @@ const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
     ("sketch.circle", "Circle", "circle"),
     ("sketch.ellipse", "Ellipse", "ellipse"),
     ("sketch.bspline", "B-spline", "bspline"),
+    ("sketch.path", "Path", "pen-path"),
     ("sketch.rect", "Rectangle", "rectangle"),
     ("sketch.polygon", "Regular polygon", "regular-polygon"),
     ("sketch.slot", "Slot", "slot"),
@@ -120,6 +121,7 @@ pub(crate) fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.parabola" => ("Arc of parabola", "Click the vertex"),
         "sketch.hyperbola" => ("Arc of hyperbola", "Click the center"),
         "sketch.bspline" => ("B-spline", "Click its first point"),
+        "sketch.path" => ("Path", "Click a node; drag to pull its handles"),
         "sketch.rect" => ("Rectangle", "Click the first corner"),
         "sketch.rect_center" | "sketch.rect_center3" => ("Rectangle", "Click the center"),
         "sketch.rect3" => ("Rectangle", "Click the first corner"),
@@ -279,9 +281,8 @@ impl SketchWorkbench {
         let category = |id: &str| -> &'static str {
             match id {
                 "sketch.select" | "sketch.point" | "sketch.line" => "create.basic",
-                "sketch.arc" | "sketch.circle" | "sketch.ellipse" | "sketch.bspline" => {
-                    "create.curves"
-                }
+                "sketch.arc" | "sketch.circle" | "sketch.ellipse" | "sketch.bspline"
+                | "sketch.path" => "create.curves",
                 "sketch.rect" | "sketch.polygon" | "sketch.slot" => "create.shapes",
                 "sketch.text" => "create.text",
                 "sketch.fillet" | "sketch.trim" | "sketch.extend" | "sketch.split" => "modify.edit",

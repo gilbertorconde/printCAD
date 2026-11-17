@@ -366,6 +366,7 @@ impl PrintCadApp {
             return;
         }
         let text = self.typed_text_of(&event);
+        let menus_before = self.session.bench_menus_opened;
         let mut wb = self.dispatch_workbench_input_without_select(&event);
         if let Some(text) = text {
             let wb_id = self.active_workbench_id();
@@ -501,7 +502,12 @@ impl PrintCadApp {
                 self.toggle_body_under_cursor_selection()
             };
         }
-        if matches!(cam_res, CameraPointerResult::RmbReleasedMaybeMenu) && !radial_took {
+        // A right click that opened the bench's own menu opens no other.
+        if matches!(cam_res, CameraPointerResult::RmbReleasedMaybeMenu)
+            && !radial_took
+            && self.session.bench_menus_opened == menus_before
+        {
+            self.session.bench_menu = None;
             redraw |= self.open_viewport_menu();
         }
 
@@ -1003,6 +1009,16 @@ impl PrintCadApp {
             first_placement: place_a,
             found: None,
         })
+    }
+
+    /// Where the pointer is over the window, in points: where a menu opened
+    /// by it stands.
+    pub(crate) fn pointer_in_points(&self) -> Option<[f32; 2]> {
+        let gfx = self.gfx.as_ref()?;
+        let (cx, cy) = self.input.cursor_in_viewport?;
+        let vp = self.session.view.camera.viewport_info();
+        let scale = gfx.window.scale_factor() as f32;
+        Some([(vp.0 + cx) / scale, (vp.1 + cy) / scale])
     }
 
     /// A right click that did not pan: over a body, the menu for that body

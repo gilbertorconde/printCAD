@@ -407,7 +407,25 @@ The scopes are the right-click menu on a body, a feature, body or
 component row in the tree, the Edit menu (`edit.cut`, `edit.copy`,
 `edit.paste` on the active workbench), and the start page. A start page
 item becomes a New card. Its command runs in a fresh document with one
-body.
+body. A `MenuItem` can be `checked`, drawn ticked: the choice that
+stands among its entries.
+
+For something the bench draws itself (a node or handle of its own), it
+opens its own menu at the pointer, typically on a right click it sees in
+`on_input`:
+
+```rust
+ctx.request(HostRequest::OpenMenu {
+    bench: WorkbenchId::from("mine"),
+    tag: node.to_string(),
+    items: vec![MenuItem::new("mine.corner", "Corner").checked(true)],
+});
+```
+
+The pick comes back to that bench's `on_command` with
+`MenuScope::Popup(tag)`, the tag saying what the menu was for; Escape or
+a click elsewhere closes it and says nothing. A right click that opens
+one opens no body menu as well.
 
 ## 10. Ask the host for things
 

@@ -1,4 +1,6 @@
-//! The viewport's context menu: what a right click on a body offers.
+//! The viewport's context menus: what a right click on a body offers, and
+//! a menu a bench opened at the pointer for something of its own
+//! (`HostRequest::OpenMenu`).
 //!
 //! The host owns the request and passes it in each frame; this draws it
 //! where the click landed and answers with commands, the last of which
@@ -29,6 +31,71 @@ pub struct ViewportMenu {
     pub repeat: Option<String>,
     /// Every face under the cursor, front to back, for Select other.
     pub others: Vec<OtherPick>,
+}
+
+/// A menu a bench opened at the pointer: its entries, the tag its pick
+/// carries back, and where it stands, in points.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BenchMenu {
+    pub bench: core_document::WorkbenchId,
+    pub tag: String,
+    pub items: Vec<core_document::MenuItem>,
+    pub at: [f32; 2],
+}
+
+/// The bench's own menu: its entries, a ticked one lit, each pick sent
+/// to the bench that opened it with [`MenuScope::Popup`] and its tag.
+///
+/// [`MenuScope::Popup`]: core_document::MenuScope::Popup
+pub fn draw_bench_menu(ctx: &Context, menu: &BenchMenu, commands: &mut Vec<UiCommand>) {
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        commands.push(UiCommand::CloseViewportMenu);
+        return;
+    }
+    let response = Area::new(egui::Id::new("bench_menu"))
+        .order(Order::Foreground)
+        .fixed_pos(egui::pos2(menu.at[0], menu.at[1]))
+        .constrain(true)
+        .interactable(true)
+        .show(ctx, |ui| {
+            Card::floating().padding(6.0).radius(5.0).show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                    ui.set_max_width(MENU_WIDTH);
+                    ui.set_min_width(MENU_WIDTH);
+                    for entry in &menu.items {
+                        if entry.separator_before {
+                            ui.separator();
+                        }
+                        let text = RichText::new(&entry.label).font(sans(FONT_SM));
+                        let row = ui.add_enabled(
+                            entry.enabled,
+                            egui::Button::selectable(entry.checked, text),
+                        );
+                        let row = match &entry.hint {
+                            Some(hint) => row.on_hover_text(hint),
+                            None => row,
+                        };
+                        if row.clicked() {
+                            commands.push(UiCommand::BenchCommand {
+                                workbench: menu.bench.clone(),
+                                id: entry.id.clone(),
+                                scope: core_document::MenuScope::Popup(menu.tag.clone()),
+                            });
+                            commands.push(UiCommand::CloseViewportMenu);
+                        }
+                    }
+                });
+            });
+        });
+    let pressed_elsewhere = ctx.input(|i| {
+        i.pointer.any_pressed()
+            && i.pointer
+                .interact_pos()
+                .is_some_and(|p| !response.response.rect.contains(p))
+    });
+    if pressed_elsewhere {
+        commands.push(UiCommand::CloseViewportMenu);
+    }
 }
 
 /// A face under the cursor, which Select other offers: its body, the

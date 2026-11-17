@@ -204,7 +204,10 @@ impl PrintCadApp {
                 self.session.selection.reveal_body = Some(body);
             }
             UiCommand::SelectBody(body) => self.select_whole_body(body),
-            UiCommand::CloseViewportMenu => self.session.viewport_menu = None,
+            UiCommand::CloseViewportMenu => {
+                self.session.viewport_menu = None;
+                self.session.bench_menu = None;
+            }
             UiCommand::SelectOther { body, triangle } => self.select_other(body, triangle),
             UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
             UiCommand::CameraSnapFit(view) => intents.camera_fit = Some(Some(view)),

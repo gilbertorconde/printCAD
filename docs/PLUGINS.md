@@ -576,6 +576,13 @@ the cue to open its task; selecting a feature alone never opens one.
 **Menus.** `menu_items` adds entries to the viewport's body menu, the
 tree's feature and body rows, the start page's New cards and the Edit
 menu (`MenuScope`); a pick runs `menu_command` with the entry's id.
+For something the package draws itself, `Request::OpenMenu { tag, items }`
+(from 0.1.8) opens its own menu at the pointer, usually from `input` on
+a right click (`Event::Release` of `Button::Right`); the pick runs
+`menu_command` with `MenuScope::Popup(tag)`, and Escape or a click
+elsewhere closes it unpicked. An entry with `checked` (from 0.1.8) draws
+ticked, the choice that stands. A package using either needs
+`min_contract = "0.1.8"`.
 
 **Files.** With `save_dialog`, `Request::SaveFile` asks where to save
 one file the bench made, and `Request::SaveFiles` asks for a folder and
