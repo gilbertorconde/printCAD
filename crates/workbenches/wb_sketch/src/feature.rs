@@ -375,6 +375,23 @@ impl WorkbenchFeature for SketchFeature {
         WorkbenchId::from(crate::KIND)
     }
 
+    /// Read through [`READ_BACK`]: the same stored data, read again (each
+    /// frame reads a sketch several times), costs a copy rather than its
+    /// texts' letters made anew.
+    fn from_json(value: &serde_json::Value) -> core_document::DocumentResult<Self> {
+        let key = value_hash(value);
+        if let Some(read) = READ_BACK.get(key) {
+            return Ok(read);
+        }
+        let feature = Self::deserialize(value).map_err(|e| {
+            core_document::DocumentError::Feature(
+                core_document::feature::FeatureError::Deserialization(e.to_string()),
+            )
+        })?;
+        READ_BACK.put(key, &feature);
+        Ok(feature)
+    }
+
     fn dependencies(&self) -> Vec<FeatureId> {
         let lent = self.face.and_then(|f| f.lent_by).map(|l| l.borrow);
         self.support.iter().map(|s| s.datum).chain(lent).collect()
@@ -434,5 +451,130 @@ mod face_support {
                 .abs()
                 < 1e-5
         );
+    }
+}
+
+/// The sketches read back lately, by the hash of the data each was read
+/// from, the latest last. Reading depends on nothing but the data (a
+/// text's letters come from the glyphs its block keeps), so the same data
+/// reads as the same sketch.
+static READ_BACK: ReadBack = ReadBack(std::sync::Mutex::new(Vec::new()));
+
+/// How many sketches [`READ_BACK`] keeps: every sketch a frame reads, in a
+/// document of many.
+const READ_BACK_KEPT: usize = 64;
+
+struct ReadBack(std::sync::Mutex<Vec<(u64, SketchFeature)>>);
+
+impl ReadBack {
+    fn get(&self, key: u64) -> Option<SketchFeature> {
+        let mut kept = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let at = kept.iter().position(|(k, _)| *k == key)?;
+        let hit = kept.remove(at);
+        let read = hit.1.clone();
+        kept.push(hit);
+        Some(read)
+    }
+
+    fn put(&self, key: u64, feature: &SketchFeature) {
+        let mut kept = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        kept.retain(|(k, _)| *k != key);
+        if kept.len() >= READ_BACK_KEPT {
+            kept.remove(0);
+        }
+        kept.push((key, feature.clone()));
+    }
+}
+
+/// A hash of `value` taken by walking it: what [`READ_BACK`] knows data
+/// by, without writing out its numbers as text first. A multiply and turn
+/// per word, as the data is no adversary's.
+fn value_hash(value: &serde_json::Value) -> u64 {
+    struct Mix(u64);
+    impl Mix {
+        fn word(&mut self, w: u64) {
+            self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
+        fn bytes(&mut self, b: &[u8]) {
+            self.word(b.len() as u64);
+            let (words, rest) = b.as_chunks::<8>();
+            for chunk in words {
+                self.word(u64::from_le_bytes(*chunk));
+            }
+            let mut last = [0u8; 8];
+            last[..rest.len()].copy_from_slice(rest);
+            self.word(u64::from_le_bytes(last));
+        }
+    }
+    fn walk(value: &serde_json::Value, mix: &mut Mix) {
+        use serde_json::Value as V;
+        match value {
+            V::Null => mix.word(1),
+            V::Bool(b) => mix.word(2 + u64::from(*b)),
+            V::Number(n) => {
+                mix.word(4);
+                match (n.as_u64(), n.as_i64(), n.as_f64()) {
+                    (Some(u), _, _) => mix.word(u),
+                    (_, Some(i), _) => mix.word(i as u64),
+                    (_, _, f) => mix.word(f.map_or(0, f64::to_bits)),
+                }
+            }
+            V::String(s) => {
+                mix.word(5);
+                mix.bytes(s.as_bytes());
+            }
+            V::Array(items) => {
+                mix.word(6);
+                mix.word(items.len() as u64);
+                for item in items {
+                    walk(item, mix);
+                }
+            }
+            V::Object(map) => {
+                mix.word(7);
+                mix.word(map.len() as u64);
+                for (key, item) in map {
+                    mix.bytes(key.as_bytes());
+                    walk(item, mix);
+                }
+            }
+        }
+    }
+    let mut mix = Mix(0);
+    walk(value, &mut mix);
+    mix.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Data read back again reads as it first did, data changed reads as
+    /// the change, and going back reads the first again: a kept sketch is
+    /// only ever the one its data makes.
+    #[test]
+    fn a_sketch_read_back_again_is_the_one_its_data_makes() {
+        let mut sketch = Sketch::new("kept");
+        let spec = crate::text::TextSpec::default();
+        crate::text::add(&mut sketch, crate::sketch::Vec2D::new(0.0, 0.0), &spec).unwrap();
+        let a = SketchFeature::new(sketch.clone(), SketchPlane::default()).to_json();
+        let anchor = sketch.texts[0].anchor;
+        if let Some(crate::sketch::GeometryElement::Point(p)) = sketch.get_geometry_mut(anchor) {
+            p.position = crate::sketch::Vec2D::new(3.0, 0.0);
+        }
+        let b = SketchFeature::new(sketch, SketchPlane::default()).to_json();
+        assert_ne!(a, b);
+        let fresh = |data: &serde_json::Value| SketchFeature::deserialize(data).unwrap();
+        for data in [&a, &a, &b, &a, &b] {
+            let read = SketchFeature::from_json(data).unwrap();
+            let drawn = |f: &SketchFeature| serde_json::to_value(&f.sketch.geometry).unwrap();
+            assert_eq!(drawn(&read), drawn(&fresh(data)));
+        }
     }
 }

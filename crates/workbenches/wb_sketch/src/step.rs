@@ -359,8 +359,8 @@ pub(crate) fn drag(sketch: &mut Sketch, targets: &[(Uuid, Vec2D)], delta: Vec2D)
 
 /// What dragged point `point`, let go at `cursor`, would be joined to:
 /// another point within `tol` first, else a curve within `tol`, never one
-/// of the curves the point belongs to or their other points. The sketch's
-/// origin and axes are left out.
+/// of the curves the point belongs to or their other points, nor a text's
+/// letters, which hold nothing. The sketch's origin and axes are left out.
 pub(crate) fn drag_target(sketch: &Sketch, point: Uuid, cursor: Vec2D, tol: f64) -> Option<Uuid> {
     if tol <= 0.0 {
         return None;
@@ -376,6 +376,7 @@ pub(crate) fn drag_target(sketch: &Sketch, point: Uuid, cursor: Vec2D, tol: f64)
         .flat_map(|g| Sketch::curve_point_ids(g))
         .collect();
     exclude.push(point);
+    exclude.extend(sketch.derived.iter().copied());
     if let crate::snap::SnapTarget::Existing(id) =
         crate::snap::snap_to_point(sketch, cursor, tol, &exclude)
     {
@@ -385,7 +386,11 @@ pub(crate) fn drag_target(sketch: &Sketch, point: Uuid, cursor: Vec2D, tol: f64)
     sketch
         .geometry
         .iter()
-        .filter(|g| !matches!(g, GeometryElement::Point(_)) && !own.contains(&g.id()))
+        .filter(|g| {
+            !matches!(g, GeometryElement::Point(_))
+                && !own.contains(&g.id())
+                && !sketch.derived.contains(&g.id())
+        })
         .filter_map(|g| Some((g.id(), crate::snap::distance_to_element(sketch, g, cursor)?)))
         .filter(|(_, d)| *d <= tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
