@@ -42,6 +42,9 @@ version first.
 - Closed assistant chats stay in a history they can be reopened from.
 - A drag reaches the document server and other clients as one change on release, and a task's Cancel takes back through undo.
 
+### Packages
+- Workbench packages can use contract 0.1.8 (SDK 0.1.8, `min_contract = "0.1.8"`): a row of icon toggles, cards with OK alone or showing a readout, and a menu opened at the pointer with checked entries.
+
 ### Kernel
 - The geometry kernel is ogeom 0.19.0: every round and chamfer goes through one blend engine, so the result does not depend on the order edges are picked, and what it does not build is refused with its reason.
 - Some chamfers that built before are refused for now: Point corners on a cone's or boss's rim and on some blocks, and bevels along a pocket's floor or other concave edges. Facet corners build most of them; the kernel fix is to come.
