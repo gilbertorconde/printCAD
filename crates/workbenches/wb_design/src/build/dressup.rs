@@ -46,6 +46,41 @@ pub(super) fn edge_selection(edges: &crate::feature::EdgeSel) -> Result<EdgeSele
     })
 }
 
+/// A variable fillet's law past its start radius: `end` at the run's end,
+/// `points` between in the order of their places, `reversed` from the
+/// run's other end.
+fn variable_radius(
+    end: f32,
+    points: &[crate::feature::RadiusPoint],
+    reversed: bool,
+) -> Result<kernel_api::VariableRadius, String> {
+    if end <= 0.0 {
+        return Err("a variable fillet's end radius must be positive".into());
+    }
+    let mut between: Vec<[f64; 2]> = Vec::with_capacity(points.len());
+    for point in points {
+        if !(point.at > 0.0 && point.at < 1.0) {
+            return Err(format!(
+                "a variable fillet's point at {} lies off its run: each lies between 0 and 1",
+                point.at
+            ));
+        }
+        if point.radius <= 0.0 {
+            return Err("a variable fillet's radii must be positive".into());
+        }
+        between.push([f64::from(point.at), f64::from(point.radius)]);
+    }
+    between.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    if between.windows(2).any(|w| w[0][0] == w[1][0]) {
+        return Err("two of a variable fillet's points are at one place".into());
+    }
+    Ok(kernel_api::VariableRadius {
+        end: f64::from(end),
+        between,
+        reversed,
+    })
+}
+
 /// A picked edge as the kernel finds it again.
 /// The op a fillet or chamfer builds, its size checked; `None` for any
 /// other feature.
@@ -61,13 +96,19 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             flip,
             profile,
             rho,
+            points,
             ..
         } => {
             if *radius <= 0.0 {
                 return Err("fillet radius must be positive".into());
             }
+            let variable = (*mode == crate::feature::FilletMode::Variable)
+                .then(|| variable_radius(*radius2, points, *flip))
+                .transpose()?;
             let distances = match mode {
-                crate::feature::FilletMode::Radius | crate::feature::FilletMode::Auto => None,
+                crate::feature::FilletMode::Radius
+                | crate::feature::FilletMode::Auto
+                | crate::feature::FilletMode::Variable => None,
                 crate::feature::FilletMode::TwoDistances => {
                     if *radius2 <= 0.0 {
                         return Err("a fillet's second distance must be positive".into());
@@ -112,6 +153,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                     corner: *corner,
                     distances,
                     auto: *mode == crate::feature::FilletMode::Auto,
+                    variable,
                 },
             }
         }

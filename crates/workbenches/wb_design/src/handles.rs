@@ -324,6 +324,12 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
         }
         DesignFeature::Draft { .. } => out.push(draft_handle(&maker, &part, eye)),
         DesignFeature::Primitive { .. } => out.extend(primitive_handles(&maker, &part)),
+        // A variable fillet's radii are at places along its run, which the
+        // view does not know: they are set in the panel.
+        DesignFeature::Fillet {
+            mode: FilletMode::Variable,
+            ..
+        } => {}
         DesignFeature::Fillet { edges, mode, .. } => {
             let two = *mode == FilletMode::TwoDistances;
             match side_handles(&maker, &part, two, ["/radius", "/radius2"]) {
@@ -1144,6 +1150,7 @@ mod tests {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         };
         let eye = Vec3::new(10.0, -50.0, 50.0);
         let handle_of = |doc: &mut Document, edges| {

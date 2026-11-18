@@ -12,9 +12,9 @@ use kernel_api::{
 };
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
-    BlendRefusal, Chamfer, chamfer_edges_checked, chamfer_edges_with, fillet_edge_distances,
-    fillet_edges_corner, fillet_edges_corner_checked, largest_chamfer_distance,
-    largest_fillet_distances, largest_fillet_radius_all,
+    Blend, BlendRefusal, Chamfer, blend_edges, chamfer_edges_checked, chamfer_edges_cornered,
+    chamfer_edges_with, fillet_edge_distances, fillet_edges_corner, fillet_edges_corner_checked,
+    largest_chamfer_distance, largest_fillet_distances, largest_fillet_radius_all,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -257,15 +257,27 @@ pub fn fillet(
     auto: bool,
 ) -> Result<Shape, Refusal> {
     if let Some(distances) = distances {
-        let (edge, face) = distances_seat(model, solid, edges, follow_tangent, distances.flip)?;
-        let built = fillet_edge_distances(
+        let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
+        let faces = reference_faces(model, solid, &chain, distances.flip)?;
+        let rounds: Vec<(Shape, Blend)> = chain
+            .into_iter()
+            .zip(faces)
+            .map(|(edge, face)| {
+                let round = Blend::RoundDistances {
+                    face,
+                    on_face: radius,
+                    on_other: distances.other,
+                    profile: profile(distances.profile),
+                };
+                (edge, round)
+            })
+            .collect();
+        // Rounds alone: the chamfer corner the call takes is never used.
+        let built = blend_edges(
             model,
             solid,
-            &edge,
-            &face,
-            radius,
-            distances.other,
-            profile(distances.profile),
+            &rounds,
+            ogeom::fillet::ChamferCorner::Facet,
             tol(),
         )
         .map_err(|e| format!("fillet with two distances failed: {e}"))?;
@@ -304,34 +316,113 @@ pub fn fillet(
     }
 }
 
+/// A round whose radius runs along the selected edges, taken as one run
+/// end to end: `start` at the run's start, `variable.end` at its end and
+/// the radii between at their shares of its length. The run starts at the
+/// free end of the first edge found at one (the first edge on a loop), or
+/// at the other end with `variable.reversed`.
+pub fn variable_fillet(
+    model: &mut Model,
+    solid: &Shape,
+    start: f64,
+    variable: &kernel_api::VariableRadius,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+) -> Result<Shape, String> {
+    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
+    let mut run = edge_run(model, &chain)?;
+    if variable.reversed {
+        run = run.iter().rev().map(Shape::reversed).collect();
+    }
+    let law = if variable.between.is_empty() {
+        ogeom::fillet::RadiusLaw::Linear {
+            start,
+            end: variable.end,
+        }
+    } else {
+        let mut points = vec![(0.0, start)];
+        points.extend(variable.between.iter().map(|[at, radius]| (*at, *radius)));
+        points.push((1.0, variable.end));
+        ogeom::fillet::RadiusLaw::Points(points)
+    };
+    let built = ogeom::fillet::fillet_edges_variable(model, solid, &run, &law, tol())
+        .map_err(|e| format!("variable fillet failed: {e}"))?;
+    crate::naming::record(&built.history);
+    Ok(built.shape)
+}
+
+/// `chain`'s edges as one run end to end, each the way the run goes: from
+/// an edge with an end no other edge meets, or round a loop from the first
+/// edge. Refused where the edges branch or make more than one run.
+fn edge_run(model: &Model, chain: &[Shape]) -> Result<Vec<Shape>, String> {
+    let ends: Vec<(Shape, Shape)> = chain
+        .iter()
+        .map(|edge| {
+            ogeom::algo::edge_vertices(model, edge)
+                .ok()
+                .flatten()
+                .ok_or_else(|| "a variable fillet's edge has no ends".to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    let meets = |vertex: &Shape, skip: usize| {
+        ends.iter()
+            .enumerate()
+            .filter(|(i, (a, b))| *i != skip && (a.is_same(vertex) || b.is_same(vertex)))
+            .count()
+    };
+    if (0..chain.len()).any(|i| meets(&ends[i].0, i) > 1 || meets(&ends[i].1, i) > 1) {
+        return Err("a variable fillet takes one run of edges end to end, and these branch".into());
+    }
+    // From a free end where there is one: the first edge with one, turned
+    // to start there.
+    let first = (0..chain.len())
+        .find_map(|i| {
+            let (a, b) = &ends[i];
+            if meets(a, i) == 0 && !a.is_same(b) {
+                Some((i, false))
+            } else if meets(b, i) == 0 && !a.is_same(b) {
+                Some((i, true))
+            } else {
+                None
+            }
+        })
+        .unwrap_or((0, false));
+    let mut used = vec![false; chain.len()];
+    let mut run = Vec::with_capacity(chain.len());
+    let (mut at, mut turned) = first;
+    loop {
+        used[at] = true;
+        let (a, b) = &ends[at];
+        run.push(if turned {
+            chain[at].reversed()
+        } else {
+            chain[at].clone()
+        });
+        let head = if turned { a } else { b };
+        let Some(next) = (0..chain.len())
+            .find(|&k| !used[k] && (ends[k].0.is_same(head) || ends[k].1.is_same(head)))
+        else {
+            break;
+        };
+        turned = !ends[next].0.is_same(head);
+        at = next;
+    }
+    if run.len() < chain.len() {
+        return Err(format!(
+            "a variable fillet takes one run of edges end to end; {} of these {} make one",
+            run.len(),
+            chain.len()
+        ));
+    }
+    Ok(run)
+}
+
 /// The kernel's spelling of how a fillet closes its corners.
 fn kernel_corner(corner: FilletCorner) -> ogeom::fillet::FilletCorner {
     match corner {
         FilletCorner::Setback => ogeom::fillet::FilletCorner::Setback,
         FilletCorner::RollingBall => ogeom::fillet::FilletCorner::Rolling,
     }
-}
-
-/// The edge a round of two distances takes and the face its radius is
-/// measured on. The kernel rounds one such edge at a time, so a selection
-/// of more is refused.
-fn distances_seat(
-    model: &mut Model,
-    solid: &Shape,
-    edges: &EdgeSelection,
-    follow_tangent: bool,
-    flip: bool,
-) -> Result<(Shape, Shape), String> {
-    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
-    let [edge] = chain.as_slice() else {
-        return Err(format!(
-            "a fillet with two distances rounds one edge, this one selects {}: \
-             the kernel does not round several such edges together yet",
-            chain.len()
-        ));
-    };
-    let face = adjacent_face(model, solid, edge, flip)?;
-    Ok((edge.clone(), face))
 }
 
 /// An automatic round of one edge too wide for a face beside it: each
@@ -419,20 +510,38 @@ fn sides_reach(
     [read(1.0, SLIVER), read(SLIVER, 1.0)]
 }
 
-/// The faces beside the one edge a round of distances takes, as its drag
-/// handles read them: where on the edge, which way each face runs from
-/// it, and how far each contact goes. `flip` puts the edge's other face
-/// first, as the round's first distance does.
+/// The faces beside a round's edges as its drag handles read them, at
+/// its first edge: where on the edge, which way each face runs from it,
+/// and how far each contact goes, the least over the round's edges.
+/// `flip` puts the edge's other face first, as the round's first distance
+/// does. An automatic round reads one edge, the only one it takes, and is
+/// `None` for more.
 fn round_sides(
     model: &mut Model,
     solid: &Shape,
     edges: &EdgeSelection,
     follow_tangent: bool,
     flip: bool,
+    auto: bool,
 ) -> Option<kernel_api::RoundSides> {
-    let (edge, face) = distances_seat(model, solid, edges, follow_tangent, flip).ok()?;
-    let limits = side_limits(model, solid, &edge, &face);
-    edge_sides(model, solid, &edge, &face, limits)
+    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet").ok()?;
+    if auto && chain.len() != 1 {
+        return None;
+    }
+    let faces = reference_faces(model, solid, &chain, flip).ok()?;
+    let limits: Vec<[Option<f64>; 2]> = chain
+        .iter()
+        .zip(&faces)
+        .map(|(edge, face)| side_limits(model, solid, edge, face))
+        .collect();
+    let least = |i: usize| limits.iter().filter_map(|l| l[i]).reduce(f64::min);
+    edge_sides(
+        model,
+        solid,
+        chain.first()?,
+        faces.first()?,
+        [least(0), least(1)],
+    )
 }
 
 /// The faces beside `edge`, `face` first, as drag handles read them: a
@@ -1131,44 +1240,60 @@ pub fn chamfer(
     };
     let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer")?;
     let specs = chamfer_specs(model, solid, spec, flip, chain)?;
+    let edges: Vec<Shape> = specs.iter().map(|(edge, _)| edge.clone()).collect();
+    let largest =
+        |m: &Model, picked: &[usize]| largest_chamfer_share(m, solid, &specs, picked, asked);
+    let picked_at = |picked: &[usize], share: f64| -> Vec<(Shape, Chamfer)> {
+        picked
+            .iter()
+            .map(|&i| (specs[i].0.clone(), scaled(&specs[i].1, share)))
+            .collect()
+    };
     // The kernel's plain chamfer closes a corner of three bevels with a
-    // facet; the mitre to one point is asked for by name.
+    // facet; the mitre to one point is asked for by name. That call names
+    // no edge when it refuses, so the refusal tries the edges apart.
     if corner == ChamferCorner::Point {
-        let built = ogeom::fillet::chamfer_edges_cornered(
-            model,
-            solid,
-            &specs,
-            ogeom::fillet::ChamferCorner::Point,
-            tol(),
-        )
-        .map_err(|e| format!("chamfer corners to a point: {e}"))?;
-        crate::naming::record(&built.history);
-        return Ok(built.shape);
+        let point = ogeom::fillet::ChamferCorner::Point;
+        return match chamfer_edges_cornered(model, solid, &specs, point, tol()) {
+            Ok(built) => {
+                crate::naming::record(&built.history);
+                Ok(built.shape)
+            }
+            Err(error) => Err(refusal(
+                "chamfer",
+                asked,
+                model,
+                solid,
+                &edges,
+                BlendRefusal {
+                    edges: Vec::new(),
+                    error,
+                },
+                largest,
+                |m, picked, share| {
+                    chamfer_edges_cornered(m, solid, &picked_at(picked, share), point, tol())
+                        .map(|_| ())
+                },
+            )?),
+        };
     }
     match chamfer_edges_checked(model, solid, &specs, tol()) {
         Ok(built) => {
             crate::naming::record(&built.history);
             Ok(built.shape)
         }
-        Err(refused) => {
-            let edges: Vec<Shape> = specs.iter().map(|(edge, _)| edge.clone()).collect();
-            Err(refusal(
-                "chamfer",
-                asked,
-                model,
-                solid,
-                &edges,
-                refused,
-                |m, picked| largest_chamfer_share(m, solid, &specs, picked, asked),
-                |m, picked, share| {
-                    let picked: Vec<(Shape, Chamfer)> = picked
-                        .iter()
-                        .map(|&i| (specs[i].0.clone(), scaled(&specs[i].1, share)))
-                        .collect();
-                    chamfer_edges_with(m, solid, &picked, tol()).map(|_| ())
-                },
-            )?)
-        }
+        Err(refused) => Err(refusal(
+            "chamfer",
+            asked,
+            model,
+            solid,
+            &edges,
+            refused,
+            largest,
+            |m, picked, share| {
+                chamfer_edges_with(m, solid, &picked_at(picked, share), tol()).map(|_| ())
+            },
+        )?),
     }
 }
 
@@ -1261,7 +1386,7 @@ fn auto_bevel(
 /// `None` where every size short of the solid's diagonal builds, where
 /// none does, or for any other op.
 /// What [`size_limit`] reads: the op's first size at its limit, and the
-/// faces beside a round of distances' one edge.
+/// faces beside a round or chamfer of distances at its first edge.
 pub type Limits = (Option<f64>, Option<kernel_api::RoundSides>);
 
 pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Limits {
@@ -1275,7 +1400,15 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Lim
         && (distances.is_some() || *auto)
     {
         let flip = distances.is_some_and(|d| d.flip);
-        let sides = round_sides(&mut model.clone(), solid, edges, *follow_tangent, flip);
+        let auto = distances.is_none();
+        let sides = round_sides(
+            &mut model.clone(),
+            solid,
+            edges,
+            *follow_tangent,
+            flip,
+            auto,
+        );
         if let Some(sides) = sides {
             let [first, second] = sides.sides.map(|side| side.largest);
             // Two distances stop each at its own face; one size grows on

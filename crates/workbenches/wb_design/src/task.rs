@@ -950,6 +950,7 @@ mod tests {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         };
         let key = crate::build::edge_op(&fillet)
             .unwrap()
@@ -1038,6 +1039,7 @@ mod tests {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         };
         let chamfer = |size: f32, size2: f32| DesignFeature::Chamfer {
             size,

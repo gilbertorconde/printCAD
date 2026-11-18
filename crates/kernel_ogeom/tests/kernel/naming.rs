@@ -231,6 +231,7 @@ fn a_reference_whose_name_is_lost_is_warned_of_or_refused() {
         corner: Default::default(),
         distances: None,
         auto: false,
+        variable: None,
     };
     let chain = |ops: &[SolidOp], probes: &[ChainProbe], projections: &[ChainProjection]| {
         OgeomKernel::new().execute_solid_chain(
@@ -329,6 +330,7 @@ fn a_fillet_s_round_is_named_after_its_edge() {
             corner: Default::default(),
             distances: None,
             auto: false,
+            variable: None,
         };
         let built = build(&[block(height), fillet], &[]);
         let blend = built
@@ -373,6 +375,7 @@ fn every_face_keeps_the_op_that_made_it() {
         corner: Default::default(),
         distances: None,
         auto: false,
+        variable: None,
     };
     let tags: [TopoName; 3] = [101, 202, 303];
     let mesh = OgeomKernel::new()
@@ -483,6 +486,7 @@ fn an_upright_picked_before_its_pieces_were_joined_is_found_whole() {
         corner: Default::default(),
         distances: None,
         auto: false,
+        variable: None,
     });
     tags.push(399);
     let built = OgeomKernel::new()

@@ -253,6 +253,7 @@ fn fillet_feature_rounds_the_pad_through_the_full_stack() {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         },
     );
     let (a, b, c, r) = (20.0, 20.0, 10.0, 2.0f64);
@@ -599,6 +600,7 @@ fn bore_rim_fillets() {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         },
     );
 
@@ -640,6 +642,7 @@ fn a_fillet_found_by_position_carries_a_warning() {
         flip: false,
         profile: Default::default(),
         rho: 0.5,
+        points: Vec::new(),
     };
     let round = doc.add_in(body, "Fillet", fillet([7, 8]));
     doc.mark_feature_dirty(round);
@@ -2248,6 +2251,7 @@ fn rounded_corner_and(dress_up: DesignFeature) -> (Document, BodyId) {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         },
     );
     doc.add_in(body, "Top", dress_up);
@@ -2300,6 +2304,7 @@ fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
         flip: false,
         profile: Default::default(),
         rho: 0.5,
+        points: Vec::new(),
     };
     let chain = top_chain();
     let one = vec![chain[0]];
@@ -2314,6 +2319,88 @@ fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
     // (1 - pi/4) mm² of section along some 31 mm of edge.
     let taken = rounded_corner - followed;
     assert!(taken > 0.2146 * 25.0 && taken < 0.2146 * 40.0, "{taken}");
+}
+
+/// A fillet on the rounded corner's top chain (side, round, side) of the
+/// mode and radii given.
+fn chain_fillet(
+    mode: wb_design::FilletMode,
+    (start, end): (f32, f32),
+    points: Vec<wb_design::RadiusPoint>,
+    flip: bool,
+) -> DesignFeature {
+    DesignFeature::Fillet {
+        corner: Default::default(),
+        refine: false,
+        radius: start,
+        edges: wb_design::EdgeSel::Edges(top_chain()),
+        follow_tangent: false,
+        mode,
+        radius2: end,
+        flip,
+        profile: Default::default(),
+        rho: 0.5,
+        points,
+    }
+}
+
+/// A variable fillet runs along the rounded corner's top chain, side,
+/// round and side, as one run: it takes off more than the constant round
+/// of its least radius and less than that of its largest, and the chain
+/// being symmetric, the same from either end.
+#[test]
+fn a_variable_fillet_runs_along_a_tangent_chain() {
+    use wb_design::{FilletMode, RadiusPoint};
+    let constant = |r| {
+        block_with_rounded_corner(chain_fillet(
+            FilletMode::Radius,
+            (r, 0.0),
+            Vec::new(),
+            false,
+        ))
+        .unwrap()
+    };
+    let (least, most) = (constant(0.5), constant(1.5));
+    let middle = vec![RadiusPoint {
+        at: 0.5,
+        radius: 1.5,
+    }];
+    let variable = |flip| {
+        block_with_rounded_corner(chain_fillet(
+            FilletMode::Variable,
+            (0.5, 0.5),
+            middle.clone(),
+            flip,
+        ))
+        .unwrap_or_else(|e| panic!("{e}"))
+    };
+    let (forward, back) = (variable(false), variable(true));
+    assert!(
+        most < forward && forward < least,
+        "{forward} between {most} and {least}"
+    );
+    assert!(
+        (forward - back).abs() < forward * 1e-6,
+        "{forward} from one end, {back} from the other"
+    );
+}
+
+/// A variable fillet's radius between placed off its run is refused at
+/// the build, saying so.
+#[test]
+fn a_variable_fillets_point_off_its_run_is_refused() {
+    let off = vec![wb_design::RadiusPoint {
+        at: 1.2,
+        radius: 1.0,
+    }];
+    let err = block_with_rounded_corner(chain_fillet(
+        wb_design::FilletMode::Variable,
+        (0.5, 1.0),
+        off,
+        false,
+    ))
+    .expect_err("a point past the run's end");
+    assert!(err.contains("lies off its run"), "{err}");
 }
 
 /// The area of the block's top face (z = 10) once built.
@@ -3032,6 +3119,7 @@ fn a_fillet_follows_its_edge_by_name_when_the_pad_grows() {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         },
     );
     let round = 4.0 * (1.0 - std::f64::consts::FRAC_PI_4);
@@ -4199,7 +4287,6 @@ fn a_rectangle_wrapped_onto_a_sphere_embosses_and_debosses() {
 }
 
 #[test]
-#[ignore = "kernel: split_face parts a region straddling a periodic seam along it (ogeom-rs#869)"]
 fn a_rectangle_wraps_onto_a_torus() {
     // Its outer equator, 25 from the axis, faces the sketch.
     let torus = kernel_api::PrimitiveKind::Torus {
@@ -4680,6 +4767,7 @@ fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         },
     );
     let refuse = |doc: &mut Document| {
@@ -5082,6 +5170,7 @@ fn a_fillet_between_two_faces_rounds_across_a_groove() {
         flip: false,
         profile: Default::default(),
         rho: 0.5,
+        points: Vec::new(),
     };
     let fillet = doc.add_in(body, "Fillet", between(3.0));
     let grooved = 40.0 * 20.0 * 5.0 + 20.0 * 20.0 * 15.0 + 18.0 * 20.0 * 5.0;

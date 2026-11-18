@@ -711,13 +711,17 @@ pub enum FilletMode {
     Radius,
     /// One distance on each face from the edge.
     TwoDistances,
+    /// A radius running along the edges, taken as one run: `radius` at its
+    /// start, `radius2` at its end, `points` between.
+    Variable,
 }
 
 impl FilletMode {
-    pub const ALL: [FilletMode; 3] = [
+    pub const ALL: [FilletMode; 4] = [
         FilletMode::Auto,
         FilletMode::Radius,
         FilletMode::TwoDistances,
+        FilletMode::Variable,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -725,8 +729,20 @@ impl FilletMode {
             FilletMode::Auto => "Auto",
             FilletMode::Radius => "Radius",
             FilletMode::TwoDistances => "Two distances",
+            FilletMode::Variable => "Variable",
         }
     }
+}
+
+/// A variable fillet's radius at a place along its run of edges.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
+pub struct RadiusPoint {
+    /// The share of the run's length from its start, strictly between 0
+    /// and 1.
+    #[walk(number("at", "At"))]
+    pub at: f32,
+    #[walk(length("radius", "Radius"))]
+    pub radius: f32,
 }
 
 /// The section of a fillet of two distances.
@@ -2070,18 +2086,25 @@ pub enum DesignFeature {
         #[walk(setting)]
         corner: kernel_api::FilletCorner,
         /// One radius; one size each face takes as far as it goes (Auto);
-        /// or `radius` on one face and `radius2` on the other.
+        /// `radius` on one face and `radius2` on the other; or a radius
+        /// running from `radius` to `radius2` along the edges (Variable).
         #[serde(default)]
         #[walk(setting)]
         mode: FilletMode,
-        /// With two distances, the distance on the face across the edge.
+        /// With two distances, the distance on the face across the edge;
+        /// variable, the radius at the run's end.
         #[serde(default)]
         #[walk(length("radius2", "Second distance"))]
         radius2: f32,
-        /// With two distances, measure `radius` on the edge's other face.
+        /// With two distances, measure `radius` on the edge's other face;
+        /// variable, start the run at its other end.
         #[serde(default)]
         #[walk(setting)]
         flip: bool,
+        /// Variable, the radii between the run's ends.
+        #[serde(default)]
+        #[walk(steps("point", "Point"))]
+        points: Vec<RadiusPoint>,
         /// With two distances, the round's section.
         #[serde(default)]
         #[walk(setting)]

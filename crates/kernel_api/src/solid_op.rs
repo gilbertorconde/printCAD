@@ -572,6 +572,22 @@ pub struct RoundDistances {
     pub profile: RoundProfile,
 }
 
+/// A round whose radius runs along its edges, taken as one run end to end:
+/// the fillet's `radius` at the run's start, `end` at its end, and any
+/// radii between at shares of the run's length, smoothly between them and
+/// never past them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VariableRadius {
+    pub end: f64,
+    /// `[share, radius]` pairs, each share of the run's length from its
+    /// start strictly between 0 and 1, in increasing order.
+    #[serde(default)]
+    pub between: Vec<[f64; 2]>,
+    /// Start the run at the other end.
+    #[serde(default)]
+    pub reversed: bool,
+}
+
 /// How a chamfer closes a vertex where three or more of its bevels meet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
 pub enum ChamferCorner {
@@ -617,6 +633,7 @@ impl SolidOp {
                 corner,
                 distances,
                 auto,
+                variable: None,
                 ..
             } => SolidOp::Fillet {
                 radius: 0.0,
@@ -626,6 +643,7 @@ impl SolidOp {
                 // Each face's limit is its own, whatever the distances.
                 distances: distances.map(|d| RoundDistances { other: 0.0, ..d }),
                 auto: *auto,
+                variable: None,
             },
             SolidOp::Chamfer {
                 spec,
@@ -774,6 +792,7 @@ pub enum SolidOp {
     /// edge and the other `distances.other`. With `auto` and one edge, a
     /// face too narrow for `radius` takes its contact as far as it goes
     /// while the other's goes on to `radius`, the round turning elliptical.
+    /// With `variable`, the radius runs from `radius` along the edges.
     Fillet {
         radius: f64,
         edges: EdgeSelection,
@@ -785,6 +804,8 @@ pub enum SolidOp {
         distances: Option<RoundDistances>,
         #[serde(default)]
         auto: bool,
+        #[serde(default)]
+        variable: Option<VariableRadius>,
     },
     /// Round between two faces of the running solid, which need share no
     /// edge: the ball rolling between them, its round filling or taking off

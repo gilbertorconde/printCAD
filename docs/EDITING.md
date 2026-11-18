@@ -404,8 +404,22 @@ elliptical, until that face runs out too; its handle drags that far.
 faces), with a handle on each face that stops where that face runs out.
 Its Profile is Elliptical, the round stretched to the two distances, or
 Conic, whose Rho sets how full it is: near 0 almost a bevel, 0.5 a
-parabola, near 1 almost the sharp edge. Two distances round one edge at
-a time for now; a selection of more says so.
+parabola, near 1 almost the sharp edge. Two distances round several
+edges together where they run on from each other as one tangent chain,
+or meet three at a time at a box's corner; any other meeting of such
+rounds at a vertex is refused with the reason. A round over several edges
+has its handles on the first, each stopping where the nearest face of
+any edge runs out.
+
+**Variable** runs the radius along the edges, taken as one run end to
+end: Start radius at one end, End radius at the other, smoothly between
+and never past them. Start from the other end turns the run round. **+
+Radius between** adds a radius at a place along the run, At its share of
+the run's length from the start (0.5 halfway), in the widest gap so far;
+× takes one away. The edges must make one run, a tangent chain or edges
+picked end to end; edges that branch at a vertex are refused. The radii
+are set in the panel only, as the view has no handle for a place along
+the run, and Corners does not apply.
 
 **Corners** says how a vertex closes where the rounds or bevels meet. A
 fillet's Setback stops each round short of the corner and fills the gap
