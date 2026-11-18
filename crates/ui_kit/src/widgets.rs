@@ -1640,6 +1640,9 @@ pub struct SelectOptions<'a> {
     /// The options side by side, the chosen one lit, in place of a
     /// dropdown.
     pub segmented: bool,
+    /// A field atop the open dropdown narrowing its options to those
+    /// matching what is typed, the best first; Enter picks the first.
+    pub search: bool,
 }
 
 /// A choice among `select.options`, `width` wide as a dropdown, or side
@@ -1676,18 +1679,55 @@ pub fn select_control(
         .text
         .or_else(|| select.options.get(select.selected).map(String::as_str))
         .unwrap_or("-");
-    egui::ComboBox::from_id_salt(key)
+    let query_key = key.with("search");
+    let mut entered = None;
+    let open = egui::ComboBox::from_id_salt(key)
         .selected_text(RichText::new(shown).font(sans(FONT_SM)))
         .width(width)
+        .height(if select.search { 320.0 } else { 200.0 })
         .show_ui(ui, |ui| {
-            for (i, text) in select.options.iter().enumerate() {
-                if select.separated.contains(&i) {
-                    ui.separator();
+            if !select.search {
+                for (i, text) in select.options.iter().enumerate() {
+                    if select.separated.contains(&i) {
+                        ui.separator();
+                    }
+                    option(ui, i, RichText::new(text).font(sans(FONT_SM)));
                 }
-                option(ui, i, RichText::new(text).font(sans(FONT_SM)));
+                return;
+            }
+            let mut query: String = ui.data(|d| d.get_temp(query_key)).unwrap_or_default();
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut query)
+                    .hint_text("Search")
+                    .font(sans(FONT_SM))
+                    .desired_width(f32::INFINITY),
+            );
+            if !field.has_focus() && !field.lost_focus() {
+                field.request_focus();
+            }
+            let shown = crate::search::ranked(select.options, &query);
+            if field.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && let Some(&first) = shown.iter().find(|i| !select.disabled.contains(i))
+            {
+                if first != select.selected {
+                    entered = Some(first);
+                }
+                ui.close();
+            }
+            ui.data_mut(|d| d.insert_temp(query_key, query));
+            if shown.is_empty() {
+                ui.label(text("No match", FONT_SM, ui.visuals().weak_text_color()));
+            }
+            for i in shown {
+                option(ui, i, RichText::new(&select.options[i]).font(sans(FONT_SM)));
             }
         });
-    picked
+    // The search starts empty each time the dropdown opens.
+    if open.inner.is_none() {
+        ui.data_mut(|d| d.remove::<String>(query_key));
+    }
+    picked.or(entered)
 }
 
 /// A dropdown of labelled options; returns whether the selection changed.

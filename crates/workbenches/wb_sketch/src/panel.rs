@@ -2742,6 +2742,7 @@ fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) ->
                 id: format!("{salt}.family"),
                 label: "Family".into(),
                 options: families.to_vec(),
+                search: true,
                 selected: families
                     .iter()
                     .position(|f| named && f.eq_ignore_ascii_case(&spec.font))

@@ -2045,6 +2045,9 @@ pub struct Select {
     /// The options side by side in the row, the chosen one lit, in place
     /// of a dropdown.
     pub segmented: bool,
+    /// A search field atop the open dropdown, narrowing a long list to
+    /// the options that match what is typed.
+    pub search: bool,
 }
 
 impl Default for Select {
@@ -2061,6 +2064,7 @@ impl Default for Select {
             hints: Vec::new(),
             separated: Vec::new(),
             segmented: false,
+            search: false,
         }
     }
 }

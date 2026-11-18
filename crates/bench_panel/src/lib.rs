@@ -802,6 +802,7 @@ fn show_one(
                             hints: &select.hints,
                             separated: &select.separated,
                             segmented: select.segmented,
+                            search: select.search,
                         },
                         width,
                     )
