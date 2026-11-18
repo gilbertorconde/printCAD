@@ -151,37 +151,25 @@ fn a_typed_corner_on_a_point_reuses_it() {
     assert_eq!(h.counts().0, 4, "four corners, the point among them");
 }
 
-/// A frame's last click opens its card with only what the clicks left to
-/// set, the wall, the tool's setting in it: nothing is stored until OK, a
-/// wall that cannot be is refused, and OK writes the frame as one undo
-/// step whose recording replays. A plain rectangle's clicks set it whole:
-/// it opens no card and is stored at its last click.
+/// A frame's last click leaves its wall waiting in the panel's Tool
+/// section, the tool's setting: nothing is stored until OK, a wall that
+/// cannot be is refused, and OK writes the frame as one undo step whose
+/// recording replays. A plain rectangle's clicks set it whole: nothing
+/// waits and it is stored at its last click.
 #[test]
-fn a_frame_waits_in_its_card_for_its_wall_and_replays() {
+fn a_frame_waits_in_the_panel_for_its_wall_and_replays() {
     let (mut h, id, before) = super::recording::session_on_a_sketch();
     h.ok_new_dimensions = false;
     h.full_click(0.0, 0.0, "sketch.rect:frame");
     h.full_click(10.0, 6.0, "sketch.rect:frame");
-    let card = h.card().expect("the card");
-    assert_eq!(
-        (
-            card.title.as_str(),
-            card.focus.as_deref(),
-            card.refusal,
-            card.ok_only
-        ),
-        ("Frame", Some("rect.size"), None, true)
-    );
-    assert_eq!(card.widgets.len(), 1, "the wall alone");
+    assert_eq!(h.waiting(), Some(Ok(())), "the frame waits");
+    assert!(h.card().is_none(), "in the panel, not on a card");
     assert_eq!(h.counts(), (0, 0, 0, 0), "nothing stored before OK");
-    h.card_type("rect.size", "-3");
-    assert!(
-        h.card().unwrap().refusal.is_some(),
-        "a wall below zero says why"
-    );
+    h.panel_number("tool.offset_distance", -3.0);
+    assert!(h.waiting().unwrap().is_err(), "a wall below zero says why");
     h.close_card(true);
     assert_eq!(h.counts(), (0, 0, 0, 0), "nothing applied while refused");
-    h.card_type("rect.size", "1");
+    h.panel_number("tool.offset_distance", 1.0);
     let closed = h.gestures_closed;
     h.close_card(true);
     assert_eq!(h.gestures_closed, closed + 1, "OK is one undo step");
@@ -191,23 +179,23 @@ fn a_frame_waits_in_its_card_for_its_wall_and_replays() {
 
     h.full_click(20.0, 0.0, "sketch.rect");
     h.full_click(30.0, 6.0, "sketch.rect");
-    assert!(h.card().is_none(), "a plain rectangle opens none");
+    assert!(h.waiting().is_none(), "a plain rectangle leaves nothing");
     assert_eq!(all_lines(&h.sketch()).len(), 12, "stored at its last click");
 }
 
-/// A frame waiting in its card is kept when another tool is picked,
-/// as OK keeps it: only Cancel or Escape drops it. The click with the new
-/// tool then draws as it would anyway.
+/// A frame waiting in the panel is kept when another tool is picked, as
+/// OK keeps it: only Cancel drops it. The click with the new tool then
+/// draws as it would anyway.
 #[test]
-fn a_frame_in_its_card_is_kept_when_another_tool_is_picked() {
+fn a_waiting_frame_is_kept_when_another_tool_is_picked() {
     let (mut h, ..) = super::recording::session_on_a_sketch();
     h.ok_new_dimensions = false;
     h.full_click(0.0, 0.0, "sketch.rect:frame");
     h.full_click(10.0, 6.0, "sketch.rect:frame");
-    assert!(h.card().is_some(), "the card waits");
+    assert!(h.waiting().is_some(), "the frame waits");
     assert_eq!(h.counts(), (0, 0, 0, 0), "nothing stored before OK");
     h.full_click(30.0, 0.0, "sketch.circle");
-    assert!(h.card().is_none(), "the card went with the tool");
+    assert!(h.waiting().is_none(), "taken when the tool changed");
     assert_eq!(all_lines(&h.sketch()).len(), 8, "the frame stayed");
 }
 

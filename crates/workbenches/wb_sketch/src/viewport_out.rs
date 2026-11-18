@@ -34,8 +34,13 @@ impl SketchWorkbench {
             (Some(_), None) => "Click the other end",
             _ => "Type the real length in the panel and apply it",
         });
+        let waiting = self.tab.corner_task.is_some();
         let (name, prompt) = match self.tab.tool_state.hint() {
             _ if calibrating.is_some() => ("Calibrate picture", calibrating.unwrap_or_default()),
+            _ if waiting => (
+                idle_hint(tool).0,
+                "Set it in the Tool section: OK keeps it, Cancel drops it",
+            ),
             Some((name, prompt)) => (name, prompt),
             None if tool == "sketch.external" && self.tab.external_intersection => (
                 "Intersection",
@@ -87,13 +92,15 @@ impl SketchWorkbench {
             }
         }
         let armed = self.armed_hint();
-        if armed.is_some() {
+        if armed.is_some() || waiting {
             key("Enter", "apply");
         }
         // Selecting is what the view does at rest: it takes no card.
         let resting =
             armed.is_none() && tool == "sketch.select" && self.tab.tool_state.hint().is_none();
-        if !resting {
+        if waiting {
+            key("Esc", "keep");
+        } else if !resting {
             key("Esc", "cancel");
         }
         let verdict = self.solver_verdict(&feature.sketch);

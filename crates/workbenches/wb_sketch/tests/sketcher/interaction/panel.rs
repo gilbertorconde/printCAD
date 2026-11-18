@@ -471,42 +471,38 @@ fn json(h: &Harness) -> serde_json::Value {
     serde_json::to_value(h.sketch()).unwrap()
 }
 
-/// A fillet picked in the view opens a card beside it, its radius taking
-/// the keys, the view showing the corner cut: a radius too large or below
-/// zero says why and holds OK back, and OK stores what the view showed as
-/// one undo step and one recorded call that replays to the same sketch.
+/// A fillet picked in the view waits in the panel's Tool section, its
+/// radius the tool's, the view showing the corner cut: a radius too
+/// large or not above zero says why and holds OK back, and OK stores
+/// what the view showed as one undo step and one recorded call that
+/// replays to the same sketch.
 #[test]
-fn a_fillet_waits_in_its_card_until_ok_and_replays() {
+fn a_fillet_waits_in_the_panel_until_ok_and_replays() {
     let (mut h, id, before) = super::recording::session_on_a_sketch();
     h.full_click(0.0, 0.0, "sketch.rect");
     h.full_click(20.0, 12.0, "sketch.rect");
     let drawn = (json(&h), h.overlays().len());
     let closed = h.gestures_closed;
     h.full_click(20.0, 12.0, "sketch.fillet");
-    let card = h.card().expect("the card");
-    assert_eq!(
-        (card.title.as_str(), card.focus.as_deref(), card.refusal),
-        ("Fillet", Some("corner.size"), None)
-    );
-    assert!(card.at.is_some(), "by the corner");
+    assert_eq!(h.waiting(), Some(Ok(())), "the corner waits");
     assert_eq!(json(&h), drawn.0, "nothing stored before OK");
     assert!(h.overlays().len() > drawn.1, "the view shows the cut");
-    // Another tab's turn: the card goes with its tab and comes back.
+    // Another tab's turn: it goes with its tab and comes back.
     let kept = h.wb.suspend_session();
-    assert!(h.card().is_none(), "not in another tab");
+    assert!(h.waiting().is_none(), "not in another tab");
     h.wb.resume_session(kept);
-    assert!(h.card().is_some(), "back with its tab");
+    assert!(h.waiting().is_some(), "back with its tab");
 
-    for refused in ["30", "-1", "nope"] {
-        h.card_type("corner.size", refused);
-        assert!(h.card().unwrap().refusal.is_some(), "{refused}: says why");
+    for refused in [30.0, 0.0] {
+        h.panel_number("tool.fillet_radius", refused);
+        assert!(h.waiting().unwrap().is_err(), "{refused}: says why");
         h.close_card(true);
         assert_eq!(json(&h), drawn.0, "{refused}: nothing applied");
     }
-    h.card_type("corner.size", "5");
+    h.panel_number("tool.fillet_radius", 5.0);
     h.close_card(true);
     assert_eq!(h.gestures_closed, closed + 1, "OK is one undo step");
-    assert!(h.card().is_none(), "the card closed");
+    assert!(h.waiting().is_none(), "nothing waits after OK");
     let arcs = all_arcs(&h.sketch());
     assert_eq!(arcs.len(), 1);
     assert!((arcs[0].radius - 5.0).abs() < 1e-9, "{}", arcs[0].radius);
@@ -515,14 +511,30 @@ fn a_fillet_waits_in_its_card_until_ok_and_replays() {
     super::recording::assert_replays(&h.recorded, before, id, &h.sketch());
 }
 
-/// An open chamfer picked away from by another tool is cut at its size,
-/// as OK cuts it; closed unaccepted (what a refused card's Escape does) or
-/// put away by an edit from elsewhere, nothing is cut or recorded.
+/// A waiting chamfer is cut at its size by everything but Cancel: OK,
+/// Enter, Escape, a click in the view or another tool. Cancel, or an edit
+/// from elsewhere, puts it away with nothing cut or recorded.
 #[test]
-fn an_open_chamfer_is_cut_by_another_tool_and_dropped_otherwise() {
+fn a_waiting_chamfer_is_cut_by_all_but_cancel() {
     type Leave = fn(&mut Harness);
-    let ways: [(&str, Leave, bool); 3] = [
-        ("unaccepted", |h| h.close_card(false), false),
+    let ways: [(&str, Leave, bool); 7] = [
+        ("cancel", |h| h.close_card(false), false),
+        ("ok", |h| h.close_card(true), true),
+        (
+            "enter",
+            |h| h.key(KeyCode::Enter, Some("sketch.chamfer")),
+            true,
+        ),
+        (
+            "escape",
+            |h| h.key(KeyCode::Escape, Some("sketch.chamfer")),
+            true,
+        ),
+        (
+            "view",
+            |h| h.full_click(-30.0, -30.0, "sketch.chamfer"),
+            true,
+        ),
         ("tool", |h| h.mouse_move(5.0, 5.0, "sketch.line"), true),
         (
             "outside",
@@ -540,10 +552,10 @@ fn an_open_chamfer_is_cut_by_another_tool_and_dropped_otherwise() {
         let drawn = (h.counts(), h.sketch().constraints.len());
         let recorded = h.recorded.len();
         h.full_click(20.0, 12.0, "sketch.chamfer");
-        assert_eq!(h.card().map(|c| c.title), Some("Chamfer".into()), "{what}");
-        h.card_type("corner.size", "3");
+        assert_eq!(h.waiting(), Some(Ok(())), "{what}");
+        h.panel_number("tool.chamfer_length", 3.0);
         leave(&mut h);
-        assert!(h.card().is_none(), "{what}: put away");
+        assert!(h.waiting().is_none(), "{what}: put away");
         let now = (h.counts(), h.sketch().constraints.len());
         if cut {
             assert_eq!(all_lines(&h.sketch()).len(), 5, "{what}: the corner cut");

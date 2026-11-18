@@ -10,6 +10,7 @@ use core_document::{
 };
 use uuid::Uuid;
 
+use crate::corner_task::TextAt;
 use crate::feature::SketchFeature;
 use crate::overlay::SketchProjector;
 use crate::registration::canonical_tool;
@@ -517,7 +518,8 @@ impl SketchWorkbench {
 
     /// The Text tool's click: text from the point clicked, a frame's
     /// corner (its second one writes the text in it), or the curve
-    /// clicked to write along.
+    /// clicked to write along. The text waits in the panel, which edits
+    /// it, until it is accepted.
     fn text_click(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -525,26 +527,15 @@ impl SketchWorkbench {
         cursor: Vec2D,
         tol: f64,
     ) -> InputResult {
-        let mut spec = self.tab.text_draft.clone();
-        let mut args = text_args(&spec, None);
-        enum Where {
-            Point(Vec2D),
-            Frame(Vec2D, Vec2D),
-            Path(Uuid, Vec2D),
-        }
-        let at = match &spec.layout {
-            text::TextLayout::Point => {
-                args["at"] = serde_json::json!([cursor.x, cursor.y]);
-                Where::Point(cursor)
-            }
+        let at = match &self.tab.text_draft.layout {
+            text::TextLayout::Point => TextAt::Point(cursor),
             text::TextLayout::Frame { .. } => {
                 let ToolState::TextFrame { corner } = self.tab.tool_state else {
                     self.tab.tool_state = ToolState::TextFrame { corner: cursor };
                     return InputResult::consumed();
                 };
                 self.tab.tool_state = ToolState::Idle;
-                args["frame"] = serde_json::json!([[corner.x, corner.y], [cursor.x, cursor.y]]);
-                Where::Frame(corner, cursor)
+                TextAt::Frame(corner, cursor)
             }
             text::TextLayout::Path { .. } => {
                 let Some((curve, at)) = snap::snap_to_curve(&feature.sketch, cursor, tol, &[])
@@ -553,11 +544,40 @@ impl SketchWorkbench {
                     ctx.log_warn("Text: click the curve to write along");
                     return InputResult::consumed();
                 };
-                args["path"] = serde_json::json!([curve.to_string()]);
-                args["at"] = serde_json::json!([at.x, at.y]);
-                Where::Path(curve, at)
+                TextAt::Path(curve, at)
             }
         };
+        let settings = step::StepSettings {
+            tol,
+            params: self.click_params(),
+            construction: self.construction_mode(),
+            avoid_redundant: self.options.avoid_redundant_auto,
+            remove_redundant: self.options.auto_remove_redundant,
+            reuse_lines: self.options.reuse_lines,
+        };
+        self.open_text_task(ctx, feature, at, &settings);
+        InputResult::consumed()
+    }
+
+    /// Write `spec` into the sketch at `at`, recorded as the `sketch.text`
+    /// call that makes it.
+    pub(crate) fn place_text(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        at: TextAt,
+        mut spec: text::TextSpec,
+    ) -> InputResult {
+        let mut args = text_args(&spec, None);
+        match at {
+            TextAt::Point(p) => args["at"] = serde_json::json!([p.x, p.y]),
+            TextAt::Frame(a, b) => {
+                args["frame"] = serde_json::json!([[a.x, a.y], [b.x, b.y]]);
+            }
+            TextAt::Path(curve, p) => {
+                args["path"] = serde_json::json!([curve.to_string()]);
+                args["at"] = serde_json::json!([p.x, p.y]);
+            }
+        }
         if let Err(why) = text::load_font(ctx.document, &mut spec) {
             ctx.log_warn(why);
             return InputResult::consumed();
@@ -572,12 +592,7 @@ impl SketchWorkbench {
         if let Some(asset) = spec.font_asset {
             args["font_asset"] = serde_json::json!(asset.to_string());
         }
-        let add = move |s: &mut sketch::Sketch, spec: &text::TextSpec| match at {
-            Where::Point(at) => text::add(s, at, spec),
-            Where::Frame(a, b) => text::add_in_frame(s, a, b, spec),
-            Where::Path(curve, at) => text::add_on_path(s, &[curve], Some(at), spec),
-        };
-        let result = self.sketch_edit(ctx, "sketch.text", args, move |s| match add(s, &spec) {
+        let result = self.sketch_edit(ctx, "sketch.text", args, move |s| match at.add(s, &spec) {
             Ok(_) => tools::ToolEffect::changed(format!("Text \"{}\"", spec.text)),
             Err(why) => tools::ToolEffect::log(why),
         });
@@ -1917,10 +1932,10 @@ impl SketchWorkbench {
         // put away (a shape half drawn, typed values), and a variant's own
         // settings (a polygon's sides) apply once, as it is picked, so the
         // panel can change them afterwards.
-        // An open corner's card has the keys (the host keeps Enter and
-        // Escape for its OK and Cancel, and applies it before a click in
-        // the view goes on); another tool takes it as it stands, as OK
-        // does, and an edit from elsewhere puts it away.
+        // What a click left to set waits in the panel: Enter, Escape, a
+        // click in the view or another tool takes it as it stands, as the
+        // panel's OK does; only its Cancel drops it, and an edit from
+        // elsewhere puts it away.
         // A node edit is the select tool's.
         if self.tab.node_edit.is_some() && active_tool.is_some_and(|t| t != "sketch.select") {
             self.leave_node_edit();
@@ -1931,12 +1946,34 @@ impl SketchWorkbench {
                 self.discard_corner();
             } else {
                 return match event {
-                    WorkbenchInputEvent::KeyPress { .. }
-                    | WorkbenchInputEvent::Text { .. }
-                    | WorkbenchInputEvent::MousePress {
+                    // Escape takes it as it stands and puts the tool
+                    // down; Enter takes it as OK does.
+                    WorkbenchInputEvent::KeyPress {
+                        key: KeyCode::Escape,
+                    } => {
+                        self.store_corner(ctx, false);
+                        self.discard_corner();
+                        ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
+                        InputResult::consumed()
+                    }
+                    WorkbenchInputEvent::KeyPress {
+                        key: KeyCode::Enter,
+                    } => {
+                        self.apply_corner(ctx);
+                        InputResult::consumed()
+                    }
+                    // A click in the view takes it too: the next one
+                    // starts afresh.
+                    WorkbenchInputEvent::MousePress {
                         button: core_document::MouseButton::Left,
                         ..
+                    } => {
+                        self.apply_corner(ctx);
+                        self.discard_corner();
+                        InputResult::consumed()
                     }
+                    WorkbenchInputEvent::KeyPress { .. }
+                    | WorkbenchInputEvent::Text { .. }
                     | WorkbenchInputEvent::MouseRelease {
                         button: core_document::MouseButton::Left,
                         ..
