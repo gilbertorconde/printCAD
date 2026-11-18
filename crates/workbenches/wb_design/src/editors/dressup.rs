@@ -2,19 +2,20 @@
 //! Chamfer, Draft, Offset and Move faces, Offset solid, Scale, Delete
 //! faces and Thickness, with the edge and face pickers only they use.
 
-use bench_api::Select;
+use bench_api::{ButtonStyle, Select, Tone};
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 use kernel_api::{ChamferCorner, FilletCorner};
 
 use crate::feature::{
-    ChamferMode, DesignFeature, EdgePick, EdgeSel, ExtrudeMode, FacePick, FilletMode, FilletProfile,
+    ChamferMode, DesignFeature, EdgePick, EdgeSel, ExtrudeMode, FacePick, FilletMode,
+    FilletProfile, RadiusPoint,
 };
 use crate::form::Form;
 
 use super::{
-    CHOICE_WIDTH, Formulas, Kind, choice_shown, deg_drag, end_targets, face_list_editor,
-    face_pick_row, label_row, mm_drag, mm_drag_upto, number, number_drag, pick, picked_edges,
-    picked_row, set_f32, signed_mm, small_button, taper_note, use_button,
+    Bounds, CHOICE_WIDTH, Formulas, Kind, choice_shown, deg_drag, end_targets, face_list_editor,
+    face_pick_row, label_row, mm_drag, mm_drag_upto, mono_value, number, number_drag, pick,
+    picked_edges, picked_row, quantity, set_f32, signed_mm, small_button, taper_note, use_button,
 };
 
 const FILLET_CORNERS: [FilletCorner; 2] = [FilletCorner::Setback, FilletCorner::RollingBall];
@@ -32,6 +33,93 @@ fn chamfer_corner_label(corner: &ChamferCorner) -> &'static str {
         ChamferCorner::Point => "Point",
         ChamferCorner::Facet => "Facet",
     }
+}
+
+/// A variable fillet's radii: at its run's start and end, which end it
+/// starts at, and the radii between, each at a share of the run's length.
+fn variable_editor(
+    f: &mut Form,
+    fx: &mut Formulas,
+    (start, end): (&mut f32, &mut f32),
+    reversed: &mut bool,
+    points: &mut Vec<RadiusPoint>,
+) -> bool {
+    let mut changed = mm_drag(f, fx, start, ("Start radius:", "radius"));
+    changed |= mm_drag(f, fx, end, ("End radius:", "radius2"));
+    changed |= f.check(
+        reversed,
+        "Start from the other end",
+        "The run of edges starts at its other end, the start radius there",
+    );
+    if !points.is_empty() {
+        f.caption(
+            "Radii between, each at a share of the run's length from its start",
+            Tone::Neutral,
+            false,
+            false,
+        );
+    }
+    let mut remove = None;
+    for (i, point) in points.iter_mut().enumerate() {
+        f.flow("", false, |f| {
+            mono_value(f, &format!("{}. Radius between", i + 1), true);
+            if small_button(f, "×", "") {
+                remove = Some(i);
+            }
+        });
+        // This point's numbers are `point{n}_…` to formulas.
+        fx.prefix = Some(format!("point{}_", i + 1));
+        changed |= share_drag(f, fx, &mut point.at, ("At:", "at"));
+        changed |= mm_drag(f, fx, &mut point.radius, ("Radius:", "radius"));
+        fx.prefix = None;
+    }
+    if let Some(i) = remove {
+        points.remove(i);
+        changed = true;
+    }
+    if f.button(
+        "+ Radius between",
+        ButtonStyle::Secondary,
+        true,
+        "A radius at a place along the run, in its widest gap",
+    ) {
+        points.push(next_point(*start, *end, points));
+        changed = true;
+    }
+    changed
+}
+
+/// A new radius between for a variable fillet: halfway across the widest
+/// gap between its places, the radius there on the straight line between
+/// the radii either side.
+fn next_point(start: f32, end: f32, points: &[RadiusPoint]) -> RadiusPoint {
+    let mut places: Vec<(f32, f32)> = vec![(0.0, start), (1.0, end)];
+    places.extend(points.iter().map(|p| (p.at, p.radius)));
+    places.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let widest = places
+        .windows(2)
+        .max_by(|a, b| (a[1].0 - a[0].0).total_cmp(&(b[1].0 - b[0].0)))
+        .map_or([(0.0, start), (1.0, end)], |w| [w[0], w[1]]);
+    RadiusPoint {
+        at: (widest[0].0 + widest[1].0) / 2.0,
+        radius: (widest[0].1 + widest[1].1) / 2.0,
+    }
+}
+
+/// A share of a run's length from its start, strictly between 0 and 1.
+fn share_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, field: (&str, &str)) -> bool {
+    const LEAST: f64 = 0.01;
+    const MOST: f64 = 0.99;
+    let set = match fx.show_within(f, field, f64::from(*value), Bounds::within(LEAST, MOST)) {
+        Some((true, v)) => Some(v.clamp(LEAST, MOST)),
+        Some((false, _)) => None,
+        None => {
+            let mut q = quantity(field.0, f64::from(*value), Kind::Plain, 0.01);
+            (q.min, q.max) = (Some(LEAST), Some(MOST));
+            f.quantity(q)
+        }
+    };
+    set_f32(value, set)
 }
 
 /// The Fillet, Chamfer, Draft, Offset faces, Offset solid, Scale, Move
@@ -57,6 +145,7 @@ pub(super) fn dressup_editor(
             flip,
             profile,
             rho,
+            points,
             ..
         } => {
             let between = matches!(edges, EdgeSel::BetweenFaces(_));
@@ -70,9 +159,15 @@ pub(super) fn dressup_editor(
                 }
             }
             let two = !between && *mode == FilletMode::TwoDistances;
+            let variable = !between && *mode == FilletMode::Variable;
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
-            let label = if two { "Distance 1:" } else { "Radius:" };
-            changed |= mm_drag_upto(f, fx, radius, (label, "radius"), most.and_then(|m| m.first));
+            if variable {
+                changed |= variable_editor(f, fx, (radius, radius2), flip, points);
+            } else {
+                let label = if two { "Distance 1:" } else { "Radius:" };
+                let most = most.and_then(|m| m.first);
+                changed |= mm_drag_upto(f, fx, radius, (label, "radius"), most);
+            }
             if two {
                 let most = most.and_then(|m| m.second);
                 changed |= mm_drag_upto(f, fx, radius2, ("Distance 2:", "radius2"), most);
@@ -88,7 +183,7 @@ pub(super) fn dressup_editor(
             changed |= edge_sel_editor(f, ctx, edges, true);
             if !between {
                 changed |= tangent_row(f, follow_tangent);
-                if !two {
+                if !two && !variable {
                     changed |= pick(f, "Corners", &FILLET_CORNERS, corner, fillet_corner_label);
                 }
             }

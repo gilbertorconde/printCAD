@@ -1561,6 +1561,7 @@ impl<'a> Importer<'a> {
                 flip: false,
                 profile: Default::default(),
                 rho: 0.5,
+                points: Vec::new(),
             }));
         }
         let mode = match object.integer("ChamferType")? {

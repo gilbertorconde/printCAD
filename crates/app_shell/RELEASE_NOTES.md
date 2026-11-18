@@ -4,6 +4,48 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.18.0
+
+### Design
+- Fillet and chamfer choose how their corners close: a fillet's Setback or Rolling ball, a chamfer's Point or Facet.
+- Variable fillets: the radius runs along a run of edges from a start radius to an end radius, through any radii set between.
+- A fillet rounds to two distances, elliptical or conic, on one edge, a tangent chain of edges or the three edges at a box's corner.
+- Auto fillets and chamfers grow past a narrow face, and two distances drag with one handle on each face.
+- A round or bevel previews what it takes off, as a pocket does, and its size drags only up to what builds.
+- A refused chamfer with Point corners names the edges that fail and offers the largest size that fits, as other refusals do.
+- Refine joins the edges a merged seam leaves split.
+- The Hole panel draws the hole and the screw it is for, the thread's note clear of the other measures.
+- Offset opens a card for its distance.
+- Text writes on a face of the solid in one step.
+- A Design task leaves the selection it found.
+
+### Sketcher
+- Text is one object whose letters are never stored: in a frame or along curves, aligned where asked, and showing what a formula in braces comes to.
+- Splines are edited by their nodes, and a Path tool draws lines and curves in one run.
+- Rectangle tools propose the whole shape the preview draws, with its sizes in a card until OK; sketch cards ask only what a click leaves to set.
+- An option reuses an existing line when a shape is drawn against it, and Auto remove redundants drops a drawn shape's repeated constraints.
+- Origin lines have a switch in the view, on by default in a sketch.
+- Sketch tools wait in the Tool section, and installed fonts are found by search.
+- Every drag with a known limit stops on it, and lengths stop above zero.
+- Big sketches, sketches with text and long histories stay fast.
+
+### View and interface
+- The left panel folds to a bar of the history's icons.
+- Documents, workbenches and chats move by dragging their tabs.
+- Bench menus open at the pointer, and every tool with variants shows its arrow in the tool panels.
+- The clipping plane leaves the grid and the origin planes whole and caps a cut solid on the plane.
+- Preferences search leaves out every block it does not find.
+- The drawing values card is a floating card.
+
+### Files and assistant
+- Every file dropped or given at start imports, in order; each .prtcad opens in a tab of its own.
+- Closed assistant chats stay in a history they can be reopened from.
+- A drag reaches the document server and other clients as one change on release, and a task's Cancel takes back through undo.
+
+### Kernel
+- The geometry kernel is ogeom 0.19.0: every round and chamfer goes through one blend engine, so the result does not depend on the order edges are picked, and what it does not build is refused with its reason.
+- Some chamfers that built before are refused for now: Point corners on a cone's or boss's rim and on some blocks, and bevels along a pocket's floor or other concave edges. Facet corners build most of them; the kernel fix is to come.
+
 ## 0.17.0
 
 ### Floating cards

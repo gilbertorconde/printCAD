@@ -1315,6 +1315,7 @@ mod tests {
             flip: false,
             profile: Default::default(),
             rho: 0.5,
+            points: Vec::new(),
         };
         let id = s
             .doc

@@ -468,13 +468,20 @@ See also: `doc.faces`
 
 ## design.fillet
 
-`mode` is Auto (when left out), Radius or TwoDistances. Auto on one edge
+`mode` is Auto (when left out), Radius, TwoDistances or Variable. Auto on one edge
 takes each face's contact `radius` from the edge or as far as the face
 goes, whichever is less; with Radius, a radius larger than the faces
 beside an edge can take fails at `pc.doc.rebuild()`. TwoDistances puts `radius` on one face and
 `radius2` on the other (`flip` swaps them), its `profile` Elliptical or
 Conic (with `rho` strictly between 0 and 1, 0.5 when left out), on one
-edge.
+edge, a tangent chain of edges, or the three edges meeting at a box's
+corner.
+
+Variable runs the radius along the edges as one run end to end: `radius`
+at its start, `radius2` at its end, and `points = {{at = .., radius =
+..}, ...}` between, each `at` a share of the run's length from its start
+strictly between 0 and 1. `flip` starts the run at its other end. Edges
+that branch at a vertex are refused.
 
 `corner` says how a vertex where rounds meet closes: Setback (when left
 out) stops each round short and fills the gap with one patch; RollingBall
@@ -528,6 +535,22 @@ pc.design.fillet{body = body, radius = 2, mode = "TwoDistances", radius2 = 4,
 assert(#pc.doc.rebuild() == 0, "the fillet builds")
 -- A quarter ellipse's corner, 2 x 4, along the edge.
 local taken = (8 - math.pi * 8 / 4) * 40
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
+```
+
+### One edge rounded from 1 mm at one end to 3 mm at the other
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+pc.design.fillet{body = body, radius = 1, mode = "Variable", radius2 = 3,
+  edges = {Edges = {{point = {20, 0, 10}, direction = {1, 0, 0}}}}}
+assert(#pc.doc.rebuild() == 0, "the fillet builds")
+-- The round's section, (1 - pi/4) r^2, with r running from 1 to 3.
+local taken = (1 - math.pi / 4) * 40 * (1 + 3 + 9) / 3
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
 ```

@@ -320,6 +320,42 @@ fn tool_names_fresh(model: &Model, tool: &Shape, tag: TopoName) -> NameMap {
     NameMap::assign(model, tool, tag, |_| Vec::new())
 }
 
+/// A kernel message as a refusal shows it: without the kernel's pointers
+/// into its own documentation, its numbers tidied.
+fn tidy(message: &str) -> String {
+    tidy_numbers(&without_doc_pointers(message))
+}
+
+/// `message` without the kernel's "see docs/CAPABILITIES.md, <section>"
+/// pointers, which name a file of the kernel's repository: each taken
+/// with the "; " before it, or with the parentheses round it.
+fn without_doc_pointers(message: &str) -> String {
+    const POINTER: &str = "see docs/CAPABILITIES.md";
+    let mut out = message.to_string();
+    while let Some(at) = out.find(POINTER) {
+        let mut end = at + POINTER.len();
+        if let Some(rest) = out[end..].strip_prefix(", ") {
+            let section = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+                .unwrap_or(rest.len());
+            // A section's name ends without a dot: one after it ends the
+            // sentence.
+            let section = rest[..section].trim_end_matches('.').len();
+            end += 2 + section;
+        }
+        let before = out[..at].trim_end();
+        let mut start = before.len();
+        if before.ends_with('(') && out[end..].starts_with(')') {
+            start = before[..before.len() - 1].trim_end().len();
+            end += 1;
+        } else if before.ends_with(';') || before.ends_with(',') {
+            start = before.len() - 1;
+        }
+        out.replace_range(start..end, "");
+    }
+    out
+}
+
 /// `message` with every number written to more than four decimals (the
 /// kernel's `1.9999999999999998`) rounded to three, trailing zeros
 /// dropped, so a refusal reads as the sizes the user typed.
@@ -562,16 +598,16 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         ));
         let err = |message: String| ChainError {
             op_index: index,
-            message: tidy_numbers(&message),
+            message: tidy(&message),
             edges: Default::default(),
         };
         let refused = |mut refusal: ops::dressup::Refusal| {
             for failing in &mut refusal.edges.failing {
-                failing.reason = tidy_numbers(&failing.reason);
+                failing.reason = tidy(&failing.reason);
             }
             ChainError {
                 op_index: index,
-                message: tidy_numbers(&refusal.message),
+                message: tidy(&refusal.message),
                 edges: refusal.edges,
             }
         };
@@ -810,6 +846,25 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
 
                 combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
+            // A variable round takes its radius from its law alone.
+            SolidOp::Fillet {
+                radius,
+                edges,
+                follow_tangent,
+                variable: Some(variable),
+                ..
+            } => {
+                let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
+                ops::dressup::variable_fillet(
+                    &mut model,
+                    &solid,
+                    *radius,
+                    variable,
+                    edges,
+                    *follow_tangent,
+                )
+                .map_err(&err)?
+            }
             SolidOp::Fillet {
                 radius,
                 edges,
@@ -817,6 +872,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 corner,
                 distances,
                 auto,
+                variable: None,
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
                 ops::dressup::fillet(
@@ -1529,7 +1585,32 @@ fn external_tool(
 
 #[cfg(test)]
 mod tidy_tests {
-    use super::tidy_numbers;
+    use super::{tidy_numbers, without_doc_pointers};
+
+    #[test]
+    fn the_kernels_doc_pointers_are_left_out() {
+        assert_eq!(
+            without_doc_pointers(
+                "chamfer failed: the blend engine builds no chamfer of this kind here: \
+                 the request lies outside what it chamfers; see docs/CAPABILITIES.md"
+            ),
+            "chamfer failed: the blend engine builds no chamfer of this kind here: \
+             the request lies outside what it chamfers"
+        );
+        assert_eq!(
+            without_doc_pointers(
+                "a rim; see docs/CAPABILITIES.md, fillet.asymmetric-rounds. Edge 2 of 3"
+            ),
+            "a rim. Edge 2 of 3"
+        );
+        assert_eq!(
+            without_doc_pointers(
+                "the oblique neutral needs the general machinery \
+                 (see docs/CAPABILITIES.md, offset.draft); edge 1"
+            ),
+            "the oblique neutral needs the general machinery; edge 1"
+        );
+    }
 
     #[test]
     fn long_decimals_round_and_short_ones_stay() {

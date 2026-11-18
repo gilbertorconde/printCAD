@@ -41,6 +41,7 @@ fn only_a_feature_made_from_a_sketch_consumes_it() {
         flip: false,
         profile: Default::default(),
         rho: 0.5,
+        points: Vec::new(),
     };
     let fillet = doc
         .add_feature_in_body(fillet, "Fillet".into(), body)

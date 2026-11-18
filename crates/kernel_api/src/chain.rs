@@ -99,13 +99,14 @@ pub struct SizeLimit {
     /// distance (with two distances, the first at their common scale).
     /// `None` where no size short of the solid's own fails.
     pub largest: Option<f64>,
-    /// A round of one edge set back by distances: where the edge is read
-    /// and each face's own limit. `None` for any other op.
+    /// A round or chamfer set back by distances, or an automatic one: where
+    /// its first edge is read and each face's own limit, the least over its
+    /// edges. `None` for any other op.
     #[serde(default)]
     pub sides: Option<RoundSides>,
 }
 
-/// The two faces beside the one edge of a round of distances, as a drag
+/// The two faces beside the first edge of a round of distances, as a drag
 /// reads them: the face its first distance is on, then the other.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RoundSides {

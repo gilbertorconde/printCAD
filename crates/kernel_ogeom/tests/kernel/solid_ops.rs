@@ -274,6 +274,7 @@ fn an_edge_pick_far_from_every_edge_fails() {
                 corner: Default::default(),
                 distances: None,
                 auto: false,
+                variable: None,
             },
         ])
     };
@@ -306,6 +307,7 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
                 corner: Default::default(),
                 distances: None,
                 auto: false,
+                variable: None,
             },
         ])?;
         let volume = volume(&result.brep_blob);
@@ -446,6 +448,7 @@ fn a_fillet_too_big_for_the_box_is_refused_at_its_op() {
             corner: Default::default(),
             distances: None,
             auto: false,
+            variable: None,
         },
     );
 }
@@ -527,11 +530,12 @@ fn a_refused_fillet_names_its_failing_edge() {
         corner: Default::default(),
         distances: None,
         auto: false,
+        variable: None,
     });
 }
 
 #[test]
-#[ignore = "kernel: a chamfer wider than the wall under it builds instead of being refused"]
+#[ignore = "kernel: Point corners refuse the step's edges each alone (ogeom-rs#1161), and a facet chamfer wider than the wall under it builds"]
 fn a_refused_chamfer_names_its_failing_edge() {
     names_its_failing_edge(&|size| SolidOp::Chamfer {
         spec: ChamferSpec::EqualDistance { distance: size },
@@ -540,6 +544,32 @@ fn a_refused_chamfer_names_its_failing_edge() {
         follow_tangent: false,
         corner: Default::default(),
     });
+}
+
+/// A chamfer mitred to a point that the block cannot take is refused as a
+/// facet chamfer is: with the largest size that fits every edge, which
+/// builds, and without the kernel's pointer into its own documentation.
+#[test]
+fn a_refused_point_chamfer_offers_the_size_that_fits() {
+    let at = |distance: f64| {
+        try_chain(&[
+            block(),
+            SolidOp::Chamfer {
+                spec: ChamferSpec::EqualDistance { distance },
+                flip: false,
+                edges: EdgeSelection::All,
+                follow_tangent: false,
+                corner: kernel_api::ChamferCorner::Point,
+            },
+        ])
+    };
+    // Two 8 mm bevels meet past the middle of the block's 10 mm sides.
+    let err = at(8.0).expect_err("8 mm bevels overlap on a 10 mm side");
+    assert_eq!(err.op_index, 1);
+    assert!(!err.message.contains("docs/"), "{}", err.message);
+    let fits = 8.0 * err.edges.fits.expect("a smaller chamfer fits");
+    assert!(fits > 4.9 && fits <= 5.0, "{fits}: half the 10 mm side");
+    at(fits).unwrap_or_else(|e| panic!("{fits} fits: {}", e.message));
 }
 
 /// Two bands overlapping across a thin wall, each edge rounding alone:
@@ -558,6 +588,7 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
             corner: Default::default(),
             distances: None,
             auto: false,
+            variable: None,
         },
     ])
     .expect_err("top and bottom bands overlap on the 2 mm sides");
@@ -674,6 +705,7 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
             corner: Default::default(),
             distances: None,
             auto: false,
+            variable: None,
         },
     ]);
     assert_eq!(
@@ -736,6 +768,7 @@ fn fillets_of_three_edges_round_their_corner() {
                     corner: Default::default(),
                     distances: None,
                     auto: false,
+                    variable: None,
                 },
             ],
             &fine_detail(),
@@ -925,6 +958,7 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
         corner: Default::default(),
         distances: None,
         auto: false,
+        variable: None,
     });
     let cylinders = chain(&ops)
         .mesh
@@ -951,6 +985,7 @@ fn rolling_ball_corners_on_the_step_are_analytic() {
         corner: FilletCorner::RollingBall,
         distances: None,
         auto: false,
+        variable: None,
     });
     let built = chain(&ops);
     let surfaces = &built.mesh.face_surfaces;
@@ -986,6 +1021,7 @@ fn a_cube_rounded_with_rolling_ball_corners_is_a_rounded_cube() {
             corner: FilletCorner::RollingBall,
             distances: None,
             auto: false,
+            variable: None,
         },
     ];
     assert_volume(&ops, want, "rolling-ball cube");
@@ -1032,6 +1068,7 @@ fn cube_rounded(profile: kernel_api::RoundProfile, flip: bool) -> kernel_api::So
                 profile,
             }),
             auto: false,
+            variable: None,
         },
     ])
 }
@@ -1099,6 +1136,7 @@ fn an_auto_round_stops_at_a_narrow_face_and_grows_on_the_other() {
         corner: Default::default(),
         distances: None,
         auto: true,
+        variable: None,
     };
     let taken = |radius: f64| 1600.0 - volume(&chain(&[plate(), round(radius)]).brep_blob);
     let corner = 1.0 - std::f64::consts::FRAC_PI_4;
@@ -1217,10 +1255,196 @@ fn an_auto_chamfer_stops_at_a_narrow_face_and_grows_on_the_other() {
     assert_eq!(small.largest, first, "the first distance stops at its face");
 }
 
+/// A round of two distances on several edges reads its drag handles at its
+/// first edge, each face's limit the least over its edges: on a 30 x 10 x
+/// 20 block, the top front edge (top 10 deep, front 20) and the bottom
+/// left edge (bottom 30, left 20), which share no vertex.
+#[test]
+fn a_round_of_two_distances_on_two_edges_stops_at_the_nearer_face() {
+    let round = |edges: Vec<[f64; 3]>| SolidOp::Fillet {
+        radius: 1.0,
+        edges: EdgeSelection::Near(edges),
+        follow_tangent: false,
+        corner: Default::default(),
+        distances: Some(kernel_api::RoundDistances {
+            other: 1.0,
+            flip: false,
+            profile: kernel_api::RoundProfile::Elliptical,
+        }),
+        auto: false,
+        variable: None,
+    };
+    let sides_of = |edges: Vec<[f64; 3]>| {
+        let detail = kernel_api::TessellationSettings::default();
+        let ops = [box_of(30.0, 10.0, 20.0), round(edges)];
+        new_kernel()
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(1..2)))
+            .expect("a 1 mm round builds")
+            .size_limit
+            .and_then(|limit| limit.sides)
+            .expect("the faces beside the first edge")
+    };
+    let (top_front, bottom_left) = ([15.0, 0.0, 20.0], [0.0, 5.0, 0.0]);
+    let alone = [sides_of(vec![top_front]), sides_of(vec![bottom_left])];
+    let both = sides_of(vec![top_front, bottom_left]);
+    assert_eq!(both.at, alone[0].at, "read at the first edge");
+    for i in 0..2 {
+        let least = alone
+            .iter()
+            .filter_map(|sides| sides.sides[i].largest)
+            .reduce(f64::min);
+        assert_eq!(both.sides[i].direction, alone[0].sides[i].direction);
+        assert_eq!(both.sides[i].largest, least, "side {i}: {both:?}");
+    }
+    let mut most: Vec<f64> = both.sides.iter().filter_map(|s| s.largest).collect();
+    most.sort_by(f64::total_cmp);
+    assert!(
+        (most[0] - 10.0).abs() < 1e-3,
+        "the top's 10 stops a side: {most:?}"
+    );
+}
+
+/// A variable round on a block's top edge: the radius runs from one end of
+/// the run to the other, so the round's section, (1 - pi/4) r^2, grows
+/// along the edge. Kept over the run's first half, it takes off the
+/// integral of the section there, which tells which end it starts at.
+fn variable_round(
+    edges: Vec<[f64; 3]>,
+    start: f64,
+    variable: kernel_api::VariableRadius,
+) -> SolidOp {
+    SolidOp::Fillet {
+        radius: start,
+        edges: EdgeSelection::Near(edges),
+        follow_tangent: false,
+        corner: Default::default(),
+        distances: None,
+        auto: false,
+        variable: Some(variable),
+    }
+}
+
+/// A 40 x 30 x 10 block.
+fn long_block() -> SolidOp {
+    blind_pad(
+        vec![rect_wire(0.0, 0.0, 40.0, 30.0)],
+        10.0,
+        BooleanOp::NewSolid,
+    )
+}
+
+#[test]
+fn a_variable_round_runs_from_its_start_radius_to_its_end() {
+    let q = 1.0 - std::f64::consts::FRAC_PI_4;
+    let linear = |reversed| kernel_api::VariableRadius {
+        end: 3.0,
+        between: Vec::new(),
+        reversed,
+    };
+    let top_front = vec![[20.0, 0.0, 10.0]];
+    // r running linearly from r0 to r1 over a length takes off
+    // q (r0^2 + r0 r1 + r1^2) / 3 for each unit of it.
+    let whole = |reversed| {
+        let ops = [
+            long_block(),
+            variable_round(top_front.clone(), 1.0, linear(reversed)),
+        ];
+        12000.0 - volume(&chain(&ops).brep_blob)
+    };
+    for reversed in [false, true] {
+        let taken = whole(reversed);
+        let want = q * 40.0 * (1.0 + 3.0 + 9.0) / 3.0;
+        assert!((taken - want).abs() < 1e-6 * want, "{taken} against {want}");
+    }
+    // The half from x = 0 to 20: r from 1 to 2, or from 3 to 2.
+    let half = |reversed| {
+        let ops = [
+            long_block(),
+            variable_round(top_front.clone(), 1.0, linear(reversed)),
+            SolidOp::Primitive {
+                kind: PrimitiveKind::Box {
+                    length: 20.0,
+                    width: 30.0,
+                    height: 10.0,
+                },
+                placement: Default::default(),
+                op: BooleanOp::Common,
+            },
+        ];
+        6000.0 - volume(&chain(&ops).brep_blob)
+    };
+    let mut halves = [half(false), half(true)];
+    halves.sort_by(f64::total_cmp);
+    let (small, large) = (q * 20.0 * 7.0 / 3.0, q * 20.0 * 19.0 / 3.0);
+    assert!(
+        (halves[0] - small).abs() < 1e-6 * small && (halves[1] - large).abs() < 1e-6 * large,
+        "reversed turns the run round: {halves:?} against {small} and {large}"
+    );
+}
+
+/// Radii between the ends: the law runs through each, never past them,
+/// so the round takes off more than the straight line between the ends
+/// would, and no more than the largest radius all along.
+#[test]
+fn a_variable_round_passes_through_its_radii_between() {
+    let q = 1.0 - std::f64::consts::FRAC_PI_4;
+    let ops = [
+        long_block(),
+        variable_round(
+            vec![[20.0, 0.0, 10.0]],
+            1.0,
+            kernel_api::VariableRadius {
+                end: 1.0,
+                between: vec![[0.5, 3.0]],
+                reversed: false,
+            },
+        ),
+    ];
+    let taken = 12000.0 - volume(&chain(&ops).brep_blob);
+    let straight = q * 40.0 * (1.0 + 3.0 + 9.0) / 3.0;
+    assert!(
+        taken > straight && taken < q * 40.0 * 9.0,
+        "{taken}: between {straight} and {}",
+        q * 40.0 * 9.0
+    );
+}
+
+/// The edges of a variable round go as one run whichever order they are
+/// picked in; edges that branch at a vertex are refused by name.
+#[test]
+fn a_variable_round_takes_its_edges_as_one_run() {
+    let run = kernel_api::VariableRadius {
+        end: 2.0,
+        between: Vec::new(),
+        reversed: false,
+    };
+    // The top's front and right edges, the right picked first.
+    let two = [
+        long_block(),
+        variable_round(
+            vec![[40.0, 15.0, 10.0], [20.0, 0.0, 10.0]],
+            1.0,
+            run.clone(),
+        ),
+    ];
+    let built = try_chain(&two).unwrap_or_else(|e| panic!("{}", e.message));
+    assert!(volume(&built.brep_blob) < 12000.0);
+    // And the upright edge at their corner: three meet there.
+    let three = [
+        long_block(),
+        variable_round(
+            vec![[40.0, 15.0, 10.0], [20.0, 0.0, 10.0], [40.0, 0.0, 5.0]],
+            1.0,
+            run,
+        ),
+    ];
+    let err = try_chain(&three).expect_err("three edges at one vertex");
+    assert!(err.message.contains("branch"), "{}", err.message);
+}
+
 /// Rounds of two distances on several edges go to the kernel together, so
 /// they close the corners where they meet.
 #[test]
-#[ignore = "kernel: a round of two distances rounds one edge per call; there is no call for several edges with their corners"]
 fn rounds_of_two_distances_on_every_edge_of_a_cube_build() {
     let built = try_chain(&[
         box_of(20.0, 20.0, 20.0),
@@ -1235,6 +1459,7 @@ fn rounds_of_two_distances_on_every_edge_of_a_cube_build() {
                 profile: kernel_api::RoundProfile::Elliptical,
             }),
             auto: false,
+            variable: None,
         },
     ]);
     assert!(built.is_ok(), "{:?}", built.err());
@@ -2770,6 +2995,7 @@ fn a_dress_up_previews_what_it_takes_off_or_adds() {
         corner: Default::default(),
         distances: None,
         auto: false,
+        variable: None,
     });
     let (preview, whole) = preview_of(&inside, rounded_at..rounded_at + 1);
     assert!(!preview.cuts, "an inside round only adds");
@@ -3512,6 +3738,7 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
             corner: Default::default(),
             distances: None,
             auto: false,
+            variable: None,
         });
         volume(&try_chain(&ops).expect("the seam rounds").brep_blob)
     };
@@ -3530,7 +3757,6 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
 /// wall: the round of the arm's top side edge runs on tangentially into
 /// the round of the arm's top against the hub, convex into concave.
 #[test]
-#[ignore = "kernel: a convex and a concave round meeting at a vertex on a cylinder (ogeom-rs#868)"]
 fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
     let ops = [
         blind_pad(
@@ -3550,6 +3776,7 @@ fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
             corner: Default::default(),
             distances: None,
             auto: false,
+            variable: None,
         },
     ];
     let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");
