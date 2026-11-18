@@ -378,9 +378,13 @@ fn group_reference(
 
 pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
     let fitted = crate::spline::solved_fits(sketch);
+    // A text's letters are made from its block where its point stands
+    // (`text::refresh` after each solve): nothing in them is the solver's.
+    let made = &sketch.derived;
     let geometry = sketch
         .geometry
         .iter()
+        .filter(|g| !made.contains(&g.id()))
         .map(|g| match g {
             G::Point(p) => core::Geometry::Point(core::Point {
                 id: core::PointId(p.id.as_u128()),
@@ -446,7 +450,12 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
         constraints: sketch
             .constraints
             .iter()
-            .filter(|c| c.is_solved())
+            .filter(|c| {
+                c.is_solved()
+                    && !sketch::constraint_refs(&c.kind)
+                        .iter()
+                        .any(|r| made.contains(r))
+            })
             .map(|c| core::Constraint {
                 id: core::ConstraintId(c.id.as_u128()),
                 kind: relation(sketch, &c.kind),
@@ -460,7 +469,15 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
         held_points: held.iter().copied().map(point).collect(),
         application_held_points: crate::spline::derived_points(sketch, &fitted)
             .into_iter()
-            .chain(crate::text::outline_points(sketch))
+            // An older file's text, stored as outlines, holds them still.
+            .chain(
+                sketch
+                    .texts
+                    .iter()
+                    .filter(|b| b.is_stored_outlines())
+                    .flat_map(|b| b.elements.iter().copied())
+                    .filter(|id| matches!(sketch.get_geometry(*id), Some(G::Point(_)))),
+            )
             .map(point)
             .collect(),
         settings: settings(sketch.solver),

@@ -498,8 +498,12 @@ fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<U
 /// too large to analyse, as its diagnosis is.
 pub fn locked_elements(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
     use sketch_solver::problem::{CurveReference, PointReference};
+    // Solved without its texts' letters, which the solver leaves out and
+    // which would only be made again after it.
     let mut solved = sketch.clone();
-    solve(&mut solved);
+    crate::text::strip(&mut solved);
+    let sys = build_system(&solved);
+    solve_system(&mut solved, sys);
     let problem = adapter::prepare(&solved, &[]);
     if problem.constraints.len() > problem.settings.diagnosis_limit {
         return Default::default();
@@ -519,15 +523,30 @@ pub fn locked_elements(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
                 id.as_u128(),
             )))
     };
-    sketch
+    let mut locked: std::collections::HashSet<Uuid> = sketch
         .geometry
         .iter()
+        .filter(|g| !sketch.derived.contains(&g.id()))
         .filter(|g| match g {
             GeometryElement::Point(p) => point(p.id),
             other => curve(other.id()) && Sketch::curve_point_ids(other).into_iter().all(point),
         })
         .map(GeometryElement::id)
-        .collect()
+        .collect();
+    // A text's letters cannot move when what they stand on cannot: its
+    // point, and its frame's corners or the curves it runs along.
+    let still: Vec<Uuid> = sketch
+        .texts
+        .iter()
+        .filter(|b| {
+            std::iter::once(b.anchor)
+                .chain(b.supports())
+                .all(|id| locked.contains(&id))
+        })
+        .flat_map(|b| b.elements.iter().copied())
+        .collect();
+    locked.extend(still);
+    locked
 }
 
 pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {

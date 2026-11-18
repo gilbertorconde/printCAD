@@ -172,6 +172,63 @@ mod tests {
         assert!(locked_elements(&sketch).contains(&circle));
     }
 
+    /// A text is locked whole with its point and free whole without it:
+    /// its letters are made from the point, never solved, so the problem
+    /// the solver gets holds none of them however many there are.
+    #[test]
+    fn a_text_is_locked_with_its_point_and_its_letters_are_never_solved() {
+        let mut sketch = Sketch::new("text");
+        let spec = crate::text::TextSpec::default();
+        let held = crate::text::add(&mut sketch, Vec2D::new(0.0, 0.0), &spec).unwrap();
+        let free = crate::text::add(&mut sketch, Vec2D::new(0.0, 20.0), &spec).unwrap();
+        let block = |sketch: &Sketch, id| sketch.texts.iter().find(|b| b.id == id).unwrap().clone();
+        let (held, free) = (block(&sketch, held), block(&sketch, free));
+        fix(&mut sketch, held.anchor, 0.0, 0.0);
+        assert!(!held.elements.is_empty());
+
+        let problem = adapter::prepare(&sketch, &[]);
+        assert_eq!(
+            problem.geometry.len(),
+            sketch.geometry.len() - sketch.derived.len(),
+            "no letter in the problem"
+        );
+        assert_eq!(dof_estimate(&sketch), 2, "the free text's point alone");
+        let locked = locked_elements(&sketch);
+        assert!(
+            held.elements.iter().all(|e| locked.contains(e)),
+            "all of the held text"
+        );
+        assert!(
+            !free.elements.iter().any(|e| locked.contains(e)),
+            "none of the free one"
+        );
+
+        // Its point moved, its letters follow.
+        let letter_point = |sketch: &Sketch| {
+            let block = block(sketch, held.id);
+            let id = block
+                .elements
+                .iter()
+                .copied()
+                .find(|e| matches!(sketch.get_geometry(*e), Some(GeometryElement::Point(_))))
+                .unwrap();
+            pos(sketch, id)
+        };
+        let before = letter_point(&sketch);
+        for c in &mut sketch.constraints {
+            if let ConstraintKind::FixedPoint { position, .. } = &mut c.kind {
+                *position = Vec2D::new(5.0, 0.0);
+            }
+        }
+        solve(&mut sketch);
+        assert!((pos(&sketch, held.anchor) - glam::DVec2::new(5.0, 0.0)).length() < 1e-9);
+        let moved = letter_point(&sketch) - before;
+        assert!(
+            (moved - glam::DVec2::new(5.0, 0.0)).length() < 1e-9,
+            "the letters follow: {moved}"
+        );
+    }
+
     #[test]
     fn constraints_on_missing_geometry_are_skipped() {
         let mut sketch = Sketch::new("missing");
