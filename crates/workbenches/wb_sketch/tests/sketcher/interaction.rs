@@ -485,6 +485,35 @@ impl Harness {
         }
     }
 
+    /// A change in the task panel, as the panel hands it over.
+    fn panel_event(&mut self, event: bench_api::PanelEvent) {
+        let outcome = self.with_ctx(|wb, ctx| {
+            wb.task_panel_event(ctx, &event);
+            core_document::HookOutcome::take(ctx)
+        });
+        self.recorded.extend(outcome.recorded);
+        if let Some(tool) = outcome.requests.into_iter().find_map(|r| match r {
+            core_document::HostRequest::ActivateTool(tool) => Some(tool),
+            _ => None,
+        }) {
+            self.tool_request = Some(tool);
+        }
+    }
+
+    /// A number set in the panel's field `id`.
+    fn panel_number(&mut self, id: &str, value: f64) {
+        self.panel_event(bench_api::PanelEvent::Number {
+            id: id.into(),
+            value,
+        });
+    }
+
+    /// Whether a click's result waits in the panel's Tool section: `Ok`
+    /// when its OK would write it, else why not.
+    fn waiting(&mut self) -> Option<Result<(), String>> {
+        self.with_ctx(|wb, ctx| wb.waiting(ctx))
+    }
+
     /// A value typed into the card's field `id`.
     fn card_type(&mut self, id: &str, value: &str) {
         self.card_event(bench_api::PanelEvent::Text {
@@ -496,17 +525,31 @@ impl Harness {
     /// The card's OK (or Enter) or Cancel (or Escape), as the host makes
     /// them: OK does nothing while held back; what the bench writes is one
     /// undo step on OK, and taken back on Cancel.
+    /// What waits in the panel's Tool section is closed by its OK or
+    /// Cancel the same way.
     fn close_card(&mut self, accept: bool) {
-        let Some(card) = self.card() else {
-            return;
-        };
-        if accept && card.refusal.is_some() {
+        if let Some(card) = self.card() {
+            if accept && card.refusal.is_some() {
+                return;
+            }
+            self.card_event(bench_api::PanelEvent::CardClose {
+                id: card.id,
+                accept,
+            });
+        } else if let Some(waiting) = self.waiting() {
+            if accept && waiting.is_err() {
+                return;
+            }
+            self.journal.note(&mut self.doc);
+            let id = if accept {
+                "pending.ok"
+            } else {
+                "pending.cancel"
+            };
+            self.panel_event(bench_api::PanelEvent::Button { id: id.into() });
+        } else {
             return;
         }
-        self.card_event(bench_api::PanelEvent::CardClose {
-            id: card.id,
-            accept,
-        });
         let written = self.journal.note(&mut self.doc);
         match written {
             Some(_) if accept => self.gestures_closed += 1,
@@ -1843,12 +1886,12 @@ fn offset_rectangle_end_to_end_produces_closed_loop() {
     }
 }
 
-/// The offset's click opens its card with the distance as the tool has
-/// it, Round and Both sides: nothing is copied until OK, a distance the
-/// card changes and Both sides show at once, and OK copies at them as one
-/// undo step, the setting carried on to the tool.
+/// The offset's click leaves the copy waiting in the panel's Tool
+/// section at the distance as the tool has it: nothing is copied until
+/// OK, a distance or Both sides changed there works it out again, and OK
+/// copies at them as one undo step, the setting carried on to the tool.
 #[test]
-fn an_offset_waits_in_its_card_for_its_distance() {
+fn an_offset_waits_in_the_panel_for_its_distance() {
     let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(12.0, 8.0, "sketch.rect");
@@ -1856,15 +1899,11 @@ fn an_offset_waits_in_its_card_for_its_distance() {
     h.wb.tool_params_mut().offset_distance = 2.0;
     h.ok_new_dimensions = false;
     h.click(6.0, 4.0, "sketch.offset");
-    let card = h.card().expect("the card");
-    assert_eq!(
-        (card.title.as_str(), card.focus.as_deref(), card.ok_only),
-        ("Offset", Some("offset.size"), true)
-    );
+    assert_eq!(h.waiting(), Some(Ok(())), "the copy waits");
     assert_eq!(h.counts().1, 4, "nothing copied before OK");
-    h.card_type("offset.size", "1");
-    h.card_event(bench_api::PanelEvent::Toggle {
-        id: "offset.both".into(),
+    h.panel_number("tool.offset_distance", 1.0);
+    h.panel_event(bench_api::PanelEvent::Toggle {
+        id: "tool.offset_both".into(),
         on: true,
     });
     let closed = h.gestures_closed;
@@ -6066,6 +6105,47 @@ fn select_mode_and_an_armed_tool_cue_what_the_cursor_is_on() {
     h.key(KeyCode::A, Some("sketch.constrain.distance"));
     assert_eq!(cue(&mut h, 5.05, 0.1, "sketch.select"), Some("On curve"));
     assert_eq!(cue(&mut h, 10.1, 0.1, "sketch.select"), Some("Endpoint"));
+}
+
+/// The text tool's click leaves its text waiting in the panel's Tool
+/// section: what the panel then sets changes that text in the view, a
+/// further click adds no second one, and OK writes the text as the panel
+/// last had it, once, as one undo step whose recording replays. Cancel
+/// leaves the sketch as it was.
+#[test]
+fn a_placed_text_takes_the_panel_until_ok() {
+    let (mut h, id, before) = recording::session_on_a_sketch();
+    h.ok_new_dimensions = false;
+    h.full_click(0.0, 0.0, "sketch.text");
+    assert_eq!(h.waiting(), Some(Ok(())), "the text waits");
+    assert!(h.sketch().texts.is_empty(), "nothing stored before OK");
+    let shown = h.overlays().len();
+    assert!(shown > 0, "the view shows it");
+    h.panel_event(bench_api::PanelEvent::Text {
+        id: "text_draft.text".into(),
+        value: "Hello, world".into(),
+    });
+    h.panel_number("text_draft.size", 4.0);
+    assert!(h.overlays().len() > shown, "the longer text is drawn");
+    h.full_click(30.0, 0.0, "sketch.text");
+    assert!(h.waiting().is_none(), "the click in the view took it");
+    let texts = h.sketch().texts;
+    assert_eq!(texts.len(), 1, "one text, the second click adding none");
+    assert_eq!(
+        (texts[0].text.as_str(), texts[0].size),
+        ("Hello, world", 4.0)
+    );
+    recording::assert_replays(&h.recorded, before, id, &h.sketch());
+
+    h.full_click(0.0, 20.0, "sketch.text");
+    assert!(h.waiting().is_some(), "the tool used again places another");
+    h.close_card(false);
+    assert!(h.waiting().is_none());
+    assert_eq!(
+        h.sketch().texts.len(),
+        1,
+        "Cancel leaves the sketch as it was"
+    );
 }
 
 /// Text is one object: a press on a letter takes the whole text (its

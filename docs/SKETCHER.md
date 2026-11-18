@@ -56,15 +56,18 @@ for its wall, draws dashed, and the click adds nothing.
 A shape's sizes go in the card by the cursor before its last click (Tab
 moves on, Enter holds them by dimensions). A tool whose clicks set the
 whole shape stores it at its last click. One that leaves more to set
-opens a second card beside the shape after it: a rounded rectangle's
-radius, a frame's wall, an offset's distance. That card has only what is left to set, the
-tool's setting in it with the keys and its value selected (a unit or a
-formula works too), and the view shows the shape solved at it. A value
-that does not fit says why and holds OK back. There is no Cancel: **OK**,
-Enter, Escape, a click elsewhere in the view, another tool or finishing
-the sketch all store it as one undo step, at the setting as it opened
-when nothing was changed. Only an edit from elsewhere (an undo) puts it
-away. A recording of it is the `sketch.draw` call with that setting.
+(a rounded rectangle's radius, a frame's wall, an offset's distance, a
+corner's fillet or chamfer, a text) keeps it waiting in the panel's
+**Tool** section after the click: the section's fields now edit that
+result, and the view shows it solved as they change. A value that does
+not fit says why and holds OK back. One click makes one result: further
+clicks do not start another until it is put away. Only the section's
+**Cancel** drops it and leaves the sketch as it was; **OK**, Enter,
+Escape, a click in the view, another tool or finishing the sketch all
+store it as one undo step, as the section has it. Escape also puts the
+tool down; after the others the tool stays in hand when Continue drawing
+is on. An edit from elsewhere (an undo) puts it away. A recording of it
+is the `sketch.draw` call with that setting.
 
 **Paths and nodes.** A spline can be edited by its nodes, as vector
 drawings edit paths. Double click a spline in the Select tool: it shows
@@ -117,8 +120,7 @@ variables (`Printer.wall * 2`), worked out once as it is entered; the
 shape keeps no link to the formula. A typed field's lock shuts: it holds
 its value while the cursor moves. Escape empties the fields. The card
 stands on the side of the cursor where it hides the least of the
-sketch, and gives way to a card that edits a shape (a corner, a
-rectangle's sizes, a dimension) while one is open.
+sketch, and gives way to a dimension's card while one is open.
 
 - **Enter** places the click at the typed values and adds dimensions that
   hold them.
@@ -376,17 +378,13 @@ values always stay.
 Fillet and Chamfer take a radius or length in the Tool section, and
 **Keep it** leaves the corner as a construction point on both curves,
 with its constraints. A click on a corner (or on the second curve) does
-not cut at once: a card opens beside the corner, naming the two curves,
-and the view shows the corner cut and solved. The radius or length has
-the keys with its value selected, so typing replaces it (a unit or a
-formula works too); Keep it is on the card as well. A size the curves
-cannot take says why and holds OK back. As with a shape's card there is
-no Cancel: **OK**, Enter, Escape, a click elsewhere in the view, another
-tool or finishing the sketch cuts it as one undo step; an edit from
-elsewhere puts it away and leaves the sketch as it was. The size carries
-on to the next corner. A script's
-`sketch.draw` with `tool = "fillet"` still cuts at once, and a recording
-of the card is that call with the size applied.
+not cut at once: it waits in the Tool section, which names the two
+curves, and the view shows the corner cut and solved as the radius,
+length or Keep it change. A size the curves cannot take says why and
+holds OK back. As with a shape, only Cancel drops it; OK and everything
+else cut it as one undo step. The size carries on to the next corner. A
+script's `sketch.draw` with `tool = "fillet"` still cuts at once, and a
+recording of it is that call with the size applied.
 
 **Spline edits.** Raising a spline's degree and inserting a knot keep the
 curve. Lowering the degree, lowering a knot's multiplicity and removing a
@@ -411,12 +409,11 @@ Rotate:
 - **Follow the original**: the copies stay the original's size, spaced by
   one pitch, as the original changes.
 
-Offset copies the selected curves to the side of its click. The click
-opens a card beside it with the distance as the Tool section has it (the
-keys on it, a unit or a formula works too), Round and Both sides, the view
-showing the copies; as with a shape's card there is no Cancel, and OK,
-Enter, Escape, a click elsewhere, another tool or finishing the sketch
-copy at what the card shows, carried on to the tool. A frame round any
+Offset copies the selected curves to the side of its click. The copies
+wait in the Tool section, whose distance, Round, Both sides and other
+switches change them in the view; as with a shape, only Cancel drops
+them, and OK and everything else copy at what the section shows, carried
+on to the tool. A frame round any
 outline is its offset with the original kept. Offset can also replace the
 original, or stay held to it by one dimension (both in the Tool section). Symmetry can keep the original
 and hold the image to it with symmetric constraints. Copies, patterns and
@@ -615,6 +612,10 @@ profile's inner and outer radius.
 ## Text
 
 The Text tool writes text on the sketch: click where its baseline starts.
+The text then waits in the Tool section, whose text, font, size and other
+fields change it in the view as they are set; OK (or Escape, a click in
+the view, another tool) writes it, and Cancel drops it. Another text
+takes another use of the tool.
 A text is one object standing on a point: a click on any of its letters
 selects it whole, dragging moves it, and constraints go on its point
 (fix it, put it on a line, dimension it from an edge), never on the

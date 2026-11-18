@@ -344,24 +344,6 @@ fn feature_entries(document: &Document, registry: &DocumentService) -> Vec<Entry
     out
 }
 
-/// 0 = substring, 1 = subsequence, None = no match.
-fn match_rank(haystack: &str, needle: &str) -> Option<u8> {
-    if needle.is_empty() || haystack.contains(needle) {
-        return Some(0);
-    }
-    let mut chars = needle.chars();
-    let mut want = chars.next();
-    for c in haystack.chars() {
-        if Some(c) == want {
-            want = chars.next();
-            if want.is_none() {
-                return Some(1);
-            }
-        }
-    }
-    None
-}
-
 fn entries(
     registry: &mut DocumentService,
     keymap: &super::keymap::Keymap,
@@ -456,7 +438,7 @@ fn order(all: &[Entry], needle: &str, recent: &[String]) -> Vec<usize> {
                 .iter()
                 .position(|k| *k == e.key())
                 .unwrap_or(usize::MAX);
-            match_rank(&text, needle).map(|rank| (rank, lately, i))
+            ui_kit::search::match_rank(&text, needle).map(|rank| (rank, lately, i))
         })
         .collect();
     shown.sort();
@@ -761,7 +743,7 @@ mod tests {
         assert_eq!(labels(""), ["Fillet", "Pocket", "Pad", "Chamfer"]);
         // "pa" is in Pad itself; Pocket only matches it spread out.
         assert_eq!(labels("pa"), ["Pad"]);
-        assert_eq!(match_rank("pocket", "pkt"), Some(1));
+        assert_eq!(ui_kit::search::match_rank("pocket", "pkt"), Some(1));
         assert!(labels("xyz").is_empty());
     }
 }

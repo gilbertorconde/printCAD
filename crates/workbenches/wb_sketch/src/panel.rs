@@ -145,6 +145,9 @@ impl SketchWorkbench {
                 };
             }
             if request.accept || cancel {
+                // What a click left waiting is written as it stands.
+                self.store_corner(ctx, false);
+                self.discard_corner();
                 ctx.request(core_document::HostRequest::FinishEditing);
                 return TaskOutcome::Accepted {
                     label: format!("Edit {}", feature.sketch.name),
@@ -240,7 +243,7 @@ impl SketchWorkbench {
         if self.tab.sketch_picker.is_some() {
             widgets.extend(self.picker_widgets(ctx, &plane));
         }
-        widgets.extend(self.tool_widgets());
+        widgets.extend(self.tool_widgets(ctx));
         widgets.extend(self.array_widgets());
         widgets.extend(self.spline_widgets(&sketch));
         widgets.extend(self.text_widgets(&sketch));
@@ -528,8 +531,10 @@ impl SketchWorkbench {
         vec![section("sketch_picker", title, None, None, true, children)]
     }
 
-    /// Settings of the active drawing tool, when it has any.
-    fn tool_widgets(&self) -> Vec<Widget> {
+    /// Settings of the active drawing tool, when it has any. What a
+    /// click left to set waits here, these fields editing it, with its OK
+    /// and Cancel.
+    fn tool_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
         let tool = self.tab.last_tool.as_deref();
         let p = &self.tab.tool_params;
         let fields: Vec<Widget> = match tool {
@@ -540,11 +545,26 @@ impl SketchWorkbench {
                 3.0,
                 12.0,
             )],
-            Some("sketch.text") => text_fields(
-                "text_draft",
-                &self.tab.text_draft,
-                self.tab.panel.font_modes[0],
-            ),
+            Some("sketch.text") => {
+                let mut fields = text_fields(
+                    "text_draft",
+                    &self.tab.text_draft,
+                    self.tab.panel.font_modes[0],
+                );
+                // Where the waiting text goes is settled by its click.
+                if self.tab.corner_task.is_some() {
+                    for field in &mut fields {
+                        if let Widget::Toggles(t) = field
+                            && t.id == "text_draft.layout"
+                        {
+                            for b in &mut t.buttons {
+                                b.disabled = true;
+                            }
+                        }
+                    }
+                }
+                fields
+            }
             Some("sketch.slot" | "sketch.arc_slot") => {
                 vec![mm("tool.slot_width", "Width", p.slot_width)]
             }
@@ -689,7 +709,10 @@ impl SketchWorkbench {
             None,
             None,
             true,
-            vec![grid("sketch_tool_grid", true, fields)],
+            [grid("sketch_tool_grid", true, fields)]
+                .into_iter()
+                .chain(self.pending_widgets(ctx))
+                .collect(),
         )]
     }
 
@@ -1550,6 +1573,23 @@ impl SketchWorkbench {
 
     /// A change to the panel.
     pub(crate) fn task_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &PanelEvent) {
+        let id = event.id();
+        if let PanelEvent::Button { id } = event
+            && self.pending_button(ctx, id)
+        {
+            return;
+        }
+        // A tool setting changed while a click's result waits works it
+        // out again.
+        let retool = self.tab.corner_task.is_some()
+            && (id.starts_with("tool.") || id.starts_with("text_draft."));
+        self.task_event_inner(ctx, event);
+        if retool {
+            self.recalculate_corner(ctx);
+        }
+    }
+
+    fn task_event_inner(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &PanelEvent) {
         let id = event.id();
         if let Some(rest) = id.strip_prefix("attach.") {
             self.attachment_event(ctx, rest);
@@ -2679,6 +2719,8 @@ fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) ->
             value: spec.text.clone(),
             multiline: true,
             width: Some(160.0),
+            // A text waiting in the view follows each key.
+            live: salt == "text_draft",
             ..Default::default()
         }
         .into(),
@@ -2700,6 +2742,7 @@ fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) ->
                 id: format!("{salt}.family"),
                 label: "Family".into(),
                 options: families.to_vec(),
+                search: true,
                 selected: families
                     .iter()
                     .position(|f| named && f.eq_ignore_ascii_case(&spec.font))

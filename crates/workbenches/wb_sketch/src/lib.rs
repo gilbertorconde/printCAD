@@ -1213,6 +1213,17 @@ impl SketchWorkbench {
             .collect()
     }
 
+    /// A task panel event, as the panel hands it over (scripted runs and
+    /// tests drive the panel through it).
+    #[cfg(feature = "egui")]
+    pub fn task_panel_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &bench_api::PanelEvent,
+    ) {
+        self.task_event(ctx, event);
+    }
+
     /// Panel-editable tool parameters (also used by integration tests to
     /// set copy counts, offset distances, …).
     pub fn tool_params_mut(&mut self) -> &mut ToolParams {
@@ -1222,13 +1233,11 @@ impl SketchWorkbench {
 
 impl Workbench for SketchWorkbench {
     fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
-        self.corner_card(ctx).or_else(|| self.dimension_card(ctx))
+        self.dimension_card(ctx)
     }
 
     fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
-        if !self.corner_event(ctx, event) {
-            self.dimension_event(ctx, event);
-        }
+        self.dimension_event(ctx, event);
     }
 
     fn tool_history(
@@ -1895,6 +1904,9 @@ impl Workbench for SketchWorkbench {
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        // What a click left waiting is written as it stands.
+        self.store_corner(ctx, false);
+        self.discard_corner();
         self.flush_draw_record(ctx);
         if self.tab.active_sketch_id.is_some() {
             self.tab.active_sketch_id = None;

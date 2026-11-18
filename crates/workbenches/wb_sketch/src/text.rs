@@ -260,31 +260,7 @@ pub fn load_font_from(
     if read_kept_font(document, spec) {
         return Ok(());
     }
-    let path = std::path::Path::new(&spec.font);
-    // A name that looks like a file is read as one; any other is a file
-    // when one can be read by it, else an installed family.
-    let read = match std::fs::read(path) {
-        Err(e) if is_file(&spec.font) => {
-            return Err(format!("cannot read the font {}: {e}", spec.font));
-        }
-        read => read.ok(),
-    };
-    let found = match read {
-        Some(bytes) => InstalledFont {
-            family: String::new(),
-            bytes,
-            index: 0,
-            file: path.file_name().map(|n| n.to_string_lossy().to_string()),
-        },
-        None => installed(&spec.font).ok_or_else(|| {
-            format!(
-                "no font named {} is installed here or kept in the document",
-                spec.font
-            )
-        })?,
-    };
-    ttf_parser::Face::parse(&found.bytes, found.index)
-        .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
+    let found = find_font(spec, installed)?;
     let kept = document
         .assets()
         .filter(|asset| asset.metadata.get("kind").and_then(|k| k.as_str()) == Some("font"))
@@ -324,6 +300,53 @@ pub fn load_font_from(
     spec.font_data = Some(std::sync::Arc::new(found.bytes));
     spec.font_index = found.index;
     Ok(())
+}
+
+/// Ready `spec`'s font for a look at the text, changing nothing: as
+/// [`load_font`] finds it, a font file or installed family read but not
+/// kept in the document, which [`load_font`] does once the text is made.
+pub fn preview_font(document: &core_document::Document, spec: &mut TextSpec) -> Result<(), String> {
+    if read_kept_font(document, spec) {
+        return Ok(());
+    }
+    let found = find_font(spec, &installed_font)?;
+    spec.font_asset = None;
+    spec.font_data = Some(std::sync::Arc::new(found.bytes));
+    spec.font_index = found.index;
+    Ok(())
+}
+
+/// The font file or installed family `spec` names, read and checked.
+fn find_font(
+    spec: &TextSpec,
+    installed: &dyn Fn(&str) -> Option<InstalledFont>,
+) -> Result<InstalledFont, String> {
+    let path = std::path::Path::new(&spec.font);
+    // A name that looks like a file is read as one; any other is a file
+    // when one can be read by it, else an installed family.
+    let read = match std::fs::read(path) {
+        Err(e) if is_file(&spec.font) => {
+            return Err(format!("cannot read the font {}: {e}", spec.font));
+        }
+        read => read.ok(),
+    };
+    let found = match read {
+        Some(bytes) => InstalledFont {
+            family: String::new(),
+            bytes,
+            index: 0,
+            file: path.file_name().map(|n| n.to_string_lossy().to_string()),
+        },
+        None => installed(&spec.font).ok_or_else(|| {
+            format!(
+                "no font named {} is installed here or kept in the document",
+                spec.font
+            )
+        })?,
+    };
+    ttf_parser::Face::parse(&found.bytes, found.index)
+        .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
+    Ok(found)
 }
 
 /// The letters a text block uses, as its font draws them, in the font's

@@ -1,24 +1,24 @@
-//! The card for what a click leaves to set: a corner picked by the fillet
-//! or chamfer tool, the last click of a rounded rectangle or a frame, or
-//! the offset's click on its side, opens a card beside it with that size
-//! (a corner's size and Keep corner, the rounded corners' radius, the
-//! frame's wall, the offset's distance with Round and Both sides), the
-//! tool's own setting
-//! in it and the keys on it, the view showing the solved result. OK or
-//! Enter writes it, and so does anything else that puts it away (another
-//! tool, the sketch finished, a click in the view): left as it opened, the
-//! setting is what it writes. A tool whose clicks set everything, a plain
-//! rectangle among them, opens no card.
+//! What a click leaves to set: a corner picked by the fillet or chamfer
+//! tool, the last click of a rounded rectangle or a frame, the offset's
+//! click on its side, or the text tool's click, waits in the task panel's
+//! Tool section, whose fields (the tool's own settings) edit it live, the
+//! view showing the solved result. Only the section's Cancel drops it:
+//! its OK, Enter, Escape, a click in the view, another tool or the sketch
+//! finished each write it as it stands. One click, one result: the next
+//! starts when the tool is used again. A tool whose clicks set
+//! everything, a plain rectangle among them, leaves nothing waiting.
 //!
 //! The draft is the click itself, run again on the sketch as the click
-//! found it with the size now set (`step::click`, as the recorded
+//! found it with the settings now set (`step::click`, as the recorded
 //! `sketch.draw` call replays it: sizes typed before the click as its
-//! typed values, the radius or wall as the tool's setting), so what the
-//! view shows, what OK stores and what a replay makes are one result.
+//! typed values, the radius or wall as the tool's setting; the text
+//! written as `sketch.text` writes it), so what the view shows, what OK
+//! stores and what a replay makes are one result.
 
 use std::collections::HashSet;
 
-use bench_api::{FloatingCard, PanelEvent, Tone, panel};
+#[cfg(feature = "egui")]
+use bench_api::{ButtonStyle, NoteKind, Tone, Widget, panel};
 use core_document::{HostRequest, WorkbenchRuntimeContext};
 use uuid::Uuid;
 
@@ -28,6 +28,7 @@ use crate::ovp::FieldKind;
 use crate::rect::Kind;
 use crate::sketch::Vec2D;
 use crate::step::{self, StepSettings};
+use crate::text::{self, TextSpec};
 use crate::tools::ToolState;
 use crate::{DrawRecord, SketchWorkbench, solver};
 
@@ -45,6 +46,35 @@ enum Subject {
     },
     /// The selected curves copied at a distance on the click's side.
     Offset,
+    /// Text where the click put it, written as the tool's text settings
+    /// say, its font read without keeping it until it is written.
+    Text { at: TextAt, spec: Box<TextSpec> },
+}
+
+/// Where the text tool's click puts its text.
+#[derive(Clone, Copy)]
+pub(crate) enum TextAt {
+    /// From a point.
+    Point(Vec2D),
+    /// In a frame across two corners.
+    Frame(Vec2D, Vec2D),
+    /// Along a curve, from a point on it.
+    Path(Uuid, Vec2D),
+}
+
+impl TextAt {
+    /// Write `spec` into `sketch` here. Returns the block's id.
+    pub(crate) fn add(
+        self,
+        sketch: &mut crate::sketch::Sketch,
+        spec: &TextSpec,
+    ) -> Result<Uuid, String> {
+        match self {
+            TextAt::Point(at) => text::add(sketch, at, spec),
+            TextAt::Frame(a, b) => text::add_in_frame(sketch, a, b, spec),
+            TextAt::Path(curve, at) => text::add_on_path(sketch, &[curve], Some(at), spec),
+        }
+    }
 }
 
 /// A corner or rectangle open in its card.
@@ -66,9 +96,6 @@ pub(crate) struct CornerTask {
     /// Apply with the sizes then set.
     record: Option<DrawRecord>,
     subject: Subject,
-    /// The tool's size (a corner's, a rounded rectangle's radius, a
-    /// frame's wall) as typed in the card: a value, a unit or a formula.
-    size_text: String,
     /// The sketch with the click run and solved, or why it cannot be.
     working: Result<SketchFeature, String>,
 }
@@ -81,13 +108,14 @@ impl CornerTask {
     fn rect(&self) -> Option<Kind> {
         match self.subject {
             Subject::Rect { kind, .. } => Some(kind),
-            Subject::Corner(_) | Subject::Offset => None,
+            Subject::Corner(_) | Subject::Offset | Subject::Text { .. } => None,
         }
     }
 
     /// The tool setting the card's size field edits, if it has one.
     fn size_param(&self) -> Option<SizeParam> {
         Some(match self.rect() {
+            None if matches!(self.subject, Subject::Text { .. }) => return None,
             None if matches!(self.subject, Subject::Offset) => SizeParam::Offset,
             None if self.bevel() => SizeParam::Chamfer,
             None | Some(Kind::Rounded) => SizeParam::Fillet,
@@ -107,7 +135,7 @@ impl CornerTask {
             Subject::Rect {
                 typed, constrain, ..
             } => (typed, *constrain),
-            Subject::Corner(_) | Subject::Offset => (&[], false),
+            Subject::Corner(_) | Subject::Offset | Subject::Text { .. } => (&[], false),
         }
     }
 
@@ -119,6 +147,19 @@ impl CornerTask {
             if !(size.is_finite() && size >= 1e-6) {
                 return Err(param.refusal().into());
             }
+        }
+        if let Subject::Text { at, spec } = &self.subject {
+            let mut feature = self.base.clone();
+            at.add(&mut feature.sketch, spec)?;
+            if auto_update
+                && matches!(
+                    solver::solve(&mut feature.sketch),
+                    SolveOutcome::NotConverged { .. }
+                )
+            {
+                return Err("The constraints cannot be solved with this text".into());
+            }
+            return Ok(feature);
         }
         let mut feature = self.base.clone();
         let mut state = self.state.clone();
@@ -143,6 +184,7 @@ impl CornerTask {
                     Subject::Corner(_) => "These curves cannot be joined at this size".into(),
                     Subject::Rect { .. } => "No rectangle fits these sizes".into(),
                     Subject::Offset => "These curves cannot be offset by this distance".into(),
+                    Subject::Text { .. } => "The text cannot be written here".into(),
                 }));
         }
         if auto_update
@@ -157,6 +199,7 @@ impl CornerTask {
                     "The constraints cannot be solved with this rectangle".into()
                 }
                 Subject::Offset => "The constraints cannot be solved with this offset".into(),
+                Subject::Text { .. } => unreachable!("worked out above"),
             });
         }
         Ok(feature)
@@ -181,23 +224,6 @@ impl SizeParam {
         }
     }
 
-    fn set(self, p: &mut crate::tools::ToolParams, value: f64) {
-        match self {
-            SizeParam::Fillet => p.fillet_radius = value,
-            SizeParam::Chamfer => p.chamfer_length = value,
-            SizeParam::Wall | SizeParam::Offset => p.offset_distance = value,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            SizeParam::Fillet => "Radius",
-            SizeParam::Chamfer => "Length",
-            SizeParam::Wall => "Wall",
-            SizeParam::Offset => "Distance",
-        }
-    }
-
     fn refusal(self) -> &'static str {
         match self {
             SizeParam::Fillet => "Enter a radius greater than zero",
@@ -208,10 +234,9 @@ impl SizeParam {
     }
 }
 
-/// The card's id and field ids for a corner and for a rectangle.
-const CORNER_CARD: &str = "sketch.corner";
-const RECT_CARD: &str = "sketch.rect";
-const OFFSET_CARD: &str = "sketch.offset";
+/// The panel's buttons for what waits.
+pub(crate) const PENDING_OK: &str = "pending.ok";
+pub(crate) const PENDING_CANCEL: &str = "pending.cancel";
 
 impl SketchWorkbench {
     /// A fillet or chamfer click that resolves a corner opens its task
@@ -234,7 +259,7 @@ impl SketchWorkbench {
             cursor,
             settings.tol,
         )?;
-        self.open_card(
+        self.open_pending(
             ctx,
             feature,
             tool,
@@ -276,7 +301,7 @@ impl SketchWorkbench {
         if !outcome.changed {
             return None;
         }
-        self.open_card(ctx, feature, tool, cursor, settings, Subject::Offset);
+        self.open_pending(ctx, feature, tool, cursor, settings, Subject::Offset);
         Some(())
     }
 
@@ -311,7 +336,7 @@ impl SketchWorkbench {
             &settings.params,
         )
         .ok()?;
-        self.open_card(
+        self.open_pending(
             ctx,
             feature,
             tool,
@@ -326,7 +351,7 @@ impl SketchWorkbench {
         Some(())
     }
 
-    fn open_card(
+    fn open_pending(
         &mut self,
         ctx: &WorkbenchRuntimeContext,
         feature: &SketchFeature,
@@ -345,18 +370,43 @@ impl SketchWorkbench {
             selected: self.tab.selected.iter().copied().collect(),
             record: self.tab.draw_record.take(),
             subject,
-            size_text: String::new(),
             working: Err(String::new()),
         };
-        task.size_text = crate::glyphs::fmt_num(task.size());
         task.working = task.calculate(self.options.auto_update);
         self.tab.corner_task = Some(task);
         self.tab.dim_capture.clear_buffers();
         self.tab.last_diagnosis = None;
     }
 
-    /// Whether a shape the tool drew (a rectangle, an offset) waits in its
-    /// card, rather than a picked corner.
+    /// The text tool's click: the text waits at `at`, written as the
+    /// tool's text settings say until it is accepted.
+    pub(crate) fn open_text_task(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        at: TextAt,
+        settings: &StepSettings,
+    ) {
+        let cursor = match at {
+            TextAt::Point(p) | TextAt::Frame(p, _) | TextAt::Path(_, p) => p,
+        };
+        let spec = self.tab.text_draft.clone();
+        self.open_pending(
+            ctx,
+            feature,
+            "sketch.text",
+            cursor,
+            settings,
+            Subject::Text {
+                at,
+                spec: Box::new(spec),
+            },
+        );
+        self.recalculate_corner(ctx);
+    }
+
+    /// Whether a shape the tool drew (a rectangle, an offset, a text)
+    /// waits in the panel, rather than a picked corner.
     pub fn shape_card_open(&self) -> bool {
         self.tab
             .corner_task
@@ -419,6 +469,15 @@ impl SketchWorkbench {
             self.tab.corner_task = Some(task);
             return;
         };
+        if let Subject::Text { at, .. } = task.subject {
+            let spec = self.tab.text_draft.clone();
+            self.place_text(ctx, at, spec);
+            ctx.request(HostRequest::JournalLabel("Text".into()));
+            if hand_back && !self.options.continue_drawing {
+                ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
+            }
+            return;
+        }
         self.tab
             .selected
             .retain(|id| feature.sketch.get_geometry(*id).is_some());
@@ -430,6 +489,7 @@ impl SketchWorkbench {
         let label = match task.rect() {
             Some(_) => idle_name(&task.tool),
             None if matches!(task.subject, Subject::Offset) => "Offset",
+            None if matches!(task.subject, Subject::Text { .. }) => "Text",
             None if task.bevel() => "Chamfer",
             None => "Fillet",
         };
@@ -448,179 +508,114 @@ impl SketchWorkbench {
             Some(_) => ctx.log_info(format!("{label} {:.2}", task.size())),
             None => ctx.log_info(label),
         }
-        // The host closes the card's undo step once OK is handled.
+        // The host closes its undo step once OK is handled.
         ctx.request(HostRequest::JournalLabel(label.into()));
-        // With Continue drawing off, a finished rectangle hands the
-        // pointer back to the Select tool, as a stored one does.
-        if hand_back && task.rect().is_some() && !self.options.continue_drawing {
+        // With Continue drawing off, the pointer goes back to the Select
+        // tool, as a stored shape hands it back.
+        if hand_back && !self.options.continue_drawing {
             ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
     }
 
-    /// The card: what it edits and its sizes (the first with the keys as
-    /// it opens), by the click; OK held back with the reason while the
-    /// result is refused.
-    pub(crate) fn corner_card(&self, ctx: &WorkbenchRuntimeContext) -> Option<FloatingCard> {
-        let task = self.tab.corner_task.as_ref()?;
-        let size = task.size_param().map(|param| {
-            let id = match task.subject {
-                Subject::Rect { .. } => "rect.size",
-                Subject::Offset => "offset.size",
-                Subject::Corner(_) => "corner.size",
-            };
-            let mut size = panel::entry_with(id, param.label(), &task.size_text, "A size");
-            size.live = true;
-            size.mono = true;
-            size.formulas = true;
-            size
-        });
-        let mut blocks: Vec<bench_api::Widget> = Vec::new();
-        let (id, title, icon, focus) = match &task.subject {
-            Subject::Corner(curves) => {
-                let names = curves.map(|id| crate::style::element_name(&task.base.sketch, id));
-                blocks.push(panel::caption(
-                    &format!("{} + {}", names[0], names[1]),
-                    Tone::Neutral,
-                    true,
-                ));
-                blocks.extend(size.map(Into::into));
-                let mut keep = panel::check(
-                    "corner.keep",
-                    "Corner",
-                    "Keep it",
-                    task.settings.params.corner_keep,
-                );
-                keep.hint = "The corner stays as a construction point on both curves, with its \
-                             constraints"
-                    .into();
-                blocks.push(keep.into());
-                let (title, icon) = if task.bevel() {
-                    ("Chamfer", "sketch-chamfer")
-                } else {
-                    ("Fillet", "sketch-fillet")
-                };
-                (CORNER_CARD, title, icon, "corner.size")
-            }
-            Subject::Offset => {
-                blocks.extend(size.map(Into::into));
-                let params = &task.settings.params;
-                blocks.push(
-                    panel::check("offset.round", "Corners", "Round", params.offset_round).into(),
-                );
-                blocks
-                    .push(panel::check("offset.both", "Sides", "Both", params.offset_both).into());
-                (OFFSET_CARD, "Offset", "offset-geometry", "offset.size")
-            }
-            Subject::Rect { .. } => {
-                blocks.extend(size.map(Into::into));
-                (
-                    RECT_CARD,
-                    idle_name(&task.tool),
-                    crate::registration::tool_icon(&task.tool),
-                    "rect.size",
-                )
-            }
+    #[cfg(feature = "egui")]
+    /// The Tool section's close for what waits: what it is, why it
+    /// cannot be written yet, and its OK and Cancel. Empty with nothing
+    /// waiting.
+    pub(crate) fn pending_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
+        let Some(task) = self.tab.corner_task.as_ref() else {
+            return Vec::new();
         };
+        let mut widgets = Vec::new();
+        if let Subject::Corner(curves) = &task.subject {
+            let names = curves.map(|id| crate::style::element_name(&task.base.sketch, id));
+            widgets.push(panel::caption(
+                &format!("{} + {}", names[0], names[1]),
+                Tone::Neutral,
+                true,
+            ));
+        }
         let stale = task.seq != ctx.document.mutation_seq();
         let refusal = match (&task.working, stale) {
             (_, true) => Some("The sketch changed: draw it again".to_string()),
-            (Err(why), _) => Some(why.clone()),
+            (Err(why), _) if !why.is_empty() => Some(why.clone()),
+            (Err(_), _) => Some(String::new()),
             (Ok(_), _) => None,
         };
-        let plane = &task.base.plane;
-        let at = std::array::from_fn(|i| {
-            (plane.origin[i] + plane.x_axis[i] * task.cursor.x + plane.y_axis[i] * task.cursor.y)
-                as f32
-        });
-        let mut card = panel::floating_card(id, title, at, Some(focus), blocks);
-        card.icon = Some(icon.into());
-        card.refusal = refusal;
-        card.ok_only = true;
-        Some(card)
+        if let Some(why) = refusal.as_ref().filter(|why| !why.is_empty()) {
+            widgets.push(panel::note(NoteKind::Warning, None, why));
+        }
+        widgets.push(panel::flow([
+            panel::hinted(
+                "Write it as it stands; so do Enter, Escape, a click in the view and another tool",
+                panel::button(PENDING_OK, "OK", ButtonStyle::Primary, refusal.is_none()),
+            ),
+            panel::hinted(
+                "Drop it: the sketch stays as it was before the click",
+                panel::button(PENDING_CANCEL, "Cancel", ButtonStyle::Secondary, true),
+            ),
+        ]));
+        widgets
     }
 
-    /// A change on the card. Answers whether it was one. The tool's size
-    /// and switch carry on to its next corner or rectangle.
-    pub(crate) fn corner_event(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        event: &PanelEvent,
-    ) -> bool {
-        let Some(task) = self.tab.corner_task.as_mut() else {
-            return false;
-        };
-        let length = |value: &str| {
-            ctx.document
-                .evaluate_formula(value, Some(core_document::expr::Dim::LENGTH))
-                .map(|q| q.value)
-                .map_err(|why| {
-                    if value.trim().is_empty() {
-                        "Type a size".to_string()
-                    } else {
-                        why
-                    }
-                })
-        };
-        match event {
-            PanelEvent::CardClose { id, accept }
-                if id == CORNER_CARD || id == RECT_CARD || id == OFFSET_CARD =>
-            {
-                if *accept {
-                    self.apply_corner(ctx);
-                } else {
-                    self.discard_corner();
-                }
-                return true;
-            }
-            PanelEvent::Text { id, value }
-                if id == "corner.size" || id == "rect.size" || id == "offset.size" =>
-            {
-                task.size_text.clone_from(value);
-                match (length(value), task.size_param()) {
-                    (Ok(v), Some(param)) => param.set(&mut self.tab.tool_params, v),
-                    (Err(why), _) => {
-                        task.working = Err(why);
-                        return true;
-                    }
-                    (Ok(_), None) => return true,
-                }
-            }
-            PanelEvent::Toggle { id, on } if id == "corner.keep" => {
-                self.tab.tool_params.corner_keep = *on;
-            }
-            PanelEvent::Toggle { id, on } if id == "offset.round" => {
-                self.tab.tool_params.offset_round = *on;
-            }
-            PanelEvent::Toggle { id, on } if id == "offset.both" => {
-                self.tab.tool_params.offset_both = *on;
-            }
-            _ if ["corner.", "rect.", "offset."]
-                .iter()
-                .any(|prefix| event.id().starts_with(prefix)) =>
-            {
-                return true;
-            }
+    /// Whether a click's result waits in the Tool section: `Ok` when its
+    /// OK would write it, else why not.
+    pub fn waiting(&self, ctx: &WorkbenchRuntimeContext) -> Option<Result<(), String>> {
+        let task = self.tab.corner_task.as_ref()?;
+        Some(if task.seq != ctx.document.mutation_seq() {
+            Err("The sketch changed: draw it again".into())
+        } else {
+            task.working.as_ref().map(|_| ()).map_err(Clone::clone)
+        })
+    }
+
+    #[cfg(feature = "egui")]
+    /// The Tool section's OK or Cancel. Answers whether `id` was one.
+    pub(crate) fn pending_button(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str) -> bool {
+        match id {
+            PENDING_OK => self.apply_corner(ctx),
+            PENDING_CANCEL => self.discard_corner(),
             _ => return false,
         }
-        self.recalculate_corner();
         true
     }
 
-    /// Work the card's click out again at the tool's sizes.
-    fn recalculate_corner(&mut self) {
+    /// Work what waits out again at the tool's settings, after one of
+    /// them changed in the panel.
+    pub(crate) fn recalculate_corner(&mut self, ctx: &WorkbenchRuntimeContext) {
         let auto_update = self.options.auto_update;
-        let p = self.tab.tool_params;
-        if let Some(task) = self.tab.corner_task.as_mut() {
-            let params = &mut task.settings.params;
-            params.fillet_radius = p.fillet_radius;
-            params.chamfer_length = p.chamfer_length;
-            params.corner_keep = p.corner_keep;
-            params.offset_distance = p.offset_distance;
-            params.offset_round = p.offset_round;
-            params.offset_both = p.offset_both;
-            task.working = task.calculate(auto_update);
-            self.tab.last_diagnosis = None;
+        let params = self.click_params();
+        let draft = self.tab.text_draft.clone();
+        let Some(task) = self.tab.corner_task.as_mut() else {
+            return;
+        };
+        let mut refused = None;
+        match &mut task.subject {
+            Subject::Text { spec, .. } => {
+                **spec = draft;
+                if let Err(why) = text::preview_font(ctx.document, spec) {
+                    refused = Some(why);
+                } else {
+                    match text::values_of(ctx.document, &spec.text) {
+                        Ok(values) => spec.values = values,
+                        Err(why) => refused = Some(why),
+                    }
+                }
+            }
+            _ => {
+                let corner = task.settings.params;
+                task.settings.params = crate::tools::ToolParams {
+                    copies: corner.copies,
+                    auto_constraints: corner.auto_constraints,
+                    arc_helpers: corner.arc_helpers,
+                    ..params
+                };
+            }
         }
+        task.working = match refused {
+            Some(why) => Err(why),
+            None => task.calculate(auto_update),
+        };
+        self.tab.last_diagnosis = None;
     }
 }
 

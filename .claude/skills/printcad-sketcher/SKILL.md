@@ -112,11 +112,16 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   `evaluate_with_retained_parameters` and solved, shown through
   `displayed_sketch`; OK records the dimension, switches, variable,
   formula and value, and the host closes them as one undo step),
-  `corner_task.rs` (a fillet or chamfer click on a corner opens a
-  floating card by it, `corner_card`: the click replayed by `step::click`
-  on the sketch as it found it at the size typed, shown through
-  `displayed_sketch` and never stored until OK, which records it as the
-  `sketch.draw` call; the host closes that as one undo step),
+  `corner_task.rs` (what a click leaves to set: a fillet or chamfer
+  corner, a rounded rectangle's radius, a frame's wall, an offset, a
+  text, waiting in the task panel's Tool section, `pending_widgets`,
+  whose fields edit it live: the click replayed by `step::click` (a
+  text by `TextAt::add`, its font read by `text::preview_font` without
+  keeping it) on the sketch as it found it, shown through
+  `displayed_sketch` and never stored until accepted; only its Cancel
+  drops it, while OK, Enter, Escape, a click in the view, another tool
+  or finishing the sketch record it as the `sketch.draw` or
+  `sketch.text` call, one undo step),
   `style.rs` (icons and
   names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
 - `image_edges`: standalone std-only subpixel edge chains in grey images
