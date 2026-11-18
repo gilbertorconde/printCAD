@@ -122,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "printcad-bench-api"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "printcad-kernel-api",
  "serde",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "printcad-bench-sdk"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "printcad-bench-api",
  "serde",
@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "printcad-kernel-api"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "serde",
