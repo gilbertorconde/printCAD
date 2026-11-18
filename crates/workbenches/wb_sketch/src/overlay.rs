@@ -61,11 +61,50 @@ pub struct ElementStyle {
 pub struct SketchProjector<'a> {
     ctx: &'a WorkbenchRuntimeContext<'a>,
     plane: SketchPlane,
+    /// [`Self::visible_extent`], worked out at its first use.
+    extent: std::cell::OnceCell<Option<(Vec2D, Vec2D)>>,
 }
 
 impl<'a> SketchProjector<'a> {
     pub fn new(ctx: &'a WorkbenchRuntimeContext<'a>, plane: SketchPlane) -> Self {
-        Self { ctx, plane }
+        Self {
+            ctx,
+            plane,
+            extent: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Whether anything in the sketch box `lo..hi` can be on screen: it
+    /// meets the view's extent, or the view has none.
+    fn may_show(&self, lo: Vec2D, hi: Vec2D) -> bool {
+        match *self.extent.get_or_init(|| self.visible_extent()) {
+            Some((vlo, vhi)) => lo.x <= vhi.x && hi.x >= vlo.x && lo.y <= vhi.y && hi.y >= vlo.y,
+            None => true,
+        }
+    }
+
+    /// Segments a full turn of radius `radius` about `center` takes to
+    /// stay within a third of a pixel of the true circle on screen, at
+    /// most [`CIRCLE_SEGMENTS`].
+    fn turn_segments(&self, center: Vec2D, radius: f64) -> usize {
+        const MIN: usize = 12;
+        const TOLERANCE_PX: f32 = 0.33;
+        let px = |p: Vec2D| self.to_px(p);
+        let (Some(c), Some(x), Some(y)) = (
+            px(center),
+            px(Vec2D::new(center.x + radius, center.y)),
+            px(Vec2D::new(center.x, center.y + radius)),
+        ) else {
+            return CIRCLE_SEGMENTS;
+        };
+        let r = (x[0] - c[0])
+            .hypot(x[1] - c[1])
+            .max((y[0] - c[0]).hypot(y[1] - c[1]));
+        if r <= TOLERANCE_PX {
+            return MIN;
+        }
+        let step = 2.0 * (1.0 - TOLERANCE_PX / r).acos();
+        ((std::f32::consts::TAU / step).ceil() as usize).clamp(MIN, CIRCLE_SEGMENTS)
     }
 
     pub fn to_world(&self, pos: Vec2D) -> [f64; 3] {
@@ -258,19 +297,37 @@ fn push_dot(out: &mut Overlays, proj: &SketchProjector, pos: Vec2D, color: [f32;
 }
 
 fn circle_points(center: Vec2D, radius: f64) -> impl Iterator<Item = Vec2D> {
-    (0..=CIRCLE_SEGMENTS).map(move |i| {
-        let a = (i as f64 / CIRCLE_SEGMENTS as f64) * std::f64::consts::TAU;
+    circle_points_n(center, radius, CIRCLE_SEGMENTS)
+}
+
+fn circle_points_n(center: Vec2D, radius: f64, segments: usize) -> impl Iterator<Item = Vec2D> {
+    (0..=segments).map(move |i| {
+        let a = (i as f64 / segments as f64) * std::f64::consts::TAU;
         Vec2D::new(center.x + radius * a.cos(), center.y + radius * a.sin())
     })
 }
 
 fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = Vec2D> {
+    arc_points_n(center, start, end, None)
+}
+
+/// An arc's samples: [`ARC_SEGMENTS`] of them, or with `per_turn` that
+/// share of a full turn's segments its sweep is.
+fn arc_points_n(
+    center: Vec2D,
+    start: Vec2D,
+    end: Vec2D,
+    per_turn: Option<usize>,
+) -> impl Iterator<Item = Vec2D> {
     let sv = (start - center).to_glam();
     let ev = (end - center).to_glam();
     let radius = sv.length();
     let (start_angle, sweep) = arc_angles(sv, ev);
-    (0..=ARC_SEGMENTS).map(move |i| {
-        let a = start_angle + sweep * (i as f64 / ARC_SEGMENTS as f64);
+    let segments = per_turn.map_or(ARC_SEGMENTS, |n| {
+        ((n as f64 * sweep.abs() / std::f64::consts::TAU).ceil() as usize).clamp(4, ARC_SEGMENTS)
+    });
+    (0..=segments).map(move |i| {
+        let a = start_angle + sweep * (i as f64 / segments as f64);
         Vec2D::new(center.x + radius * a.cos(), center.y + radius * a.sin())
     })
 }
@@ -586,6 +643,10 @@ fn push_element(
         GeometryElement::Line(l) => {
             if let (Some(a), Some(b)) =
                 (sketch.point_position(l.start), sketch.point_position(l.end))
+                && proj.may_show(
+                    Vec2D::new(a.x.min(b.x), a.y.min(b.y)),
+                    Vec2D::new(a.x.max(b.x), a.y.max(b.y)),
+                )
             {
                 push_polyline(
                     &mut out.lines,
@@ -597,12 +658,17 @@ fn push_element(
                 );
             }
         }
+        // Round curves off screen are left out, and those on it take as
+        // many segments as their size there needs.
         GeometryElement::Circle(c) => {
-            if let Some(center) = sketch.point_position(c.center) {
+            if let Some(center) = sketch.point_position(c.center)
+                && let reach = Vec2D::new(c.radius, c.radius)
+                && proj.may_show(center - reach, center + reach)
+            {
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    circle_points(center, c.radius),
+                    circle_points_n(center, c.radius, proj.turn_segments(center, c.radius)),
                     color,
                     thickness,
                     dashed,
@@ -615,14 +681,18 @@ fn push_element(
                 sketch.point_position(a.start),
                 sketch.point_position(a.end),
             ) {
-                push_polyline(
-                    &mut out.lines,
-                    proj,
-                    arc_points(c, s, e),
-                    color,
-                    thickness,
-                    dashed,
-                );
+                let radius = (s - c).to_glam().length();
+                let reach = Vec2D::new(radius, radius);
+                if proj.may_show(c - reach, c + reach) {
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        arc_points_n(c, s, e, Some(proj.turn_segments(c, radius))),
+                        color,
+                        thickness,
+                        dashed,
+                    );
+                }
             }
         }
         GeometryElement::Ellipse(e) => {
@@ -1631,18 +1701,24 @@ fn push_loose_ends(
     pal: &SketchPalette,
     sketch: &Sketch,
 ) {
-    let radius = f64::from(LOOSE_END_PX) * proj.units_per_px();
+    // Drawn round the end's place on screen: a ring of a few pixels needs
+    // few segments, and one off screen none.
+    const SEGMENTS: usize = 16;
+    let (_, _, w, h) = proj.ctx.viewport;
+    let r = LOOSE_END_PX;
     for id in crate::profile::loose_ends(sketch) {
-        if let Some(at) = sketch.point_position(id) {
-            push_polyline(
-                &mut out.lines,
-                proj,
-                circle_points(at, radius),
-                pal.conflict,
-                1.5,
-                false,
-            );
+        let Some(c) = sketch.point_position(id).and_then(|p| proj.to_px(p)) else {
+            continue;
+        };
+        if c[0] < -r || c[1] < -r || c[0] > w as f32 + r || c[1] > h as f32 + r {
+            continue;
         }
+        let ring = (0..=SEGMENTS).map(|i| {
+            let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            Some([c[0] + r * a.cos(), c[1] + r * a.sin()])
+        });
+        out.lines
+            .extend(ScreenSpaceOverlay::polyline(ring, pal.conflict, 1.5, None));
     }
 }
 

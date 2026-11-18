@@ -10,6 +10,8 @@ mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
 mod platform;
+#[cfg(all(feature = "profile", target_os = "linux"))]
+mod profile;
 mod script_library;
 #[cfg(test)]
 mod test_support;
@@ -87,6 +89,8 @@ fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_bloc
 fn main() -> Result<()> {
     core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
     app::bench_hooks::hooks();
+    #[cfg(all(feature = "profile", target_os = "linux"))]
+    profile::start();
     let _camera_tracing_guard =
         init_tracing_subscriber().context("tracing subscriber init failed")?;
 
@@ -122,6 +126,8 @@ fn main() -> Result<()> {
     match headless::parse(&words) {
         Ok(Some(invocation)) => {
             let finished = headless::run(&invocation, registry)?;
+            #[cfg(all(feature = "profile", target_os = "linux"))]
+            profile::finish();
             std::process::exit(if finished { 0 } else { 1 });
         }
         Ok(None) => {}
@@ -170,6 +176,8 @@ fn main() -> Result<()> {
     }
     app.start_agent_server();
     event_loop.run_app(&mut app).context("event loop error")?;
+    #[cfg(all(feature = "profile", target_os = "linux"))]
+    profile::finish();
     Ok(())
 }
 
@@ -425,7 +433,16 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        if matches!(event, WindowEvent::CursorMoved { .. }) {
+            self.input.pending_move = Some((window_id, event));
+            return;
+        }
+        self.handle_pending_move(event_loop);
+        #[cfg(all(feature = "profile", target_os = "linux"))]
+        let began = std::time::Instant::now();
         self.handle_window_event(event_loop, window_id, event);
+        #[cfg(all(feature = "profile", target_os = "linux"))]
+        profile::event(began.elapsed());
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
@@ -440,7 +457,12 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.handle_pending_move(event_loop);
+        #[cfg(all(feature = "profile", target_os = "linux"))]
+        let began = std::time::Instant::now();
         self.frame(event_loop);
+        #[cfg(all(feature = "profile", target_os = "linux"))]
+        profile::frame(began.elapsed());
     }
 }
 

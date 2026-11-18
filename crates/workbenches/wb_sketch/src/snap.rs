@@ -944,6 +944,22 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
     Shape::of(&|id| sketch.point_position(id), geom).map(|shape| shape.distance(pos.to_glam()))
 }
 
+/// [`distance_to_element`] when it is at most `reach`: a curve whose
+/// bound keeps it further away is passed over without its nearest point.
+pub fn distance_within(
+    sketch: &Sketch,
+    geom: &GeometryElement,
+    pos: Vec2D,
+    reach: f64,
+) -> Option<f64> {
+    let shape = Shape::of(&|id| sketch.point_position(id), geom)?;
+    let p = pos.to_glam();
+    if shape.distance_at_least(p) > reach {
+        return None;
+    }
+    Some(shape.distance(p)).filter(|d| *d <= reach)
+}
+
 /// CCW start angle and sweep (0..TAU) for an arc from `start_vec` to
 /// `end_vec` (both relative to the center).
 pub fn arc_angles(start_vec: DVec2, end_vec: DVec2) -> (f64, f64) {

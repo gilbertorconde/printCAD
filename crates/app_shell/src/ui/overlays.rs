@@ -31,24 +31,6 @@ const RIM_ALPHA: f32 = 0.55;
 /// guides) are background, and stay unrimmed.
 const RIMMED_FROM: f32 = 0.6;
 
-/// Where `overlay` starts and ends on screen.
-fn ends(
-    viewport_rect: egui::Rect,
-    overlay: &core_document::ScreenSpaceOverlay,
-    ppp: f32,
-) -> (egui::Pos2, egui::Pos2) {
-    (
-        egui::pos2(
-            viewport_rect.min.x + overlay.start[0] / ppp,
-            viewport_rect.min.y + overlay.start[1] / ppp,
-        ),
-        egui::pos2(
-            viewport_rect.min.x + overlay.end[0] / ppp,
-            viewport_rect.min.y + overlay.end[1] / ppp,
-        ),
-    )
-}
-
 /// Draw the pictures a bench lays over the viewport, each a textured grid
 /// between its corners laid out by [`picture_mesh`]; a picture not shown
 /// any more lets its texture go.
@@ -288,44 +270,6 @@ pub fn draw_screen_space_polygons(
     }
 }
 
-/// One dashed segment whose pattern is already `phase` along (points): a
-/// polyline's segments continue the pattern rather than each restarting
-/// it. The painter's own offset is a leading gap, so the rest of a dash
-/// the phase falls in is drawn here and the pattern resumes after its gap.
-fn dashed_segment(
-    [start, end]: [egui::Pos2; 2],
-    stroke: egui::Stroke,
-    (dash, gap): (f32, f32),
-    phase: f32,
-) -> Vec<egui::Shape> {
-    let length = start.distance(end);
-    let phase = phase.rem_euclid(dash + gap);
-    if phase >= dash {
-        return egui::Shape::dashed_line_with_offset(
-            &[start, end],
-            stroke,
-            &[dash],
-            &[gap],
-            dash + gap - phase,
-        );
-    }
-    let rest = dash - phase;
-    let mut shapes = vec![egui::Shape::line_segment(
-        [start, start + (end - start) * (rest / length).min(1.0)],
-        stroke,
-    )];
-    if rest + gap < length {
-        shapes.extend(egui::Shape::dashed_line_with_offset(
-            &[start, end],
-            stroke,
-            &[dash],
-            &[gap],
-            rest + gap,
-        ));
-    }
-    shapes
-}
-
 /// Draw constant-thickness lines in the viewport area.
 pub fn draw_screen_space_overlays(
     ctx: &Context,
@@ -335,55 +279,43 @@ pub fn draw_screen_space_overlays(
     if overlays.is_empty() {
         return;
     }
-    let ppp = ctx.pixels_per_point();
     let painter = viewport_painter(ctx, viewport_rect);
-    // A dark rim under every strong line first, so a light line reads on a
-    // light face and a coloured one on a face of its colour; the rims all
-    // go down before any line, so none covers a neighbour.
-    for overlay in overlays.iter().filter(|o| o.alpha >= RIMMED_FROM) {
-        let (start, end) = ends(viewport_rect, overlay, ppp);
-        let rim = egui::Stroke::new(
-            (overlay.thickness + 2.0 * RIM_PX) / ppp,
-            Color32::from_black_alpha((RIM_ALPHA * overlay.alpha * 255.0) as u8),
-        );
-        match overlay.dash {
-            Some((dash, gap)) => {
-                painter.extend(dashed_segment(
-                    [start, end],
-                    rim,
-                    (dash / ppp, gap / ppp),
-                    overlay.dash_offset / ppp,
-                ));
-            }
-            None => {
-                painter.line_segment([start, end], rim);
-            }
+    painter.add(render_wgpu::lines_shape(
+        viewport_rect,
+        screen_lines(overlays),
+    ));
+}
+
+/// The segments the GPU draws for `overlays`: a dark rim under every
+/// strong line first, so a light line reads on a light face and a coloured
+/// one on a face of its colour; the rims all go down before any line, so
+/// none covers a neighbour.
+fn screen_lines(overlays: &[core_document::ScreenSpaceOverlay]) -> Vec<render_wgpu::ScreenLine> {
+    let line = |o: &core_document::ScreenSpaceOverlay, color: [f32; 4], thickness: f32| {
+        render_wgpu::ScreenLine {
+            start: o.start,
+            end: o.end,
+            color,
+            thickness,
+            dash: o.dash,
+            dash_offset: o.dash_offset,
         }
-    }
-    for overlay in overlays {
-        let start = egui::pos2(
-            viewport_rect.min.x + overlay.start[0] / ppp,
-            viewport_rect.min.y + overlay.start[1] / ppp,
-        );
-        let end = egui::pos2(
-            viewport_rect.min.x + overlay.end[0] / ppp,
-            viewport_rect.min.y + overlay.end[1] / ppp,
-        );
-        let stroke = egui::Stroke::new(overlay.thickness / ppp, rgb(overlay.color, overlay.alpha));
-        match overlay.dash {
-            Some((dash, gap)) => {
-                painter.extend(dashed_segment(
-                    [start, end],
-                    stroke,
-                    (dash / ppp, gap / ppp),
-                    overlay.dash_offset / ppp,
-                ));
-            }
-            None => {
-                painter.line_segment([start, end], stroke);
-            }
-        }
-    }
+    };
+    let rims = overlays.iter().filter(|o| o.alpha >= RIMMED_FROM).map(|o| {
+        line(
+            o,
+            [0.0, 0.0, 0.0, RIM_ALPHA * o.alpha],
+            o.thickness + 2.0 * RIM_PX,
+        )
+    });
+    let lines = overlays.iter().map(|o| {
+        line(
+            o,
+            [o.color[0], o.color[1], o.color[2], o.alpha],
+            o.thickness,
+        )
+    });
+    rims.chain(lines).collect()
 }
 
 /// Draw point markers and icon glyphs, above the lines and beneath the
@@ -592,24 +524,25 @@ mod tests {
         assert_eq!((points.len(), indices.len()), (4, 6));
     }
 
-    /// Painted length of overlays as the painter dashes them, in pixels.
+    /// Painted length of overlays under the line pass's dash rule (a
+    /// point `s` along a segment is on when `dash_offset + s` falls in the
+    /// dash of its period), in pixels, summed over hundredths of a pixel.
     fn painted(overlays: &[core_document::ScreenSpaceOverlay]) -> f32 {
         overlays
             .iter()
-            .flat_map(|o| {
-                let (start, end) = (
-                    egui::pos2(o.start[0], o.start[1]),
-                    egui::pos2(o.end[0], o.end[1]),
-                );
-                let stroke = egui::Stroke::new(1.0, Color32::WHITE);
-                match o.dash {
-                    Some(pattern) => dashed_segment([start, end], stroke, pattern, o.dash_offset),
-                    None => vec![egui::Shape::line_segment([start, end], stroke)],
-                }
-            })
-            .map(|shape| match shape {
-                egui::Shape::LineSegment { points: [a, b], .. } => a.distance(b),
-                other => panic!("a dash is a line segment, not {other:?}"),
+            .map(|o| {
+                let length = (o.end[0] - o.start[0]).hypot(o.end[1] - o.start[1]);
+                let Some((dash, gap)) = o.dash else {
+                    return length;
+                };
+                let steps = (length * 100.0).round() as usize;
+                (0..steps)
+                    .filter(|i| {
+                        let s = o.dash_offset + (*i as f32 + 0.5) / 100.0;
+                        s.rem_euclid(dash + gap) < dash
+                    })
+                    .count() as f32
+                    / 100.0
             })
             .sum()
     }
@@ -631,7 +564,7 @@ mod tests {
         };
         for step in [90.0, 30.0, 4.5, 2.0, 1.0, 0.5] {
             let drawn = painted(&path(step));
-            assert!((drawn - 50.0).abs() < 1e-3, "step {step}: painted {drawn}");
+            assert!((drawn - 50.0).abs() < 0.25, "step {step}: painted {drawn}");
         }
         // Phase falling in a gap and in a dash, past one period.
         let one = |phase: f32| {
@@ -641,10 +574,10 @@ mod tests {
             o.dash_offset = phase;
             painted(&[o])
         };
-        assert!((one(0.0) - 5.0).abs() < 1e-4);
-        assert!((one(6.0) - 5.0).abs() < 1e-4, "{}", one(6.0)); // 3 gap, 5 dash, 1 gap
-        assert!((one(2.0) - 5.0).abs() < 1e-4, "{}", one(2.0)); // 3 dash, 4 gap, 2 dash
-        assert!((one(11.0) - one(2.0)).abs() < 1e-4);
+        assert!((one(0.0) - 5.0).abs() < 0.03);
+        assert!((one(6.0) - 5.0).abs() < 0.03, "{}", one(6.0)); // 3 gap, 5 dash, 1 gap
+        assert!((one(2.0) - 5.0).abs() < 0.03, "{}", one(2.0)); // 3 dash, 4 gap, 2 dash
+        assert!((one(11.0) - one(2.0)).abs() < 0.03);
         // An unprojectable point breaks the path without a segment across it.
         let broken = core_document::ScreenSpaceOverlay::polyline(
             [

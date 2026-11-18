@@ -1,5 +1,5 @@
 use super::*;
-use core_document::{Document, WorkbenchInputEvent, WorkbenchRuntimeContext};
+use core_document::{Document, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext};
 
 /// The box primitive at the origin, added to `body`.
 fn add_box(doc: &mut Document, body: BodyId) -> FeatureId {

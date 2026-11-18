@@ -880,6 +880,29 @@ fn overlays_are_generated_while_editing() {
     assert!(dots >= 4, "corner points drawn as dots, got {dots}");
 }
 
+/// A circle is drawn in as many segments as its size on screen needs, and
+/// not at all when it is off screen.
+#[test]
+fn circles_take_the_segments_their_size_on_screen_needs() {
+    let drawn = |x: f64, y: f64, radius: f64| {
+        let mut h = Harness::sketching();
+        let before = h.overlays().len();
+        h.edit_sketch(|sketch| {
+            let center = point(sketch, x, y);
+            let circle = wb_sketch::sketch::Circle::new(center, radius);
+            sketch.add_geometry(GeometryElement::Circle(circle));
+        });
+        h.overlays().len() - before
+    };
+    // About 15 pixels to the unit from 50 above: half a unit is a few
+    // pixels round, 15 units fill most of the view.
+    assert_eq!(drawn(0.0, 0.0, 0.5), 12, "the fewest a small circle takes");
+    assert_eq!(drawn(0.0, 0.0, 15.0), 48, "the most a large one takes");
+    let medium = drawn(0.0, 0.0, 3.0);
+    assert!(12 < medium && medium < 48, "{medium} segments");
+    assert_eq!(drawn(500.0, 500.0, 1.0), 0, "off screen");
+}
+
 /// Pressed on the end the line tool draws from and dragged, the line tool
 /// draws an arc tangent to the line before it, then goes on with lines
 /// from the arc's end.
@@ -1116,8 +1139,8 @@ fn loose_ends_are_ringed_between_shapes() {
             .iter()
             .filter(|o| o.color == conflict)
             .count()
-            // A ring is drawn in 48 segments.
-            / 48
+            // A ring is drawn in 16 segments.
+            / 16
     };
     let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");

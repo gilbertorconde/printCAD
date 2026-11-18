@@ -39,6 +39,15 @@ fn sketches_projecting(
     document: &Document,
     body: BodyId,
 ) -> Vec<(FeatureId, u64, Vec<kernel_api::ProjectionProbe>)> {
+    super::read_once(document, "sketches projecting", body, || {
+        read_sketches_projecting(document, body)
+    })
+}
+
+fn read_sketches_projecting(
+    document: &Document,
+    body: BodyId,
+) -> Vec<(FeatureId, u64, Vec<kernel_api::ProjectionProbe>)> {
     let mut sketches: Vec<(FeatureId, u64, Vec<kernel_api::ProjectionProbe>)> = document
         .feature_tree()
         .all_nodes()
@@ -47,6 +56,9 @@ fn sketches_projecting(
         })
         .filter_map(|(id, n)| {
             let data = document.feature_values(*id).unwrap_or(&n.data);
+            if !wb_sketch::SketchFeature::stores_external(data) {
+                return None;
+            }
             let asked = wb_sketch::SketchFeature::from_json(data)
                 .ok()?
                 .own_projections(body);
@@ -124,6 +136,15 @@ pub(super) fn answer_lent_faces(document: &mut Document, body: BodyId) {
 /// references to find again on its solid: id, place in the history and
 /// the probes.
 fn datums_asking(
+    document: &Document,
+    body: BodyId,
+) -> Vec<(FeatureId, u64, Vec<kernel_api::ShapeProbe>)> {
+    super::read_once(document, "datums asking", body, || {
+        read_datums_asking(document, body)
+    })
+}
+
+fn read_datums_asking(
     document: &Document,
     body: BodyId,
 ) -> Vec<(FeatureId, u64, Vec<kernel_api::ShapeProbe>)> {

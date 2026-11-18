@@ -323,6 +323,14 @@ impl PrintCadApp {
         // Time since last *rendered* frame
         let (dt_secs, second) = self.stats.frame_at(now);
         if let Some(second) = second {
+            #[cfg(all(feature = "profile", target_os = "linux"))]
+            crate::profile::note(format!(
+                "fps {:.0} ui_ms {:.1} render_ms {:.1} doc seq {}",
+                self.stats.current_fps,
+                second.ui_ms,
+                second.render_ms,
+                self.session.document.mutation_seq()
+            ));
             let stats = self
                 .gfx
                 .as_ref()

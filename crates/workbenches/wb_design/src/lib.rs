@@ -78,8 +78,8 @@ pub use references::retarget_feature_sketch;
 use core_document::HostRequest;
 use core_document::{
     BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext, base_tool_id,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    base_tool_id,
 };
 use features::datum_icon;
 use making::{Given, ToolMade, take_base};
@@ -408,7 +408,7 @@ impl Workbench for DesignWorkbench {
         if node.workbench_id.as_str() == "core.datum" {
             return core_document::workbench::sole_dependency(document, node);
         }
-        DesignFeature::from_json(&node.data).ok()?.sketch()
+        node.read::<DesignFeature>()?.sketch()
     }
 
     /// A hole with a cosmetic thread threads each of its bores; a mirror

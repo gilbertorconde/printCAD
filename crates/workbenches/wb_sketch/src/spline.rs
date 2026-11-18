@@ -196,6 +196,17 @@ pub fn refit_splines(sketch: &mut Sketch) {
     }
 }
 
+thread_local! {
+    /// [`BSpline::polyline`]s by everything that makes one: degree, knots,
+    /// weights, the control positions' bits and the samples asked for.
+    static POLYLINES: std::cell::RefCell<std::collections::HashMap<Vec<u64>, Vec<Vec2D>>> =
+        Default::default();
+}
+
+/// How many polylines [`POLYLINES`] keeps before it starts again: the
+/// letters of some fifty texts, a few megabytes.
+const POLYLINES_KEPT: usize = 2048;
+
 impl BSpline {
     /// Stored control positions promoted to double precision.
     pub fn control_positions(&self, sketch: &Sketch) -> Option<Vec<[f64; 2]>> {
@@ -217,12 +228,33 @@ impl BSpline {
     /// The curve as a polyline for drawing, export and measuring: about
     /// `samples` intervals, every knot span's ends among the points (see
     /// [`sample_span_basis`]).
+    ///
+    /// Kept by what makes it ([`POLYLINES`]): the overlays draw every
+    /// curve each frame, a text's letters many spans each.
     pub fn polyline(&self, sketch: &Sketch, samples: usize) -> Option<Vec<Vec2D>> {
-        Some(sample_span_basis(
-            &basis_of(self)?,
-            &self.control_positions(sketch)?,
-            samples,
-        ))
+        let control = self.control_positions(sketch)?;
+        let mut key: Vec<u64> =
+            Vec::with_capacity(4 + self.knots.len() + self.weights.len() + 2 * control.len());
+        key.extend([
+            samples as u64,
+            u64::from(self.degree),
+            u64::from(self.periodic),
+            self.knots.len() as u64,
+        ]);
+        key.extend(self.knots.iter().map(|k| k.to_bits()));
+        key.extend(self.weights.iter().map(|w| w.to_bits()));
+        key.extend(control.iter().flat_map(|[x, y]| [x.to_bits(), y.to_bits()]));
+        if let Some(kept) = POLYLINES.with_borrow(|kept| kept.get(&key).cloned()) {
+            return Some(kept);
+        }
+        let line = sample_span_basis(&basis_of(self)?, &control, samples);
+        POLYLINES.with_borrow_mut(|kept| {
+            if kept.len() >= POLYLINES_KEPT {
+                kept.clear();
+            }
+            kept.insert(key, line.clone());
+        });
+        Some(line)
     }
 
     /// The kernel's default cubic representation needs no explicit knots

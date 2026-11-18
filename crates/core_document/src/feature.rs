@@ -105,6 +105,9 @@ pub struct FeatureNode {
     pub warning: Option<String>,
     /// Type-erased feature data (serialized JSON)
     pub data: serde_json::Value,
+    /// Which `data` this is: a new one each time it is written.
+    #[serde(skip)]
+    pub data_revision: DataRevision,
     /// The formulas that set its numbers, by the key its bench gives each
     /// (`Workbench::parameters`). The number in `data` is what the user
     /// last set; what a formula comes to now is derived
@@ -157,6 +160,59 @@ pub fn data_revision(data: &serde_json::Value) -> u64 {
     hasher.finish()
 }
 
+/// Which payload a node holds: a number no other write of feature data in
+/// this run has, kept by a copy of the node along with the data. What is
+/// read from a node's data can be kept under it ([`FeatureNode::read`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DataRevision(u64);
+
+impl DataRevision {
+    /// The number, spread over the whole range like
+    /// [`crate::workbench::fresh_revision`]'s, so it stays apart from
+    /// content hashes used as revisions.
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl Default for DataRevision {
+    /// A revision no other has.
+    fn default() -> Self {
+        Self(crate::workbench::fresh_revision())
+    }
+}
+
+impl FeatureNode {
+    /// The node's data read as `F`, decoded once per [`DataRevision`]: the
+    /// tree and the toolbar ask every frame of every feature.
+    pub fn read<F: WorkbenchFeature + Clone + 'static>(&self) -> Option<F> {
+        type Kept = HashMap<(FeatureId, std::any::TypeId), (DataRevision, Box<dyn std::any::Any>)>;
+        /// Entries past which the cache starts over: a run that opens many
+        /// documents does not keep each one's features for good.
+        const KEPT: usize = 8192;
+        thread_local! {
+            static READ: std::cell::RefCell<Kept> = Default::default();
+        }
+        let key = (self.id, std::any::TypeId::of::<F>());
+        let kept = READ.with_borrow(|kept| {
+            kept.get(&key)
+                .filter(|(revision, _)| *revision == self.data_revision)
+                .and_then(|(_, read)| read.downcast_ref::<F>().cloned())
+        });
+        if kept.is_some() {
+            return kept;
+        }
+        let read = F::from_json(&self.data).ok()?;
+        READ.with_borrow_mut(|kept| {
+            if kept.len() >= KEPT {
+                kept.clear();
+            }
+            kept.insert(key, (self.data_revision, Box::new(read.clone())));
+        });
+        Some(read)
+    }
+}
+
 impl FeatureNode {
     pub fn new<F: WorkbenchFeature>(id: FeatureId, feature: &F) -> Self {
         Self {
@@ -176,6 +232,7 @@ impl FeatureNode {
             refused_edges: Default::default(),
             warning: None,
             data: feature.to_json(),
+            data_revision: DataRevision::default(),
             formulas: Default::default(),
             made_by: None,
             package_source: None,
@@ -403,6 +460,7 @@ mod tests {
             refused_edges: Default::default(),
             warning: None,
             data: serde_json::Value::Null,
+            data_revision: DataRevision::default(),
             formulas: Default::default(),
             made_by: None,
             package_source: None,

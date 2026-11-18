@@ -163,6 +163,10 @@ pub(crate) struct InputState {
     pub paste_pressed: bool,
     /// The window has the keyboard: chats notify only while it has not.
     pub window_focused: bool,
+    /// The latest pointer move not handled yet: a burst of moves (a
+    /// high-rate mouse sends one a millisecond) is handled once, before the
+    /// next other event or the next frame.
+    pub pending_move: Option<(winit::window::WindowId, winit::event::WindowEvent)>,
 }
 
 impl Default for InputState {
@@ -177,6 +181,7 @@ impl Default for InputState {
             modifiers: winit::keyboard::ModifiersState::default(),
             paste_pressed: false,
             window_focused: true,
+            pending_move: None,
         }
     }
 }
@@ -320,6 +325,9 @@ pub(crate) struct KeptRun {
     /// Files named on the command line, opened at start in place of the
     /// last session's.
     pub launch_files: Vec<PathBuf>,
+    /// When the benches' settings were last asked for: every bench, the
+    /// packages too, answers with its whole settings, so not every frame.
+    pub settings_seen: Option<Instant>,
 }
 
 impl KeptRun {
@@ -328,6 +336,7 @@ impl KeptRun {
             last_session,
             keeping: Default::default(),
             launch_files: Vec::new(),
+            settings_seen: None,
         }
     }
 }

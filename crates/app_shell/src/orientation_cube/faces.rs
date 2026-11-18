@@ -127,17 +127,27 @@ pub(super) fn face_tint(axis: Color32) -> Color32 {
     )
 }
 
+/// The labels' fonts: only the app's bundled face, loaded once. Scanning the
+/// system's fonts instead costs a noticeable pause on a machine with many
+/// installed.
+fn label_fonts() -> std::sync::Arc<fontdb::Database> {
+    static FONTS: std::sync::OnceLock<std::sync::Arc<fontdb::Database>> =
+        std::sync::OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut fontdb = fontdb::Database::new();
+            fontdb.load_font_data(ui_kit::theme::SANS_SEMIBOLD_TTF.to_vec());
+            std::sync::Arc::new(fontdb)
+        })
+        .clone()
+}
+
 pub(crate) fn rasterize_svg(svg: &str) -> Option<ColorImage> {
-    let mut fontdb = fontdb::Database::new();
-    // Without the system's fonts the labels fall back to the app's bundled
-    // face, last in the template's list.
-    fontdb.load_system_fonts();
-    fontdb.load_font_data(ui_kit::theme::SANS_SEMIBOLD_TTF.to_vec());
     let opt = Options {
-        font_family: "DejaVu Sans".into(),
+        font_family: "IBM Plex Sans".into(),
         languages: vec!["en".into()],
         font_size: 44.0,
-        fontdb: std::sync::Arc::new(fontdb),
+        fontdb: label_fonts(),
         ..Options::default()
     };
     let tree = usvg::Tree::from_data(svg.as_bytes(), &opt).ok()?;

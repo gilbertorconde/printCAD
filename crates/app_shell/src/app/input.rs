@@ -20,6 +20,17 @@ use crate::log_panel as app_log;
 pub(crate) use super::face_pick::*;
 
 impl PrintCadApp {
+    /// Handles the pointer move held back by `window_event`, if any.
+    pub(crate) fn handle_pending_move(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some((window_id, event)) = self.input.pending_move.take() {
+            #[cfg(all(feature = "profile", target_os = "linux"))]
+            let began = std::time::Instant::now();
+            self.handle_window_event(event_loop, window_id, event);
+            #[cfg(all(feature = "profile", target_os = "linux"))]
+            crate::profile::event(began.elapsed());
+        }
+    }
+
     /// Body of the winit `window_event` handler.
     pub(crate) fn handle_window_event(
         &mut self,

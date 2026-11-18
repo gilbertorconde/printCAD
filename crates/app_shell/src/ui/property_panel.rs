@@ -87,8 +87,31 @@ fn parameter_rows(
             Some(name) => format!("{}.{name}", core_document::expr::quote_name(&node.name)),
             None => "Name it to read it from formulas".to_string(),
         };
-        let (drag_min, drag_max) = registry.parameter_drag_range(document, feature, &p);
-        field_row(ui, width, &p.label, Some(&hint), |ui, field_width| {
+        ui_kit::lazy::row(ui, ("parameter", feature, &p.key), false, |ui| {
+            parameter_row(
+                ui, document, registry, feature, &p, value, error, &hint, width, result,
+            );
+        });
+    }
+}
+
+/// One of [`parameter_rows`]: the number `p`, at `value`, as a field.
+#[allow(clippy::too_many_arguments)]
+fn parameter_row(
+    ui: &mut egui::Ui,
+    document: &Document,
+    registry: &core_document::DocumentService,
+    feature: FeatureId,
+    p: &core_document::evaluate::Parameter,
+    value: f64,
+    error: Option<&str>,
+    hint: &str,
+    width: f32,
+    result: &mut PropertyPanelResult,
+) {
+    {
+        let (drag_min, drag_max) = registry.parameter_drag_range(document, feature, p);
+        field_row(ui, width, &p.label, Some(hint), |ui, field_width| {
             let quantity = bench_api::Quantity {
                 drag_min,
                 drag_max,
@@ -239,7 +262,14 @@ fn reference_rows(
 
 /// `data` (a feature's payload, one variant key over its fields) without
 /// `fields`.
-fn without_fields(data: &serde_json::Value, fields: &[String]) -> serde_json::Value {
+fn without_fields<'a>(
+    data: &'a serde_json::Value,
+    fields: &[String],
+) -> std::borrow::Cow<'a, serde_json::Value> {
+    // Copied only to take something out: a sketch's data is its every curve.
+    if fields.is_empty() {
+        return std::borrow::Cow::Borrowed(data);
+    }
     let mut data = data.clone();
     if let Some(inner) = data
         .as_object_mut()
@@ -250,7 +280,7 @@ fn without_fields(data: &serde_json::Value, fields: &[String]) -> serde_json::Va
             inner.remove(field);
         }
     }
-    data
+    std::borrow::Cow::Owned(data)
 }
 
 /// One value row.
@@ -344,22 +374,14 @@ fn flatten_feature_json(
     let (group, fields) = match value {
         serde_json::Value::Object(map) if map.len() == 1 => {
             let (variant, inner) = map.iter().next().expect("one entry");
-            (variant.clone(), inner.clone())
+            (variant.clone(), inner)
         }
         serde_json::Value::String(s) => return (s.clone(), rows),
-        other => ("Data".to_string(), other.clone()),
+        other => ("Data".to_string(), other),
     };
     if let serde_json::Value::Object(map) = fields {
         for (key, v) in map {
-            flatten_field(
-                &mut rows,
-                &key,
-                &humanize_key(&key),
-                &v,
-                document,
-                hints,
-                unit,
-            );
+            flatten_field(&mut rows, key, &humanize_key(key), v, document, hints, unit);
         }
     }
     (group, rows)
@@ -889,20 +911,22 @@ pub fn draw_property_panel(
                 }
                 for (group, rows) in groups {
                     group_header(ui, &group);
-                    for row in rows {
+                    for (index, row) in rows.into_iter().enumerate() {
                         let editable_label =
                             row.name == "Label" && !matches!(selected, TreeItemId::DocumentRoot);
-                        if editable_label {
-                            label_row(ui, selected, &row.value, rename_buffer, &mut result);
-                        } else if row.name == INERTIA_ABOUT && inertia_references.len() > 1 {
-                            if let Some(name) =
-                                inertia_about_row(ui, &row.value, inertia_references)
-                            {
-                                *inertia_about = Some(name);
+                        ui_kit::lazy::row(ui, ("property", &group, index), false, |ui| {
+                            if editable_label {
+                                label_row(ui, selected, &row.value, rename_buffer, &mut result);
+                            } else if row.name == INERTIA_ABOUT && inertia_references.len() > 1 {
+                                if let Some(name) =
+                                    inertia_about_row(ui, &row.value, inertia_references)
+                                {
+                                    *inertia_about = Some(name);
+                                }
+                            } else {
+                                value_row(ui, &row);
                             }
-                        } else {
-                            value_row(ui, &row);
-                        }
+                        });
                     }
                 }
                 match table {

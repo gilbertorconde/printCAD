@@ -993,6 +993,66 @@ fn draw_node(
     options: &TreeDrawOptions<'_>,
     result: &mut TreeUiResult,
 ) {
+    // A row out of sight takes its room unbuilt, keeping its place for the
+    // tip bar's drop and its branch as it was left open or closed.
+    let row = ui_kit::lazy::row(
+        ui,
+        ("tree", node.id),
+        options.scroll_to == Some(node.id),
+        |ui| node_row(ui, node, depth, options, result),
+    );
+    let open = match row.inner {
+        Some(open) => open,
+        None => {
+            if let (TreeItemId::Feature(id), Some(body)) = (node.id, node.history_body) {
+                result.history_rows.push((body, id, row.rect));
+            }
+            node.children.is_empty() || open_state(ui, node.id)
+        }
+    };
+    // The tip bar shows in the plain tree, not a filtered one.
+    let bars = options.filter.is_empty();
+    if bars
+        && node.is_tip
+        && let Some(body) = node.history_body
+    {
+        tip_bar(ui, body, depth, result);
+    }
+    // A closed branch stays closed to the eye, but not to a filter: what
+    // matches is shown wherever it sits.
+    if open || !options.filter.is_empty() {
+        for child in &node.children {
+            if matches_filter(child, options.filter) {
+                draw_node(ui, child, depth + 1, options, result);
+            }
+        }
+        // Under the last of a body's history, at the body's level: the bar
+        // of a body with no tip, which builds all of it, or the place the
+        // bar drops on to build all of it again.
+        if bars
+            && !node.mesh
+            && matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_))
+            && let Some(body) = node.body
+            && node.children.iter().any(|c| c.history_body == Some(body))
+        {
+            let end = if holds_tip(node) {
+                history_end(ui, body, depth + 1, result)
+            } else {
+                tip_bar(ui, body, depth + 1, result)
+            };
+            result.history_ends.push((body, end));
+        }
+    }
+}
+
+/// The row of `node` in the tree, whether its branch is open.
+fn node_row(
+    ui: &mut Ui,
+    node: &TreeNode,
+    depth: usize,
+    options: &TreeDrawOptions<'_>,
+    result: &mut TreeUiResult,
+) -> bool {
     let editing_here =
         matches!((node.id, options.editing), (TreeItemId::Feature(a), Some(b)) if a == b);
     let mut badges = Vec::new();
@@ -1135,40 +1195,7 @@ fn draw_node(
         eye,
         tooltip: node.tooltip.as_deref(),
     };
-    let open = draw_row(ui, &spec, options, result, Some(node));
-    // The tip bar shows in the plain tree, not a filtered one.
-    let bars = options.filter.is_empty();
-    if bars
-        && node.is_tip
-        && let Some(body) = node.history_body
-    {
-        tip_bar(ui, body, depth, result);
-    }
-    // A closed branch stays closed to the eye, but not to a filter: what
-    // matches is shown wherever it sits.
-    if open || !options.filter.is_empty() {
-        for child in &node.children {
-            if matches_filter(child, options.filter) {
-                draw_node(ui, child, depth + 1, options, result);
-            }
-        }
-        // Under the last of a body's history, at the body's level: the bar
-        // of a body with no tip, which builds all of it, or the place the
-        // bar drops on to build all of it again.
-        if bars
-            && !node.mesh
-            && matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_))
-            && let Some(body) = node.body
-            && node.children.iter().any(|c| c.history_body == Some(body))
-        {
-            let end = if holds_tip(node) {
-                history_end(ui, body, depth + 1, result)
-            } else {
-                tip_bar(ui, body, depth + 1, result)
-            };
-            result.history_ends.push((body, end));
-        }
-    }
+    draw_row(ui, &spec, options, result, Some(node))
 }
 
 fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult) {
