@@ -491,7 +491,7 @@ pub(crate) fn stored_sketch(
     document: &core_document::Document,
     id: FeatureId,
 ) -> Option<SketchFeature> {
-    document.feature_as::<SketchFeature>(id)
+    document.read_feature::<SketchFeature>(id)
 }
 
 /// Where the body a sketch belongs to sits.

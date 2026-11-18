@@ -133,7 +133,7 @@ pub(crate) fn constraint_row_label(c: &Constraint) -> String {
 
 /// What a constraint ties, as the list says it beside its name: the
 /// elements it names, each once, in order ("Line 2 · Point 4").
-pub(crate) fn constraint_operands(sketch: &Sketch, c: &Constraint) -> String {
+pub(crate) fn constraint_operands(names: &style::ElementNames, c: &Constraint) -> String {
     let mut seen = Vec::new();
     for id in sketch::constraint_refs(&c.kind) {
         if !seen.contains(&id) {
@@ -141,7 +141,7 @@ pub(crate) fn constraint_operands(sketch: &Sketch, c: &Constraint) -> String {
         }
     }
     seen.iter()
-        .map(|id| style::element_name(sketch, *id))
+        .map(|id| names.name(*id))
         .collect::<Vec<_>>()
         .join(" · ")
 }
@@ -784,6 +784,12 @@ impl SketchWorkbench {
     /// keeps its plane in its body's frame, and editing works where the
     /// body sits.
     fn get_active_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
+        self.frame_sketch(ctx).map(|feature| (*feature).clone())
+    }
+
+    /// The edited sketch read from the document, placed, with a dragged
+    /// label where it is held: what [`Self::frame_sketch`] keeps.
+    fn read_active_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
         let id = self.tab.active_sketch_id?;
         let mut feature = stored_sketch(ctx.document, id)?;
         let placement = sketch_placement(ctx.document, id);
@@ -1192,6 +1198,7 @@ impl SketchWorkbench {
     /// and kind filters and the selection leave it.
     pub fn listed_constraints(&self, sketch: &Sketch) -> Vec<Uuid> {
         let text = self.tab.constraint_filter.trim().to_lowercase();
+        let names = (!text.is_empty()).then(|| style::ElementNames::new(sketch));
         sketch
             .constraints
             .iter()
@@ -1199,9 +1206,9 @@ impl SketchWorkbench {
             .filter(|(_, c)| {
                 (text.is_empty()
                     || constraint_row_label(c).to_lowercase().contains(&text)
-                    || constraint_operands(sketch, c)
-                        .to_lowercase()
-                        .contains(&text))
+                    || names
+                        .as_ref()
+                        .is_some_and(|n| constraint_operands(n, c).to_lowercase().contains(&text)))
                     && self.tab.constraint_kind_filter.accepts(
                         sketch,
                         c,
@@ -1555,9 +1562,8 @@ impl Workbench for SketchWorkbench {
         _node: &core_document::FeatureNode,
     ) -> Option<core_document::PassiveGeometry> {
         // As its formulas leave it, solved.
-        let data = document.feature_values(id)?;
-        let feature = SketchFeature::from_json(data).ok()?;
-        let revision = core_document::data_revision(data);
+        let feature = document.read_feature::<SketchFeature>(id)?;
+        let revision = document.values_revision(id)?;
         // Every region its curves close, shaded on its own.
         let regions = if self.options.shade_regions {
             self.tab.closed_parts.passive_regions(
@@ -1586,11 +1592,10 @@ impl Workbench for SketchWorkbench {
         pick: &core_document::ViewportPick,
         tolerance_px: f32,
     ) -> Option<core_document::PartPick> {
-        let data = document.feature_values(id)?;
-        let feature = SketchFeature::from_json(data).ok()?;
+        let feature = document.read_feature::<SketchFeature>(id)?;
         self.tab.closed_parts.pick(
             id,
-            core_document::data_revision(data),
+            document.values_revision(id)?,
             &feature,
             pick,
             tolerance_px,
@@ -1759,7 +1764,7 @@ impl Workbench for SketchWorkbench {
             .own_seq
             .swap(seq, std::sync::atomic::Ordering::Relaxed)
             != seq;
-        self.tab.selection_shape = match self.get_active_sketch(ctx) {
+        self.tab.selection_shape = match self.frame_sketch(ctx) {
             Some(feature) => {
                 // What was selected may be gone, by an edit here that took
                 // more with it (an element's constraints) or one from outside.
@@ -1830,7 +1835,7 @@ impl Workbench for SketchWorkbench {
             "sketch.fit_edge" => {
                 editing
                     && self
-                        .get_active_sketch(ctx)
+                        .frame_sketch(ctx)
                         .is_some_and(|f| !f.sketch.images.is_empty())
             }
             "sketch.save_dxf" | "sketch.save_svg" | "sketch.save_csv" => editing,

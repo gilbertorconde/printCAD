@@ -320,6 +320,16 @@ impl SketchFeature {
     /// and each section of one of its faces, onto the sketch's plane. The
     /// build answers them, so the projections follow the solid as it was
     /// before the features the sketch builds, never chasing their change.
+    /// Whether stored sketch data holds geometry brought from a solid, read
+    /// off the one field: a sketch without it projects nothing, and the
+    /// builds ask of every sketch each frame.
+    pub fn stores_external(data: &serde_json::Value) -> bool {
+        data.get("sketch")
+            .and_then(|s| s.get("external"))
+            .and_then(|e| e.as_object())
+            .is_some_and(|e| !e.is_empty())
+    }
+
     pub fn own_projections(&self, body: core_document::BodyId) -> Vec<kernel_api::ProjectionProbe> {
         crate::external::groups(&self.sketch)
             .into_iter()
@@ -576,5 +586,28 @@ mod tests {
             let drawn = |f: &SketchFeature| serde_json::to_value(&f.sketch.geometry).unwrap();
             assert_eq!(drawn(&read), drawn(&fresh(data)));
         }
+    }
+
+    /// The one-field read finds a solid's geometry exactly where the whole
+    /// read does: the builds pass over a sketch it says has none.
+    #[test]
+    fn stored_external_geometry_is_seen_without_reading_the_sketch() {
+        let mut sketch = Sketch::new("projected");
+        let plain = SketchFeature::new(sketch.clone(), SketchPlane::default()).to_json();
+        assert!(!SketchFeature::stores_external(&plain));
+        sketch.external.insert(
+            uuid::Uuid::new_v4(),
+            crate::sketch::ExternalSource {
+                body: uuid::Uuid::new_v4(),
+                point: [1.0, 2.0, 0.0],
+                direction: [0.0; 3],
+                section: false,
+                defining: false,
+                reference: None,
+                faces: Default::default(),
+            },
+        );
+        let projected = SketchFeature::new(sketch, SketchPlane::default()).to_json();
+        assert!(SketchFeature::stores_external(&projected));
     }
 }

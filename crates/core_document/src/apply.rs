@@ -511,6 +511,7 @@ impl Document {
                     refused_edges: Default::default(),
                     warning: None,
                     data: data.clone(),
+                    data_revision: Default::default(),
                     formulas: formulas.clone(),
                     made_by: made_by.clone(),
                     package_source: package_source.clone(),
@@ -522,6 +523,7 @@ impl Document {
             Op::UpdateFeatureData { id, data } => {
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
                     node.data = data.clone();
+                    node.data_revision = Default::default();
                 }
             }
             Op::RenameFeature { id, name } => {

@@ -6,6 +6,7 @@
 pub mod completion;
 pub mod icon;
 mod icon_table;
+pub mod lazy;
 pub mod markdown;
 pub mod search;
 pub mod theme;

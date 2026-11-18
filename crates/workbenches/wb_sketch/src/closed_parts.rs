@@ -10,7 +10,7 @@ use core_document::{FeatureId, FeaturePart, PartPick, PassiveRegion, ViewportPic
 use kernel_api::ProfileWire;
 
 use crate::SketchFeature;
-use crate::boundary::{self, narrow, narrow3};
+use crate::boundary::{self, narrow3};
 use crate::regions::Region;
 use crate::sketch::{GeometryElement, Vec2D};
 use crate::{profile, snap};
@@ -98,12 +98,12 @@ impl Kept {
     ) -> Option<PartPick> {
         let (world, pos, px_per_unit) = cursor_in_sketch(feature, pick)?;
         let sketch = &feature.sketch;
+        let reach = f64::from(tolerance_px / px_per_unit.max(f32::MIN_POSITIVE));
         let curve = sketch
             .geometry
             .iter()
             .filter(|g| !matches!(g, GeometryElement::Point(_)) && !sketch.is_construction(g.id()))
-            .filter_map(|g| Some((g.id(), snap::distance_to_element(sketch, g, pos)?)))
-            .filter(|(_, d)| narrow(*d) * px_per_unit <= tolerance_px)
+            .filter_map(|g| Some((g.id(), snap::distance_within(sketch, g, pos, reach)?)))
             .min_by(|a, b| a.1.total_cmp(&b.1));
         let part = match curve {
             Some((curve, _)) => FeaturePart::Edge(curve.to_string()),

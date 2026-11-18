@@ -218,12 +218,13 @@ impl SketchWorkbench {
         let feature = self.frame_displayed(ctx)?;
         let pal = ctx.sketch_palette;
         let verdict = self.solver_verdict(&feature.sketch);
+        let named = style::ElementNames::new(&feature.sketch);
         let mut names: Vec<String> = feature
             .sketch
             .geometry
             .iter()
             .filter(|g| self.tab.selected.contains(&g.id()))
-            .map(|g| style::element_name(&feature.sketch, g.id()))
+            .map(|g| named.name(g.id()))
             .collect();
         names.extend(
             feature
@@ -320,8 +321,8 @@ impl SketchWorkbench {
         // The stored sketch is known by its data, as out of editing; an
         // open card's draft by what it holds.
         let drafting = self.tab.corner_task.is_some() || self.tab.dim_edit.is_some();
-        let revision = match ctx.document.feature_values(id) {
-            Some(data) if !drafting => core_document::data_revision(data),
+        let revision = match ctx.document.values_revision(id) {
+            Some(revision) if !drafting => revision,
             _ => core_document::data_revision(&feature.to_json()),
         };
         let key = {
@@ -688,7 +689,7 @@ impl SketchWorkbench {
         if self.tab.hover_from_panel
             && let Some(id) = self.tab.hovered
         {
-            lit.extend(relations::Relations::of(sketch).constraints_on(id));
+            lit.extend(self.frame_relations(ctx, sketch).constraints_on(id));
         }
         glyphs::build(
             sketch,
@@ -727,14 +728,24 @@ impl SketchWorkbench {
         snap.kind.is_some().then_some(snap)
     }
 
-    /// The edited sketch as [`Self::get_active_sketch`] reads it, read once
-    /// for every hook of a frame.
+    /// The edited sketch as [`Self::read_active_sketch`] reads it, read
+    /// once for every hook of a frame and every read while nothing it was
+    /// read from has changed.
     pub(crate) fn frame_sketch(
         &self,
         ctx: &WorkbenchRuntimeContext,
     ) -> Option<std::sync::Arc<SketchFeature>> {
-        let key = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
-        self.frame.active(key, || self.get_active_sketch(ctx))
+        self.frame
+            .active(self.active_key(ctx), || self.read_active_sketch(ctx))
+    }
+
+    /// What [`Self::frame_sketch`] reads the sketch under.
+    pub(crate) fn active_key(&self, ctx: &WorkbenchRuntimeContext) -> frame_memo::ActiveKey {
+        let label = self.tab.label_drag.as_ref().and_then(|drag| {
+            drag.current
+                .map(|offset| (drag.constraint, [offset.x, offset.y]))
+        });
+        frame_memo::ActiveKey::of(ctx, self.tab.active_sketch_id, label)
     }
 
     /// The sketch the view shows: an open card's draft
@@ -749,6 +760,21 @@ impl SketchWorkbench {
             .displayed(key, || match self.drafted_sketch(ctx) {
                 Some(draft) => Some(std::sync::Arc::new(draft)),
                 None => self.frame_sketch(ctx),
+            })
+    }
+
+    /// [`relations::Relations::of`] `sketch`, worked out once while the
+    /// frame's sketch reads stand: the panel's list and the overlays both
+    /// ask. Known by where `sketch` lies, which a frame's reads keep alive.
+    pub(crate) fn frame_relations(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) -> std::sync::Arc<relations::Relations> {
+        let key = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
+        self.frame
+            .relations((key, std::ptr::from_ref(sketch) as usize), || {
+                relations::Relations::of(sketch)
             })
     }
 
@@ -802,7 +828,7 @@ impl SketchWorkbench {
         // Selected constraints show the geometry they hold, in their own
         // colour: it is not selected, so tools do not act on it.
         let selected = self.tab.selected.clone();
-        let relations = relations::Relations::of(&feature.sketch);
+        let relations = self.frame_relations(ctx, &feature.sketch);
         let mut referenced: HashSet<Uuid> = HashSet::new();
         for c in &feature.sketch.constraints {
             if self.tab.selected_constraints.contains(&c.id)

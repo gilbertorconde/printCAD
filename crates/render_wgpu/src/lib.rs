@@ -7,11 +7,13 @@
 
 mod core;
 mod grid;
+mod lines;
 mod mesh;
 mod ramp;
 mod readback;
 
 pub use egui_wgpu::wgpu;
+pub use lines::{ScreenLine, lines_shape};
 pub use mesh::{DrawStats, GpuLight, LightingData};
 
 use egui::{ClippedPrimitive, TexturesDelta};
@@ -690,6 +692,7 @@ mod tests {
         let none = naga::valid::Capabilities::empty();
         validate("scene.wgsl", include_str!("../shaders/scene.wgsl"), none);
         validate("blit.wgsl", include_str!("../shaders/blit.wgsl"), none);
+        validate("lines.wgsl", include_str!("../shaders/lines.wgsl"), none);
     }
 
     #[test]

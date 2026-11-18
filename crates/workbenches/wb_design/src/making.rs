@@ -101,10 +101,20 @@ impl DesignWorkbench {
 
     /// Whether the body's history builds anything: borrowed geometry
     /// alone does not.
+    /// Each feature's kind is read from its data's tag, not decoded: the
+    /// toolbar asks this for every button.
     pub(crate) fn body_has_solid(ctx: &WorkbenchRuntimeContext, body: BodyId) -> bool {
-        design_features_of_body(ctx.document, body)
-            .iter()
-            .any(|(_, f)| !matches!(f, DesignFeature::Borrow { .. }))
+        ctx.document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, node)| {
+                node.workbench_id.as_str() == crate::KIND && node.body == Some(body)
+            })
+            .any(|(id, _)| {
+                ctx.document
+                    .feature_values(*id)
+                    .is_some_and(builds_material)
+            })
             || Self::can_take_base(ctx, body)
     }
 
@@ -570,4 +580,32 @@ pub(crate) struct CreatedFeature {
     pub id: FeatureId,
     /// The sketch closed so the feature builds.
     pub repaired: Option<profile_repair::SketchRepair>,
+}
+
+/// Whether a design feature's data is of a kind that makes material: any
+/// but a borrow of another body's geometry.
+fn builds_material(data: &serde_json::Value) -> bool {
+    match data {
+        serde_json::Value::Object(tagged) => tagged.len() == 1 && !tagged.contains_key("Borrow"),
+        serde_json::Value::String(tag) => tag != "Borrow",
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::builds_material;
+    use crate::{BorrowSource, DesignFeature};
+    use core_document::FeatureId;
+
+    #[test]
+    fn a_borrow_alone_makes_no_material() {
+        let borrow = DesignFeature::Borrow {
+            source: BorrowSource::Sketch(FeatureId::new()),
+            frozen: None,
+            options: Default::default(),
+        };
+        assert!(!builds_material(&serde_json::to_value(&borrow).unwrap()));
+        assert!(builds_material(&serde_json::json!({ "Pad": {} })));
+    }
 }

@@ -264,11 +264,19 @@ pub fn draw_assistant(
                             ui.spacing_mut().item_spacing.y = SPACE_2;
                             let origin = ui.min_rect().top();
                             let mut user_tops = Vec::new();
+                            // The last entries may still be growing.
+                            let settled = chat.entries.len().saturating_sub(2);
                             for (index, entry) in chat.entries.iter().enumerate() {
-                                let rect = ui
-                                    .scope(|ui| draw_entry(ui, chat, index, entry, commands))
-                                    .response
-                                    .rect;
+                                let force = index >= settled || land_on == Some(index);
+                                let rect = ui_kit::lazy::row(
+                                    ui,
+                                    ("entry", &chat.id, index),
+                                    force,
+                                    |ui| {
+                                        draw_entry(ui, chat, index, entry, commands);
+                                    },
+                                )
+                                .rect;
                                 if matches!(entry, ChatEntry::User { .. }) {
                                     user_tops.push((index, rect.top() - origin));
                                 }

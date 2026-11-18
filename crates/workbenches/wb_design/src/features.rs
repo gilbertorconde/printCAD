@@ -7,7 +7,7 @@ use core_document::{Document, FeatureId, FeatureInfo, Workbench, WorkbenchFeatur
 impl DesignWorkbench {
     pub(crate) fn info_of(&self, node: &core_document::FeatureNode) -> FeatureInfo {
         if node.workbench_id.as_str() == "core.datum" {
-            let datum = core_document::DatumFeature::from_json(&node.data).ok();
+            let datum = node.read::<core_document::DatumFeature>();
             return FeatureInfo {
                 icon: datum.as_ref().map(datum_icon).unwrap_or("datum-plane"),
                 kind_label: "Datum".to_string(),
@@ -15,7 +15,7 @@ impl DesignWorkbench {
                 builds_solid: false,
             };
         }
-        let feature = DesignFeature::from_json(&node.data).ok();
+        let feature = node.read::<DesignFeature>();
         FeatureInfo {
             icon: feature.as_ref().map(|f| f.icon()).unwrap_or("tree-feature"),
             kind_label: feature

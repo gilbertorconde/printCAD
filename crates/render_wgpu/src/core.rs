@@ -311,7 +311,7 @@ impl RendererCore {
             picks_primitives,
         );
         let grid_renderer = crate::grid::GridPipeline::new(&device, scene_format, msaa_samples);
-        let egui_renderer = egui_wgpu::Renderer::new(
+        let mut egui_renderer = egui_wgpu::Renderer::new(
             &device,
             format,
             egui_wgpu::RendererOptions {
@@ -319,6 +319,9 @@ impl RendererCore {
                 ..Default::default()
             },
         );
+        egui_renderer
+            .callback_resources
+            .insert(crate::lines::LinePass::new(&device, format));
 
         Ok(Self {
             egui_renderer,

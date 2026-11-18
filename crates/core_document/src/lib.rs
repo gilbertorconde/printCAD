@@ -73,8 +73,8 @@ pub use datum::{
 };
 pub use evaluate::{Evaluation, Parameter, SlotValue};
 pub use feature::{
-    BodyId, FeatureError, FeatureId, FeatureNode, FeatureOrigin, FeatureTree, WorkbenchFeature,
-    data_revision, node_revision,
+    BodyId, DataRevision, FeatureError, FeatureId, FeatureNode, FeatureOrigin, FeatureTree,
+    WorkbenchFeature, data_revision, node_revision,
 };
 pub use grid::PlaneGrid;
 pub use history::JournalEntryId;
@@ -256,6 +256,10 @@ pub struct Document {
     /// document, even for a body whose geometry went and came back.
     #[serde(skip)]
     next_geometry_revision: u64,
+    /// Which document value this is: every new, loaded or cloned one is
+    /// another (`content_stamp`).
+    #[serde(skip)]
+    lineage: Lineage,
     /// The bodies the configuration in effect leaves out, kept as the
     /// table changes.
     #[serde(skip)]
@@ -313,12 +317,32 @@ pub enum MoveRefused {
     Dependency { neighbour: FeatureId },
 }
 
+/// A number no other document value in the process has: a clone takes a
+/// new one, since the two go on to be edited apart.
+#[derive(Debug)]
+struct Lineage(u64);
+
+impl Default for Lineage {
+    fn default() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+impl Clone for Lineage {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 /// The document's formulas, worked out.
 #[derive(Debug, Clone, Default)]
 struct Evaluated {
     evaluation: evaluate::Evaluation,
     /// The `mutation_seq` it was worked out at.
     at: Option<u64>,
+    /// How many times the formulas were worked out.
+    runs: u64,
     /// Features whose values moved since the host last took them.
     moved: Vec<FeatureId>,
 }
@@ -360,6 +384,7 @@ impl Document {
             history_suppressed: false,
             evaluated: Evaluated::default(),
             next_geometry_revision: 0,
+            lineage: Lineage::default(),
             left_out: Vec::new(),
             link_stale: Default::default(),
             isolated: None,
@@ -623,6 +648,32 @@ impl Document {
         F::from_json(self.feature_values(id)?).ok()
     }
 
+    /// [`Self::feature_as`], decoded once per write of the feature's data
+    /// when no formula sets its values ([`FeatureNode::read`]): for what
+    /// is read every frame.
+    pub fn read_feature<F: WorkbenchFeature + Clone + 'static>(&self, id: FeatureId) -> Option<F> {
+        let node = self.feature_tree.get_node(id)?;
+        if node.workbench_id != F::workbench_id() {
+            return None;
+        }
+        match self.evaluated.evaluation.data.get(&id) {
+            Some(values) => F::from_json(values).ok(),
+            None => node.read(),
+        }
+    }
+
+    /// A revision of [`Self::feature_values`]: equal while they are the
+    /// same, without reading them through when no formula sets them.
+    pub fn values_revision(&self, id: FeatureId) -> Option<u64> {
+        match self.evaluated.evaluation.data.get(&id) {
+            Some(values) => Some(feature::data_revision(values)),
+            None => self
+                .feature_tree
+                .get_node(id)
+                .map(|n| n.data_revision.get()),
+        }
+    }
+
     /// Every feature of `F`'s kind that reads as one, from its
     /// [`Self::feature_values`], in build order.
     pub fn features_of<F: WorkbenchFeature>(&self) -> Vec<(FeatureId, F)> {
@@ -705,6 +756,13 @@ impl Document {
         last.data.remove(&id)
     }
 
+    /// Equal while nothing a feature reads can have changed: the same
+    /// document value, no edit since and the formulas not worked out again.
+    /// A cache of what features say keyed on it never goes stale.
+    pub fn content_stamp(&self) -> (u64, u64, u64) {
+        (self.lineage.0, self.mutation_seq, self.evaluated.runs)
+    }
+
     /// Whether the document changed since its formulas were worked out.
     pub fn needs_evaluation(&self) -> bool {
         self.evaluated.at != Some(self.mutation_seq)
@@ -758,6 +816,7 @@ impl Document {
         self.evaluated = Evaluated {
             evaluation,
             at: Some(self.mutation_seq),
+            runs: self.evaluated.runs.wrapping_add(1),
             moved,
         };
         changed

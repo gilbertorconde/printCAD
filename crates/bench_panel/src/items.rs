@@ -406,9 +406,14 @@ pub(super) fn item_list(
     let mut clicked = None;
     for &i in &shown {
         let item = &list.items[i];
-        let drawn = {
+        // A row out of sight takes its room unbuilt: a long list costs
+        // what shows of it.
+        let row = ui_kit::lazy::row(ui, ("items", &list.id, i), false, |ui| {
             let mut field = field_drawer(id, document, out);
             item_row(ui, id.with(("items", &list.id, i)), item, &mut field)
+        });
+        let Some(drawn) = row.inner else {
+            continue;
         };
         if ui.rect_contains_pointer(drawn.response.rect) {
             pointed.0 = Some(i);

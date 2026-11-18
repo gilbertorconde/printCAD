@@ -3,13 +3,14 @@
 //! changed: the sketch read from the document, the overlays and the
 //! constraint glyphs.
 //!
-//! A memo holds while the tab state's stamp, the document, its edit count
-//! and whether its formulas are worked out stay; the overlays and glyphs
-//! also need the same settings and the same view. Any mutable borrow of
-//! the tab state takes a fresh stamp ([`Stamped`]), and `on_frame` takes
-//! one every frame, so a memo never outlives the frame it was made in:
-//! what the document derives between frames (a solved formula, a
-//! projection followed) is read afresh.
+//! The sketch read holds while the document's content stamp, the edited
+//! sketch and a label's drag stay, across frames: the stamp moves with
+//! everything the document derives (a solved formula, a projection
+//! followed). The rest holds while the tab state's stamp and the content
+//! stamp stay; the overlays and glyphs also need the same settings and
+//! the same view. Any mutable borrow of the tab state takes a fresh stamp
+//! ([`Stamped`]), and `on_frame` takes one every frame, so those never
+//! outlive the frame they were made in.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use core_document::WorkbenchRuntimeContext;
 
-use crate::{SketchFeature, SketchOptions, glyphs::Glyph, overlay::Overlays};
+use crate::{SketchFeature, SketchOptions, glyphs::Glyph, overlay::Overlays, relations::Relations};
 
 static STAMPS: AtomicU64 = AtomicU64::new(1);
 
@@ -71,22 +72,41 @@ impl<T> std::ops::DerefMut for Stamped<T> {
     }
 }
 
-/// What the sketch read depends on.
+/// What a frame's reads of the tab state and the document depend on.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct SketchKey {
     tab: u64,
-    document: usize,
-    seq: u64,
-    evaluated: bool,
+    content: (u64, u64, u64),
 }
 
 impl SketchKey {
     pub(crate) fn of(tab: u64, ctx: &WorkbenchRuntimeContext) -> Self {
         Self {
             tab,
-            document: std::ptr::from_ref(&*ctx.document) as usize,
-            seq: ctx.document.mutation_seq(),
-            evaluated: !ctx.document.needs_evaluation(),
+            content: ctx.document.content_stamp(),
+        }
+    }
+}
+
+/// What the edited sketch as read from the document depends on: the
+/// document's content, which sketch, and where a dragged label is.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct ActiveKey {
+    content: (u64, u64, u64),
+    sketch: Option<core_document::FeatureId>,
+    label: Option<(uuid::Uuid, [f64; 2])>,
+}
+
+impl ActiveKey {
+    pub(crate) fn of(
+        ctx: &WorkbenchRuntimeContext,
+        sketch: Option<core_document::FeatureId>,
+        label: Option<(uuid::Uuid, [f64; 2])>,
+    ) -> Self {
+        Self {
+            content: ctx.document.content_stamp(),
+            sketch,
+            label,
         }
     }
 }
@@ -184,16 +204,37 @@ impl<K: PartialEq, V: Clone> Slot<K, V> {
 /// The frame's memos.
 #[derive(Default)]
 pub(crate) struct FrameMemo {
-    active: Slot<SketchKey, Option<Arc<SketchFeature>>>,
+    active: Slot<ActiveKey, Option<Arc<SketchFeature>>>,
     displayed: Slot<SketchKey, Option<Arc<SketchFeature>>>,
     overlays: Slot<DrawKey, Arc<Overlays>>,
     glyphs: Slot<DrawKey, Arc<Vec<Glyph>>>,
+    relations: Slot<(SketchKey, usize), Arc<Relations>>,
+    #[cfg(feature = "egui")]
+    row_text: Slot<ActiveKey, Arc<crate::panel::RowText>>,
 }
 
 impl FrameMemo {
+    /// The element list's row text for the sketch read under `key`.
+    #[cfg(feature = "egui")]
+    pub(crate) fn row_text(
+        &self,
+        key: ActiveKey,
+        make: impl FnOnce() -> crate::panel::RowText,
+    ) -> Arc<crate::panel::RowText> {
+        self.row_text.get(key, || Arc::new(make()))
+    }
+
+    pub(crate) fn relations(
+        &self,
+        key: (SketchKey, usize),
+        make: impl FnOnce() -> Relations,
+    ) -> Arc<Relations> {
+        self.relations.get(key, || Arc::new(make()))
+    }
+
     pub(crate) fn active(
         &self,
-        key: SketchKey,
+        key: ActiveKey,
         read: impl FnOnce() -> Option<SketchFeature>,
     ) -> Option<Arc<SketchFeature>> {
         self.active.get(key, || read().map(Arc::new))
@@ -225,6 +266,9 @@ impl FrameMemo {
         self.displayed.clear();
         self.overlays.clear();
         self.glyphs.clear();
+        self.relations.clear();
+        #[cfg(feature = "egui")]
+        self.row_text.clear();
     }
 }
 

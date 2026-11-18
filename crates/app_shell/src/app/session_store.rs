@@ -26,6 +26,8 @@ pub(crate) const VIEWS_KEPT: usize = 50;
 
 const VIEWS_FILE: &str = "views.json";
 const SESSION_FILE: &str = "session.json";
+/// How often the benches' settings are looked at for a change to keep.
+const SETTINGS_EVERY: Duration = Duration::from_millis(250);
 
 /// A document's view, kept with its file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -264,6 +266,8 @@ impl PrintCadApp {
     /// once every save has finished, so a Save as taken while quitting
     /// has its file.
     pub(crate) fn keep_session_for_next_run(&mut self) {
+        self.kept.settings_seen = None;
+        self.drive_bench_settings_keeping();
         let now = self.session_now();
         self.keep(now);
     }
@@ -280,7 +284,7 @@ impl PrintCadApp {
         }
     }
 
-    /// Keep the benches' settings when a bench changed its own outside
+    /// Keep the benches' settings, looked at every [`SETTINGS_EVERY`], when a bench changed its own outside
     /// Preferences (a switch on its task panel, such as the sketcher's grid
     /// and snap), as a Preferences commit keeps them: in
     /// `UserSettings.workbenches`, written to the settings file. While
@@ -293,6 +297,14 @@ impl PrintCadApp {
         {
             return;
         }
+        if self
+            .kept
+            .settings_seen
+            .is_some_and(|at| at.elapsed() < SETTINGS_EVERY)
+        {
+            return;
+        }
+        self.kept.settings_seen = Some(Instant::now());
         let now = self.registry.collect_settings();
         if !bench_settings_moved(&self.user_settings.workbenches, &now) {
             return;

@@ -23,7 +23,7 @@ use crate::boundary::widen3;
 use crate::relations::{Related, Relations};
 use crate::sketch::{self, Constraint, Sketch, SketchPlane};
 use crate::solver;
-use crate::style::{constraint_icon, element_kind, element_name, element_row_icon};
+use crate::style::{ElementNames, constraint_icon, element_kind, element_row_icon};
 use crate::{ConstraintFilter, ElementFilter, SketchWorkbench, overlay};
 
 /// The panel's id among the app's declared panels.
@@ -77,7 +77,7 @@ struct ConstraintRow {
 
 /// What the lists light this frame, from what last frame left in hand.
 struct InHand {
-    relations: Relations,
+    relations: std::sync::Arc<Relations>,
     /// The rows tied to the hovered item and the selection.
     related: Related,
     /// The element hovered, in the panel or the view.
@@ -224,7 +224,7 @@ impl SketchWorkbench {
         if self.tab.pending_creation.is_some() {
             return self.attachment_widgets(ctx);
         }
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.frame_sketch(ctx) else {
             return Vec::new();
         };
         let shift =
@@ -238,19 +238,19 @@ impl SketchWorkbench {
                 });
         let on_datum = feature.support.is_some();
         let plane = feature.plane;
-        let sketch = feature.sketch;
-        let mut widgets = self.problem_widgets(&sketch);
+        let sketch = &feature.sketch;
+        let mut widgets = self.problem_widgets(sketch);
         if self.tab.sketch_picker.is_some() {
             widgets.extend(self.picker_widgets(ctx, &plane));
         }
         widgets.extend(self.tool_widgets(ctx));
         widgets.extend(self.array_widgets());
-        widgets.extend(self.spline_widgets(&sketch));
-        widgets.extend(self.text_widgets(&sketch));
-        widgets.extend(self.image_widgets(ctx, &sketch));
-        widgets.extend(self.list_widgets(ctx, &sketch));
+        widgets.extend(self.spline_widgets(sketch));
+        widgets.extend(self.text_widgets(sketch));
+        widgets.extend(self.image_widgets(ctx, sketch));
+        widgets.extend(self.list_widgets(ctx, sketch));
         widgets.extend(self.placement_widgets(shift, on_datum));
-        widgets.extend(self.settings_widgets(&sketch));
+        widgets.extend(self.settings_widgets(sketch));
         widgets
     }
 
@@ -967,7 +967,7 @@ impl SketchWorkbench {
         };
         // What the rows light comes from what last frame left in hand: the
         // item the panel hovered, and the selection.
-        let relations = Relations::of(sketch);
+        let relations = self.frame_relations(ctx, sketch);
         let panel_element = self.tab.hovered.filter(|_| self.tab.hover_from_panel);
         let hand = InHand {
             related: relations.related(
@@ -1122,12 +1122,17 @@ impl SketchWorkbench {
             .collect();
         let external = sketch.external_ids();
         let locked = self.locked_elements(ctx, sketch);
+        let text = self
+            .frame
+            .row_text(self.active_key(ctx), || RowText::of(sketch));
+        let by_id: std::collections::HashMap<Uuid, &Constraint> =
+            sketch.constraints.iter().map(|c| (c.id, c)).collect();
         for geom in &sketch.geometry {
             let id = geom.id();
             if sketch.derived.contains(&id) || !self.tab.element_filter.accepts(sketch, id) {
                 continue;
             }
-            let name = element_name(sketch, id);
+            let name = text.name(sketch, id);
             if !named(&name) {
                 continue;
             }
@@ -1145,7 +1150,7 @@ impl SketchWorkbench {
                 .relations
                 .constraints_on(id)
                 .iter()
-                .filter_map(|c| sketch.constraints.iter().find(|k| k.id == *c))
+                .filter_map(|c| by_id.get(c).copied())
                 .collect();
             let badges = on
                 .iter()
@@ -1175,7 +1180,7 @@ impl SketchWorkbench {
                 color: Some([color[0], color[1], color[2]]),
                 label: name,
                 secondary: detail.map(String::from),
-                value: Some(element_value(sketch, geom)),
+                value: Some(text.value(sketch, geom)),
                 flag: lost.contains(&id).then(|| StatusLine {
                     text: "lost".into(),
                     tone: Tone::Warning,
@@ -1212,6 +1217,9 @@ impl SketchWorkbench {
             sketch_id: self.tab.active_sketch_id,
         };
         let listed: std::collections::HashSet<&Uuid> = shown.iter().collect();
+        let text = self
+            .frame
+            .row_text(self.active_key(ctx), || RowText::of(sketch));
         let mut items = Vec::new();
         for constraint in &sketch.constraints {
             if !listed.contains(&constraint.id) {
@@ -1223,7 +1231,7 @@ impl SketchWorkbench {
             let tags = operands
                 .iter()
                 .map(|e| Tag {
-                    text: element_name(sketch, *e),
+                    text: text.name(sketch, *e),
                     selected: self.tab.selected.contains(e),
                     lit: hand.element == Some(*e),
                     ..Default::default()
@@ -2456,6 +2464,47 @@ fn image_field(id: &str) -> Option<(usize, &str)> {
 
 /// An element's size as its row shows it: a line's length, a round's
 /// radius, a point's place; else its kind.
+/// The element list's text for each element of a sketch: its name and
+/// its value, worked out once per read of the sketch.
+pub(crate) struct RowText {
+    names: std::collections::HashMap<Uuid, String>,
+    values: std::collections::HashMap<Uuid, String>,
+}
+
+impl RowText {
+    pub(crate) fn of(sketch: &Sketch) -> Self {
+        let named = ElementNames::new(sketch);
+        let drawn = sketch
+            .geometry
+            .iter()
+            .filter(|g| !sketch.derived.contains(&g.id()));
+        let (names, values) = drawn
+            .map(|g| {
+                (
+                    (g.id(), named.name(g.id())),
+                    (g.id(), element_value(sketch, g)),
+                )
+            })
+            .unzip();
+        Self { names, values }
+    }
+
+    /// [`crate::style::element_name`] of `id`.
+    fn name(&self, sketch: &Sketch, id: Uuid) -> String {
+        match self.names.get(&id) {
+            Some(name) => name.clone(),
+            None => crate::style::element_name(sketch, id),
+        }
+    }
+
+    fn value(&self, sketch: &Sketch, geom: &sketch::GeometryElement) -> String {
+        match self.values.get(&geom.id()) {
+            Some(value) => value.clone(),
+            None => element_value(sketch, geom),
+        }
+    }
+}
+
 fn element_value(sketch: &Sketch, geom: &sketch::GeometryElement) -> String {
     use sketch::GeometryElement as G;
     let at = |id| sketch.point_position(id);

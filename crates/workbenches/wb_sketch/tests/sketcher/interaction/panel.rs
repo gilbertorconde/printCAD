@@ -442,6 +442,9 @@ fn the_lists_follow_a_shape_while_it_is_drawn() {
 #[test]
 fn rows_pick_several_elements_for_the_view() {
     let (mut h, mut panel) = rectangle();
+    // High enough for the view to hold the whole rectangle: what is off
+    // screen is not drawn.
+    h.vp = crate::view_proj_from(150.0);
     panel.click(&mut h, panel.at("Line 1", 0));
     let ctrl = panel.at("Line 2", 0);
     let press = |pressed| egui::Event::PointerButton {

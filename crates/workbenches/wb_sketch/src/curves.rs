@@ -277,8 +277,9 @@ impl Curve {
         let n = self.pieces(span);
         let dist = |t: f64| (self.at(t) - p).length_squared();
         let best = (0..=n)
-            .min_by(|i, j| dist(sample_at(span, *i, n)).total_cmp(&dist(sample_at(span, *j, n))))
-            .unwrap_or(0);
+            .map(|i| (i, dist(sample_at(span, i, n))))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(0, |(i, _)| i);
         let (mut lo, mut hi) = (
             sample_at(span, best.saturating_sub(1), n),
             sample_at(span, (best + 1).min(n), n),

@@ -104,31 +104,83 @@ pub fn element_kind(element: &GeometryElement) -> &'static str {
 }
 
 /// "Line 3": the element's kind and its 1-based ordinal among elements of
-/// that kind, in sketch order.
+/// that kind, in sketch order. Naming many elements goes through
+/// [`ElementNames`], which counts once for all of them.
 pub fn element_name(sketch: &Sketch, id: Uuid) -> String {
+    named(sketch, id, |kind| {
+        let mut ordinal = 0;
+        for g in drawn(sketch) {
+            if std::mem::discriminant(g) == kind {
+                ordinal += 1;
+            }
+            if g.id() == id {
+                return Some(ordinal);
+            }
+        }
+        None
+    })
+}
+
+/// Every element's [`element_name`], each ordinal counted in one pass over
+/// the sketch.
+pub struct ElementNames<'a> {
+    sketch: &'a Sketch,
+    ordinals: std::collections::HashMap<Uuid, usize>,
+}
+
+impl<'a> ElementNames<'a> {
+    pub fn new(sketch: &'a Sketch) -> Self {
+        let mut counts: Vec<(std::mem::Discriminant<GeometryElement>, usize)> = Vec::new();
+        let mut ordinals = std::collections::HashMap::with_capacity(sketch.geometry.len());
+        for g in drawn(sketch) {
+            let kind = std::mem::discriminant(g);
+            let ordinal = match counts.iter_mut().find(|(k, _)| *k == kind) {
+                Some((_, n)) => {
+                    *n += 1;
+                    *n
+                }
+                None => {
+                    counts.push((kind, 1));
+                    1
+                }
+            };
+            ordinals.insert(g.id(), ordinal);
+        }
+        Self { sketch, ordinals }
+    }
+
+    pub fn name(&self, id: Uuid) -> String {
+        named(self.sketch, id, |_| self.ordinals.get(&id).copied())
+    }
+}
+
+/// The elements that take a name of their own: all but a text's letters.
+fn drawn(sketch: &Sketch) -> impl Iterator<Item = &GeometryElement> {
+    sketch
+        .geometry
+        .iter()
+        .filter(|g| !sketch.derived.contains(&g.id()))
+}
+
+fn named(
+    sketch: &Sketch,
+    id: Uuid,
+    ordinal: impl FnOnce(std::mem::Discriminant<GeometryElement>) -> Option<usize>,
+) -> String {
     if let Some(reference) = crate::sketch::Reference::of(id) {
         return reference.label().to_string();
     }
     if let Some(block) = sketch.texts.iter().find(|b| b.anchor == id) {
         return crate::params::text_label(&block.text);
     }
-    let Some(kind) = sketch.get_geometry(id).map(std::mem::discriminant) else {
-        return format!("Element {}", &id.to_string()[..8]);
+    let unnamed = || format!("Element {}", &id.to_string()[..8]);
+    let Some(g) = sketch.get_geometry(id) else {
+        return unnamed();
     };
-    let mut ordinal = 0;
-    for g in sketch
-        .geometry
-        .iter()
-        .filter(|g| !sketch.derived.contains(&g.id()))
-    {
-        if std::mem::discriminant(g) == kind {
-            ordinal += 1;
-        }
-        if g.id() == id {
-            return format!("{} {ordinal}", element_kind(g));
-        }
+    match ordinal(std::mem::discriminant(g)) {
+        Some(n) => format!("{} {n}", element_kind(g)),
+        None => unnamed(),
     }
-    format!("Element {}", &id.to_string()[..8])
 }
 
 /// A short label for the plane a sketch sits on.
@@ -202,6 +254,11 @@ mod tests {
         assert_eq!(element_name(&sketch, a), "Point 1");
         assert_eq!(element_name(&sketch, l), "Line 1");
         assert_eq!(element_name(&sketch, c), "Point 3");
+        let names = ElementNames::new(&sketch);
+        let stray = Uuid::new_v4();
+        for id in [a, b, l, c, stray] {
+            assert_eq!(names.name(id), element_name(&sketch, id));
+        }
     }
 
     #[test]

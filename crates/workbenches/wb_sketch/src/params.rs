@@ -8,6 +8,7 @@
 
 use core_document::expr::{self, Dim};
 use core_document::{FeatureNode, Parameter, WorkbenchFeature};
+use serde::Deserialize as _;
 use serde_json::Value;
 
 use crate::feature::SketchFeature;
@@ -51,15 +52,20 @@ pub(crate) fn formula_dim(kind: &ConstraintKind) -> Dim {
 
 /// The sketch's driving dimensions.
 pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
-    let Ok(feature) = SketchFeature::from_json(&node.data) else {
+    // A generated sketch is its numbers; it has no dimensions of its own.
+    if node.data.get("generator").is_some_and(|g| !g.is_null()) {
+        return match SketchFeature::from_json(&node.data) {
+            Ok(feature) => crate::generator::parameters(&feature),
+            Err(_) => Vec::new(),
+        };
+    }
+    // Only the constraints and the texts, as stored, which the pointers
+    // name: not the curves, nor the letters made of the texts.
+    let Ok(Numbered { sketch }) = Numbered::deserialize(&node.data) else {
         return Vec::new();
     };
-    // A generated sketch is its numbers; it has no dimensions of its own.
-    if feature.generator.is_some() {
-        return crate::generator::parameters(&feature);
-    }
     let mut out = Vec::new();
-    for (i, c) in feature.sketch.constraints.iter().enumerate() {
+    for (i, c) in sketch.constraints.iter().enumerate() {
         if !c.driving || dimension_value(&c.kind).is_none() {
             continue;
         }
@@ -85,7 +91,7 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
     }
     // Each text block's size, spacing and angle, kept under the block's
     // id; its outlines are made again at what they come to.
-    for (i, block) in feature.sketch.texts.iter().enumerate() {
+    for (i, block) in sketch.texts.iter().enumerate() {
         let what = text_label(&block.text);
         for (field, label, dim) in [
             ("size", "size", Dim::LENGTH),
@@ -119,6 +125,19 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
         }
     }
     out
+}
+
+/// What of a sketch's stored data holds its numbers.
+#[derive(serde::Deserialize)]
+struct Numbered {
+    sketch: NumberedSketch,
+}
+
+#[derive(serde::Deserialize)]
+struct NumberedSketch {
+    constraints: Vec<crate::sketch::Constraint>,
+    #[serde(default)]
+    texts: Vec<crate::sketch::TextBlock>,
 }
 
 /// What the UI calls a text block: its first line, cut short.

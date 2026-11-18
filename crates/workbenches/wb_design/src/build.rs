@@ -51,11 +51,52 @@ pub fn design_features_of_body(
     document: &Document,
     body: BodyId,
 ) -> Vec<(FeatureId, DesignFeature)> {
-    document
-        .feature_tree()
-        .ordered_nodes(|node| node.workbench_id.as_str() == crate::KIND && node.body == Some(body))
-        .filter_map(|(id, _)| document.feature_as::<DesignFeature>(*id).map(|f| (*id, f)))
-        .collect()
+    read_once(document, "design features", body, || {
+        document
+            .feature_tree()
+            .ordered_nodes(|node| {
+                node.workbench_id.as_str() == crate::KIND && node.body == Some(body)
+            })
+            .filter_map(|(id, _)| document.feature_as::<DesignFeature>(*id).map(|f| (*id, f)))
+            .collect()
+    })
+}
+
+/// What `read` makes of `body`'s features, read from the document once
+/// while its [`Document::content_stamp`] holds: the recompute loop and the
+/// toolbar ask every frame, and decoding a long history each time costs
+/// more than the rest of the frame.
+pub(crate) fn read_once<T: Clone + 'static>(
+    document: &Document,
+    what: &'static str,
+    body: BodyId,
+    read: impl FnOnce() -> T,
+) -> T {
+    type Kept = std::collections::HashMap<(&'static str, BodyId), std::rc::Rc<dyn std::any::Any>>;
+    /// The stamp what is kept was read at, and what was read.
+    type Read = (Option<(u64, u64, u64)>, Kept);
+    thread_local! {
+        static READ: std::cell::RefCell<Read> = Default::default();
+    }
+    let stamp = document.content_stamp();
+    let kept = READ.with_borrow_mut(|(at, kept)| {
+        if *at != Some(stamp) {
+            *at = Some(stamp);
+            kept.clear();
+        }
+        kept.get(&(what, body)).cloned()
+    });
+    if let Some(value) = kept.as_deref().and_then(|v| v.downcast_ref::<T>()) {
+        return value.clone();
+    }
+    // Not borrowed while reading: `read` may read others the same way.
+    let value = read();
+    READ.with_borrow_mut(|(at, kept)| {
+        if *at == Some(stamp) {
+            kept.insert((what, body), std::rc::Rc::new(value.clone()));
+        }
+    });
+    value
 }
 
 /// Bodies that have at least one dirty part feature (their solids need a

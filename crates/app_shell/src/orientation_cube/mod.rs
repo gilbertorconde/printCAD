@@ -446,6 +446,25 @@ mod tests {
     use egui::{Pos2, Rect, vec2};
 
     #[test]
+    fn face_labels_draw_with_the_bundled_font_alone() {
+        let face = |label: &str| {
+            let svg = super::FACE_TEMPLATE_SVG
+                .replace("{{BACKGROUND_COLOR}}", "#707684")
+                .replace("{{TEXT_COLOR}}", "#f0f0f0")
+                .replace("{{LABEL}}", label);
+            super::faces::rasterize_svg(&svg).expect("the template rasterizes")
+        };
+        let (blank, top) = (face(""), face("TOP"));
+        let inked = blank
+            .pixels
+            .iter()
+            .zip(&top.pixels)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(inked > 200, "only {inked} pixels of label");
+    }
+
+    #[test]
     fn the_home_glyph_sits_in_the_corner_off_the_disc() {
         // The widget as `draw` lays it out: 200 px square, the disc of
         // radius 75 centred 115 px down.

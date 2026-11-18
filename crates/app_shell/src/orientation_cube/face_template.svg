@@ -33,7 +33,7 @@
     y="50%"
     text-anchor="middle"
     dominant-baseline="central"
-    font-family="DejaVu Sans, Arial, Helvetica, Sans, IBM Plex Sans"
+    font-family="IBM Plex Sans"
     font-size="40"
     font-weight="bold"
     fill="{{TEXT_COLOR}}">

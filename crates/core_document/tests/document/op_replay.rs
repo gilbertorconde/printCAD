@@ -317,3 +317,31 @@ fn a_document_keeps_its_measure_unit() {
     let back = reloaded(&mut Document::new("plain"));
     assert_eq!(back.measure_unit(), None);
 }
+
+/// What is kept of a feature's reading (`read_feature`, `values_revision`,
+/// `content_stamp`) follows every write of it, and a copy of the document
+/// is told apart from the original.
+#[test]
+fn kept_readings_follow_each_write() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(None);
+    let id = doc
+        .add_feature_in_body(datum(BasePlane::XY), "Datum".into(), Some(body))
+        .expect("add");
+    let stamp = doc.content_stamp();
+    let revision = doc.values_revision(id);
+    let read = doc.read_feature::<DatumFeature>(id).expect("reads");
+    assert_eq!(read.attachment, DatumAttachment::BasePlane(BasePlane::XY));
+    assert_eq!(doc.content_stamp(), stamp, "reading changes nothing");
+    assert_eq!(doc.values_revision(id), revision);
+
+    let moved = serde_json::to_value(datum(BasePlane::YZ)).unwrap();
+    doc.update_feature_data(id, moved).expect("update");
+    assert_ne!(doc.content_stamp(), stamp);
+    assert_ne!(doc.values_revision(id), revision);
+    let read = doc.read_feature::<DatumFeature>(id).expect("reads");
+    assert_eq!(read.attachment, DatumAttachment::BasePlane(BasePlane::YZ));
+
+    let copy = doc.clone();
+    assert_ne!(copy.content_stamp(), doc.content_stamp());
+}
