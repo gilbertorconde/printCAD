@@ -357,10 +357,10 @@ pub const FUNCTIONS: &[(&str, &str)] = &[
     ("max", "max(a, b, ...): the largest"),
     (
         "round",
-        "round(x): to the nearest whole mm, degree or number",
+        "round(x): to the nearest whole unit (a length in its own unit), degree or number",
     ),
-    ("floor", "floor(x): down to a whole mm, degree or number"),
-    ("ceil", "ceil(x): up to a whole mm, degree or number"),
+    ("floor", "floor(x): down to a whole unit, degree or number"),
+    ("ceil", "ceil(x): up to a whole unit, degree or number"),
     ("sqrt", "sqrt(x): the square root; of an area, a length"),
     ("hypot", "hypot(a, b): sqrt(a² + b²)"),
     ("sin", "sin(angle)"),
@@ -771,16 +771,32 @@ fn collect_references(node: &Node, out: &mut Vec<Reference>) {
     }
 }
 
-/// A value while evaluating, and whether it is still a bare number.
+/// A value while evaluating, whether it is still a bare number, and the
+/// millimetres in the unit a length was written in, when it was written
+/// in one unit throughout (what `round` rounds it to whole units of).
 #[derive(Debug, Clone, Copy)]
 struct Value {
     q: Quantity,
     bare: bool,
+    written: Option<f64>,
 }
 
 impl Value {
     fn of(q: Quantity) -> Self {
-        Self { q, bare: false }
+        Self {
+            q,
+            bare: false,
+            written: None,
+        }
+    }
+}
+
+/// The unit written for both sides of a sum, when they share one.
+fn shared_unit(a: Value, b: Value) -> Option<f64> {
+    if a.written == b.written {
+        a.written
+    } else {
+        None
     }
 }
 
@@ -828,12 +844,16 @@ fn eval(node: &Node, ctx: &Context) -> Result<Value, ExprError> {
         } => Ok(Value {
             q: Quantity::number(*value),
             bare: true,
+            written: None,
         }),
         Node::Number {
             value,
             unit: Some((size, dim)),
             ..
-        } => Ok(Value::of(Quantity::new(value * size, *dim))),
+        } => Ok(Value {
+            written: (*dim == Dim::LENGTH).then_some(*size),
+            ..Value::of(Quantity::new(value * size, *dim))
+        }),
         Node::Constant(value, _) => Ok(Value::of(Quantity::number(*value))),
         Node::Ref(r) => ctx
             .resolve
@@ -845,7 +865,7 @@ fn eval(node: &Node, ctx: &Context) -> Result<Value, ExprError> {
             match *op {
                 "-" => Ok(Value {
                     q: Quantity::new(-v.q.value, v.q.dim),
-                    bare: v.bare,
+                    ..v
                 }),
                 _ => {
                     need_number(v, span, "`!` takes")?;
@@ -920,11 +940,17 @@ fn binary(
             Ok(Value {
                 q: Quantity::new(finite(value, span)?, l.q.dim),
                 bare: l.bare && r.bare,
+                written: shared_unit(l, r),
             })
         }
         "*" => Ok(Value {
             q: Quantity::new(finite(l.q.value * r.q.value, span)?, l.q.dim.times(r.q.dim)),
             bare: l.bare && r.bare,
+            written: match (l.q.dim == Dim::NUMBER, r.q.dim == Dim::NUMBER) {
+                (false, true) => l.written,
+                (true, false) => r.written,
+                _ => None,
+            },
         }),
         "/" => {
             if r.q.value == 0.0 {
@@ -933,6 +959,11 @@ fn binary(
             Ok(Value {
                 q: Quantity::new(finite(l.q.value / r.q.value, span)?, l.q.dim.over(r.q.dim)),
                 bare: l.bare && r.bare,
+                written: if r.q.dim == Dim::NUMBER {
+                    l.written
+                } else {
+                    None
+                },
             })
         }
         "^" => {
@@ -952,6 +983,7 @@ fn binary(
             Ok(Value {
                 q: Quantity::new(finite(l.q.value.powf(n), span)?, dim),
                 bare: l.bare,
+                written: None,
             })
         }
         _ => {
@@ -1017,7 +1049,7 @@ fn call(name: &str, args: &[Node], ctx: &Context, span: &Range<usize>) -> Result
     };
     let same = |v: Value, value: f64| Value {
         q: Quantity::new(value, v.q.dim),
-        bare: v.bare,
+        ..v
     };
     let result = match name {
         "sin" | "cos" | "tan" => {
@@ -1080,18 +1112,32 @@ fn call(name: &str, args: &[Node], ctx: &Context, span: &Range<usize>) -> Result
                     },
                 ),
                 bare: v.bare,
+                written: None,
             }
         }
-        "abs" | "round" | "floor" | "ceil" => {
+        "abs" => {
+            count(1)?;
+            same(values[0], values[0].q.value.abs())
+        }
+        "round" | "floor" | "ceil" => {
             count(1)?;
             let v = values[0];
-            let x = match name {
-                "abs" => v.q.value.abs(),
-                "round" => v.q.value.round(),
-                "floor" => v.q.value.floor(),
-                _ => v.q.value.ceil(),
+            // A length goes to whole units of the unit it was written in,
+            // or else of the document's; an angle to whole degrees.
+            let per = if v.q.dim.angle == 0 && v.q.dim.length != 0 {
+                v.written
+                    .unwrap_or_else(|| mm_per(ctx.length_unit))
+                    .powi(i32::from(v.q.dim.length))
+            } else {
+                1.0
             };
-            same(v, x)
+            let x = v.q.value / per;
+            let x = match name {
+                "round" => x.round(),
+                "floor" => x.floor(),
+                _ => x.ceil(),
+            };
+            same(v, x * per)
         }
         "min" | "max" => {
             if values.is_empty() {
@@ -1283,6 +1329,28 @@ mod tests {
                 .contains("takes 2 values")
         );
         assert!(n("nope(1)").unwrap_err().message.contains("no function"));
+    }
+
+    #[test]
+    fn rounding_works_in_the_unit_a_length_is_written_in() {
+        let inch = |t: &str| eval_in(t, Unit::In).unwrap().value;
+        let mm = |t: &str| eval_in(t, Unit::Mm).unwrap().value;
+        // A length written in a unit rounds in it, whatever the document's.
+        assert!(close(inch("round(1.3 in)"), 25.4));
+        assert!(close(mm("round(1.3 in)"), 25.4));
+        assert!(close(inch("floor(-2 * 0.6 in)"), -50.8));
+        assert!(close(inch("round(13.4 mm)"), 13.0));
+        // Otherwise it rounds in the document's unit: a millimetre
+        // document's results are millimetres as ever.
+        assert!(close(inch("ceil(Printer.nozzle)"), 25.4));
+        assert!(close(mm("ceil(Printer.nozzle + 0.1 in)"), 3.0));
+        assert!(close(mm("round(`Pad 2`.length / 5)"), 2.0));
+        assert!(close(inch("round(1.3)"), 1.0));
+        assert_eq!(
+            inch("round(Sizes.tilt / 7)"),
+            4.0,
+            "angles round in degrees"
+        );
     }
 
     #[test]
