@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::channel;
 
 use kernel_api::{LinearDeflectionMode, TessellationSettings, TriMesh};
 use kernel_ogeom::export::{
@@ -188,6 +188,9 @@ fn borrowed<'a>(
         })
         .collect()
 }
+
+/// What the log says of an export thread that ended without an outcome.
+const EXPORT_STOPPED: &str = "The export stopped without writing the file";
 
 /// A finished export, for the log.
 pub(crate) struct ExportOutcome {
@@ -394,22 +397,18 @@ impl PrintCadApp {
             });
         });
         if let Err(err) = started {
+            self.files.export_rx = None;
             crate::app_log::error(format!("Could not start the export: {err}"));
         }
     }
 
     /// Log a finished export, if one has finished.
     pub(crate) fn poll_export(&mut self) {
-        let Some(outcome) = self
-            .files
-            .export_rx
-            .as_ref()
-            .and_then(|rx: &Receiver<ExportOutcome>| rx.try_recv().ok())
-        else {
-            return;
-        };
-        self.files.export_rx = None;
-        report_export(outcome, true);
+        match crate::platform::take_answer(&mut self.files.export_rx) {
+            Some(Ok(outcome)) => report_export(outcome, true),
+            Some(Err(_)) => app_log::error(EXPORT_STOPPED),
+            None => {}
+        }
     }
 
     /// Wait for an export being written, before the process ends: one cut
@@ -419,8 +418,9 @@ impl PrintCadApp {
             return;
         };
         app_log::info("Finishing the export before exit…");
-        if let Ok(outcome) = rx.recv() {
-            report_export(outcome, false);
+        match rx.recv() {
+            Ok(outcome) => report_export(outcome, false),
+            Err(_) => app_log::error(EXPORT_STOPPED),
         }
     }
 

@@ -1111,13 +1111,14 @@ impl PrintCadApp {
     /// a document goes to the tab it was asked from, brought on screen,
     /// whichever tab is on screen now; it is let go when that tab closed.
     pub(crate) fn poll_file_dialog(&mut self) {
-        let Some(rx) = &self.files.dialog_rx else {
-            return;
+        let result = match crate::platform::take_answer(&mut self.files.dialog_rx) {
+            Some(Ok(result)) => result,
+            Some(Err(_)) => {
+                app_log::error("The file dialog closed without an answer: nothing done");
+                return;
+            }
+            None => return,
         };
-        let Ok(result) = rx.try_recv() else {
-            return;
-        };
-        self.files.dialog_rx = None;
         let path = result.paths.first().cloned();
         // A bench hears of a cancelled pick too, in its own tab.
         let answered =
