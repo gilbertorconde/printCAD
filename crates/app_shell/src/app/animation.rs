@@ -157,8 +157,12 @@ pub(crate) fn save_dialog(videos: bool) -> (String, String, Vec<&'static str>) {
 
 /// Draw `animation` and write it to `path`, away from the window, in the
 /// kind the path's extension names ([`Kind::of`]). The log says when it
-/// is done.
-pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
+/// is done; the thread comes back for the frame loop to wait on and an
+/// exit to finish.
+pub(crate) fn write_in_background(
+    animation: Animation,
+    path: PathBuf,
+) -> Option<crate::platform::Job> {
     let spawned = crate::platform::spawn("printcad-animation", move || {
         match write(&animation, &path) {
             Ok(written) => app_log::info(format!(
@@ -169,9 +173,9 @@ pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
             Err(why) => app_log::error(format!("Could not record the animation: {why}")),
         }
     });
-    if let Err(err) = spawned {
-        app_log::error(format!("Could not start recording the animation: {err}"));
-    }
+    spawned
+        .map_err(|err| app_log::error(format!("Could not start recording the animation: {err}")))
+        .ok()
 }
 
 /// Write the animation where `path` says, in the kind [`Kind::of`] makes
@@ -479,6 +483,18 @@ mod tests {
         for i in 1..=3 {
             assert!(folder.join(format!("shot-{i:04}.png")).exists());
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A recording written away from the window hands back its thread,
+    /// and the file is there once it has been waited for.
+    #[test]
+    fn a_recording_written_in_the_background_can_be_waited_for() {
+        let dir = std::env::temp_dir().join(format!("printcad-anim-wait-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let job = write_in_background(slide(2, 40), dir.join("wait.gif")).expect("starts");
+        job.join();
+        assert!(dir.join("wait.gif").is_file());
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -1177,7 +1177,9 @@ impl PrintCadApp {
             }
             FileDialogKind::SaveAnimation(animation) => {
                 if let Some(path) = path {
-                    crate::app::animation::write_in_background(*animation, path);
+                    self.files
+                        .animations
+                        .extend(crate::app::animation::write_in_background(*animation, path));
                 }
             }
             FileDialogKind::SaveFiles(files) => {

@@ -189,6 +189,7 @@ impl PrintCadApp {
             || self.any_tab_busy()
             || self.files.dialog_rx.is_some()
             || self.files.export_rx.is_some()
+            || !self.files.animations.is_empty()
             || !self.nav_device.motion().is_idle()
             || self.scripting.thread.busy()
             || self.registry.any_busy()

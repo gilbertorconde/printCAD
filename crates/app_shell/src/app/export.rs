@@ -423,8 +423,10 @@ impl PrintCadApp {
         }
     }
 
-    /// Log a finished export, if one has finished.
+    /// Log a finished export, if one has finished. An animation written
+    /// stops keeping frames coming once its thread ends.
     pub(crate) fn poll_export(&mut self) {
+        self.files.animations.retain(|job| !job.is_finished());
         match crate::platform::take_answer(&mut self.files.export_rx) {
             Some(Ok(outcome)) => report_export(outcome, true),
             Some(Err(_)) => app_log::error(EXPORT_STOPPED),
@@ -432,9 +434,17 @@ impl PrintCadApp {
         }
     }
 
-    /// Wait for an export being written, before the process ends: one cut
-    /// off would leave no file. Nothing opens in the slicer on the way out.
+    /// Wait for an export and the animations being written, before the
+    /// process ends: one cut off would leave no file. Nothing opens in the
+    /// slicer on the way out.
     pub(crate) fn finish_export(&mut self) {
+        let animations = std::mem::take(&mut self.files.animations);
+        if animations.iter().any(|job| !job.is_finished()) {
+            app_log::info("Finishing the animation before exit…");
+        }
+        for job in animations {
+            job.join();
+        }
         let Some(rx) = self.files.export_rx.take() else {
             return;
         };

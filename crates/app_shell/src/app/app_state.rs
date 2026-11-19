@@ -227,6 +227,8 @@ pub(crate) struct FileWork {
     /// This run's own folder for the files sent to the slicer, once one
     /// has been sent.
     pub slicer_folder: Option<PathBuf>,
+    /// Animations being drawn and written on threads of their own.
+    pub animations: Vec<crate::platform::Job>,
 }
 
 impl FileWork {
@@ -239,6 +241,7 @@ impl FileWork {
             closed_files: Vec::new(),
             picture: None,
             slicer_folder: None,
+            animations: Vec::new(),
         }
     }
 }
