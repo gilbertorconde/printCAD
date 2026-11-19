@@ -631,8 +631,9 @@ pub(crate) fn held_point(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64)
 
 /// What a snap made in tool `state` knows of the drawing in
 /// progress: a straight segment's start, for alignment, which it must not
-/// land back on. Arcs' circles are left to [`snap_at`], which knows the
-/// tool's settings.
+/// land back on; or the circle a centre-point arc's end lands on, which
+/// takes only snaps on that circle. Arcs' circles are left to
+/// [`snap_at`], which knows the tool's settings.
 pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
     let from = match state {
         ToolState::LineFrom { from, .. }
@@ -643,6 +644,13 @@ pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
         } => Some(*from),
         _ => None,
     };
+    let guide = match state {
+        ToolState::ArcStart { center, start } => center
+            .position(sketch)
+            .zip(start.position(sketch))
+            .map(|(c, s)| (c, (s - c).to_glam().length())),
+        _ => None,
+    };
     snap::SnapContext {
         from: from.and_then(|f| f.position(sketch)),
         exclude: match from {
@@ -650,6 +658,7 @@ pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
             _ => Vec::new(),
         },
         arcs: false,
+        guide,
     }
 }
 
