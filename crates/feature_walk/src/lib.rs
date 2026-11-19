@@ -2,6 +2,13 @@
 //! by the role its `#[walk(...)]` attribute names, or by its own type's
 //! `Walk` when it names none, at the place serde writes it. The roles are
 //! described in `core_document::walk`.
+//!
+//! `#[derive(Describe)]` for `core_document::describe::Describe`: what a
+//! script writes for the type, its fields' kinds from the same roles and
+//! their names and defaults from serde's attributes. `Walk` derives it
+//! too.
+
+mod describe;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as Tokens;
@@ -16,6 +23,15 @@ use syn::{
 pub fn derive_walk(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match expand(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+#[proc_macro_derive(Describe, attributes(walk))]
+pub fn derive_describe(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match describe::expand(&input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
@@ -58,7 +74,10 @@ fn expand(input: &DeriveInput) -> syn::Result<Tokens> {
             }
         }
     };
+    let described = describe::expand(input)?;
     Ok(quote! {
+        #described
+
         impl #impl_generics ::core_document::walk::Walk for #name #type_generics #where_clause {
             #[allow(unused_variables)]
             fn walk(&self, walker: &mut ::core_document::walk::Walker) {
@@ -250,7 +269,7 @@ fn container_is_setting(attrs: &[Attribute]) -> syn::Result<bool> {
 }
 
 /// Whether one of the `#[serde(...)]` attributes names `word`.
-fn serde_has(attrs: &[Attribute], word: &str) -> syn::Result<bool> {
+pub(crate) fn serde_has(attrs: &[Attribute], word: &str) -> syn::Result<bool> {
     let mut found = false;
     for attr in attrs.iter().filter(|a| a.path().is_ident("serde")) {
         attr.parse_nested_meta(|meta| {
@@ -270,7 +289,7 @@ fn serde_has(attrs: &[Attribute], word: &str) -> syn::Result<bool> {
 }
 
 /// The name `#[serde(rename = "...")]` gives, if any.
-fn serde_rename(attrs: &[Attribute]) -> syn::Result<Option<String>> {
+pub(crate) fn serde_rename(attrs: &[Attribute]) -> syn::Result<Option<String>> {
     let mut found = None;
     for attr in attrs.iter().filter(|a| a.path().is_ident("serde")) {
         attr.parse_nested_meta(|meta| {

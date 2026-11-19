@@ -1,5 +1,6 @@
 //! Design feature payloads stored in the document feature tree.
 
+use core_document::describe::{Describe, Shape};
 use core_document::walk::Walk;
 use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
@@ -211,7 +212,7 @@ pub enum ExtrudeDirection {
 }
 
 /// One of a body's own axes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Describe)]
 pub enum BaseAxis {
     X,
     Y,
@@ -589,7 +590,7 @@ impl ExtrudeExtras {
 }
 
 /// How a helix's extent is specified; the missing quantity is derived.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Describe)]
 pub enum HelixMode {
     #[default]
     PitchHeight,
@@ -681,7 +682,7 @@ where
 }
 
 /// How a pipe's section turns a sharp corner of its path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
 pub enum PipeCorner {
     /// Carried into the corner and sheared onto the plane bisecting it.
     #[default]
@@ -709,7 +710,7 @@ impl PipeCorner {
 }
 
 /// Fillet sizing style.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Describe)]
 pub enum FilletMode {
     /// One size, each face's contact stopping where the face runs out
     /// while the other's goes on (on one edge).
@@ -753,7 +754,7 @@ pub struct RadiusPoint {
 }
 
 /// The section of a fillet of two distances.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Describe)]
 pub enum FilletProfile {
     /// The ellipse tangent to each face at its distance.
     #[default]
@@ -778,7 +779,7 @@ fn half() -> f32 {
 }
 
 /// Chamfer sizing style.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Describe)]
 pub enum ChamferMode {
     /// One size, each face's leg stopping where the face runs out while
     /// the other's goes on.
@@ -945,7 +946,7 @@ impl MirrorPlane {
 }
 
 /// Which of a sketch's own axes a pattern runs along or turns about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
 pub enum SketchAxis {
     /// The sketch's horizontal (x) axis through its origin.
     #[default]
@@ -1179,7 +1180,7 @@ impl Default for NutTrap {
 }
 
 /// Which end of a hole a nut trap sits at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
 pub enum NutSide {
     /// At its mouth, on the sketch's plane.
     #[default]
@@ -1265,7 +1266,7 @@ impl HoleCut {
 }
 
 /// How long a hole's modeled thread runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
 pub enum ThreadLength {
     /// As deep as the thread depth given.
     #[default]
@@ -1293,7 +1294,7 @@ impl ThreadLength {
 }
 
 /// ISO 273 metric clearance style for a threaded hole size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
 pub enum HoleFit {
     Close,
     #[default]
@@ -1388,6 +1389,32 @@ impl<'de> Deserialize<'de> for ThreadSpec {
             }
             _ => Err(D::Error::custom(shapes)),
         }
+    }
+}
+
+/// A thread as its reading above takes it: a designation, or the whole.
+impl Describe for ThreadSpec {
+    fn shape() -> Shape {
+        use core_document::describe::Field;
+        let field = |name: &str, shape, default| Field {
+            name: name.into(),
+            shape,
+            default,
+            flatten: false,
+        };
+        Shape::OneOf(vec![
+            Shape::Words("a size such as \"M6\" or \"1/4-20\""),
+            Shape::Fields(vec![
+                field(
+                    "standard",
+                    ThreadStandard::shape(),
+                    core_document::describe::json(&ThreadStandard::default()),
+                ),
+                field("size", Shape::Text, None),
+                field("class", Shape::Text, Some("".into())),
+                field("left_handed", Shape::Bool, Some(false.into())),
+            ]),
+        ])
     }
 }
 
@@ -1509,7 +1536,7 @@ pub enum BorrowSource {
 
 /// Borrowed geometry as it was when it was frozen, in the borrowing body's
 /// frame: what the body keeps once it stops following the source.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Describe)]
 pub struct FrozenBorrow {
     /// The sketch, with its plane in the borrowing body's frame, as a
     /// sketch feature's data.
@@ -1522,7 +1549,7 @@ pub struct FrozenBorrow {
 }
 
 /// A borrowed face as it was frozen.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Describe)]
 pub struct FrozenFace {
     /// Where it was picked, in the borrowing body's frame.
     pub pick: FacePick,
@@ -1540,7 +1567,7 @@ pub struct FrozenFace {
 }
 
 /// A borrowed edge as it was frozen.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Describe)]
 pub struct FrozenEdge {
     /// A point of it and its direction there, in the borrowing body's
     /// frame.
@@ -2531,7 +2558,7 @@ pub enum DesignFeature {
 }
 
 /// How a borrow lends what it borrows.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Describe)]
 #[serde(default)]
 pub struct BorrowOptions {
     /// Moved and turned from where the bodies put it: along and about the
