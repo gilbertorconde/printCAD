@@ -646,11 +646,10 @@ impl PrintCadApp {
             .map(|s| s.to_ascii_lowercase())
         {
             Some(ext) if ext == "json" => {
-                let file = std::fs::File::create(path).with_context(|| {
-                    format!("Failed to create document file {}", path.display())
-                })?;
-                serde_json::to_writer_pretty(file, &self.session.document)
+                let bytes = serde_json::to_vec_pretty(&self.session.document)
                     .with_context(|| "Failed to serialize document")?;
+                crate::platform::write(path, &bytes)
+                    .with_context(|| format!("Failed to write document file {}", path.display()))?;
             }
             _ => {
                 let compression = if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
@@ -922,6 +921,7 @@ impl PrintCadApp {
         for job in self.autosave.jobs.drain(..) {
             job.join();
         }
+        self.finish_export();
     }
 
     /// Take away the recovery copies of the tabs `forget` names, on the way
@@ -1166,7 +1166,7 @@ impl PrintCadApp {
             FileDialogKind::Attach(chat) => self.attach_files(&chat, result.paths),
             FileDialogKind::SaveFile(file) => {
                 if let Some(path) = path {
-                    match std::fs::write(&path, &file.contents) {
+                    match crate::platform::write(&path, &file.contents) {
                         Ok(()) => app_log::info(format!("Saved {}", path.display())),
                         Err(err) => {
                             app_log::error(format!("Could not save {}: {err}", path.display()))
@@ -1384,7 +1384,7 @@ fn write_into(folder: &std::path::Path, files: &[(String, Vec<u8>)]) {
             continue;
         }
         let path = folder.join(name);
-        match std::fs::write(&path, contents) {
+        match crate::platform::write(&path, contents) {
             Ok(()) => app_log::info(format!("Saved {}", path.display())),
             Err(err) => app_log::error(format!("Could not save {}: {err}", path.display())),
         }

@@ -415,48 +415,18 @@ impl PrintCadApp {
             return;
         };
         self.files.export_rx = None;
-        let ExportOutcome {
-            path,
-            result,
-            open_with,
-        } = outcome;
-        match result {
-            Ok(exported) => {
-                let mut line = format!(
-                    "Exported {} to {}",
-                    match exported.written {
-                        1 => "1 body".to_string(),
-                        n => format!("{n} bodies"),
-                    },
-                    path.display()
-                );
-                if exported.triangles > 0 {
-                    line.push_str(&format!(" ({} triangles)", exported.triangles));
-                }
-                app_log::info(line);
-                if !exported.skipped.is_empty() {
-                    app_log::warn(format!(
-                        "Left out, as meshes have no exact shape to write: {}",
-                        exported.skipped.join(", ")
-                    ));
-                }
-                if !exported.annotations_left_out.is_empty() {
-                    app_log::warn(format!(
-                        "Annotations left out, as they lie on no face of their body: {}",
-                        exported.annotations_left_out.join(", ")
-                    ));
-                }
-                if let Some(command) = open_with {
-                    match open_in_slicer(&command, &path) {
-                        Ok(program) => app_log::info(format!("Opened it with {program}")),
-                        Err(err) => app_log::error(format!(
-                            "Could not open it in the slicer: {err}. Set the slicer \
-                             in Preferences › 3D printing."
-                        )),
-                    }
-                }
-            }
-            Err(err) => app_log::error(format!("Export to {} failed: {err}", path.display())),
+        report_export(outcome, true);
+    }
+
+    /// Wait for an export being written, before the process ends: one cut
+    /// off would leave no file. Nothing opens in the slicer on the way out.
+    pub(crate) fn finish_export(&mut self) {
+        let Some(rx) = self.files.export_rx.take() else {
+            return;
+        };
+        app_log::info("Finishing the export before exit…");
+        if let Ok(outcome) = rx.recv() {
+            report_export(outcome, false);
         }
     }
 
@@ -511,6 +481,54 @@ impl PrintCadApp {
             Some(shown) if shown.key == key => shown.layout.clone(),
             _ => lay_out(document, &parts, &settings),
         }
+    }
+}
+
+/// Log how an export went, and open it in the slicer it was for when
+/// `open` and it was written.
+fn report_export(outcome: ExportOutcome, open: bool) {
+    let ExportOutcome {
+        path,
+        result,
+        open_with,
+    } = outcome;
+    match result {
+        Ok(exported) => {
+            let mut line = format!(
+                "Exported {} to {}",
+                match exported.written {
+                    1 => "1 body".to_string(),
+                    n => format!("{n} bodies"),
+                },
+                path.display()
+            );
+            if exported.triangles > 0 {
+                line.push_str(&format!(" ({} triangles)", exported.triangles));
+            }
+            app_log::info(line);
+            if !exported.skipped.is_empty() {
+                app_log::warn(format!(
+                    "Left out, as meshes have no exact shape to write: {}",
+                    exported.skipped.join(", ")
+                ));
+            }
+            if !exported.annotations_left_out.is_empty() {
+                app_log::warn(format!(
+                    "Annotations left out, as they lie on no face of their body: {}",
+                    exported.annotations_left_out.join(", ")
+                ));
+            }
+            if let Some(command) = open_with.filter(|_| open) {
+                match open_in_slicer(&command, &path) {
+                    Ok(program) => app_log::info(format!("Opened it with {program}")),
+                    Err(err) => app_log::error(format!(
+                        "Could not open it in the slicer: {err}. Set the slicer \
+                         in Preferences › 3D printing."
+                    )),
+                }
+            }
+        }
+        Err(err) => app_log::error(format!("Export to {} failed: {err}", path.display())),
     }
 }
 
