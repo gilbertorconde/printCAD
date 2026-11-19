@@ -47,7 +47,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
     t.add_free(
         sketch(CommandSpec::new(
             "sketch.knot_multiplicity",
-            "Set how many times a spline's knot stands (1 up to the degree), or remove it with 0",
+            "Set how many times a spline's knot stands: 1 up to the degree, or 0 to remove it",
         ))
         .param("spline", ParamKind::Id, "The spline")
         .param(

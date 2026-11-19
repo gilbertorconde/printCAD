@@ -62,7 +62,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
     t.add_free(
         sketch(CommandSpec::new(
             "sketch.mirror_sketch",
-            "A new sketch on the same plane: this one's geometry mirrored across its Y axis",
+            "Mirror this sketch's geometry across its Y axis into a new sketch on the same plane",
         ))
         .returns("the new sketch's id"),
         reading(mirror_sketch_command),

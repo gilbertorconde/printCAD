@@ -473,8 +473,9 @@ impl PrintCadApp {
             self.document_words(chat)
         );
         out.push_str(&format!(
-            "\n\n{}\n\n{}",
+            "\n\n{} {}\n\n{}",
             crate::app::discovery::ABOUT_INDEX,
+            agents::discovery::INDEX_FORMAT,
             crate::app::discovery::catalog(&self.registry)
                 .index()
                 .trim_end()

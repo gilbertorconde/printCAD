@@ -94,8 +94,8 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
     t.add_free(
         sketch(CommandSpec::new(
             "sketch.remove_axis_alignment",
-            "Turn the horizontal and vertical constraints of lines into parallel and \
-             perpendicular ones among them, so the group keeps its shape and turns as a whole",
+            "Turn lines' horizontal and vertical constraints into parallel and perpendicular \
+             ones among them: the group keeps its shape and turns as a whole",
         ))
         .param("items", ParamKind::List, "The lines")
         .returns("how many constraints changed"),

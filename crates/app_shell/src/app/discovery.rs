@@ -7,7 +7,7 @@
 //! of the scripting guide, the AI guide's sections, and the recipes under
 //! `docs/recipes/`.
 
-use agents::discovery::{Catalog, DEFAULT_LIMIT, Entry, render_described, render_search};
+use agents::discovery::{Catalog, DEFAULT_LIMIT, Entry, render_described, render_search, slug};
 use serde_json::Value;
 
 use crate::app::scripts::command_specs;
@@ -26,7 +26,7 @@ pub(crate) const ABOUT_INDEX: &str = "\
 `search` finds commands and guides by the words of a task (\"round the edges\", \
 several queries at once), and `describe` gives one's whole entry (arguments, \
 notes, examples) by id, bare name or a near spelling; the index below lists every \
-one in a line.";
+one.";
 
 /// Every command and document, ready to search.
 pub(crate) fn catalog(registry: &core_document::DocumentService) -> Catalog {
@@ -94,16 +94,6 @@ fn sections(id: &str, text: &str) -> Vec<Entry> {
     }
     push(&key, &title, &body);
     out
-}
-
-/// A heading as an anchor: lower case, words joined by `-`.
-fn slug(heading: &str) -> String {
-    heading
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
 }
 
 /// The words of `args[key]`: a list of strings, or one string.
@@ -326,18 +316,26 @@ mod tests {
         assert_eq!(found[0].hits[0].entry.id, "guide/scripting#recording");
     }
 
-    /// The index goes into every connection's instructions: it stays
-    /// small enough to read in full (about 6,200 tokens).
+    /// The index goes into every connection's instructions: it lists
+    /// every command, read back as its format says, and stays small
+    /// enough to read in full (25,000 bytes is about 6,200 tokens).
     #[test]
     fn the_index_lists_every_command_in_little_room() {
         let registry = registry();
         let index = catalog(&registry).index();
+        let mut listed = std::collections::HashSet::new();
+        let mut group = "";
+        for line in index.lines() {
+            if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                group = g;
+            } else if let Some((name, _)) = line.split_once(": ") {
+                listed.insert(format!("{group}.{name}"));
+            } else {
+                listed.extend(line.split(", ").map(|name| format!("{group}.{name}")));
+            }
+        }
         for spec in command_specs(&registry) {
-            assert!(
-                index.contains(&format!("\n{}: ", spec.id)),
-                "{} is not in the index",
-                spec.id
-            );
+            assert!(listed.contains(&spec.id), "{} is not in the index", spec.id);
         }
         assert!(index.len() < 25_000, "the index is {} bytes", index.len());
         assert!(!index.contains('\u{2014}'));

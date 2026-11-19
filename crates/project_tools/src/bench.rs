@@ -35,8 +35,8 @@ impl Workbench for ProjectImportBench {
             prose().explain(
                 CommandSpec::new(
                     IMPORT_COMMAND,
-                    "Bring a FreeCAD file's bodies, sketches, texts and links into the document \
-                 as bodies of Design features, sketches and linked copies, and what has no \
+                    "Bring a FreeCAD file's bodies, sketches, texts and links into the document: \
+                 bodies of Design features, sketches and linked copies, and what has no \
                  counterpart as the shapes the file saved",
                 )
                 .param("path", ParamKind::String, "The .FCStd file")

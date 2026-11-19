@@ -46,7 +46,7 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
     let fields = [
         (
             "design.gear",
-            "Make an involute spur gear's profile, outer or internal (ring): a sketch to pad",
+            "Make an involute spur gear's profile, outer or internal (ring), as a sketch to pad",
             "module, teeth, pressure_angle_deg, profile_shift, addendum and dedendum (in \
              modules), backlash, root_fillet (in modules), undercut (the root a rack cutter \
              leaves; false for a fillet arc), bore, keyway = {on, width, depth} (0 for the \
@@ -55,20 +55,20 @@ pub(crate) fn register(context: &mut WorkbenchContext) {
         ),
         (
             "design.sprocket",
-            "Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad",
+            "Make a roller chain sprocket's profile (ISO 606 teeth), as a sketch to pad",
             "pitch, roller (the roller's diameter), teeth, bore, keyway = {on, width, depth} \
              (0 for the standard key's by the bore)",
         ),
         (
             "design.shaft",
-            "Make a stepped shaft's half section: a sketch to revolve about its vertical axis",
+            "Make a stepped shaft's half section, as a sketch to revolve about its vertical axis",
             "sections = {{length, diameter, chamfer, fillet}, ...}, start_chamfer, and \
              loads = {bearings = {a, b}, forces = {{at, force, angle_deg}, ...}, torque (N·m), \
              torque_from, torque_to, modulus (GPa)} for its stresses and deflection",
         ),
         (
             "design.keyway",
-            "Make the slot of a parallel key in a shaft (DIN 6885): a sketch to pocket",
+            "Make the slot of a parallel key in a shaft (DIN 6885), as a sketch to pocket",
             "shaft (its diameter, which sizes the standard key), length, width and depth (0 \
              for the standard key's), rounded (false for square ends)",
         ),

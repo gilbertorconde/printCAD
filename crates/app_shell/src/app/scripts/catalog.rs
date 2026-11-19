@@ -24,8 +24,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .read_only(),
         CommandSpec::new(
             "doc.agent_rules",
-            "The rules an AI agent working on this document keeps to, beside the ones in \
-             Preferences for every document",
+            "The rules an AI agent keeps to on this document; Preferences hold the ones for \
+             every document",
         )
         .returns("the rules, as text")
         .read_only(),
@@ -96,8 +96,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             ),
         CommandSpec::new(
             "doc.set_body",
-            "Change a body: its colour, how much shows through, material, placement, whether \
-             it is frozen, a scan, or clicks pick it",
+            "Change a body's colour, how much shows through, material or placement, whether \
+             it is frozen or a scan, or whether clicks pick it",
         )
         .param("body", ParamKind::Id, "")
         .optional(
@@ -186,7 +186,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .returns("the copy's id"),
         CommandSpec::new(
             "doc.array",
-            "Repeat a body along a line, around an axis, along a path or at points, each \
+            "Repeat a body along a line, around an axis, along a path or at points: each \
              repeat a linked copy",
         )
         .optional(
@@ -562,7 +562,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         doc_render::proof::with_arguments(
             CommandSpec::new(
                 "doc.picture",
-                "Write a PNG of the bodies, the same for the same arguments whatever the \
+                "Write a PNG of the bodies: the same for the same arguments whatever the \
                  user's camera (except view \"current\")",
             )
             .param("path", ParamKind::String, "Where to write the PNG"),
@@ -711,9 +711,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
 
 /// The commands a key can run that make sense without a key: all but
 /// those that open a window of the interface's own (Save view as picture
-/// is only its file dialog; `doc.picture` takes the path), lay out the
-/// window (the split view) or go on through the user's answers in it
-/// (Save all, Revert to saved, Close other tabs).
+/// is only its file dialog; `doc.picture` takes the path) or exist only to
+/// ask the user (Revert to saved and Close other tabs ask before letting
+/// edits go). Save all is one: it asks only where Save would, for a
+/// document's name or before saving over another version's file.
 pub(super) fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
     use keymap::HostAction::*;
     keymap::host_actions()
@@ -723,8 +724,6 @@ pub(super) fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostA
                 Palette
                     | Preferences
                     | SavePicture
-                    | SplitView
-                    | LinkSplitCameras
                     | Console
                     | Assistant
                     | RunScript
@@ -732,7 +731,6 @@ pub(super) fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostA
                     | Delete
                     | ToggleVisibility
                     | PivotAtCursor
-                    | SaveAll
                     | Revert
                     | CloseOtherTabs
             )
@@ -763,8 +761,8 @@ fn for_agents(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
             "it closes a document's tab, and with it the chats working on that document; \
              only the user closes tabs",
         ),
-        New | Open | SaveAs | Import | Export | SendToSlicer | Undo | Redo | NewTab | ReopenTab
-        | NextTab | PreviousTab => spec.agent_always_asks(),
+        New | Open | SaveAs | SaveAll | Import | Export | SendToSlicer | Undo | Redo | NewTab
+        | ReopenTab | NextTab | PreviousTab => spec.agent_always_asks(),
         _ => spec,
     }
 }
@@ -797,11 +795,17 @@ pub(crate) fn import_units(
     Ok(Some(given.unwrap_or(default)))
 }
 
-/// A file command takes the file by name, to run without its dialog.
+/// A file command takes the file by name, to run without its dialog;
+/// Save all says what it may ask.
 fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
     use keymap::HostAction::*;
     let path = |spec: CommandSpec, doc: &str| spec.optional("path", ParamKind::String, doc);
     match action {
+        SaveAll => spec.note(
+            "Saves every open document with edits, each in its own file. One with no file yet, \
+             or whose file another version of printCAD wrote, asks the user in the window, and \
+             the saves after it wait for the answer.",
+        ),
         Open => path(spec, "The document to open; the dialog when left out")
             .returns("nothing; the document opens in its tab after the script"),
         SaveAs => path(spec, "Where to save; the dialog when left out"),

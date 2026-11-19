@@ -63,7 +63,7 @@ pub(super) const FEATURES: &[(&str, &str)] = &[
     ),
     (
         "design.project",
-        "Project a sketch onto faces: split lines, emboss or deboss",
+        "Project a sketch onto faces as split lines, an emboss or a deboss",
     ),
     (
         "design.text",

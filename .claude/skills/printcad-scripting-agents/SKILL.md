@@ -121,7 +121,7 @@ agent process speaking the Agent Client Protocol: `ChatCommand` in,
 `ChatEvent` out), `mcp` (the server core over a `ToolHost`) and `bridge`
 (`printcad --mcp`, relaying stdio to the app's socket with a header naming
 the chat), and `discovery` (BM25 `search`, loose `describe` and the
-one-line-per-entry `index` over plain `Entry`s, with the CAD `SYNONYMS`
+compact `index` over plain `Entry`s (`name: headline` under each `[group]`, bare names for commands whose summary only says them, a guide's sections on its line; `INDEX_FORMAT` tells an agent how to read it), with the CAD `SYNONYMS`
 table, pinned by the ranking test in `app/discovery.rs`, which builds the
 entries from every command through `scripting::command_entry` and from
 the guides' sections and `docs/recipes/`; the index goes into the
