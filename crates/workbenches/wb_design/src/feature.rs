@@ -2956,13 +2956,72 @@ impl DesignFeature {
         }
     }
 
-    pub fn start_face_mut(&mut self) -> Option<&mut FacePick> {
-        match self {
-            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
-                extras.start_face.as_mut()
+    /// The faces of the solid before the feature that place it, which a
+    /// build finds again by name (else by where they were picked) and the
+    /// feature follows: a start face, a mirror's or split's picked plane, a
+    /// draft's neutral face.
+    pub fn placing_faces(&self) -> Vec<&FacePick> {
+        fn mirror(plane: &MirrorPlane) -> Option<&FacePick> {
+            match plane {
+                MirrorPlane::Face(face) => Some(face),
+                _ => None,
             }
-            DesignFeature::Hole { start, .. } => start.face.as_mut(),
-            _ => None,
+        }
+        match self {
+            DesignFeature::Mirrored { plane, .. }
+            | DesignFeature::Split {
+                plane,
+                sketch: None,
+                ..
+            } => mirror(plane).into_iter().collect(),
+            DesignFeature::MultiTransform { steps, .. } => steps
+                .iter()
+                .filter_map(|step| match step {
+                    TransformStep::Mirror { plane } => mirror(plane),
+                    _ => None,
+                })
+                .collect(),
+            DesignFeature::Draft {
+                neutral,
+                neutral_plane: None,
+                ..
+            } => vec![neutral],
+            other => other.start_face().into_iter().collect(),
+        }
+    }
+
+    /// [`Self::placing_faces`], to move.
+    pub fn placing_faces_mut(&mut self) -> Vec<&mut FacePick> {
+        fn mirror(plane: &mut MirrorPlane) -> Option<&mut FacePick> {
+            match plane {
+                MirrorPlane::Face(face) => Some(face),
+                _ => None,
+            }
+        }
+        match self {
+            DesignFeature::Mirrored { plane, .. }
+            | DesignFeature::Split {
+                plane,
+                sketch: None,
+                ..
+            } => mirror(plane).into_iter().collect(),
+            DesignFeature::MultiTransform { steps, .. } => steps
+                .iter_mut()
+                .filter_map(|step| match step {
+                    TransformStep::Mirror { plane } => mirror(plane),
+                    _ => None,
+                })
+                .collect(),
+            DesignFeature::Draft {
+                neutral,
+                neutral_plane: None,
+                ..
+            } => vec![neutral],
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_mut().into_iter().collect()
+            }
+            DesignFeature::Hole { start, .. } => start.face.as_mut().into_iter().collect(),
+            _ => Vec::new(),
         }
     }
 

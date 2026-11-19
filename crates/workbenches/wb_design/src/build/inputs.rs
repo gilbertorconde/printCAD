@@ -158,15 +158,18 @@ fn read_datums_asking(
                     .ok()?
                     .probes(),
                 // A primitive attached by a mode asks what the attachment
-                // asks.
-                // A feature starting on a face of the solid asks where the
-                // face is.
+                // asks; a feature placed by faces of the solid asks where
+                // they are.
                 crate::KIND => match DesignFeature::from_json(&n.data).ok()? {
                     DesignFeature::Primitive {
                         attached: Some(attached),
                         ..
                     } => attached.probes(),
-                    feature => vec![feature.start_face()?.probe()],
+                    feature => feature
+                        .placing_faces()
+                        .into_iter()
+                        .map(|face| face.probe())
+                        .collect(),
                 },
                 wb_sketch::KIND => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;

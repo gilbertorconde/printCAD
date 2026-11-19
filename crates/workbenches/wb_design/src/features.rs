@@ -184,19 +184,24 @@ impl DesignWorkbench {
         let Ok(mut feature) = DesignFeature::from_json(values) else {
             return false;
         };
-        // A feature starting on a face takes where the face is now.
-        if let Some(asked) = DesignFeature::from_json(&node.data)
-            .ok()
-            .and_then(|made| made.start_face().map(|face| face.probe()))
-        {
-            let Some(face) = feature.start_face_mut() else {
+        // A feature placed by faces of the solid takes where they are now.
+        let asked: Vec<kernel_api::ShapeProbe> = DesignFeature::from_json(&node.data)
+            .map(|made| made.placing_faces().iter().map(|f| f.probe()).collect())
+            .unwrap_or_default();
+        if !asked.is_empty() {
+            let mut faces = feature.placing_faces_mut();
+            if probed.probes != asked || faces.len() != asked.len() {
                 return false;
-            };
-            let before = *face;
-            if probed.probes != [asked]
-                || !probed.answers.first().is_some_and(|a| face.take_answer(a))
-                || *face == before
-            {
+            }
+            let mut moved = false;
+            for (face, answer) in faces.iter_mut().zip(&probed.answers) {
+                let before = **face;
+                if !face.take_answer(answer) {
+                    return false;
+                }
+                moved |= **face != before;
+            }
+            if !moved {
                 return false;
             }
             *values = feature.to_json();
