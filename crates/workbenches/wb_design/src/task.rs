@@ -1886,4 +1886,25 @@ mod tests {
             assert_eq!(shown, want, "{end:?}");
         }
     }
+
+    /// A revolution's Midplane splits its angle half each way, so the
+    /// panel offers a second angle only with Midplane off.
+    #[test]
+    fn a_midplane_revolution_offers_no_second_angle() {
+        let Scene {
+            mut doc, second, ..
+        } = scene();
+        let body = doc.get_feature_meta(second).and_then(|n| n.body);
+        for midplane in [true, false] {
+            let revolution = DesignFeature::from_json(&serde_json::json!({"Revolution": {
+                "sketch": second.0.to_string(), "angle_deg": 120.0,
+                "midplane": midplane, "second_angle_deg": 90.0}}))
+            .unwrap();
+            let id = doc
+                .add_feature_in_body(revolution, "Revolution".into(), body)
+                .unwrap();
+            let shown = rows_shown(&mut doc, id, ["Midplane", "Second angle", "Angle 2"]);
+            assert_eq!(shown, [true, !midplane, !midplane], "midplane {midplane}");
+        }
+    }
 }

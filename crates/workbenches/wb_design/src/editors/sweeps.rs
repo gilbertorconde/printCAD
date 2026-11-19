@@ -103,13 +103,17 @@ pub(super) fn sweep_editor(
             changed |= project_axis_row(f, axis, project_axis);
             if *mode == RevolveMode::Angle {
                 changed |= f.check(midplane, "Midplane", "");
-                let mut two_sided = second_angle_deg.is_some();
-                if f.check(&mut two_sided, "Second angle", "") {
-                    *second_angle_deg = two_sided.then_some(90.0);
-                    changed = true;
-                }
-                if let Some(second) = second_angle_deg {
-                    changed |= deg_drag(f, fx, second, ("Angle 2:", "angle2"), 0.1..=360.0);
+                // Midplane splits the angle half each way, leaving no
+                // second angle to give.
+                if !*midplane {
+                    let mut two_sided = second_angle_deg.is_some();
+                    if f.check(&mut two_sided, "Second angle", "") {
+                        *second_angle_deg = two_sided.then_some(90.0);
+                        changed = true;
+                    }
+                    if let Some(second) = second_angle_deg {
+                        changed |= deg_drag(f, fx, second, ("Angle 2:", "angle2"), 0.1..=360.0);
+                    }
                 }
             }
             changed |= f.check(reversed, "Reversed", "");
