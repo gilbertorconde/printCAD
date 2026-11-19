@@ -158,9 +158,12 @@ selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own. It waits for the tab's
 next build cycle, which sends an edit of the same frame, and for the builds
 out (`Builds::built_since`); a body showing a task's preview is written
-whole (`whole_solids`, as a save does); a waiting export is written, or
-logged as not written, when its tab closes or the app exits
-(`settle_waiting_export`). The registry gathers
+whole (`whole_solids`, as a save does). While an open task's preview
+holds the history after its feature back, the wait is bounded
+(`TASK_WAIT`): the export then writes what a save writes and the log
+names each body that stops at the feature (`Builds::stopped_at_task`).
+A waiting export is written, or logged as not written, when its tab
+closes or the app exits (`settle_waiting_export`). The registry gathers
 `Workbench::semantic_pmi` (`kernel_api::SemanticPmi`, re-exported by
 `core_document`); `app/export.rs::export_pmi` takes its world probes into
 each body's frame, and `kernel_ogeom::export::export_with_annotations`
