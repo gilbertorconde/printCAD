@@ -169,7 +169,8 @@ corner; ellipse its centre, an end of the major axis, then a point on it.
 Clicks short of a shape make nothing, without an error.
 
 Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6,
-`fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer
+`fillet_radius` and `chamfer_length` 2 mm when not given. `polygon_sides`
+takes 3 to 1000 and `copies` 0 to 10000; a count outside is refused. A fillet or chamfer
 takes one click on the corner. A bspline ends with the word "finish" in
 `points`, and so does an open path; a path's click on its first node closes
 it, and a click with `drag = {x, y}` places a smooth node whose handle the
@@ -245,7 +246,8 @@ The items are the first copy: `rows = 2, cols = 3` makes five more. Columns
 step along the sketch's x by `dx`, rows along its y by `dy`.
 
 `rows` and `cols` must be at least 1, and one of them more than 1 ("an array
-needs elements and at least two rows or columns").
+needs elements and at least two rows or columns"); an array makes at most
+10000 copies.
 
 Without `linked` the copies are free geometry; with it, constraints keep them
 the originals' size and on the pitch.
