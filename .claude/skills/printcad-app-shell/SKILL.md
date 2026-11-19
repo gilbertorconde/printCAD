@@ -114,6 +114,12 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   (`unsaved::Then` names what goes on after each answer); a document with
   no file of its own asks its name in the threaded file dialog
   (`FileDialogKind::SaveThen`) and goes on once that save lands.
+  Where no one can answer (the window unable to draw; SIGTERM or SIGINT
+  on unix, `platform::on_termination` waking the loop with
+  `AppEvent::Terminate`) the exit is `exit_without_asking`: a recovery
+  copy of every tab with edits, the saves in flight waited for. Each
+  menu entry has one place (Preferences in Edit, Console in Windows with
+  the other panels), and the keymap's group is the menu it is in.
 
 ## Application features
 

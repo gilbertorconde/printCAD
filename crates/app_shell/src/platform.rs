@@ -98,6 +98,69 @@ pub(crate) fn read_only(path: &Path) -> bool {
     false
 }
 
+/// Call `asked` on a thread of its own each time the system asks the
+/// process to end (SIGTERM, as a desktop logout sends; SIGINT, as Ctrl+C
+/// in a terminal does), in place of ending it there and then. The
+/// handler only writes a byte to a pipe a thread reads; it puts the
+/// system's own handling back as it runs, so a second signal ends the
+/// process. Nothing on systems without these signals.
+#[cfg(unix)]
+pub(crate) fn on_termination(asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    use std::sync::atomic::Ordering;
+
+    let mut fds = [0; 2];
+    // SAFETY: `fds` has room for the two descriptors pipe writes.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: the read end is this process's, owned by the file alone.
+    let mut read = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    TERMINATION_PIPE.store(fds[1], Ordering::SeqCst);
+    spawn("termination", move || {
+        let mut byte = [0];
+        while matches!(read.read(&mut byte), Ok(1)) {
+            asked();
+        }
+    })?;
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        // SAFETY: the action is zeroed, then given a handler that only
+        // calls `write`, which is safe in a signal handler.
+        let failed = unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = termination_handler as *const () as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART | libc::SA_RESETHAND;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(signal, &action, std::ptr::null_mut()) != 0
+        };
+        if failed {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn on_termination(_asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// The pipe's write end the termination handler writes to.
+#[cfg(unix)]
+static TERMINATION_PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+#[cfg(unix)]
+extern "C" fn termination_handler(_signal: libc::c_int) {
+    let fd = TERMINATION_PIPE.load(std::sync::atomic::Ordering::SeqCst);
+    if fd >= 0 {
+        // SAFETY: write is safe in a signal handler; the byte outlives it.
+        unsafe {
+            libc::write(fd, [1u8].as_ptr().cast(), 1);
+        }
+    }
+}
+
 /// End a file chooser still open as the app quits. On Linux the dialog
 /// crate falls back to a chooser of its own process when the desktop
 /// portal is missing, and that process outlives the app unless ended; a
@@ -287,6 +350,22 @@ fn scratch_file_in(
 #[cfg(test)]
 mod private_tests {
     use super::*;
+
+    /// SIGTERM reaches the thread that asks the app to quit instead of
+    /// ending the process.
+    #[cfg(unix)]
+    #[test]
+    fn a_termination_signal_is_handed_to_a_thread() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        on_termination(move || {
+            let _ = tx.lock().unwrap().send(());
+        })
+        .unwrap();
+        // SAFETY: raise only sends a signal to this process.
+        unsafe { libc::raise(libc::SIGTERM) };
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    }
 
     /// Each folder is new and open to its user alone; two files of one
     /// name get a path each, and a link put where a file would go is

@@ -156,20 +156,6 @@ const HOST: &[HostSpec] = {
             "File",
             &[],
         ),
-        anywhere(spec(
-            RunScript,
-            "file.run_script",
-            "Run script",
-            "File",
-            &[],
-        )),
-        anywhere(spec(
-            Record,
-            "app.record",
-            "Record a script, or stop",
-            "File",
-            &[],
-        )),
         anywhere(spec(Quit, "app.quit", "Quit", "File", &["Ctrl+Q"])),
         text_owned(spec(Undo, "edit.undo", "Undo", "Edit", &["Ctrl+Z"])),
         text_owned(spec(
@@ -217,6 +203,13 @@ const HOST: &[HostSpec] = {
             "Edit",
             &["Shift+Space"],
         ),
+        anywhere(spec(
+            Preferences,
+            "app.preferences",
+            "Preferences",
+            "Edit",
+            &["Ctrl+,"],
+        )),
         spec(FitAll, "view.fit_all", "Fit all", "View", &["F"]),
         spec(
             FitSelection,
@@ -283,14 +276,6 @@ const HOST: &[HostSpec] = {
         ),
         spec(Shaded, "view.shaded", "Shaded", "View", &[]),
         spec(Wireframe, "view.wireframe", "Wireframe", "View", &[]),
-        spec(
-            ClippingPlane,
-            "view.clipping_plane",
-            "Clipping plane",
-            "View",
-            &[],
-        ),
-        spec(Measure, "view.measure", "Measure", "View", &[]),
         spec(NoteTool, "view.note", "Note", "View", &[]),
         spec(PrintBed, "view.print_bed", "Print bed", "View", &[]),
         spec(Annotations, "view.annotations", "Annotations", "View", &[]),
@@ -324,6 +309,14 @@ const HOST: &[HostSpec] = {
             "View",
             &["F11"],
         )),
+        spec(
+            ClippingPlane,
+            "view.clipping_plane",
+            "Clipping plane",
+            "Inspect",
+            &[],
+        ),
+        spec(Measure, "view.measure", "Measure", "Inspect", &[]),
         anywhere(spec(NewTab, "tab.new", "New tab", "Tabs", &["Ctrl+T"])),
         anywhere(spec(
             CloseTab,
@@ -361,26 +354,33 @@ const HOST: &[HostSpec] = {
             "Application",
             &["Ctrl+K"],
         )),
-        anywhere(spec(
-            Preferences,
-            "app.preferences",
-            "Preferences",
-            "Application",
-            &["Ctrl+,"],
-        )),
-        anywhere(spec(LogPanel, "app.log", "Log panel", "Application", &[])),
+        anywhere(spec(LogPanel, "app.log", "Log panel", "Windows", &[])),
         anywhere(spec(
             Assistant,
             "app.assistant",
             "Assistant",
-            "Application",
+            "Windows",
             &[],
         )),
         anywhere(spec(
             Console,
             "app.console",
             "Script console",
-            "Application",
+            "Windows",
+            &[],
+        )),
+        anywhere(spec(
+            RunScript,
+            "file.run_script",
+            "Run script",
+            "Scripts",
+            &[],
+        )),
+        anywhere(spec(
+            Record,
+            "app.record",
+            "Record a script, or stop",
+            "Scripts",
             &[],
         )),
     ]
@@ -1302,6 +1302,23 @@ mod tests {
         assert_eq!(tool.len(), 1, "{tool:?}");
         assert!(tool[0].shadowed, "the workbench's F shadows Fit all");
         assert!(keymap.clashes("wb.two.tool").is_empty(), "L is free");
+    }
+
+    /// Preferences lists each command under the menu that has it.
+    #[test]
+    fn commands_are_grouped_under_their_menu() {
+        let group = |id: &str| HOST.iter().find(|s| s.id == id).unwrap().group;
+        for (id, menu) in [
+            ("view.measure", "Inspect"),
+            ("view.clipping_plane", "Inspect"),
+            ("app.preferences", "Edit"),
+            ("app.console", "Windows"),
+            ("app.log", "Windows"),
+            ("file.run_script", "Scripts"),
+            ("app.record", "Scripts"),
+        ] {
+            assert_eq!(group(id), menu, "{id}");
+        }
     }
 
     #[test]

@@ -16,7 +16,7 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 
 ## Where scripts run
 
-- **The console.** Windows › Console, Scripts › Console, or the console
+- **The console.** Windows › Console, or the console
   switch on the status bar. Enter runs what is typed, Shift+Enter starts another
   line, Tab completes a command name, Up and Down go back through what was
   run, earlier sessions included. An expression shows its value. Globals stay set between runs, and
@@ -2010,10 +2010,6 @@ See also `pc.doc.save_section`.
 
 `pc.view.wireframe`: Wireframe.
 
-`pc.view.clipping_plane`: Clipping plane.
-
-`pc.view.measure`: Measure.
-
 `pc.view.note`: Note.
 
 `pc.view.print_bed`: Print bed.
@@ -2031,6 +2027,10 @@ See also `pc.doc.save_section`.
 `pc.view.left_panel`: Fold the left panel.
 
 `pc.view.fullscreen`: Full screen.
+
+`pc.view.clipping_plane`: Clipping plane.
+
+`pc.view.measure`: Measure.
 
 ### edit
 
