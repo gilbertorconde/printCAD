@@ -868,7 +868,8 @@ pub enum DrawStyle {
     ShadedEdges,
     /// Lit surfaces alone.
     Shaded,
-    /// Every triangle as lines, nothing filled.
+    /// Face-boundary edges alone, nothing filled; a mesh with no such
+    /// edges (a scan) shows its triangles.
     Wireframe,
 }
 
