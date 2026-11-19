@@ -188,8 +188,8 @@ impl UiLayer {
     /// under it sees a key.
     fn draw_questions(&mut self, ui: &mut Ui, f: &mut FrameIn<'_>, out: &mut FrameOut) {
         let file = &f.inputs.file;
-        if let Some(name) = &f.inputs.unsaved_question {
-            unsaved_modal::draw(ui.ctx(), name, &mut out.commands);
+        if let Some((name, revert)) = &f.inputs.unsaved_question {
+            unsaved_modal::draw(ui.ctx(), name, *revert, &mut out.commands);
         }
         if let Some(question) = &file.save_over {
             save_over_modal::draw(ui.ctx(), question, &mut out.commands);
@@ -307,6 +307,9 @@ impl UiLayer {
                 screen: inputs.screen,
                 active_tab_blank: tabs.iter().any(|t| t.active && t.blank),
                 active_tab: tabs.iter().find(|t| t.active).map(|t| t.tab),
+                active_has_file: tabs.iter().any(|t| t.active && t.has_file),
+                other_tabs: tabs.len() > 1,
+                any_edits: tabs.iter().any(|t| t.dirty),
                 scripts: inputs.scripts,
                 recording: inputs.recording,
                 section_on: inputs.section.is_some(),

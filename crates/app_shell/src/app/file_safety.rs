@@ -222,7 +222,7 @@ impl PrintCadApp {
 
     /// Whether saving the active tab to `path` asks first: it is the tab's
     /// own file, from another version.
-    fn asks_before_saving_at(&self, path: &Path) -> bool {
+    pub(crate) fn asks_before_saving_at(&self, path: &Path) -> bool {
         self.session.file.path.as_deref() == Some(path)
             && self
                 .session

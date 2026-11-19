@@ -63,6 +63,7 @@ enum ShellAction {
     Console,
     Quit,
     PrintLayout,
+    SaveAll,
 }
 
 struct ShellEntry {
@@ -97,6 +98,12 @@ const SHELL: &[ShellEntry] = &[
         icon: "save",
         binding: Some("file.save_as"),
         action: ShellAction::File(FileCommand::SaveAs),
+    },
+    ShellEntry {
+        label: "Save all",
+        icon: "save",
+        binding: Some("file.save_all"),
+        action: ShellAction::SaveAll,
     },
     ShellEntry {
         label: "Import STEP, IGES or mesh…",
@@ -473,6 +480,7 @@ fn run(entry: &Entry, commands: &mut Vec<UiCommand>, result: &mut PaletteResult)
             ShellAction::Console => result.toggle_console = true,
             ShellAction::Quit => commands.push(UiCommand::Quit),
             ShellAction::PrintLayout => result.print_layout = true,
+            ShellAction::SaveAll => commands.push(UiCommand::SaveAll),
         },
         EntryKind::Tool { bench, id } => {
             result.activate_tool = Some((ActiveWorkbench(bench.clone()), id.clone()));

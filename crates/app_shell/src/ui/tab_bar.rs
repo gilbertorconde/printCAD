@@ -1,6 +1,7 @@
 //! The strip of open documents under the menu bar: one tab per document,
 //! the one on screen lit, a dot for unsaved edits, a close on each and a
-//! plus at the end. A drag moves a tab along the strip.
+//! plus at the end. A drag moves a tab along the strip; a right click
+//! offers closing it or the others, and reverting it to its file.
 
 use egui::Ui;
 use ui_kit::tokens::*;
@@ -21,6 +22,8 @@ pub struct TabInfo {
     pub blank: bool,
     /// Its file cannot be written in place: a lock before its name.
     pub read_only: bool,
+    /// It was opened from or saved to a file, which Revert reads again.
+    pub has_file: bool,
 }
 
 const TAB_MIN: f32 = 96.0;
@@ -55,6 +58,9 @@ pub fn draw_tab_bar(ui: &mut Ui, tabs: &[TabInfo], commands: &mut Vec<UiCommand>
                             .response
                             .on_hover_text(crate::app::file_safety::READ_ONLY_TIP);
                     }
+                    shown
+                        .response
+                        .context_menu(|ui| tab_menu(ui, tab, tabs.len() > 1, commands));
                     if shown.closed {
                         commands.push(UiCommand::CloseTab(tab.tab));
                     } else if shown.selected {
@@ -75,4 +81,26 @@ pub fn draw_tab_bar(ui: &mut Ui, tabs: &[TabInfo], commands: &mut Vec<UiCommand>
                 }
             });
         });
+}
+
+/// A tab's right-click menu.
+fn tab_menu(ui: &mut Ui, tab: &TabInfo, others: bool, commands: &mut Vec<UiCommand>) {
+    let row = |ui: &mut Ui, label: &str, enabled: bool| {
+        let text = egui::RichText::new(label).font(ui_kit::sans(FONT_SM));
+        let clicked = ui.add_enabled(enabled, egui::Button::new(text)).clicked();
+        if clicked {
+            ui.close();
+        }
+        clicked
+    };
+    if row(ui, "Close tab", true) {
+        commands.push(UiCommand::CloseTab(tab.tab));
+    }
+    if row(ui, "Close other tabs", others) {
+        commands.push(UiCommand::CloseOtherTabs(tab.tab));
+    }
+    ui.separator();
+    if row(ui, "Revert to saved", tab.has_file) {
+        commands.push(UiCommand::RevertTab(tab.tab));
+    }
 }

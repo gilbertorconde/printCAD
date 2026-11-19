@@ -5,6 +5,10 @@
 //! the tab open, with its recovery copy, and stops the quit. A document
 //! with no file of its own asks for a name in the file dialog, on its
 //! thread, and the close goes on once the save under it lands.
+//!
+//! The same questions, one tab at a time, carry Close other tabs, Save
+//! all (its names and saves over another version's file) and Revert to
+//! saved, which asks before letting edits go.
 
 use uuid::Uuid;
 use winit::event_loop::ActiveEventLoop;
@@ -28,6 +32,13 @@ pub(crate) enum Then {
     CloseTab,
     /// Go on quitting: ask about the next tab with edits, or exit.
     Quit,
+    /// Close the tab asked about, then go on closing every tab but this
+    /// one.
+    CloseOthers(Uuid),
+    /// Go on saving every tab with edits.
+    SaveAll,
+    /// Read the tab's file again, its edits let go.
+    Revert,
 }
 
 /// A question on screen: which tab, and what follows the answer.
@@ -38,11 +49,15 @@ pub(crate) struct Asking {
 }
 
 impl PrintCadApp {
-    /// The name of the document asked about, while a question is open.
-    pub(crate) fn unsaved_question(&self) -> Option<String> {
+    /// The name of the document asked about while a question is open,
+    /// and whether the question is Revert's.
+    pub(crate) fn unsaved_question(&self) -> Option<(String, bool)> {
         let asking = self.questions.unsaved?;
         let session = self.tab_session(asking.tab)?;
-        Some(session.document.name().to_string())
+        Some((
+            session.document.name().to_string(),
+            asking.then == Then::Revert,
+        ))
     }
 
     fn is_dirty(&self, index: usize) -> bool {
@@ -151,13 +166,7 @@ impl PrintCadApp {
                     // drawing meanwhile; the close goes on once the
                     // document is saved under it.
                     None => {
-                        // Refused while another dialog is open: the close
-                        // stops there.
-                        let refused = self.files.dialog_rx.is_some();
-                        self.start_file_dialog(FileDialogKind::SaveThen(asking.then));
-                        if refused {
-                            self.questions.stop_waiting();
-                        }
+                        self.ask_name_then(asking.then);
                         return;
                     }
                 }
@@ -170,8 +179,19 @@ impl PrintCadApp {
         self.go_on_after_answer(asking.tab, asking.then, event_loop);
     }
 
-    /// What waited for the answer about tab `tab`'s edits: close it, or
-    /// go on quitting.
+    /// Ask the active tab's document a name in the file dialog, on its
+    /// thread; `then` goes on once it is saved under it. Refused while
+    /// another dialog is open, which stops `then` there.
+    fn ask_name_then(&mut self, then: Then) {
+        let refused = self.files.dialog_rx.is_some();
+        self.start_file_dialog(FileDialogKind::SaveThen(then));
+        if refused {
+            self.questions.stop_waiting();
+        }
+    }
+
+    /// What waited for the answer about tab `tab`'s edits: close it, go
+    /// on quitting, closing the others or saving all, or revert it.
     pub(crate) fn go_on_after_answer(
         &mut self,
         tab: Uuid,
@@ -188,7 +208,124 @@ impl PrintCadApp {
                 self.questions.quit_answered.insert(tab);
                 self.request_quit(event_loop);
             }
+            Then::CloseOthers(keep) => {
+                if let Some(index) = self.tab_index_of(tab) {
+                    self.close_tab_now(index);
+                }
+                self.close_other_tabs(keep);
+            }
+            Then::SaveAll => self.save_all(),
+            Then::Revert => self.revert_now(tab),
         }
+    }
+
+    /// Close every tab but `keep`: those without edits at once, then each
+    /// with edits once the user answers for it, as quitting asks.
+    pub(crate) fn close_other_tabs(&mut self, keep: Uuid) {
+        while let Some(index) =
+            (0..self.tabs.len()).find(|&i| self.tabs[i].tab != keep && !self.is_dirty(i))
+        {
+            self.close_tab_now(index);
+        }
+        match (0..self.tabs.len()).find(|&i| self.tabs[i].tab != keep) {
+            Some(index) => {
+                self.switch_tab(index);
+                self.questions.unsaved = Some(Asking {
+                    tab: self.tabs[index].tab,
+                    then: Then::CloseOthers(keep),
+                });
+                self.redraw_needed = true;
+            }
+            None => {
+                if let Some(index) = self.tab_index_of(keep) {
+                    self.switch_tab(index);
+                }
+            }
+        }
+    }
+
+    /// Save every tab with edits: each that saves in place at once, then
+    /// one at a time each that asks first, for a name or about saving over
+    /// another version's file, going on as each save lands.
+    pub(crate) fn save_all(&mut self) {
+        for index in 0..self.tabs.len() {
+            let tab = self.tabs[index].tab;
+            if !self.is_dirty(index) || self.questions.saved_all.contains(&tab) {
+                continue;
+            }
+            let quiet = self.with_tab(index, |app| {
+                app.file_to_save_in_place()
+                    .filter(|path| !app.asks_before_saving_at(path))
+            });
+            if let Some(path) = quiet {
+                self.questions.saved_all.insert(tab);
+                self.with_tab(index, |app| {
+                    if let Err(err) = app.save_document_at(&path) {
+                        app_log::error(format!("Save failed: {err:#}"));
+                    }
+                });
+            }
+        }
+        let next = (0..self.tabs.len())
+            .find(|&i| self.is_dirty(i) && !self.questions.saved_all.contains(&self.tabs[i].tab));
+        let Some(index) = next else {
+            self.questions.saved_all.clear();
+            return;
+        };
+        self.questions.saved_all.insert(self.tabs[index].tab);
+        self.switch_tab(index);
+        if !self.ask_before_saving_over(Some(Then::SaveAll)) {
+            self.ask_name_then(Then::SaveAll);
+        }
+    }
+
+    /// Revert tab `tab` to its file: at once when it has no edits, else
+    /// once the user lets them go.
+    pub(crate) fn revert_tab(&mut self, tab: Uuid) {
+        let Some(index) = self.tab_index_of(tab) else {
+            return;
+        };
+        if self.session_at(index).is_none_or(|s| s.file.path.is_none()) {
+            app_log::warn("This document has no saved file to revert to");
+            return;
+        }
+        if !self.is_dirty(index) {
+            self.revert_now(tab);
+            return;
+        }
+        self.switch_tab(index);
+        self.questions.unsaved = Some(Asking {
+            tab,
+            then: Then::Revert,
+        });
+        self.redraw_needed = true;
+    }
+
+    /// Read tab `tab`'s file again in its place, whatever its edits: the
+    /// tab closes and the file opens where it stood, as closing and
+    /// opening it would.
+    fn revert_now(&mut self, tab: Uuid) {
+        let Some(index) = self.tab_index_of(tab) else {
+            return;
+        };
+        let Some(path) = self.session_at(index).and_then(|s| s.file.path.clone()) else {
+            return;
+        };
+        if !crate::platform::exists(&path) {
+            app_log::error(format!(
+                "`{}` is gone: nothing to revert to",
+                path.display()
+            ));
+            return;
+        }
+        self.switch_tab(index);
+        // A save on its way is written before the file is read again.
+        self.wait_for_document_saves();
+        self.close_tab_now(index);
+        self.files.closed_files.retain(|f| f != &path);
+        self.open_document_at(path);
+        let opened = self.tabs[self.active_tab].tab;
+        self.move_tab(opened, index);
     }
 
     /// Whether the save the active tab just started is written: it is
