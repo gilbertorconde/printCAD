@@ -17,13 +17,7 @@ use crate::spline;
 /// curve within tolerance captures the click, projecting the position onto
 /// it so `materialize_on_curve` records the on-curve constraint.
 pub(crate) fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f64) -> SnapTarget {
-    match snap::snap_to_point(sketch, cursor, tol, &[]) {
-        SnapTarget::Existing(id) => SnapTarget::Existing(id),
-        SnapTarget::New(pos) => match snap::snap_to_curve(sketch, cursor, tol, &[]) {
-            Some((_, proj)) => SnapTarget::New(proj),
-            None => SnapTarget::New(pos),
-        },
-    }
+    snap::Lookup::of(sketch).point_or_curve(cursor, tol)
 }
 
 /// Whether two of `targets` are one existing point: a shape through them
@@ -926,7 +920,8 @@ pub(super) fn polygon(
             // Every vertex is the point exactly where it falls, else a new
             // one; the clicked vertex, where a snap put it, is held there.
             let eps = super::curve_attach_eps(snap_tol);
-            let first = snap_point_or_curve(sketch, cursor, eps);
+            let lookup = snap::Lookup::of(sketch);
+            let first = lookup.point_or_curve(cursor, eps);
             let Some(v) = first.position(sketch) else {
                 return ToolEffect::none();
             };
@@ -939,7 +934,7 @@ pub(super) fn polygon(
                 .enumerate()
                 .map(|(i, p)| match i {
                     0 => first,
-                    _ => snap::snap_to_point(sketch, p, eps, &[]),
+                    _ => lookup.point(p, eps, &[]),
                 })
                 .collect();
             if joins_itself(corners.iter().chain([&center])) {
@@ -1038,8 +1033,9 @@ pub(super) fn slot(
             // Both ends are held where a snap put them; each rail end is the
             // point exactly where it falls, else a new one.
             let eps = super::curve_attach_eps(snap_tol);
-            let to = snap_point_or_curve(sketch, b, eps);
-            let ends = [p1, p2, p3, p4].map(|p| snap::snap_to_point(sketch, p, eps, &[]));
+            let lookup = snap::Lookup::of(sketch);
+            let to = lookup.point_or_curve(b, eps);
+            let ends = [p1, p2, p3, p4].map(|p| lookup.point(p, eps, &[]));
             if joins_itself([from, to].iter().chain(&ends)) {
                 return ToolEffect::log("The slot would join a point to itself");
             }
@@ -1168,6 +1164,7 @@ pub(super) fn arc_slot(
             // Each point worked out from the clicks is the point exactly
             // where it falls, else a new one.
             let eps = super::curve_attach_eps(snap_tol);
+            let lookup = snap::Lookup::of(sketch);
             let derived = [
                 shape.cap_b,
                 shape.outer_a,
@@ -1175,7 +1172,7 @@ pub(super) fn arc_slot(
                 shape.inner_a,
                 shape.inner_b,
             ]
-            .map(|p| snap::snap_to_point(sketch, p, eps, &[]));
+            .map(|p| lookup.point(p, eps, &[]));
             if joins_itself([center, start].iter().chain(&derived)) {
                 return ToolEffect::log("The slot would join a point to itself");
             }

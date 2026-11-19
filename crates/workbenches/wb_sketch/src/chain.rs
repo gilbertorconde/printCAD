@@ -187,9 +187,10 @@ pub(crate) fn resolve(
         SnapTarget::Existing(id) => vec![id],
         SnapTarget::New(_) => vec![],
     };
-    let (end, axis) = match snap::snap_to_point(sketch, cursor, tol, &exclude) {
+    let lookup = snap::Lookup::of(sketch);
+    let (end, axis) = match lookup.point(cursor, tol, &exclude) {
         SnapTarget::Existing(id) => (SnapTarget::Existing(id), axis),
-        SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, tol, &[]) {
+        SnapTarget::New(_) => match lookup.curve(cursor, tol, &[]) {
             // On a curve the point is held there; it stays level or plumb
             // only where the snap carried that direction onto the curve.
             Some((_, proj)) => (
