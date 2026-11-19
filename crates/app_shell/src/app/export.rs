@@ -458,6 +458,27 @@ impl PrintCadApp {
         }
     }
 
+    /// Remove this run's private folders on the way out, after the export
+    /// in flight is written: the scratch folder, and the slicer's once no
+    /// slicer may still be reading a file in it. One left for a slicer
+    /// stays for the system to clear with the runtime or temporary folder.
+    pub(crate) fn remove_private_folders(&mut self) {
+        crate::platform::remove_scratch_folder();
+        let Some(folder) = self.files.slicer_folder.take() else {
+            return;
+        };
+        let (running, handed) = *SLICERS.lock().unwrap_or_else(|e| e.into_inner());
+        if slicer_files_may_go(running, handed, std::time::Instant::now()) {
+            let _ = std::fs::remove_dir_all(&folder);
+        } else {
+            tracing::info!(
+                target: "printcad.export",
+                "left {} for the slicer reading it",
+                folder.display()
+            );
+        }
+    }
+
     /// The bodies the draft asks for: the selected ones, or every visible
     /// body with geometry that is made; or the print layout's copies.
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
@@ -728,6 +749,27 @@ fn slicer_invocation(command: &str, file: &Path) -> (String, Vec<String>) {
     (program, args)
 }
 
+/// The slicers this run started that are still running, and when the
+/// latest was handed its file.
+static SLICERS: std::sync::Mutex<(usize, Option<std::time::Instant>)> =
+    std::sync::Mutex::new((0, None));
+
+/// How long a slicer handed a file is given to read it. A slicer started
+/// through the system's opener outlives the process this run watches, so
+/// the time is what keeps its file until it has loaded.
+const SLICER_READS_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Whether the files handed to slicers may go: none of the slicers
+/// started is still running (one may load its file again), and the
+/// latest was handed its file long enough ago to have read it.
+fn slicer_files_may_go(
+    running: usize,
+    handed: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    running == 0 && handed.is_none_or(|at| now.duration_since(at) >= SLICER_READS_WITHIN)
+}
+
 /// Start the slicer on `file` beside the app, and say which program ran.
 fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
     let (program, args) = slicer_invocation(command, file);
@@ -737,9 +779,16 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
+    {
+        let mut slicers = SLICERS.lock().unwrap_or_else(|e| e.into_inner());
+        slicers.0 += 1;
+        slicers.1 = Some(std::time::Instant::now());
+    }
     // Collected when it exits, so it never lingers as a finished process.
     std::thread::spawn(move || {
         let _ = child.wait();
+        let mut slicers = SLICERS.lock().unwrap_or_else(|e| e.into_inner());
+        slicers.0 = slicers.0.saturating_sub(1);
     });
     Ok(program)
 }
@@ -1315,6 +1364,14 @@ mod tests {
         assert_eq!(args, ["--single", "/tmp/printcad/slicer/part.3mf"]);
         let (_, args) = slicer_invocation("slice --load={file} --go", file);
         assert_eq!(args, ["--load=/tmp/printcad/slicer/part.3mf", "--go"]);
+
+        // Its files go at exit only once no slicer may still be reading one.
+        let now = std::time::Instant::now();
+        let long_ago = now.checked_sub(SLICER_READS_WITHIN * 2);
+        assert!(slicer_files_may_go(0, None, now));
+        assert!(slicer_files_may_go(0, long_ago, now));
+        assert!(!slicer_files_may_go(0, Some(now), now), "just handed over");
+        assert!(!slicer_files_may_go(1, long_ago, now), "still running");
     }
 
     #[test]

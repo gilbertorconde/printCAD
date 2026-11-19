@@ -97,6 +97,7 @@ impl PrintCadApp {
                 self.questions.quit_answered.clear();
                 self.forget_recovery_copies(|_| true);
                 self.keep_session_for_next_run();
+                self.remove_private_folders();
                 event_loop.exit();
             }
         }
@@ -113,6 +114,7 @@ impl PrintCadApp {
         self.keep_recovery_copies();
         self.wait_for_all_document_saves();
         self.keep_session_for_next_run();
+        self.remove_private_folders();
         event_loop.exit();
     }
 

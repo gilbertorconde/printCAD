@@ -160,17 +160,44 @@ pub(crate) fn reserve_file(folder: &Path, stem: &str, ext: &str) -> std::io::Res
     }
 }
 
+/// This run's scratch folder, once made.
+static SCRATCH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
 /// Write `bytes` as a new file named after `name` in this run's private
 /// scratch folder, for the kernel to read by path. The folder is made on
 /// first use, and again should it go.
 pub(crate) fn scratch_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
-    static FOLDER: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+    scratch_file_in(&SCRATCH, &private_base(), name, bytes)
+}
+
+/// Remove this run's scratch folder with whatever is left in it, on the
+/// way out: its files are the kernel's copies, read by then or no longer
+/// wanted.
+pub(crate) fn remove_scratch_folder() {
+    remove_kept_folder(&SCRATCH);
+}
+
+fn remove_kept_folder(kept: &std::sync::Mutex<Option<PathBuf>>) {
+    let folder = kept.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(folder) = folder {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+}
+
+/// [`scratch_file`] in the folder `kept` holds, made in `base` when there
+/// is none.
+fn scratch_file_in(
+    kept: &std::sync::Mutex<Option<PathBuf>>,
+    base: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> std::io::Result<PathBuf> {
     let folder = {
-        let mut kept = FOLDER.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = kept.lock().unwrap_or_else(|e| e.into_inner());
         match kept.clone().filter(|f| f.is_dir()) {
             Some(folder) => folder,
             None => {
-                let folder = make_private_folder(&private_base(), "scratch")?;
+                let folder = make_private_folder(base, "scratch")?;
                 *kept = Some(folder.clone());
                 folder
             }
@@ -207,13 +234,14 @@ mod private_tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&folder), 0o700);
-            let scratch = scratch_file("part.step", b"solid").unwrap();
+            let kept = std::sync::Mutex::new(None);
+            let scratch = scratch_file_in(&kept, &base, "part.step", b"solid").unwrap();
             assert_eq!(mode(scratch.parent().unwrap()), 0o700);
             assert_eq!(std::fs::read(&scratch).unwrap(), b"solid");
-            let again = scratch_file("part.step", b"x").unwrap();
+            let again = scratch_file_in(&kept, &base, "part.step", b"x").unwrap();
             assert_ne!(again, scratch);
-            remove(&scratch);
-            remove(&again);
+            remove_kept_folder(&kept);
+            assert!(!scratch.parent().unwrap().exists(), "gone on the way out");
         }
         let first = reserve_file(&folder, "bracket", "3mf").unwrap();
         let second = reserve_file(&folder, "bracket", "3mf").unwrap();

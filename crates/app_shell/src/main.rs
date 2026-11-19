@@ -125,7 +125,9 @@ fn main() -> Result<()> {
     registry.apply_settings(&user_settings.workbenches);
     match headless::parse(&words) {
         Ok(Some(invocation)) => {
-            let finished = headless::run(&invocation, registry)?;
+            let finished = headless::run(&invocation, registry);
+            crate::platform::remove_scratch_folder();
+            let finished = finished?;
             #[cfg(all(feature = "profile", target_os = "linux"))]
             profile::finish();
             std::process::exit(if finished { 0 } else { 1 });

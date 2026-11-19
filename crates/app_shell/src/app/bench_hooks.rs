@@ -309,6 +309,7 @@ impl PrintCadApp {
             // A scripted run leaves nothing to recover.
             self.forget_recovery_copies(|_| true);
             self.keep_session_for_next_run();
+            self.remove_private_folders();
             event_loop.exit();
             return false;
         }
