@@ -792,8 +792,9 @@ fn guided_ends(
     Some([held(at[0], reused[0]), held(at[1], reused[1])])
 }
 
-/// The existing point within `snap_tol` of `p` that lies on `guide`, if
-/// any: one off the curve would pull the arc's end off it.
+/// The nearest existing point within `snap_tol` of `p` that lies on
+/// `guide`, if any: one off the curve would pull the arc's end off it,
+/// so a nearer one off it is passed over.
 fn on_guide(
     sketch: &Sketch,
     guide: &snap::Guide,
@@ -801,13 +802,7 @@ fn on_guide(
     snap_tol: f64,
     exclude: &[Uuid],
 ) -> Option<Uuid> {
-    match snap::snap_to_point(sketch, p, snap_tol, exclude) {
-        SnapTarget::Existing(id) => sketch
-            .point_position(id)
-            .filter(|q| guide.holds(*q))
-            .map(|_| id),
-        SnapTarget::New(_) => None,
-    }
+    snap::snap_to_point_on(sketch, p, snap_tol, exclude, guide)
 }
 
 /// The spline the tool's clicks so far make with `params`: over them as

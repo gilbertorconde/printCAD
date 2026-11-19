@@ -299,6 +299,36 @@ fn a_typed_arc_end_reuses_only_a_point_on_its_circle() {
     }
 }
 
+/// A centre-point arc's end, clicked or typed, reuses the point within
+/// reach that lies on its circle even when a nearer one lies off it.
+#[test]
+fn an_arc_end_reuses_a_point_on_its_circle_past_a_nearer_one_off_it() {
+    let at = |deg: f64, r: f64| {
+        let (sin, cos) = deg.to_radians().sin_cos();
+        Vec2D::new(r * cos, r * sin)
+    };
+    for typed in [false, true] {
+        let mut h = Harness::sketching();
+        let on = h.edit_sketch(|s| {
+            let mut put = |p| s.add_geometry(GeometryElement::Point(Point::new(p)));
+            put(at(0.0, 10.0));
+            put(at(60.0, 10.01));
+            put(at(60.25, 10.0))
+        });
+        h.click(0.0, 0.0, "sketch.arc");
+        h.click(10.0, 0.0, "sketch.arc");
+        let end = at(60.0, 10.0);
+        if typed {
+            h.mouse_move(end.x, end.y, "sketch.arc");
+            h.type_text("60", Some("sketch.arc"));
+            h.key(core_document::KeyCode::Enter, Some("sketch.arc"));
+        } else {
+            h.click(end.x, end.y, "sketch.arc");
+        }
+        assert_eq!(crate::arc_of(&h.sketch()).end, on, "typed: {typed}");
+    }
+}
+
 /// A circle's rim clicked onto a text's outline keeps no point there: the
 /// outlines are made again from the text each time the sketch is read,
 /// which drops any constraint on them, so the circle is its centre and

@@ -411,8 +411,9 @@ fn on_guide(
         let target = SnapTarget::New(Vec2D::from_glam(p));
         return snap(target, p, SnapKind::Intersection);
     }
-    match nearest_point(&scene.near(foot.to_glam(), tol), &cx.exclude) {
-        Some((id, p)) if guide.holds(Vec2D::from_glam(p)) => {
+    let on = |p: DVec2| guide.holds(Vec2D::from_glam(p));
+    match nearest_point_where(&scene.near(foot.to_glam(), tol), &cx.exclude, on) {
+        Some((id, p)) => {
             let kind = if scene.centres.contains(&id) {
                 SnapKind::Center
             } else {
@@ -810,11 +811,22 @@ impl Scene {
 
 /// The nearest point among `near` not in `exclude`, with its position.
 fn nearest_point(near: &[(&Item, f64)], exclude: &[Uuid]) -> Option<(Uuid, DVec2)> {
+    nearest_point_where(near, exclude, |_| true)
+}
+
+/// [`nearest_point`] among the points `keep` takes: a nearer one it
+/// passes over shadows none farther.
+fn nearest_point_where(
+    near: &[(&Item, f64)],
+    exclude: &[Uuid],
+    keep: impl Fn(DVec2) -> bool,
+) -> Option<(Uuid, DVec2)> {
     // Points on one spot differ only by their place in the sketch.
     let mut best = Best::new();
     for &(item, d) in near {
         if let Shape::Point(p) = item.shape
             && !exclude.contains(&item.id)
+            && keep(p)
         {
             best.offer(Rank::new(d, 0, p).of(item, p), (item.id, p));
         }
@@ -1123,6 +1135,21 @@ pub fn snap_to_point(sketch: &Sketch, cursor: Vec2D, tol: f64, exclude: &[Uuid])
         Some((id, _)) => SnapTarget::Existing(id),
         None => SnapTarget::New(cursor),
     }
+}
+
+/// The nearest existing point within `tol` of `cursor` that lies on
+/// `guide`, as [`snap_to_point`] picks among points on one spot; one off
+/// the guide, however near, is passed over.
+pub fn snap_to_point_on(
+    sketch: &Sketch,
+    cursor: Vec2D,
+    tol: f64,
+    exclude: &[Uuid],
+    guide: &Guide,
+) -> Option<Uuid> {
+    let scene = Scene::of(sketch);
+    let on = |p: DVec2| guide.holds(Vec2D::from_glam(p));
+    nearest_point_where(&scene.near(cursor.to_glam(), tol), exclude, on).map(|(id, _)| id)
 }
 
 /// While drawing from `from`, snap `cursor` onto the horizontal/vertical
