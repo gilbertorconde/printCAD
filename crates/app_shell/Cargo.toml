@@ -60,6 +60,8 @@ notify-rust = "4.18"
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Ending a file chooser process left open at exit.
+libc = "0.2"
 pprof = { version = "0.15", optional = true }
 
 [features]

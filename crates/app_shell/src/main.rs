@@ -178,6 +178,11 @@ fn main() -> Result<()> {
     }
     app.start_agent_server();
     event_loop.run_app(&mut app).context("event loop error")?;
+    // The dialog's thread ends with the process; a chooser it started as
+    // a process of its own would not.
+    if app.files.dialog_rx.is_some() {
+        platform::end_file_choosers();
+    }
     #[cfg(all(feature = "profile", target_os = "linux"))]
     profile::finish();
     Ok(())
