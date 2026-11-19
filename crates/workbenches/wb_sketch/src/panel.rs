@@ -22,7 +22,6 @@ use ui_kit::tokens::*;
 use crate::boundary::widen3;
 use crate::relations::{Related, Relations};
 use crate::sketch::{self, Constraint, Sketch, SketchPlane};
-use crate::solver;
 use crate::style::{ElementNames, constraint_icon, element_kind, element_row_icon};
 use crate::{ConstraintFilter, ElementFilter, SketchWorkbench, overlay};
 
@@ -99,7 +98,7 @@ impl SketchWorkbench {
     /// Make sure a diagnosis is cached, then read the verdict.
     fn diagnosed_verdict(&mut self, sketch: &Sketch) -> crate::verdict::SolverVerdict {
         if self.tab.last_diagnosis.is_none() {
-            self.tab.last_diagnosis = Some(solver::diagnose(sketch));
+            self.tab.last_diagnosis = Some(self.diagnose(sketch));
         }
         self.solver_verdict(sketch)
     }

@@ -82,6 +82,19 @@ impl SketchWorkbench {
         dof
     }
 
+    /// [`solver::diagnose`] of `sketch`; on a sketch too large to analyse,
+    /// whose diagnosis is its freedom alone, the kept estimate.
+    pub(crate) fn diagnose(&self, sketch: &Sketch) -> solver::Diagnosis {
+        if solver::diagnosable(sketch) {
+            return solver::diagnose(sketch);
+        }
+        solver::Diagnosis {
+            dof: self.freedom(sketch),
+            analyzed: false,
+            ..Default::default()
+        }
+    }
+
     /// The solver's verdict from the cached diagnosis, or a cheap estimate
     /// of the freedom left when none is cached yet.
     pub(crate) fn solver_verdict(&self, sketch: &Sketch) -> SolverVerdict {
@@ -262,5 +275,24 @@ mod tests {
         let mut draft = sketch;
         fix(&mut draft, b, 5.0);
         assert_eq!(*wb.locked_elements(&draft), [a, b].into());
+    }
+
+    /// A sketch too large to analyse is diagnosed by the kept estimate.
+    #[test]
+    fn a_large_sketch_is_diagnosed_by_its_kept_freedom() {
+        let mut sketch = Sketch::new("s");
+        for k in 0..61 {
+            let [a, b] = [0.0, 5.0].map(|x| {
+                let at = Vec2D::new(x, k as f64);
+                sketch.add_geometry(GeometryElement::Point(Point::new(at)))
+            });
+            let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+            sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        }
+        let wb = SketchWorkbench::default();
+        assert_eq!(wb.diagnose(&sketch).dof, solver::dof_estimate(&sketch));
+        wb.tab.freedom.borrow_mut().as_mut().unwrap().1 = -7;
+        let diagnosis = wb.diagnose(&sketch);
+        assert_eq!((diagnosis.dof, diagnosis.analyzed), (-7, false));
     }
 }

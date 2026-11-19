@@ -195,6 +195,13 @@ pub fn holds(sketch: &Sketch) -> bool {
         < tolerance * sketch_solver::solve::var_scale(&sys.vars)
 }
 
+/// Whether the sketch is small enough for [`diagnose`] to look for
+/// redundant and conflicting constraints.
+pub fn diagnosable(sketch: &Sketch) -> bool {
+    let problem = adapter::prepare(sketch, &[]);
+    problem.constraints.len() <= problem.settings.diagnosis_limit
+}
+
 pub fn dof_estimate(sketch: &Sketch) -> i32 {
     sketch_solver::freedom::estimate(&adapter::prepare(sketch, &[])).degrees
 }
