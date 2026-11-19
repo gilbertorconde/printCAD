@@ -6,7 +6,8 @@
 //!
 //! Then, on the grid with a dimension on each cell's bottom side and
 //! circle, an edit (a segment drawn, the task panel drawn too) and a
-//! dimension's label dragged, with and without the panel.
+//! dimension's label dragged, with and without the panel; and an edit
+//! with dimensions on 25 cells only, which the diagnosis analyses.
 //!
 //! `cargo run --release -p wb_sketch --example snap_bench -- [cells] [queries] [only]`:
 //! a square grid of `cells` × `cells` cells (20 by default), each a closed
@@ -273,21 +274,23 @@ fn hover(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], tool: &str,
     });
 }
 
-/// Each cell's bottom side held to its length and its circle to its
-/// radius, so the sketch carries two dimension labels per cell.
-fn dimensioned(mut sketch: Sketch) -> Sketch {
+/// The first `cells` cells' bottom sides held to their length and their
+/// circles to their radius: two dimension labels per cell.
+fn dimensioned(mut sketch: Sketch, cells: usize) -> Sketch {
     let lines: Vec<_> = sketch
         .geometry
         .iter()
         .filter(|g| matches!(g, GeometryElement::Line(_)))
         .map(|g| g.id())
         .step_by(4)
+        .take(cells)
         .collect();
     let circles: Vec<_> = sketch
         .geometry
         .iter()
         .filter(|g| matches!(g, GeometryElement::Circle(_)))
         .map(|g| g.id())
+        .take(cells)
         .collect();
     for line in lines {
         sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
@@ -440,9 +443,12 @@ fn main() {
         "sketch.line",
         true,
     );
-    let marked = dimensioned(sketch.clone());
+    let marked = dimensioned(sketch.clone(), usize::MAX);
     let edits = &queries[..queries.len().min(100)];
     edit("edit, a segment drawn", &marked, span, edits);
+    // Few enough dimensions for the diagnosis to look for redundancy.
+    let few = dimensioned(sketch.clone(), 25);
+    edit("edit, 50 dimensions", &few, span, edits);
     label_drag("label drag", &marked, span, &queries, false);
     label_drag("label drag, panel drawn", &marked, span, &queries, true);
 }
