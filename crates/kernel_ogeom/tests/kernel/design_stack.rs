@@ -1045,9 +1045,9 @@ fn a_pad_starting_on_a_face_follows_the_face() {
     assert!((top(&doc) - 25.0).abs() < 1e-3, "followed: {}", top(&doc));
 }
 
-/// A mirror, a split and a draft placed by a block's top face follow the
-/// face when the block grows: each builds as it would had the face been
-/// picked where it stands now.
+/// A mirror, a split, a draft and a projected sketch placed by a block's
+/// top face follow the face when the block grows: each builds as it would
+/// had the face been picked where it stands now.
 #[test]
 fn features_placed_by_a_picked_face_follow_it() {
     use wb_design::{FacePick, MirrorPlane};
@@ -1084,6 +1084,22 @@ fn features_placed_by_a_picked_face_follow_it() {
                 );
                 piece
             }
+            "project" => {
+                let above = SketchPlane {
+                    origin: [0.0, 0.0, 30.0],
+                    ..SketchPlane::xy()
+                };
+                let sketch = doc.add_in(body, "sketch", rect_at(above, 10.0, 10.0, 30.0, 30.0));
+                let raised = DesignFeature::Project {
+                    sketch,
+                    faces: vec![face],
+                    mode: kernel_api::ProjectMode::Emboss,
+                    height: 1.0,
+                    wrap: false,
+                };
+                doc.add_in(body, "Project", raised);
+                body
+            }
             _ => {
                 doc.add_in(
                     body,
@@ -1116,7 +1132,7 @@ fn features_placed_by_a_picked_face_follow_it() {
         (bounds, body_volume(doc, body))
     };
     let mut failures = Vec::new();
-    for kind in ["mirror", "split", "draft"] {
+    for kind in ["mirror", "split", "draft", "project"] {
         let (mut doc, block, base, measured) = make(kind, 10.0, 10.0);
         doc.set_feature(block, pad(base, 16.0));
         doc.mark_feature_dirty(block);

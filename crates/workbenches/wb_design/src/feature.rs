@@ -3004,7 +3004,7 @@ impl DesignFeature {
     /// The faces of the solid before the feature that place it, which a
     /// build finds again by name (else by where they were picked) and the
     /// feature follows: a start face, a mirror's or split's picked plane, a
-    /// draft's neutral face, the faces text goes on.
+    /// draft's neutral face, the faces a projected sketch or text goes on.
     pub fn placing_faces(&self) -> Vec<&FacePick> {
         fn mirror(plane: &MirrorPlane) -> Option<&FacePick> {
             match plane {
@@ -3031,7 +3031,9 @@ impl DesignFeature {
                 neutral_plane: None,
                 ..
             } => vec![neutral],
-            DesignFeature::Text { faces, .. } => faces.iter().collect(),
+            DesignFeature::Project { faces, .. } | DesignFeature::Text { faces, .. } => {
+                faces.iter().collect()
+            }
             other => other.start_face().into_iter().collect(),
         }
     }
@@ -3078,7 +3080,9 @@ impl DesignFeature {
                 neutral_plane: None,
                 ..
             } => vec![neutral],
-            DesignFeature::Text { faces, .. } => faces.iter_mut().collect(),
+            DesignFeature::Project { faces, .. } | DesignFeature::Text { faces, .. } => {
+                faces.iter_mut().collect()
+            }
             DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
                 extras.start_face.as_mut().into_iter().collect()
             }
