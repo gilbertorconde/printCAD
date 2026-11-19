@@ -376,10 +376,10 @@ impl Headless {
             }
             "file.export" => {
                 let path = PathBuf::from(a.string("path")?);
-                let format = crate::app::scripts::export_format(a.opt_string("format")?, &path)?;
+                let draft = crate::app::scripts::export_draft(&a, &path)?;
                 let bodies = crate::app::scripts::body_list(args.get("bodies"))?;
                 self.rebuild();
-                let layout = (a.opt_bool("layout")? == Some(true)).then(|| {
+                let layout = draft.layout.then(|| {
                     use doc_render::print_layout::{LayoutSettings, lay_out, parts_to_print};
                     lay_out(
                         &self.document,
@@ -390,9 +390,8 @@ impl Headless {
                 let (path, exported) = crate::app::export::export_document(
                     (&self.document, &self.registry),
                     path,
-                    format,
+                    &draft,
                     bodies,
-                    a.opt_number("tolerance")?.map(|t| t as f32),
                     layout.as_ref(),
                     None,
                 )
@@ -1331,20 +1330,28 @@ endsolid t
             pc.config.set{name = "Large two", variable = "Size.height", value = "20 mm"}
             pc.config.activate{name = "Small"}
         "#;
+        // The NURBS kind of STEP, which the file's extension cannot say.
+        let draft = crate::app::export::ExportDraft {
+            format: kernel_ogeom::export::ExportFormat::StepNurbs,
+            ..Default::default()
+        };
         let export = crate::app::export::every_configuration_script(
             &dir.join("part").display().to_string(),
-            "stl",
-            0.05,
-            "nil",
-            false,
+            &draft,
+            None,
         );
         let check = r#"
             assert(pc.config.list().active == "Small", "the active one is back")
         "#;
         std::fs::write(&script, format!("{setup}\n{export}\n{check}")).unwrap();
         assert!(run_file(script, None, Vec::new()), "the script runs");
-        assert!(dir.join("part-Small.stl").exists());
-        assert!(dir.join("part-Large two.stl").exists());
+        for name in ["part-Small.step", "part-Large two.step"] {
+            let text = std::fs::read_to_string(dir.join(name)).unwrap();
+            assert!(
+                text.contains("B_SPLINE_SURFACE") && !text.contains("PLANE("),
+                "{name} is all splines"
+            );
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

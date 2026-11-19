@@ -1566,7 +1566,7 @@ pub(crate) fn tree_item(
 }
 
 /// The format an export names, else the one its path's extension says.
-pub(crate) fn export_format(
+fn export_format(
     name: Option<&str>,
     path: &std::path::Path,
 ) -> Result<kernel_ogeom::export::ExportFormat, CommandError> {
@@ -1589,6 +1589,51 @@ pub(crate) fn export_format(
             )
         }),
     }
+}
+
+/// The name `export_format` reads for `format`.
+pub(crate) fn format_name(format: kernel_ogeom::export::ExportFormat) -> &'static str {
+    use kernel_ogeom::export::ExportFormat;
+    match format {
+        ExportFormat::Step => "step",
+        ExportFormat::StepNurbs => "step_nurbs",
+        ExportFormat::Stl => "stl",
+        ExportFormat::ThreeMf => "3mf",
+    }
+}
+
+/// The export a script's arguments ask for, as the File › Export dialog's
+/// options: each one left out as the dialog first opens on it.
+pub(crate) fn export_draft(
+    a: &Args,
+    path: &std::path::Path,
+) -> Result<crate::app::export::ExportDraft, CommandError> {
+    let mut draft = crate::app::export::ExportDraft {
+        format: export_format(a.opt_string("format")?, path)?,
+        ..Default::default()
+    };
+    if let Some(tolerance) = a.opt_number("tolerance")? {
+        draft.detail.chord_tolerance = tolerance as f32;
+    }
+    if let Some(angle) = a.opt_number("angle")? {
+        draft.detail.angular_tolerance_deg = angle as f32;
+    }
+    if let Some(textures) = a.opt_bool("textures")? {
+        draft.textures = textures;
+    }
+    draft.layout = a.opt_bool("layout")? == Some(true);
+    Ok(draft)
+}
+
+/// The arguments that ask `export_draft` for what `draft` writes.
+pub(crate) fn export_args(draft: &crate::app::export::ExportDraft) -> CommandArgs {
+    let mut args = CommandArgs::new();
+    args.insert("format".into(), json!(format_name(draft.format)));
+    args.insert("tolerance".into(), json!(draft.detail.chord_tolerance));
+    args.insert("angle".into(), json!(draft.detail.angular_tolerance_deg));
+    args.insert("textures".into(), json!(draft.textures));
+    args.insert("layout".into(), json!(draft.layout));
+    args
 }
 
 /// A list of body ids, when one is given.

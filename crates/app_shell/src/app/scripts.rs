@@ -19,10 +19,10 @@ mod document;
 #[cfg(test)]
 use document::faces_of;
 pub(crate) use document::{
-    body_list, delete_item, document_command, drop_place, export_format, features_in_order,
-    kind_of, move_after, move_in_history, print_layout_command, rebuild_failures, set_body_tip,
-    set_item_visible, set_tip, suppress, suppress_all, suppress_call, surface_json, tree_item,
-    user_note_guard,
+    body_list, delete_item, document_command, drop_place, export_args, export_draft,
+    features_in_order, kind_of, move_after, move_in_history, print_layout_command,
+    rebuild_failures, set_body_tip, set_item_visible, set_tip, suppress, suppress_all,
+    suppress_call, surface_json, tree_item, user_note_guard,
 };
 mod recording;
 use recording::item_id;
@@ -329,11 +329,9 @@ impl PrintCadApp {
                 Ok(Value::Null)
             }
             Export => {
-                let format = export_format(a.opt_string("format")?, &path)?;
+                let draft = export_draft(&a, &path)?;
                 let bodies = body_list(args.get("bodies"))?;
-                let tolerance = a.opt_number("tolerance")?.map(|t| t as f32);
-                let layout =
-                    (a.opt_bool("layout")? == Some(true)).then(|| self.current_print_layout());
+                let layout = draft.layout.then(|| self.current_print_layout());
                 let printing = &self.user_settings.printing;
                 let compensation = printing
                     .compensation
@@ -342,9 +340,8 @@ impl PrintCadApp {
                 let (path, exported) = crate::app::export::export_document(
                     (&self.session.document, &self.registry),
                     path,
-                    format,
+                    &draft,
                     bodies,
-                    tolerance,
                     layout.as_ref(),
                     compensation,
                 )

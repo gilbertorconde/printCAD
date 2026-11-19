@@ -1994,8 +1994,10 @@ See also `pc.doc.save_section`.
 
 - `path` (string, optional): Where to write; the dialog when left out
 - `format` (string, optional): step, step_nurbs (every surface a spline), stl or 3mf; from the path's extension when left out
-- `bodies` (list, optional): The bodies to write; every visible one when left out
+- `bodies` (list, optional): The bodies to write; every visible one a bench does not mark as bought when left out
 - `tolerance` (number, optional): The mesh formats' distance to the true surface, mm (0.01)
+- `angle` (number, optional): The mesh formats' largest turn between facets, degrees (5)
+- `textures` (boolean, optional): Whether the mesh formats press the bodies' surface textures in (true)
 - `layout` (boolean, optional): The print layout (doc.print_layout) rather than the bodies where they sit
 - Returns {path, written, skipped, triangles}
 

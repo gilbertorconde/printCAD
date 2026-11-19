@@ -278,18 +278,12 @@ impl PrintCadApp {
                 app_log::warn("Nothing to export: select a body with geometry first");
                 return;
             }
-            let quoted: Vec<String> = selected.iter().map(|b| format!("\"{b}\"")).collect();
-            format!("{{{}}}", quoted.join(", "))
+            Some(selected)
         } else {
-            "nil".to_string()
+            None
         };
-        let source = every_configuration_script(
-            &base.display().to_string(),
-            draft.format.extension(),
-            draft.detail.chord_tolerance,
-            &bodies,
-            draft.layout,
-        );
+        let source =
+            every_configuration_script(&base.display().to_string(), draft, bodies.as_deref());
         self.submit_script(
             scripting::Job::Script {
                 name: "Export every configuration".to_string(),
@@ -430,30 +424,21 @@ impl PrintCadApp {
         }
     }
 
-    /// The bodies the draft asks for: the selected one, or every visible
-    /// body with geometry that is made, in the document's body order; or
-    /// the print layout's copies.
+    /// The bodies the draft asks for: the selected ones, or every visible
+    /// body with geometry that is made; or the print layout's copies.
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
-        let document = &self.session.document;
-        let textured = draft.textures && draft.format.is_mesh();
-        if draft.layout {
-            let layout = self.current_print_layout();
-            return layout_bodies(document, &layout, textured);
-        }
-        let selected = self.bodies_to_export_selected();
-        // What a bench says is not made (a bought part) stays out of an
-        // export of everything.
-        let not_made = self.registry.not_printed(document);
-        bodies_to_export(
-            document,
-            |id| {
-                if draft.selected_only {
-                    selected.contains(&id.0)
-                } else {
-                    document.imported_body_effective_visible(id) && !not_made.contains(&id)
-                }
-            },
-            textured,
+        let layout = draft.layout.then(|| self.current_print_layout());
+        let selected: Option<Vec<core_document::BodyId>> = draft.selected_only.then(|| {
+            self.bodies_to_export_selected()
+                .into_iter()
+                .map(core_document::BodyId)
+                .collect()
+        });
+        owned_bodies(
+            (&self.session.document, &self.registry),
+            draft,
+            selected.as_deref(),
+            layout.as_ref(),
         )
     }
 
@@ -585,30 +570,56 @@ fn layout_bodies(
 }
 
 /// The script that writes every configuration: `base-<name>.<ext>` each,
-/// `bodies` a Lua list of body ids or `nil` for every visible body, or
-/// the print layout when `layout`.
+/// as the export `draft` says, of `bodies` or of every body an export of
+/// everything takes when `None`.
 pub(crate) fn every_configuration_script(
     base: &str,
-    ext: &str,
-    tolerance: f32,
-    bodies: &str,
-    layout: bool,
+    draft: &ExportDraft,
+    bodies: Option<&[uuid::Uuid]>,
 ) -> String {
+    let mut args = crate::app::scripts::export_args(draft);
+    if let Some(bodies) = bodies {
+        let ids = bodies.iter().map(|b| b.to_string().into()).collect();
+        args.insert("bodies".into(), serde_json::Value::Array(ids));
+    }
+    let options = lua_table(&args);
+    let ext = draft.format.extension();
     format!(
         r#"-- Export every configuration
-local base, ext, tolerance, bodies, layout = {base:?}, {ext:?}, {tolerance}, {bodies}, {layout}
+local base, ext, options = {base:?}, {ext:?}, {options}
 local table = pc.config.list()
 local was = table.active
 for _, row in ipairs(table.rows) do
   pc.config.activate{{name = row.name}}
   pc.doc.rebuild()
   local file = base .. "-" .. row.name:gsub("[^%w%-_. ]", "-") .. "." .. ext
-  pc.file.export{{path = file, tolerance = tolerance, bodies = bodies, layout = layout}}
+  options.path = file
+  pc.file.export(options)
   print("Wrote " .. file)
 end
 pc.config.activate{{name = was}}
 "#
     )
+}
+
+/// A command's arguments as a Lua table: strings, numbers, booleans and
+/// lists of them.
+fn lua_table(args: &core_document::CommandArgs) -> String {
+    fn lua(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::String(s) => format!("{s:?}"),
+            serde_json::Value::Array(items) => {
+                let items: Vec<String> = items.iter().map(lua).collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            other => other.to_string(),
+        }
+    }
+    let fields: Vec<String> = args
+        .iter()
+        .map(|(k, v)| format!("{k} = {}", lua(v)))
+        .collect();
+    format!("{{{}}}", fields.join(", "))
 }
 
 /// A document name as a file name: letters, digits and a few marks kept,
@@ -699,37 +710,53 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
     Ok(program)
 }
 
-/// Write `bodies` of `document` (every visible one when `None`), or the
-/// copies of `layout` when given, to `path` now, on this thread: what a
-/// script's export does. A mesh format makes up for the printer as
-/// `compensation` says, when given.
+/// The bodies an export of `draft` writes: the copies of `layout` when
+/// given, else those `listed`, else every visible body with geometry that
+/// no bench calls bought; their textures with them when the draft presses
+/// them into a mesh format. The dialog, the slicer and a script's export
+/// all take their bodies here.
+fn owned_bodies(
+    (document, registry): (&core_document::Document, &core_document::DocumentService),
+    draft: &ExportDraft,
+    listed: Option<&[core_document::BodyId]>,
+    layout: Option<&doc_render::print_layout::Layout>,
+) -> Vec<OwnedBody> {
+    let textured = draft.textures && draft.format.is_mesh();
+    if let Some(layout) = layout {
+        return layout_bodies(document, layout, textured);
+    }
+    let not_made = match listed {
+        Some(_) => Vec::new(),
+        None => registry.not_printed(document),
+    };
+    bodies_to_export(
+        document,
+        |id| match listed {
+            Some(list) => list.contains(&id),
+            None => document.imported_body_effective_visible(id) && !not_made.contains(&id),
+        },
+        textured,
+    )
+}
+
+/// Write what `draft` asks for to `path` now, on this thread: `bodies` of
+/// `document` (every one an export of everything takes when `None`), or
+/// the copies of `layout` when given. What a script's export does. A mesh
+/// format makes up for the printer as `compensation` says, when given.
 pub(crate) fn export_document(
     (document, registry): (&core_document::Document, &core_document::DocumentService),
     path: PathBuf,
-    format: ExportFormat,
+    draft: &ExportDraft,
     bodies: Option<Vec<core_document::BodyId>>,
-    tolerance: Option<f32>,
     layout: Option<&doc_render::print_layout::Layout>,
     compensation: Option<&settings::PrintCompensation>,
 ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
-    let owned = match layout {
-        Some(layout) => layout_bodies(document, layout, format.is_mesh()),
-        None => bodies_to_export(
-            document,
-            |id| match &bodies {
-                Some(list) => list.contains(&id),
-                None => document.imported_body_effective_visible(id),
-            },
-            format.is_mesh(),
-        ),
-    };
+    let format = draft.format;
+    let owned = owned_bodies((document, registry), draft, bodies.as_deref(), layout);
     if owned.is_empty() {
         return Err("there is nothing to export".to_string());
     }
-    let mut detail = ExportDraft::default().detail;
-    if let Some(tolerance) = tolerance {
-        detail.chord_tolerance = tolerance;
-    }
+    let detail = &draft.detail;
     let finishes: Vec<_> = owned.iter().map(OwnedBody::finish).collect();
     let compensation = compensation.filter(|_| format.is_mesh());
     let borrowed = borrowed(
@@ -743,9 +770,10 @@ pub(crate) fn export_document(
     let path = with_extension(&path, format);
     let notes = export_notes(&owned);
     let semantic = export_pmi(document, registry, &owned, format);
-    let exported = export_with_annotations(&borrowed, &notes, &semantic, format, &detail)
+    let exported = export_with_annotations(&borrowed, &notes, &semantic, format, detail)
         .map_err(|e| e.to_string())?;
-    std::fs::write(&path, &exported.bytes).map_err(|e| format!("could not write the file: {e}"))?;
+    crate::platform::write(&path, &exported.bytes)
+        .map_err(|e| format!("could not write the file: {e}"))?;
     Ok((path, exported))
 }
 
@@ -858,8 +886,10 @@ mod tests {
         let (path, exported) = export_document(
             (doc, &core_document::DocumentService::default()),
             path,
-            format,
-            None,
+            &ExportDraft {
+                format,
+                ..Default::default()
+            },
             None,
             layout,
             None,
@@ -1135,8 +1165,10 @@ mod tests {
         let (_, exported) = export_document(
             (&doc, &registry),
             path.clone(),
-            ExportFormat::Step,
-            None,
+            &ExportDraft {
+                format: ExportFormat::Step,
+                ..Default::default()
+            },
             None,
             None,
             None,
@@ -1153,6 +1185,89 @@ mod tests {
             .find(|l| l.contains("COORDINATES_LIST('M6 thread'"))
             .expect("the leader is written");
         assert!(list.contains(&rim), "{list} starts at {rim}");
+    }
+
+    /// Every configuration is written by a script; its export reads back
+    /// every option the dialog was confirmed with, whatever the file's
+    /// extension says.
+    #[test]
+    fn the_every_configuration_script_carries_the_dialogs_options() {
+        let mut draft = ExportDraft {
+            format: ExportFormat::StepNurbs,
+            textures: false,
+            layout: true,
+            ..Default::default()
+        };
+        draft.detail.chord_tolerance = 0.05;
+        draft.detail.angular_tolerance_deg = 12.0;
+        let args = crate::app::scripts::export_args(&draft);
+        let back =
+            crate::app::scripts::export_draft(&core_document::Args(&args), Path::new("a.step"))
+                .unwrap();
+        assert_eq!(back.format, ExportFormat::StepNurbs);
+        assert!(!back.textures && back.layout);
+        assert_eq!(back.detail.chord_tolerance, 0.05);
+        assert_eq!(back.detail.angular_tolerance_deg, 12.0);
+        let script = every_configuration_script("/t/a", &draft, None);
+        assert!(script.contains(&lua_table(&args)), "{script}");
+        assert!(script.contains("format = \"step_nurbs\""), "{script}");
+    }
+
+    /// A script's export of everything takes the bodies the dialog's does,
+    /// leaving out what a bench says is bought, and presses textures in
+    /// only when asked to.
+    #[test]
+    fn a_script_export_leaves_out_bought_bodies_and_unticked_textures() {
+        struct Bought;
+        impl core_document::Workbench for Bought {
+            fn descriptor(&self) -> core_document::WorkbenchDescriptor {
+                core_document::WorkbenchDescriptor::new("test.bought", "Bought", "")
+            }
+            fn configure(&self, _: &mut core_document::WorkbenchContext) {}
+            fn not_printed(
+                &self,
+                document: &core_document::Document,
+                _: &[core_document::WorkbenchId],
+            ) -> Vec<core_document::BodyId> {
+                document.bodies().iter().map(|b| b.id).collect()
+            }
+        }
+        let doc = textured_box(true);
+        let body = doc.bodies()[0].id;
+        let mut registry = core_document::DocumentService::default();
+        registry.register_workbench(Box::new(Bought)).unwrap();
+        let stl = |textures: bool| ExportDraft {
+            format: ExportFormat::Stl,
+            textures,
+            ..Default::default()
+        };
+        let path = std::env::temp_dir().join(format!("export-{}.stl", uuid::Uuid::new_v4()));
+        let everything = export_document(
+            (&doc, &registry),
+            path.clone(),
+            &stl(true),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            everything.err().as_deref(),
+            Some("there is nothing to export")
+        );
+
+        let untextured = export_document(
+            (&doc, &registry),
+            path.clone(),
+            &stl(false),
+            Some(vec![body]),
+            None,
+            None,
+        )
+        .unwrap()
+        .1;
+        let plain = export(&textured_box(false), ExportFormat::Stl, None);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(untextured.triangles, plain.triangles);
     }
 
     #[test]
