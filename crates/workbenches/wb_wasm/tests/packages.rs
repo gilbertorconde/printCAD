@@ -1596,6 +1596,70 @@ fn a_bench_removes_the_body_it_made_but_not_one_holding_anothers_feature() {
 }
 
 #[test]
+fn a_bench_moves_the_body_it_made_but_not_anothers_nor_one_that_is_not_there() {
+    let package = installed("tests/rogue", "rogue.wasm", "rogue-placement");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("rogue");
+    let made = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.body",
+        json!({}),
+    )
+    .expect("a body with a thing on it");
+    let body = made["body"].as_str().unwrap().to_string();
+    let mut matrix = vec![0.0; 16];
+    for i in 0..4 {
+        matrix[i * 5] = 1.0;
+    }
+    matrix[3] = 25.0;
+    let placing =
+        |id: &str| json!({"command": "doc.set_placement", "args": {"body": id, "matrix": matrix}});
+    run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.call",
+        placing(&body),
+    )
+    .expect("its own body");
+    let own = document.bodies()[0].id;
+    assert_eq!(document.body_placement(own).translation[0], 25.0);
+
+    let other = document.create_body(Some("Other".into()));
+    document.add_feature_of_kind(
+        WorkbenchId::new("wb.design"),
+        "Pad".into(),
+        Some(other),
+        Vec::new(),
+        json!({}),
+        core_document::FeatureOrigin::default(),
+    );
+    let refused = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.call",
+        placing(&other.0.to_string()),
+    )
+    .unwrap_err();
+    assert!(refused.contains("does not own"), "{refused}");
+    assert!(document.body_placement(other).is_identity());
+
+    let missing = uuid::Uuid::new_v4().to_string();
+    let refused = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.call",
+        placing(&missing),
+    )
+    .unwrap_err();
+    assert!(refused.contains("no body"), "{refused}");
+}
+
+#[test]
 fn a_job_runs_away_from_the_window_and_reports_whichever_bench_is_on_screen() {
     let package = installed("tests/rogue", "rogue.wasm", "rogue-job");
     let mut registry = registry_with(&package, Capabilities::default());
