@@ -40,6 +40,7 @@ export function gateList({ all = false, testArgs } = {}) {
       ["clippy", "-p", name, "--lib", "--no-default-features", "--", "-D", "warnings"],
     ]),
     ["comments", "lint", "node", ["scripts/lint-comment-rot.mjs", ...(all ? ["--all"] : [])]],
+    // Tests' share of the lines, printed for information; it never fails.
     ["test lines", "lint", "node", ["scripts/test-lines.mjs"]],
     ["tests", "tests", "node", ["scripts/test-budget.mjs", ...(testArgs ?? (all ? [] : ["--changed"]))]],
   ];

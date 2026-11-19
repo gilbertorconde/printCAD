@@ -25,7 +25,7 @@ cargo run --release -p app_shell  # for real STEP files; see the profile note
 cargo test --workspace            # full suite (~1900 tests)
 node scripts/test-budget.mjs      # the same, timed against its budget (what CI runs)
 node scripts/test-budget.mjs --changed   # only what a change reaches, its own crates first
-node scripts/test-lines.mjs       # tests' share of the code, held under a ceiling in CI
+node scripts/test-lines.mjs       # tests' share of the code, a report (never fails)
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 node scripts/gates.mjs            # every gate above in order, stopping at the first failure (--all for the full suite)
@@ -253,5 +253,5 @@ Project skills under `.claude/skills/` hold everything else this file used to ca
 - `printcad-render-loop`: on-demand frames, render_wgpu, edge pass cost, the cached scene and its fingerprint.
 - `printcad-bench-hooks`: `PRINTCAD_BENCH_*` / `PRINTCAD_OPEN_*` hooks: click-free runs, captures, PR pictures.
 - `printcad-scripting-agents`: command contract, Lua scripts, recording, headless `--script`, recipes, agents/MCP/assistant.
-- `printcad-testing`: test layout, budget, CI scope, test-lines ceiling, STEP fixtures, PR evidence.
+- `printcad-testing`: test layout, budget, CI scope, test-lines report, STEP fixtures, PR evidence.
 - `printcad-release-site`: release anatomy, packaging, icons, corpus, the GitHub Pages site.

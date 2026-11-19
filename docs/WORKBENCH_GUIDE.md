@@ -563,8 +563,8 @@ application builds scenes from workbench features only through
 Every addition ends with tests that measure what it made at its strongest
 boundary (a solid's volume, area and bounds; a sketch's closure; a
 placement), not the code's inner steps, and with `fmt`, `clippy`,
-`node scripts/test-budget.mjs --changed`, `test-lines.mjs` and
-`lint-comment-rot.mjs` passing.
+`node scripts/test-budget.mjs --changed` and `lint-comment-rot.mjs`
+passing.
 
 **A Design feature**
 1. `wb_design/src/feature.rs`: the `DesignFeature` variant, new fields with
