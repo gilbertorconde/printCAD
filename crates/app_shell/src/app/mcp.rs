@@ -1155,8 +1155,6 @@ mod tests {
             "sketch.image",
             "sketch.import_dxf",
             "doc.picture",
-            "edit.undo",
-            "edit.redo",
             "tab.new",
             "tab.next",
         ] {

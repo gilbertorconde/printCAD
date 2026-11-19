@@ -31,6 +31,34 @@ struct Entry {
     inverse: Vec<DocumentOp>,
 }
 
+/// A move of a journal's stacks while a run is open, kept so a run that
+/// fails can be taken back exactly.
+#[derive(Debug)]
+enum RunMove {
+    /// A call's step closed onto the undo stack.
+    Closed,
+    /// The newest step went from undo to redo.
+    Undone,
+    /// The newest undone step went back from redo to undo.
+    Redone,
+    /// A step closed and cleared these from redo.
+    RedoCleared(Vec<Entry>),
+}
+
+/// A script's run: its calls close steps of their own, so it can step
+/// back through them, and become one step when it ends.
+#[derive(Debug, Default)]
+struct Run {
+    /// The step the whole run becomes.
+    label: Option<String>,
+    /// The steps its calls closed.
+    made: Vec<JournalEntryId>,
+    /// How its stacks moved, oldest first.
+    moves: Vec<RunMove>,
+    /// A non-invertible op crossed: nothing before it can be taken back.
+    barrier: bool,
+}
+
 /// The op journal: bounded per-user undo/redo stacks.
 #[derive(Debug, Default)]
 pub struct OpJournal {
@@ -40,9 +68,9 @@ pub struct OpJournal {
     /// Label for the next boundary, set by explicit commits ("Create
     /// body"); gestures without one get a generic label.
     pending_label: Option<String>,
-    /// Boundaries wait while this is set: a script's edits are one gesture
-    /// whatever the commands it calls do.
-    held: bool,
+    /// A script's run is open: boundaries wait, its calls close steps of
+    /// their own, and it ends as one step.
+    run: Option<Run>,
     /// A task is open: its edits wait for it to end, as one step when it
     /// is accepted and taken back when it is cancelled.
     task: bool,
@@ -61,30 +89,118 @@ impl OpJournal {
         self.pending_label = Some(label.into());
     }
 
-    /// Hold boundaries until released, so everything done meanwhile is one
-    /// gesture; releasing does not close it, the next boundary does.
-    pub fn hold(&mut self, held: bool) {
-        self.held = held;
+    /// Open a script's run, named by the label given last: boundaries
+    /// wait until [`end_run`](Self::end_run), each call closes a step of
+    /// its own ([`note_call`](Self::note_call)) that undo and redo step
+    /// through as any other, and the run ends as one step.
+    pub fn begin_run(&mut self) {
+        if self.run.is_none() {
+            self.run = Some(Run {
+                label: self.pending_label.take(),
+                ..Run::default()
+            });
+        }
+    }
+
+    /// Whether the open run crossed a non-invertible op (an import), so
+    /// no undo takes it back to where it began.
+    pub fn run_crossed_barrier(&self) -> bool {
+        self.run.as_ref().is_some_and(|run| run.barrier)
+    }
+
+    /// Close what a script's call did as a step named `label`, in a run
+    /// or not; nothing closes while a task is open. Answers the entry it
+    /// closed, if any.
+    pub fn note_call(
+        &mut self,
+        document: &mut Document,
+        label: impl Into<String>,
+    ) -> Option<JournalEntryId> {
+        if self.task {
+            return None;
+        }
+        self.pending_label = Some(label.into());
+        let closed = self.close(document);
+        self.pending_label = None;
+        closed
+    }
+
+    /// End the open run: what is still open closes (unless a task holds
+    /// it), and the newest steps its calls closed become one step, named
+    /// as the run is. Steps it undid or redid stay where it left them.
+    /// Answers the run's step.
+    pub fn end_run(&mut self, document: &mut Document) -> Option<JournalEntryId> {
+        self.run.as_ref()?;
+        if !self.task {
+            self.close(document);
+        }
+        let run = self.run.take()?;
+        let ours = self
+            .undo
+            .iter()
+            .rev()
+            .take_while(|entry| run.made.contains(&entry.id))
+            .count();
+        let steps = self.undo.split_off(self.undo.len() - ours);
+        let mut id = None;
+        if !steps.is_empty() {
+            let mut forward = Vec::new();
+            let mut inverse = Vec::new();
+            for entry in steps {
+                forward.extend(entry.forward);
+                inverse.extend(entry.inverse);
+            }
+            let made = JournalEntryId(uuid::Uuid::new_v4());
+            self.undo.push(Entry {
+                id: made,
+                label: run.label.unwrap_or_else(|| "Edit".to_string()),
+                forward,
+                inverse,
+            });
+            id = Some(made);
+        }
+        self.trim();
+        id
     }
 
     /// Close the current gesture: drain captured pairs into one entry.
     /// Called at gesture boundaries: every frame with no mouse button held,
     /// and immediately after discrete commands. A barrier clears history.
-    /// Nothing closes while the journal is held. Answers the entry it
+    /// Nothing closes while a run or a task is open. Answers the entry it
     /// closed, if any.
     pub fn note(&mut self, document: &mut Document) -> Option<JournalEntryId> {
-        if self.held || self.task {
+        if self.run.is_some() || self.task {
             return None;
         }
         self.close(document)
     }
 
+    /// Drop the oldest steps past the limit, unless a run is open and may
+    /// still take its moves back.
+    fn trim(&mut self) {
+        if self.run.is_none() && self.undo.len() > self.limit {
+            let over = self.undo.len() - self.limit;
+            self.undo.drain(..over);
+        }
+    }
+
+    /// Everything before a non-invertible op is out of reach: the history
+    /// clears, and an open run can take back only what follows.
+    fn cross_barrier(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.pending_label = None;
+        if let Some(run) = &mut self.run {
+            run.made.clear();
+            run.moves.clear();
+            run.barrier = true;
+        }
+    }
+
     fn close(&mut self, document: &mut Document) -> Option<JournalEntryId> {
         let (pairs, barrier) = document.take_journal_pairs();
         if barrier {
-            self.undo.clear();
-            self.redo.clear();
-            self.pending_label = None;
+            self.cross_barrier();
             return None;
         }
         if pairs.is_empty() {
@@ -112,21 +228,61 @@ impl OpJournal {
             forward,
             inverse,
         });
-        if self.undo.len() > self.limit {
-            self.undo.remove(0);
-        }
         // A fresh edit forks history; the old future is unreachable.
-        self.redo.clear();
+        let cleared = std::mem::take(&mut self.redo);
+        if let Some(run) = &mut self.run {
+            run.made.push(id);
+            if !cleared.is_empty() {
+                run.moves.push(RunMove::RedoCleared(cleared));
+            }
+            run.moves.push(RunMove::Closed);
+        }
+        self.trim();
         Some(id)
     }
 
     /// Take back everything done since the last boundary and leave no
     /// step for it: a script that stopped with an error puts the document
-    /// back as it found it. Answers how many edits were taken back, and
-    /// whether a non-invertible op (an import) crossed, in which case only
-    /// what followed it is taken back and the history clears as it would
-    /// have on closing.
+    /// back as it found it. With a run open that is everything the run
+    /// did, its undos and redos too, and the run ends leaving no step.
+    /// Answers how many edits were taken back, and whether a
+    /// non-invertible op (an import) crossed, in which case only what
+    /// followed it is taken back and the history clears as it would have
+    /// on closing.
     pub fn roll_back(&mut self, document: &mut Document) -> (usize, bool) {
+        let (mut undone, mut barrier) = self.roll_back_pending(document);
+        let Some(run) = self.run.take() else {
+            return (undone, barrier);
+        };
+        barrier |= run.barrier;
+        for step in run.moves.into_iter().rev() {
+            match step {
+                RunMove::Closed => {
+                    if let Some(entry) = self.undo.pop() {
+                        undone += apply_back(document, &entry);
+                    }
+                }
+                RunMove::Undone => {
+                    if let Some(entry) = self.redo.pop() {
+                        undone += apply_forward(document, &entry);
+                        self.undo.push(entry);
+                    }
+                }
+                RunMove::Redone => {
+                    if let Some(entry) = self.undo.pop() {
+                        undone += apply_back(document, &entry);
+                        self.redo.push(entry);
+                    }
+                }
+                RunMove::RedoCleared(entries) => self.redo = entries,
+            }
+        }
+        self.trim();
+        (undone, barrier)
+    }
+
+    /// Take back the edits not yet closed, leaving no step for them.
+    fn roll_back_pending(&mut self, document: &mut Document) -> (usize, bool) {
         let (pairs, barrier) = document.take_journal_pairs();
         document.without_journal(|doc| {
             for (_, inverse) in pairs.iter().rev() {
@@ -135,8 +291,7 @@ impl OpJournal {
         });
         self.pending_label = None;
         if barrier {
-            self.undo.clear();
-            self.redo.clear();
+            self.cross_barrier();
         }
         (pairs.len(), barrier)
     }
@@ -154,7 +309,7 @@ impl OpJournal {
     }
 
     /// End the open task keeping its edits: one step, named `label` when
-    /// given, closed unless a script holds the journal.
+    /// given, closed unless a script's run is open.
     pub fn accept_task(
         &mut self,
         document: &mut Document,
@@ -173,35 +328,33 @@ impl OpJournal {
     /// what followed it is taken back.
     pub fn cancel_task(&mut self, document: &mut Document) -> (usize, bool) {
         self.task = false;
-        self.roll_back(document)
+        self.roll_back_pending(document)
     }
 
     /// Undo the newest gesture. Returns its label.
     pub fn undo(&mut self, document: &mut Document) -> Option<String> {
         // Fold any uncommitted edits first so they are what gets undone,
-        // held or not.
+        // in a run or not.
         self.close(document);
         let entry = self.undo.pop()?;
-        document.without_journal(|doc| {
-            for op in entry.inverse.iter().rev() {
-                doc.apply_history_op(op);
-            }
-        });
+        apply_back(document, &entry);
         let label = entry.label.clone();
         self.redo.push(entry);
+        if let Some(run) = &mut self.run {
+            run.moves.push(RunMove::Undone);
+        }
         Some(label)
     }
 
     /// Re-apply the most recently undone gesture. Returns its label.
     pub fn redo(&mut self, document: &mut Document) -> Option<String> {
         let entry = self.redo.pop()?;
-        document.without_journal(|doc| {
-            for op in &entry.forward {
-                doc.apply_history_op(op);
-            }
-        });
+        apply_forward(document, &entry);
         let label = entry.label.clone();
         self.undo.push(entry);
+        if let Some(run) = &mut self.run {
+            run.moves.push(RunMove::Redone);
+        }
         Some(label)
     }
 
@@ -212,6 +365,7 @@ impl OpJournal {
         self.redo.clear();
         self.pending_label = None;
         self.task = false;
+        self.run = None;
     }
 
     pub fn can_undo(&self) -> bool {
@@ -230,10 +384,9 @@ impl OpJournal {
 
     /// Undo the gesture `id` names, only while it is the newest: edits not
     /// yet closed close first, so they are newer and refuse it. Nothing
-    /// changes while the journal is held or a task is open. Answers the
-    /// label undone.
+    /// changes while a run or a task is open. Answers the label undone.
     pub fn undo_entry(&mut self, document: &mut Document, id: JournalEntryId) -> Option<String> {
-        if self.held || self.task {
+        if self.run.is_some() || self.task {
             return None;
         }
         self.close(document);
@@ -242,6 +395,26 @@ impl OpJournal {
         }
         self.undo(document)
     }
+}
+
+/// Take `entry` back: its inverses, newest first. Answers how many.
+fn apply_back(document: &mut Document, entry: &Entry) -> usize {
+    document.without_journal(|doc| {
+        for op in entry.inverse.iter().rev() {
+            doc.apply_history_op(op);
+        }
+    });
+    entry.inverse.len()
+}
+
+/// Do `entry` again: its ops, oldest first. Answers how many.
+fn apply_forward(document: &mut Document, entry: &Entry) -> usize {
+    document.without_journal(|doc| {
+        for op in &entry.forward {
+            doc.apply_history_op(op);
+        }
+    });
+    entry.forward.len()
 }
 
 /// Run `task` as the host runs one that ends by its Cancel: what was
@@ -353,17 +526,17 @@ mod tests {
     }
 
     #[test]
-    fn a_held_journal_makes_everything_until_the_next_boundary_one_step() {
+    fn a_run_ends_as_one_step_whatever_its_calls_closed() {
         let mut doc = Document::new("Script");
         let mut journal = OpJournal::new(16);
         journal.label_next("Run script");
-        journal.hold(true);
+        journal.begin_run();
         let body = doc.create_body(Some("A".into()));
         journal.note(&mut doc);
         doc.rename_body(body, "B");
-        journal.note(&mut doc);
+        journal.note_call(&mut doc, "doc.rename");
         doc.create_body(Some("C".into()));
-        journal.hold(false);
+        journal.end_run(&mut doc);
         journal.note(&mut doc);
 
         assert_eq!(journal.undo(&mut doc).as_deref(), Some("Run script"));
@@ -374,7 +547,7 @@ mod tests {
     /// A run that fails is taken back whole and leaves no step; what was
     /// undoable before it still is.
     #[test]
-    fn a_held_run_rolled_back_leaves_the_document_and_history_as_before() {
+    fn a_run_rolled_back_leaves_the_document_and_history_as_before() {
         let mut doc = Document::new("Script");
         let mut journal = OpJournal::new(16);
         let kept = doc.create_body(Some("Kept".into()));
@@ -382,13 +555,13 @@ mod tests {
         journal.note(&mut doc);
 
         journal.label_next("Run script");
-        journal.hold(true);
+        journal.begin_run();
         doc.rename_body(kept, "Renamed");
+        journal.note_call(&mut doc, "doc.rename");
         let body = doc.create_body(Some("A".into()));
         doc.add_feature_in_body(datum(), "D".into(), Some(body))
             .unwrap();
         journal.note(&mut doc);
-        journal.hold(false);
         let (undone, barrier) = journal.roll_back(&mut doc);
         assert!(undone >= 3 && !barrier, "{undone} {barrier}");
         journal.note(&mut doc);
@@ -398,6 +571,67 @@ mod tests {
         assert_eq!(doc.feature_tree().all_nodes().count(), 0);
         assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create body"));
         assert!(!journal.can_undo(), "the run left no step");
+    }
+
+    /// In a run, undo steps back through the run's own calls one at a
+    /// time and on into what came before, as the UI's Undo does; the
+    /// calls left become the run's one step, and a run that fails puts
+    /// back what it undid too.
+    #[test]
+    fn a_run_s_calls_are_steps_it_can_undo_and_redo() {
+        let mut doc = Document::new("Script");
+        let mut journal = OpJournal::new(16);
+        let body = doc.create_body(Some("A".into()));
+        journal.label_next("Create body");
+        journal.note(&mut doc);
+        let name = |doc: &Document| doc.bodies().first().map(|b| b.name.clone());
+
+        journal.label_next("Run script");
+        journal.begin_run();
+        doc.rename_body(body, "B");
+        journal.note_call(&mut doc, "doc.rename");
+        doc.rename_body(body, "C");
+        journal.note_call(&mut doc, "doc.rename");
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("doc.rename"));
+        assert_eq!(name(&doc).as_deref(), Some("B"), "only the last call");
+        assert_eq!(journal.redo(&mut doc).as_deref(), Some("doc.rename"));
+        assert_eq!(name(&doc).as_deref(), Some("C"));
+        journal.undo(&mut doc);
+        journal.end_run(&mut doc);
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Run script"));
+        assert_eq!(name(&doc).as_deref(), Some("A"));
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create body"));
+        journal.redo(&mut doc);
+        journal.redo(&mut doc);
+        assert_eq!(name(&doc).as_deref(), Some("B"));
+
+        // A run that undoes what came before it, then fails.
+        journal.begin_run();
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Run script"));
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create body"));
+        assert!(doc.bodies().is_empty());
+        doc.create_body(Some("Z".into()));
+        journal.note_call(&mut doc, "doc.new_body");
+        assert!(!journal.can_redo(), "a call forks the history");
+        journal.roll_back(&mut doc);
+        assert_eq!(name(&doc).as_deref(), Some("B"));
+        assert_eq!(doc.bodies().len(), 1);
+        assert!(
+            journal.can_redo(),
+            "what the call cleared from redo is back"
+        );
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Run script"));
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create body"));
+        assert!(!journal.can_undo());
+
+        // A run that only undoes leaves no step of its own: what it undid
+        // redoes.
+        journal.redo(&mut doc);
+        journal.begin_run();
+        journal.undo(&mut doc);
+        assert_eq!(journal.end_run(&mut doc), None);
+        assert!(!journal.can_undo());
+        assert_eq!(journal.redo(&mut doc).as_deref(), Some("Create body"));
     }
 
     #[test]
@@ -440,11 +674,11 @@ mod tests {
         assert_eq!(journal.undo_entry_id(), Some(renamed));
         assert_eq!(journal.note(&mut doc), None, "nothing new to close");
 
-        // Older, held, or overtaken by an open edit: refused, nothing moves.
+        // Older, in a run, or overtaken by an open edit: refused, nothing moves.
         assert_eq!(journal.undo_entry(&mut doc, made), None);
-        journal.hold(true);
+        journal.begin_run();
         assert_eq!(journal.undo_entry(&mut doc, renamed), None);
-        journal.hold(false);
+        journal.end_run(&mut doc);
         assert_eq!(doc.bodies()[0].name, "D");
 
         assert!(journal.undo_entry(&mut doc, renamed).is_some());

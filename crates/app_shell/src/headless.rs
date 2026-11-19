@@ -92,6 +92,9 @@ pub fn run(invocation: &Invocation, registry: DocumentService) -> Result<bool> {
         registry,
         document,
         file: invocation.open.clone(),
+        journal: Some(core_document::history::OpJournal::new(
+            crate::app::session::JOURNAL_LIMIT,
+        )),
     };
     host.rebuild();
     let mut engine = scripting::ScriptEngine::new();
@@ -140,6 +143,8 @@ pub(crate) fn run_in_empty_document(
 
 /// Run `source` on `document` as `run_in_empty_document` does: the
 /// document it leaves, and what it returns or the error that stopped it.
+/// It keeps no history: edits not yet closed in `document` are left for
+/// the history that holds them.
 #[cfg(test)]
 pub(crate) fn run_in_document(
     registry: &mut DocumentService,
@@ -147,10 +152,52 @@ pub(crate) fn run_in_document(
     source: &str,
     name: &str,
 ) -> (Document, Result<Option<Value>, String>) {
+    let (document, _, answer) = run_sandboxed(registry, document, source, name, None);
+    (document, answer)
+}
+
+/// Run `source` on `document` as `run_in_document` does, as one run of
+/// a history of its own: that history too, where undo takes the whole
+/// run back, unless the run crossed an import that no undo crosses.
+#[cfg(test)]
+pub(crate) fn run_journaled(
+    registry: &mut DocumentService,
+    document: Document,
+    source: &str,
+    name: &str,
+) -> (
+    Document,
+    Option<core_document::history::OpJournal>,
+    Result<Option<Value>, String>,
+) {
+    let mut journal = core_document::history::OpJournal::new(crate::app::session::JOURNAL_LIMIT);
+    journal.begin_run();
+    let (mut document, journal, answer) =
+        run_sandboxed(registry, document, source, name, Some(journal));
+    let journal = journal.filter(|j| !j.run_crossed_barrier()).map(|mut j| {
+        j.end_run(&mut document);
+        j
+    });
+    (document, journal, answer)
+}
+
+#[cfg(test)]
+fn run_sandboxed(
+    registry: &mut DocumentService,
+    document: Document,
+    source: &str,
+    name: &str,
+    journal: Option<core_document::history::OpJournal>,
+) -> (
+    Document,
+    Option<core_document::history::OpJournal>,
+    Result<Option<Value>, String>,
+) {
     let mut host = Headless {
         registry: std::mem::take(registry),
         document,
         file: None,
+        journal,
     };
     let out = scripting::ScriptEngine::sandboxed().run_script(source, name, &mut host);
     *registry = host.registry;
@@ -158,7 +205,7 @@ pub(crate) fn run_in_document(
         Some(error) => Err(error),
         None => Ok(out.returned),
     };
-    (host.document, answer)
+    (host.document, host.journal, answer)
 }
 
 /// The document and the workbenches, with no window.
@@ -166,6 +213,9 @@ struct Headless {
     registry: DocumentService,
     document: Document,
     file: Option<PathBuf>,
+    /// The run's history, each call a step as a run's calls are in the
+    /// window; none where another history holds the document's edits.
+    journal: Option<core_document::history::OpJournal>,
 }
 
 /// The document commands a window-less run answers.
@@ -201,6 +251,8 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.move",
     "doc.set_tip",
     "doc.rebuild",
+    "doc.undo",
+    "doc.redo",
     "doc.faces",
     "doc.edges",
     "doc.set_body",
@@ -273,6 +325,9 @@ impl scripting::Host for Headless {
     fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
         let answer = self.call_one(id, args);
         self.settle_formulas();
+        if let Some(journal) = &mut self.journal {
+            journal.note_call(&mut self.document, core_document::renamed::command(id));
+        }
         answer
     }
 }
@@ -319,6 +374,21 @@ impl Headless {
         let a = Args(&args);
         match id {
             "doc.rebuild" => Ok(Value::Array(self.rebuild())),
+            "doc.undo" | "doc.redo" => {
+                let journal = self
+                    .journal
+                    .as_mut()
+                    .ok_or_else(|| CommandError::failed("this run keeps no history"))?;
+                let label = crate::app::scripts::step_history(
+                    journal,
+                    &mut self.document,
+                    id == "doc.redo",
+                )?;
+                if label.is_some() {
+                    self.registry.invalidate_all(&mut self.document);
+                }
+                Ok(label.map_or(Value::Null, Value::String))
+            }
             "doc.set_visible" => {
                 let visible = a.opt_bool("visible")?.unwrap_or(true);
                 let item = tree_item(&self.document, a.id("id")?)?;
@@ -695,6 +765,7 @@ mod tests {
             registry: registry(),
             document: empty.clone(),
             file: None,
+            journal: None,
         };
         let hostile = |kind: ParamKind, path: bool| -> Vec<Value> {
             let mut values = vec![

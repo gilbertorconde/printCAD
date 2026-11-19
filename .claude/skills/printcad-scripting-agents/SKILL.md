@@ -46,12 +46,18 @@ store) sends `UiCommand::RunConsole`, which queues it on the script thread
 Each command the script calls comes back as `Event::Call` and runs on the
 UI thread in `drive_scripts` (8 ms a frame, in the tab the run started in,
 `in_script_tab`); `doc.rebuild` answers once the kernel is idle
-(`scripting.rebuild`) rather than blocking a frame. The journal is held
-(`OpJournal::hold`) from `Started` to `Finished`, so a run is one undo
-step. The thread wakes the loop through `AppEvent::Script` and a busy A run that stops with an error or is stopped is taken back
-(`OpJournal::roll_back`), leaving no undo step; an import inside it is a
-barrier, so only what followed it is taken back.
-thread counts as async work. Stop sets the engine's stop flag.
+(`scripting.rebuild`) rather than blocking a frame. A run is open in the
+journal (`OpJournal::begin_run`/`end_run`) from `Started` to `Finished`:
+each call closes a step named by its id (`close_call`, `note_call`), so
+`doc.undo`/`doc.redo` (`step_history`, shared with `headless.rs`, whose
+calls are steps too; they wait for the kernel as `doc.rebuild` does)
+step back through the run's calls and on into what came before, and the
+calls left become the run's one undo step. The thread wakes the loop
+through `AppEvent::Script` and a busy thread counts as async work. A run
+that stops with an error or is stopped is taken back
+(`OpJournal::roll_back`, its undos and redos too), leaving no undo step;
+an import inside it is a barrier, so only what followed it is taken
+back. Stop sets the engine's stop flag.
 A run's chunk value comes back as `RunOutput::returned` (JSON: a table
 with keys 1 to n a list, any other an object); the console shows it and
 an agent's `lua` answers `{returned, printed}` (`script_answer`).
@@ -147,7 +153,8 @@ A change waits in `PrintCadApp.agents.approvals` while its chat asks
 registers the command) is what never waits, and `CommandSpec::agent`
 (`AgentAccess`) what an agent may never run (`app.quit`, `tab.close`,
 `doc.set_agent_rules`) or must always have allowed, one `call` at a time
-(files, import/export, slicer, undo/redo, tabs); `agent_check` enforces it
+(files, import/export, slicer, tabs; `doc.undo`/`doc.redo` are ordinary
+writes); `agent_check` enforces it
 for `call` before it is held and for every command a `lua` script calls.
 `app/agent_context.rs` is what an agent is told: the MCP instructions,
 built per connection on the UI thread (the relay asks for them, and for

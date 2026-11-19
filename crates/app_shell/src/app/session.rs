@@ -16,6 +16,9 @@ pub(crate) use crate::app::session_state::{
 use crate::camera::CameraController;
 use crate::ui::{ActiveTool, ActiveWorkbench, Screen, TreeItemId};
 
+/// How many steps a tab's undo history keeps, and a window-less run's.
+pub(crate) const JOURNAL_LIMIT: usize = 64;
+
 pub(crate) struct DocumentSession {
     /// The tab's own identity; the document's id changes when a file is
     /// opened into it, this does not.
@@ -148,7 +151,7 @@ impl DocumentSession {
             file: Default::default(),
             connection: Connection::new(server, server_socket),
             tools: Default::default(),
-            journal: core_document::history::OpJournal::new(64),
+            journal: core_document::history::OpJournal::new(JOURNAL_LIMIT),
             pending_sketch_creation: None,
             plane_session_open: false,
             viewport_menu: None,

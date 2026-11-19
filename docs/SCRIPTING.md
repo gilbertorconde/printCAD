@@ -74,7 +74,9 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
   script. `pcall(pc.design.pad, {sketch = s})` catches it instead.
 - Every change is an ordinary edit, so Undo takes it back. A console line
   or a script run is one undo step, and so is anything you edit by hand
-  while it runs.
+  while it runs. Inside a run each call is a step: `pc.doc.undo()` takes
+  back the script's last call, then the ones before it, then what was
+  done before the run, and `pc.doc.redo()` puts them back.
 - A run that stops with an error, or is stopped, takes back everything
   changed while it ran and leaves no undo step: the document is as it was
   before the run. An import is the exception; it cannot be taken back, so
@@ -940,6 +942,56 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "built up to 
 pc.doc.set_tip{id = pad, clear = true}
 assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = body}.volume - (1000 - math.pi * 12)) < 1e-3)
+```
+
+`pc.doc.undo`: Undo the newest step, as Edit › Undo does.
+
+- Returns the step's name, or nil when there is nothing to undo
+
+Notes:
+
+- They step the same history as Edit › Undo and Redo. Each call a script makes is a step of its own: `pc.doc.undo()` takes back the script's last call, then the one before, then what was done before the script ran. When the script ends, the calls it kept become one step, named after the script. An agent's undo is a change to the document like any other, asked about when its chat asks before changes.
+- Called while the kernel builds, they wait for it to finish first. They are refused while a task is open. An import clears the history, so nothing before it undoes.
+
+See also `pc.doc.rebuild`.
+
+Example: Take back the last call.
+
+```lua
+local body = pc.doc.new_body{}
+pc.doc.rename{id = body, name = "Bracket"}
+assert(pc.doc.undo() == "doc.rename")
+assert(pc.doc.bodies()[1].name ~= "Bracket")
+assert(pc.doc.redo() == "doc.rename")
+assert(pc.doc.bodies()[1].name == "Bracket")
+pc.doc.undo()
+pc.doc.undo()
+assert(#pc.doc.bodies() == 0)
+```
+
+`pc.doc.redo`: Redo the step undone last, as Edit › Redo does.
+
+- Returns the step's name, or nil when there is nothing to redo
+
+Notes:
+
+- They step the same history as Edit › Undo and Redo. Each call a script makes is a step of its own: `pc.doc.undo()` takes back the script's last call, then the one before, then what was done before the script ran. When the script ends, the calls it kept become one step, named after the script. An agent's undo is a change to the document like any other, asked about when its chat asks before changes.
+- Called while the kernel builds, they wait for it to finish first. They are refused while a task is open. An import clears the history, so nothing before it undoes.
+
+See also `pc.doc.rebuild`.
+
+Example: Take back the last call.
+
+```lua
+local body = pc.doc.new_body{}
+pc.doc.rename{id = body, name = "Bracket"}
+assert(pc.doc.undo() == "doc.rename")
+assert(pc.doc.bodies()[1].name ~= "Bracket")
+assert(pc.doc.redo() == "doc.rename")
+assert(pc.doc.bodies()[1].name == "Bracket")
+pc.doc.undo()
+pc.doc.undo()
+assert(#pc.doc.bodies() == 0)
 ```
 
 `pc.doc.rebuild`: Rebuild every solid that changed, repair or convert what was asked, and wait.
@@ -2033,10 +2085,6 @@ See also `pc.doc.save_section`.
 `pc.view.measure`: Measure.
 
 ### edit
-
-`pc.edit.undo`: Undo.
-
-`pc.edit.redo`: Redo.
 
 `pc.edit.cut`: Cut.
 

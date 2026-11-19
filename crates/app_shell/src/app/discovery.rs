@@ -193,7 +193,7 @@ mod tests {
         ("new sketch", &["sketch.new"]),
         ("measure volume", &["doc.measure"]),
         ("the faces of a body", &["doc.faces"]),
-        ("undo", &["edit.undo"]),
+        ("undo", &["doc.undo"]),
         ("variable", &["var.new", "var.set", "var.list"]),
         ("export stl", &["file.export"]),
         ("gear", &["design.gear"]),
