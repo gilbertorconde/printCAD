@@ -26,12 +26,13 @@ pub(crate) fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f64) -> S
     }
 }
 
-/// A point at a clicked `pos`: the existing one when one is exactly there
-/// (a snap put the click on it), else a new one, held on whatever curve it
-/// lies exactly on.
-fn place(sketch: &mut Sketch, pos: Vec2D, snap_tol: f64) -> Uuid {
-    let eps = super::curve_attach_eps(snap_tol);
-    materialize_on_curve(sketch, snap_point_or_curve(sketch, pos, eps), snap_tol)
+/// Whether two of `targets` are one existing point: a shape through them
+/// would join that point to itself.
+fn joins_itself<'a>(targets: impl IntoIterator<Item = &'a SnapTarget>) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    targets
+        .into_iter()
+        .any(|t| matches!(t, SnapTarget::Existing(id) if !seen.insert(*id)))
 }
 
 pub(super) fn point(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f64) -> ToolEffect {
@@ -835,15 +836,7 @@ pub(super) fn polygon(
                     _ => snap::snap_to_point(sketch, p, eps, &[]),
                 })
                 .collect();
-            let reused: Vec<Uuid> = corners
-                .iter()
-                .chain([&center])
-                .filter_map(|t| match t {
-                    SnapTarget::Existing(id) => Some(*id),
-                    SnapTarget::New(_) => None,
-                })
-                .collect();
-            if (1..reused.len()).any(|i| reused[i..].contains(&reused[i - 1])) {
+            if joins_itself(corners.iter().chain([&center])) {
                 return ToolEffect::log("The polygon would join a point to itself");
             }
             // Held regular: a construction circle through every vertex,
@@ -936,13 +929,18 @@ pub(super) fn slot(
                 return ToolEffect::none(); // degenerate centerline/width
             };
             let half = width * 0.5;
+            // The far end is held where a snap put it; each rail end is the
+            // point exactly where it falls, else a new one.
+            let eps = super::curve_attach_eps(snap_tol);
+            let to = snap_point_or_curve(sketch, b, eps);
+            let ends = [p1, p2, p3, p4].map(|p| snap::snap_to_point(sketch, p, eps, &[]));
+            if joins_itself([from, to].iter().chain(&ends)) {
+                return ToolEffect::log("The slot would join a point to itself");
+            }
 
             let center_a = materialize(sketch, from);
-            let center_b = place(sketch, b, snap_tol);
-            let i1 = sketch.add_geometry(GeometryElement::Point(Point::new(p1)));
-            let i2 = sketch.add_geometry(GeometryElement::Point(Point::new(p2)));
-            let i3 = sketch.add_geometry(GeometryElement::Point(Point::new(p3)));
-            let i4 = sketch.add_geometry(GeometryElement::Point(Point::new(p4)));
+            let center_b = materialize_on_curve(sketch, to, snap_tol);
+            let [i1, i2, i3, i4] = ends.map(|t| materialize(sketch, t));
 
             let rail_1 = sketch.add_geometry(GeometryElement::Line(Line::new(i1, i2)));
             let rail_2 = sketch.add_geometry(GeometryElement::Line(Line::new(i3, i4)));
@@ -1061,13 +1059,24 @@ pub(super) fn arc_slot(
             let Some(shape) = arc_slot_shape(c, s, cursor, width) else {
                 return ToolEffect::none();
             };
+            // Each point worked out from the clicks is the point exactly
+            // where it falls, else a new one.
+            let eps = super::curve_attach_eps(snap_tol);
+            let derived = [
+                shape.cap_b,
+                shape.outer_a,
+                shape.outer_b,
+                shape.inner_a,
+                shape.inner_b,
+            ]
+            .map(|p| snap::snap_to_point(sketch, p, eps, &[]));
+            if joins_itself([center, start].iter().chain(&derived)) {
+                return ToolEffect::log("The slot would join a point to itself");
+            }
             let center_id = materialize(sketch, center);
             let cap_a_id = materialize(sketch, start);
-            let cap_b_id = sketch.add_geometry(GeometryElement::Point(Point::new(shape.cap_b)));
-            let outer_a = sketch.add_geometry(GeometryElement::Point(Point::new(shape.outer_a)));
-            let outer_b = sketch.add_geometry(GeometryElement::Point(Point::new(shape.outer_b)));
-            let inner_a = sketch.add_geometry(GeometryElement::Point(Point::new(shape.inner_a)));
-            let inner_b = sketch.add_geometry(GeometryElement::Point(Point::new(shape.inner_b)));
+            let [cap_b_id, outer_a, outer_b, inner_a, inner_b] =
+                derived.map(|t| materialize(sketch, t));
 
             // Rails run CCW start → end; the caps are CCW semicircles that
             // bulge past the ends (see the straight slot for the same idea).
