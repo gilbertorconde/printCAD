@@ -168,6 +168,14 @@ pub enum MarkKind {
     Icon { name: &'static str, size: f32 },
     /// Two crossing 1px lines, `size` pixels long.
     Crosshair { size: f32 },
+    /// A filled arrowhead, its tip at the mark's position, pointing along
+    /// `way` (of unit length on screen), `length` pixels from tip to base
+    /// and `width` pixels across the base.
+    Arrowhead {
+        way: [f32; 2],
+        length: f32,
+        width: f32,
+    },
 }
 
 impl ScreenSpaceMark {

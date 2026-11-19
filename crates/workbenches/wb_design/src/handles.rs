@@ -1,4 +1,4 @@
-//! Drag handles on the feature under edit: a dot at the end of each
+//! Drag handles on the feature under edit: an arrow to the end of each
 //! number the view can show (a pad's or pocket's lengths, a hole's depth,
 //! a revolution's or groove's angles round its axis, a draft's angle, a
 //! primitive's sizes, a fillet's or chamfer's size), dragged along its
@@ -84,11 +84,16 @@ pub(crate) struct Handle {
 
 impl Handle {
     pub fn position(&self) -> Vec3 {
+        self.at(self.value)
+    }
+
+    /// Where the handle stands with its number at `value`.
+    fn at(&self, value: f32) -> Vec3 {
         match self.shape {
-            Shape::Line { origin, dir, scale } => origin + dir * self.value * scale,
+            Shape::Line { origin, dir, scale } => origin + dir * value * scale,
             Shape::Arc {
                 base_deg, scale, ..
-            } => self.on_arc(base_deg + self.value * scale),
+            } => self.on_arc(base_deg + value * scale),
         }
     }
 
@@ -911,7 +916,7 @@ pub(crate) fn sketch_centre(
     ))
 }
 
-/// The handle whose dot is nearest the press at `pos`, within reach.
+/// The handle whose head is nearest the press at `pos`, within reach.
 pub(crate) fn under(
     ctx: &WorkbenchRuntimeContext,
     handles: &[Handle],
@@ -930,9 +935,13 @@ pub(crate) fn under(
         .map(|(i, _)| i)
 }
 
-/// The handle's path from its start to it: a dashed line, or the arc.
-pub(crate) fn overlays(ctx: &WorkbenchRuntimeContext, handle: &Handle) -> Vec<ScreenSpaceOverlay> {
-    let color = ctx.sketch_palette.selected;
+/// The handle's path on screen from its start to where it stands (a
+/// straight line, or the arc), and the way its head points there: the way
+/// the number shown grows, away from the start.
+fn arrow_path(
+    handle: &Handle,
+    to_screen: impl Fn(Vec3) -> Option<(f32, f32)>,
+) -> Option<(Vec<[f32; 2]>, [f32; 2])> {
     let points: Vec<Vec3> = match handle.shape {
         Shape::Line { .. } => vec![handle.start(), handle.position()],
         Shape::Arc {
@@ -945,34 +954,49 @@ pub(crate) fn overlays(ctx: &WorkbenchRuntimeContext, handle: &Handle) -> Vec<Sc
                 .collect()
         }
     };
-    let screen: Vec<Option<(f32, f32)>> = points
-        .iter()
-        .map(|p| ctx.world_to_viewport(p.to_array()))
+    let path: Vec<[f32; 2]> = points
+        .into_iter()
+        .filter_map(|p| to_screen(p).map(|(x, y)| [x, y]))
         .collect();
-    screen
-        .windows(2)
-        .filter_map(|pair| match (pair[0], pair[1]) {
-            (Some(a), Some(b)) => {
-                Some(ScreenSpaceOverlay::new([a.0, a.1], [b.0, b.1], color, 1.5).dashed(4.0, 3.0))
-            }
-            _ => None,
-        })
-        .collect()
+    let tip = to_screen(handle.position())?;
+    let outward = if handle.value < 0.0 { -1.0 } else { 1.0 };
+    let ahead = to_screen(handle.at(handle.value + outward * handle.value.abs().max(1.0) * 0.01))?;
+    Some((path, [ahead.0 - tip.0, ahead.1 - tip.1]))
 }
 
-pub(crate) fn marks(
+/// The handle as an arrow from its start, its head where the number
+/// stands, lit while it is held.
+fn arrow(
     ctx: &WorkbenchRuntimeContext,
     handle: &Handle,
     held: bool,
-) -> Vec<ScreenSpaceMark> {
+) -> (Vec<ScreenSpaceOverlay>, Vec<ScreenSpaceMark>) {
     let color = if held {
         ctx.sketch_palette.preselect
     } else {
         ctx.sketch_palette.selected
     };
-    ctx.world_to_viewport(handle.position().to_array())
-        .map(|(x, y)| vec![ScreenSpaceMark::dot([x, y], 6.0, color)])
+    arrow_path(handle, |p| ctx.world_to_viewport(p.to_array()))
+        .map(|(path, way)| core_document::handle_arrow(&path, way, color, ctx.pixels_per_point))
         .unwrap_or_default()
+}
+
+/// The handle's shaft.
+pub(crate) fn overlays(
+    ctx: &WorkbenchRuntimeContext,
+    handle: &Handle,
+    held: bool,
+) -> Vec<ScreenSpaceOverlay> {
+    arrow(ctx, handle, held).0
+}
+
+/// The handle's head, which a press takes hold of.
+pub(crate) fn marks(
+    ctx: &WorkbenchRuntimeContext,
+    handle: &Handle,
+    held: bool,
+) -> Vec<ScreenSpaceMark> {
+    arrow(ctx, handle, held).1
 }
 
 /// The number beside the handle while it is held.
@@ -1076,6 +1100,51 @@ mod tests {
             handle.value_at(Vec3::new(0.0, 0.0, 50.0), Vec3::NEG_Z, 0.1),
             None
         );
+    }
+
+    /// A handle's arrow ends where its number stands, its head pointing
+    /// the way the number grows: up a pad's line (out the other way past
+    /// zero), on along a revolution's arc.
+    #[test]
+    fn a_handles_arrow_points_the_way_its_number_grows() {
+        // Seen from +X: the world's y to the right, z up the screen.
+        let side_on = |p: Vec3| Some((p.y * 10.0, -p.z * 10.0));
+        let unit = |w: [f32; 2]| {
+            let n = w[0].hypot(w[1]);
+            [w[0] / n, w[1] / n]
+        };
+        let mut pad = line(1.0, Range::Signed);
+        let (path, way) = arrow_path(&pad, side_on).unwrap();
+        assert_eq!(path, vec![[0.0, 0.0], [0.0, -100.0]]);
+        assert_eq!(unit(way), [0.0, -1.0], "up the screen");
+        pad.value = -4.0;
+        let (path, way) = arrow_path(&pad, side_on).unwrap();
+        assert_eq!(path.last(), Some(&[0.0, 40.0]));
+        assert_eq!(unit(way), [0.0, 1.0], "away from the start");
+
+        // A quarter turn about +X from +Y: it ends at +Z, heading on
+        // towards -Y.
+        let turn = Handle {
+            shape: Shape::Arc {
+                centre: Vec3::ZERO,
+                axis: Vec3::X,
+                from: Vec3::Y,
+                radius: 1.0,
+                base_deg: 0.0,
+                scale: 1.0,
+            },
+            value: 90.0,
+            angle: true,
+            ..line(1.0, Range::Positive)
+        };
+        let (path, way) = arrow_path(&turn, side_on).unwrap();
+        let tip = path.last().unwrap();
+        assert!(
+            tip[0].abs() < 1e-4 && (tip[1] + 10.0).abs() < 1e-4,
+            "{tip:?}"
+        );
+        let way = unit(way);
+        assert!((way[0] + 1.0).abs() < 1e-3 && way[1].abs() < 0.1, "{way:?}");
     }
 
     /// Coarse steps take whole millimetres, fine ones tenths; a pad's

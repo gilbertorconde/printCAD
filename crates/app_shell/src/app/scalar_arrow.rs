@@ -122,15 +122,13 @@ impl ScalarArrow {
     ) {
         let way = (self.tip - self.base).normalize_or_zero();
         let side = Vec2::new(-way.y, way.x);
-        let head = |s: f32| self.tip - way * 10.0 + side * s * 5.0;
-        let line =
-            |a: Vec2, b: Vec2| ScreenSpaceOverlay::new(a.to_array(), b.to_array(), color, 2.0);
-        let lines = vec![
-            line(self.base, self.tip),
-            line(head(1.0), self.tip),
-            line(head(-1.0), self.tip),
-        ];
-        let marks = vec![ScreenSpaceMark::dot(self.base.to_array(), 3.0, color)];
+        // Its sizes are in pixels, as the arrow's length is.
+        let (lines, marks) = core_document::handle_arrow(
+            &[self.base.to_array(), self.tip.to_array()],
+            way.to_array(),
+            color,
+            1.0,
+        );
         let at = self.tip + way * 14.0 + side * 10.0;
         let label = ScreenSpaceLabel::new(at.to_array(), text, color, 12.0).pill();
         (lines, marks, label)

@@ -80,8 +80,8 @@ impl Handle {
         self.arrow().is_under(at)
     }
 
-    /// What draws it: the arrow, a dot at its foot and the offset beside
-    /// its tip, brighter while held or under the pointer.
+    /// What draws it: the arrow and the offset beside its tip, brighter
+    /// while held or under the pointer.
     pub fn drawn(
         &self,
         hot: bool,

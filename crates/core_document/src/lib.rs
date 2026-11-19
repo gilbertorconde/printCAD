@@ -14,6 +14,7 @@ pub mod evaluate;
 pub mod expr;
 pub mod feature;
 pub mod grid;
+pub mod handle_arrow;
 pub mod history;
 mod imported;
 pub mod inertia;
@@ -77,6 +78,7 @@ pub use feature::{
     WorkbenchFeature, data_revision, node_revision,
 };
 pub use grid::PlaneGrid;
+pub use handle_arrow::handle_arrow;
 pub use history::JournalEntryId;
 use imported::MeshesApart;
 pub use imported::{Annotation, ImportedGeometry, ImportedObjectNode, LocalGeometry};

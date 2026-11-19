@@ -361,6 +361,16 @@ pub fn draw_screen_space_marks(
                     painter.image(tex.id(), rect, uv, color);
                 }
             }
+            core_document::MarkKind::Arrowhead { way, length, width } => {
+                let way = egui::vec2(way[0], way[1]);
+                let side = egui::vec2(-way.y, way.x) * (width / ppp / 2.0);
+                let base = pos - way * (length / ppp);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![pos, base + side, base - side],
+                    color,
+                    egui::Stroke::NONE,
+                ));
+            }
         }
     }
 }
