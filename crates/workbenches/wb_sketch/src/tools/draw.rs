@@ -203,7 +203,12 @@ pub(super) fn arc(
                 return ToolEffect::none();
             }
             let end_pos = Vec2D::from_glam(center_pos.to_glam() + dir.normalize() * radius);
-            let end_snap = snap::snap_to_point(sketch, end_pos, snap_tol, &[]);
+            let circle = snap::Guide::Circle {
+                centre: center_pos,
+                r: radius,
+            };
+            let end_snap = on_guide(sketch, &circle, end_pos, snap_tol, &[])
+                .map_or(SnapTarget::New(end_pos), SnapTarget::Existing);
             // An end snapped onto the start would close the arc on one
             // point, no sweep the solver can hold: wait for another end.
             if end_snap
@@ -777,15 +782,7 @@ fn guided_ends(
     snap_tol: f64,
     exclude: &[Uuid],
 ) -> Option<[Uuid; 2]> {
-    let reused = at.map(
-        |p| match snap::snap_to_point(sketch, p, snap_tol, exclude) {
-            SnapTarget::Existing(id) => sketch
-                .point_position(id)
-                .filter(|q| guide.holds(*q))
-                .map(|_| id),
-            SnapTarget::New(_) => None,
-        },
-    );
+    let reused = at.map(|p| on_guide(sketch, guide, p, snap_tol, exclude));
     if reused[0].is_some() && reused[0] == reused[1] {
         return None;
     }
@@ -793,6 +790,24 @@ fn guided_ends(
         id.unwrap_or_else(|| materialize_on_curve(sketch, SnapTarget::New(p), snap_tol))
     };
     Some([held(at[0], reused[0]), held(at[1], reused[1])])
+}
+
+/// The existing point within `snap_tol` of `p` that lies on `guide`, if
+/// any: one off the curve would pull the arc's end off it.
+fn on_guide(
+    sketch: &Sketch,
+    guide: &snap::Guide,
+    p: Vec2D,
+    snap_tol: f64,
+    exclude: &[Uuid],
+) -> Option<Uuid> {
+    match snap::snap_to_point(sketch, p, snap_tol, exclude) {
+        SnapTarget::Existing(id) => sketch
+            .point_position(id)
+            .filter(|q| guide.holds(*q))
+            .map(|_| id),
+        SnapTarget::New(_) => None,
+    }
 }
 
 /// The spline the tool's clicks so far make with `params`: over them as

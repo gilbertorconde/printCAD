@@ -272,6 +272,33 @@ fn an_arc_s_end_lands_where_its_circle_meets_what_it_snapped_to() {
     }
 }
 
+/// A typed sweep puts the centre-point arc's end on its circle: a point
+/// there is reused, one near it but off the circle is left alone.
+#[test]
+fn a_typed_arc_end_reuses_only_a_point_on_its_circle() {
+    for (x, y, reused) in [(0.0, 10.0, true), (0.15, 10.1, false)] {
+        let mut h = Harness::sketching();
+        // The start on a point, so the radius is exactly 10.
+        let near = h.edit_sketch(|s| {
+            let mut at =
+                |x, y| s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+            at(10.0, 0.0);
+            at(x, y)
+        });
+        h.click(0.0, 0.0, "sketch.arc");
+        h.click(10.0, 0.0, "sketch.arc");
+        h.mouse_move(3.0, 9.0, "sketch.arc");
+        h.type_text("90", Some("sketch.arc"));
+        h.key(core_document::KeyCode::Enter, Some("sketch.arc"));
+        let sketch = h.sketch();
+        let arc = crate::arc_of(&sketch);
+        assert_eq!(arc.end == near, reused, "point at ({x}, {y})");
+        let [end, start] = [arc.end, arc.start].map(|p| sketch.point_position(p).unwrap());
+        let off = (end.to_glam().length() - start.to_glam().length()).abs();
+        assert!(off < 1e-6, "({x}, {y}): end off the circle by {off}");
+    }
+}
+
 /// A circle's rim clicked onto a text's outline keeps no point there: the
 /// outlines are made again from the text each time the sketch is read,
 /// which drops any constraint on them, so the circle is its centre and
