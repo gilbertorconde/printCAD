@@ -1,11 +1,14 @@
 //! Closing a document with unsaved edits: the window asks (Save, Don't
 //! save, Cancel; `ui/unsaved_modal.rs`) and the close waits for the
 //! answer. Quitting asks for each tab with edits in turn, then exits.
+//! Save goes on only once the file is written: a save that fails keeps
+//! the tab open, with its recovery copy, and stops the quit.
 
 use uuid::Uuid;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::PrintCadApp;
+use crate::log_panel as app_log;
 
 /// What the user chose about unsaved edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +84,18 @@ impl PrintCadApp {
                 // Any save the answers started finishes before the exit;
                 // leaving mid-write would truncate a file.
                 self.wait_for_all_document_saves();
+                // A save that failed on the way leaves its tab with edits
+                // nobody answered for: that tab is asked about too.
+                let unanswered = (0..self.tabs.len()).any(|i| {
+                    self.is_dirty(i) && !self.questions.quit_answered.contains(&self.tabs[i].tab)
+                });
+                if unanswered {
+                    self.request_quit(event_loop);
+                    return;
+                }
+                // Every tab saved or let go: no copy to come back from.
+                self.questions.quit_answered.clear();
+                self.forget_recovery_copies(|_| true);
                 self.keep_session_for_next_run();
                 event_loop.exit();
             }
@@ -100,30 +115,55 @@ impl PrintCadApp {
             Unsaved::Discard => true,
             Unsaved::Save => {
                 self.switch_tab(index);
-                let saved = self.save_document_interactive();
-                if saved {
-                    // The write finishes, and its answer is taken in (the
-                    // file, the recent list), before the tab goes.
-                    self.wait_for_document_saves();
-                    self.drain_server_messages();
+                if self.ask_before_saving_over(Some(asking.then)) {
+                    // The question about the file's version answers for
+                    // the close, and goes on with it once saved.
+                    return;
                 }
-                saved
+                self.save_document_interactive() && self.save_landed()
             }
         };
         if !go_on {
             self.questions.quit_answered.clear();
             return;
         }
-        match asking.then {
+        self.go_on_after_answer(asking.tab, asking.then, event_loop);
+    }
+
+    /// What waited for the answer about tab `tab`'s edits: close it, or
+    /// go on quitting.
+    pub(crate) fn go_on_after_answer(
+        &mut self,
+        tab: Uuid,
+        then: Then,
+        event_loop: &ActiveEventLoop,
+    ) {
+        match then {
             Then::CloseTab => {
-                if let Some(index) = self.tab_index_of(asking.tab) {
+                if let Some(index) = self.tab_index_of(tab) {
                     self.close_tab_now(index);
                 }
             }
             Then::Quit => {
-                self.questions.quit_answered.insert(asking.tab);
+                self.questions.quit_answered.insert(tab);
                 self.request_quit(event_loop);
             }
         }
+    }
+
+    /// Whether the save the active tab just started is written: it is
+    /// waited for, its answer taken in (the file, the recent list), and
+    /// the document is clean. Said in the log when it is not.
+    pub(crate) fn save_landed(&mut self) -> bool {
+        self.wait_for_document_saves();
+        self.drain_server_messages();
+        let saved = !self.session.document.metadata().dirty();
+        if !saved {
+            app_log::error(format!(
+                "`{}` was not saved, so it stays open with its edits",
+                self.session.document.name()
+            ));
+        }
+        saved
     }
 }

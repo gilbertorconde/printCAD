@@ -59,6 +59,9 @@ struct FrameIntents {
     quit: bool,
     /// The answer to the unsaved-edits question.
     unsaved_answer: Option<crate::app::unsaved::Unsaved>,
+    /// A close or quit to go on with, its save over a file from another
+    /// version written.
+    after_save_over: Option<(uuid::Uuid, crate::app::unsaved::Then)>,
     request_workbench: Option<ActiveWorkbench>,
     undo: bool,
     redo: bool,
@@ -397,8 +400,12 @@ impl PrintCadApp {
                 }
             }
             UiCommand::AnswerSaveOver(answer) => {
-                if self.answer_save_over(answer) {
+                let outcome = self.answer_save_over(answer);
+                if outcome.settings_changed {
                     intents.persist_settings = true;
+                }
+                if outcome.go_on.is_some() {
+                    intents.after_save_over = outcome.go_on;
                 }
             }
             UiCommand::DismissFileNotice => self.session.file.safety.newer_notice = false,

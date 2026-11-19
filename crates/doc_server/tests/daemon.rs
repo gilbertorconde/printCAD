@@ -528,3 +528,47 @@ fn a_late_joiner_catches_up_to_the_unsaved_present() {
         "the tail is the unsaved present"
     );
 }
+
+/// A save `flush` waited for still answers on the next `poll`, through
+/// either server, failed or completed: the answer is how the app learns
+/// the file is written, and a close or quit goes on only once it is.
+#[test]
+fn a_flushed_save_still_answers_on_the_next_poll() {
+    daemon_env();
+    let home = TestHome::new("flush_answers");
+    let daemon = DaemonClient::spawn_or_connect(&home.socket()).expect("spawn daemon");
+    let servers: [(Box<dyn DocumentServer>, &str); 2] = [
+        (Box::new(daemon), "daemon"),
+        (Box::new(doc_server::DirectFiles::new()), "direct"),
+    ];
+    let bytes = Document::new("Flushed")
+        .save_to_bytes(core_document::Compression::None)
+        .expect("serialize");
+    for (mut server, name) in servers {
+        let path = home.dir.join(format!("{name}.prtcad"));
+        // A folder where the file should go: that write fails.
+        let blocked = home.dir.join(format!("{name}-blocked.prtcad"));
+        std::fs::create_dir_all(&blocked).expect("blocking folder");
+        for (path, at_seq) in [(&path, 7), (&blocked, 8)] {
+            server.send(ClientMessage::SaveDocument {
+                path: path.clone(),
+                bytes: bytes.clone(),
+                at_seq,
+            });
+        }
+        server.flush();
+        assert!(path.is_file(), "{name}: the save is on disk after flush");
+        assert_eq!(server.status().saves_in_flight, 0, "{name}");
+        let answers = server.poll();
+        let completed = answers.iter().any(
+            |m| matches!(m, ServerMessage::SaveCompleted { path: p, at_seq: 7 } if *p == path),
+        );
+        let failed = answers
+            .iter()
+            .any(|m| matches!(m, ServerMessage::SaveFailed { path: p, .. } if *p == blocked));
+        assert!(
+            completed && failed,
+            "{name}: both saves answer: {answers:?}"
+        );
+    }
+}

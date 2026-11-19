@@ -409,6 +409,9 @@ impl PrintCadApp {
         if let Some(answer) = intents.unsaved_answer.take() {
             self.answer_unsaved(answer, event_loop);
         }
+        if let Some((tab, then)) = intents.after_save_over.take() {
+            self.go_on_after_answer(tab, then, event_loop);
+        }
         if intents.quit {
             self.request_quit(event_loop);
         }

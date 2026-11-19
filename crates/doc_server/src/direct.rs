@@ -15,6 +15,8 @@ pub struct DirectFiles {
     tx: Sender<ServerMessage>,
     rx: Receiver<ServerMessage>,
     workers: Vec<std::thread::JoinHandle<()>>,
+    /// Replies `flush` took in, handed out by the next `poll`.
+    held: Vec<ServerMessage>,
     opens_in_flight: u32,
     saves_in_flight: u32,
     ops_dropped: u64,
@@ -33,6 +35,7 @@ impl DirectFiles {
             tx,
             rx,
             workers: Vec::new(),
+            held: Vec::new(),
             opens_in_flight: 0,
             saves_in_flight: 0,
             ops_dropped: 0,
@@ -96,7 +99,7 @@ impl DocumentServer for DirectFiles {
     }
 
     fn poll(&mut self) -> Vec<ServerMessage> {
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.held);
         while let Ok(message) = self.rx.try_recv() {
             match &message {
                 ServerMessage::Opened { .. } | ServerMessage::OpenFailed { .. } => {
@@ -126,7 +129,8 @@ impl DocumentServer for DirectFiles {
         for handle in self.workers.drain(..) {
             let _ = handle.join();
         }
-        // Drain replies so in-flight counters settle for any later status().
-        let _ = self.poll();
+        // The replies settle the in-flight counters now and wait for the
+        // next `poll`, which hands them out.
+        self.held = self.poll();
     }
 }

@@ -884,16 +884,27 @@ impl PrintCadApp {
         }
     }
 
-    /// Every tab's saves, before the process ends (CLAUDE.md invariant).
+    /// Every tab's saves, before the process ends (CLAUDE.md invariant),
+    /// their answers taken in, so a tab whose save failed still shows its
+    /// edits; and the recovery copies being written.
     pub(crate) fn wait_for_all_document_saves(&mut self) {
-        self.for_each_tab(|app| app.wait_for_document_saves());
-        // On the way out, after the user answered for every tab: no copy is
-        // left to come back from.
+        self.for_each_tab(|app| {
+            app.wait_for_document_saves();
+            app.drain_server_messages();
+        });
         for job in self.autosave.jobs.drain(..) {
             job.join();
         }
+    }
+
+    /// Take away the recovery copies of the tabs `forget` names, on the way
+    /// out once their edits are saved or let go.
+    pub(crate) fn forget_recovery_copies(&mut self, forget: impl Fn(uuid::Uuid) -> bool) {
         for slot in &self.tabs {
-            crate::app::recovery::forget(slot.tab);
+            if forget(slot.tab) {
+                self.autosave.saved.remove(&slot.tab);
+                crate::app::recovery::forget(slot.tab);
+            }
         }
     }
 
