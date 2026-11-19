@@ -1240,6 +1240,7 @@ impl PrintCadApp {
         let mut all_meshes = sketch_meshes;
         all_meshes.extend(imported_meshes);
         all_meshes.extend(region_meshes);
+        let previews_from = all_meshes.len();
         // What the feature being edited adds or takes: its tool in the
         // preview colour, faces see-through and edges whole.
         let rendering = &self.user_settings.rendering;
@@ -1268,6 +1269,10 @@ impl PrintCadApp {
             });
         }
         all_meshes.append(&mut overlay_meshes);
+        // A feature's preview and what the bench draws (a part it is about
+        // to place) may reach past every body: the clip planes take them
+        // in too, or the camera cuts them off.
+        self.clip_to_include(&all_meshes[previews_from..]);
 
         // A scan's marked surface, over it while it shows.
         self.settle_marking();
@@ -1442,6 +1447,20 @@ impl PrintCadApp {
     /// The box around everything the scene pass draws: visible bodies,
     /// the features drawn beside them, and the print bed when it shows.
     /// `None` for an empty scene.
+    /// Widen the cameras' scene, and so their clip planes, to take in
+    /// `meshes` as drawn (moved by their instance, where they have one).
+    fn clip_to_include(&mut self, meshes: &[BodySubmission]) {
+        let Some(extra) = meshes_bounds(meshes) else {
+            return;
+        };
+        let settings = &self.user_settings.camera;
+        let cameras = std::iter::once(&mut self.session.view.camera)
+            .chain(self.session.view.side_camera.as_mut());
+        for camera in cameras {
+            widen_clip(camera, extra, settings);
+        }
+    }
+
     fn scene_bounds(&self, features: &[BodySubmission]) -> Option<(Vec3, Vec3)> {
         let mut lo = Vec3::splat(f32::INFINITY);
         let mut hi = Vec3::splat(f32::NEG_INFINITY);
@@ -1656,6 +1675,42 @@ impl PrintCadApp {
     }
 }
 
+/// The box round `meshes` as they are drawn: each mesh's bounds, moved by
+/// its instance's transform where it has one. `None` when none has any.
+fn meshes_bounds(meshes: &[BodySubmission]) -> Option<(Vec3, Vec3)> {
+    meshes
+        .iter()
+        .filter_map(|body| {
+            let bounds = body.mesh.bounds()?;
+            let (lo, hi): ([f32; 3], [f32; 3]) = match body.instance {
+                Some(instance) => kernel_api::Aabb::from(bounds)
+                    .transformed(&instance.transform)
+                    .into(),
+                None => bounds,
+            };
+            Some((Vec3::from_array(lo), Vec3::from_array(hi)))
+        })
+        .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+}
+
+/// Grow `camera`'s scene to hold `extra` and set its clip planes again
+/// when that changed it.
+fn widen_clip(
+    camera: &mut crate::camera::CameraController,
+    extra: (Vec3, Vec3),
+    settings: &settings::CameraSettings,
+) {
+    let scene = camera.scene_bounds();
+    let widened = Some(match scene {
+        Some((lo, hi)) => (lo.min(extra.0), hi.max(extra.1)),
+        None => extra,
+    });
+    if widened != scene {
+        camera.set_scene_bounds(widened);
+        camera.apply_auto_clip_planes(settings);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1693,6 +1748,50 @@ mod tests {
         assert!(
             la.zip(lb).is_some_and(|(x, y)| Arc::ptr_eq(&x, &y)),
             "after a load too"
+        );
+    }
+
+    /// A preview far longer than every body (a 530 mm bar beside a small
+    /// part) stays between the clip planes once the camera takes it in.
+    #[test]
+    fn a_preview_past_the_bodies_widens_the_clip_planes() {
+        let settings = settings::CameraSettings::default();
+        let mut camera = crate::camera::CameraController::new(&settings, (800, 600));
+        camera.reset_to_fit(Vec3::ZERO, 10.0, None, &settings);
+        camera.set_scene_bounds(Some((Vec3::splat(-5.0), Vec3::splat(5.0))));
+        camera.apply_auto_clip_planes(&settings);
+        let (forward, _) = camera.view_basis();
+        let far_end = Vec3::from_array(camera.position()) + forward * 600.0;
+        let old_far = camera.state.far_plane;
+        let bar = BodySubmission {
+            id: uuid::Uuid::new_v4(),
+            revision: 1,
+            mesh: Arc::new(kernel_api::TriMesh {
+                positions: vec![[0.0; 3], far_end.to_array(), [1.0, 0.0, 0.0]],
+                normals: vec![[0.0, 0.0, 1.0]; 3],
+                indices: vec![0, 1, 2],
+                ..Default::default()
+            }),
+            scalar: None,
+            color: [1.0; 3],
+            opacity: 0.5,
+            highlight: Default::default(),
+            is_wireframe: false,
+            pickable: false,
+            on_top: false,
+            edge_color: None,
+            front_only: true,
+            vertex_colors: false,
+            instance: None,
+            section: Default::default(),
+        };
+        widen_clip(&mut camera, meshes_bounds(&[bar]).unwrap(), &settings);
+        let d = 600.0;
+        assert!(d > old_far, "the bar ends past the old far plane");
+        assert!(
+            camera.state.far_plane >= d,
+            "{} < {d}",
+            camera.state.far_plane
         );
     }
 }
