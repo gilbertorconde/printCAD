@@ -3,7 +3,9 @@
 //! carries the shape along. The holds say nothing twice.
 
 use super::Harness;
-use wb_sketch::sketch::{ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
+use wb_sketch::sketch::{
+    Conic, ConicKind, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
+};
 use wb_sketch::snap::distance_to_element;
 
 /// Each tool's clicks on a sketch holding a level line along y = 10, an
@@ -194,39 +196,76 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
     }
 }
 
-/// The centre-point arc's end clicked on a line near where the arc's
-/// circle crosses it lands on the crossing, named by the cue, and is held
-/// on the line. Clicked on the line away from the circle, the cue names no
-/// snap and the end lands on the circle, free of the line.
+/// The centre-point arc's end clicked on a line (an ellipse, a parabola)
+/// near where the arc's circle crosses it lands on the crossing, named by
+/// the cue, and is held on the line. Clicked on the line away from the
+/// circle, the cue names no snap and the end lands on the circle, free of
+/// the line.
 #[test]
 fn an_arc_s_end_lands_where_its_circle_meets_what_it_snapped_to() {
-    let (centre, crossing) = (Vec2D::new(5.0, -3.0), Vec2D::new(5.0 + 56f64.sqrt(), 10.0));
-    for (x, held) in [(crossing.x + 0.2, true), (20.0, false)] {
+    let centre = Vec2D::new(5.0, -3.0);
+    let on_ellipse = Vec2D::new(5.0 + (500f64 / 3.0).sqrt(), -3.0 + (175f64 / 3.0).sqrt());
+    let on_level = Vec2D::new(5.0 + 56f64.sqrt(), 10.0);
+    let on_parabola = Vec2D::new(14.0, 9.0);
+    for (x, y, crossing, held, drawn) in [
+        (on_level.x + 0.2, 10.0, on_level, true, "line"),
+        (20.0, 10.0, on_level, false, "line"),
+        (
+            on_ellipse.x + 0.1,
+            on_ellipse.y + 0.1,
+            on_ellipse,
+            true,
+            "ellipse",
+        ),
+        (14.1, 9.1, on_parabola, true, "parabola"),
+    ] {
         let mut h = Harness::sketching();
-        h.line((-30.0, 10.0), (30.0, 10.0));
+        let curve = h.edit_sketch(|s| {
+            let mut at =
+                |x, y| s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+            let drawn = match drawn {
+                "line" => GeometryElement::Line(Line::new(at(-30.0, 10.0), at(30.0, 10.0))),
+                "ellipse" => GeometryElement::Ellipse(Ellipse::new(
+                    at(centre.x, centre.y),
+                    Vec2D::new(20.0, 0.0),
+                    0.5,
+                )),
+                _ => GeometryElement::Conic(Conic::new(
+                    ConicKind::Parabola,
+                    at(5.0, 0.0),
+                    Vec2D::new(0.0, 2.25),
+                    0.0,
+                    at(-7.0, 16.0),
+                    at(17.0, 16.0),
+                )),
+            };
+            s.add_geometry(drawn)
+        });
         h.click(centre.x, centre.y, "sketch.arc");
         h.click(20.0, -3.0, "sketch.arc");
-        h.mouse_move(x, 10.0, "sketch.arc");
+        h.mouse_move(x, y, "sketch.arc");
         let names = ["Endpoint", "Intersection", "On curve", "Midpoint"];
         let cue = h
             .labels()
             .into_iter()
             .find(|l| names.contains(&l.text.as_str()));
-        h.click(x, 10.0, "sketch.arc");
+        h.click(x, y, "sketch.arc");
         let sketch = h.sketch();
-        let (arc, line) = (crate::arc_of(&sketch), crate::line_of(&sketch).id);
+        let arc = crate::arc_of(&sketch);
         let end = sketch.point_position(arc.end).unwrap();
-        let on_line = sketch.constraints.iter().any(|c| {
-            matches!(c.kind, ConstraintKind::PointOnLine { point, line: l }
-                if point == arc.end && l == line)
+        let on_it = sketch.constraints.iter().any(|c| match c.kind {
+            ConstraintKind::PointOnLine { point, line: on }
+            | ConstraintKind::PointOnEllipse { point, ellipse: on }
+            | ConstraintKind::PointOnCurve { point, curve: on } => point == arc.end && on == curve,
+            _ => false,
         });
-        let case = format!("end at x = {x}");
+        let case = format!("end at ({x}, {y})");
         assert_eq!(
             cue.map(|l| l.text),
             held.then(|| "Intersection".into()),
             "{case}"
         );
-        assert_eq!(on_line, held, "{case}");
+        assert_eq!(on_it, held, "{case}");
         assert_eq!((end - crossing).to_glam().length() < 1e-3, held, "{case}");
         let off = ((end - centre).to_glam().length() - 15.0).abs();
         assert!(off < 1e-3, "{case}: off the circle by {off}");

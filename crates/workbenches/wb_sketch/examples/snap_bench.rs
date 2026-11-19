@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use wb_sketch::sketch::{Arc, Circle, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D};
-use wb_sketch::snap::{self, SnapContext};
+use wb_sketch::snap::{self, Guide, SnapContext};
 
 struct Counting;
 
@@ -131,6 +131,35 @@ fn main() {
             ..SnapContext::default()
         };
         std::hint::black_box(snap::resolve(&sketch, c, tol, &from));
+    });
+    // The circle a centre-point arc's end lands on, passing just off the
+    // cursor.
+    measure("resolve, placing an arc's end", &queries, |c| {
+        let centre = Vec2D::new(c.x + 3.1, c.y + 2.2);
+        let r = (c - centre).to_glam().length() + 0.1;
+        let end = SnapContext {
+            guide: Some(Guide::Circle { centre, r }),
+            ..SnapContext::default()
+        };
+        std::hint::black_box(snap::resolve(&sketch, c, tol, &end));
+    });
+    // Likewise the ellipse an elliptic arc's end lands on, whose crossings
+    // are found numerically.
+    measure("resolve, an ellipse arc's end", &queries, |c| {
+        let major = Vec2D::new(4.0, 1.5);
+        let centre = Vec2D::new(c.x + 3.1, c.y + 2.2);
+        let guide = Guide::Ellipse {
+            centre,
+            major,
+            ratio: 0.5,
+        };
+        let on = guide.foot(c).unwrap_or(c);
+        let end = SnapContext {
+            guide: Some(guide),
+            ..SnapContext::default()
+        };
+        let c = Vec2D::new(on.x + 0.1, on.y);
+        std::hint::black_box(snap::resolve(&sketch, c, tol, &end));
     });
     measure("hit_test", &queries, |c| {
         std::hint::black_box(snap::hit_test(&sketch, c, tol));

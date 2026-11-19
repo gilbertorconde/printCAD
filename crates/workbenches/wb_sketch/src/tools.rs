@@ -521,6 +521,7 @@ enum Hold {
     Middle(Uuid),
     OnCircle(Uuid),
     OnEllipse(Uuid),
+    OnCurve(Uuid),
 }
 
 impl Hold {
@@ -534,6 +535,7 @@ impl Hold {
             Hold::Middle(line) => ConstraintKind::Midpoint { point, line },
             Hold::OnCircle(circle) => ConstraintKind::PointOnCircle { point, circle },
             Hold::OnEllipse(ellipse) => ConstraintKind::PointOnEllipse { point, ellipse },
+            Hold::OnCurve(curve) => ConstraintKind::PointOnCurve { point, curve },
         }
     }
 }
@@ -576,6 +578,12 @@ fn holds_at(sketch: &Sketch, pos: Vec2D, snap_tol: f64) -> Vec<Hold> {
             }
             GeometryElement::Circle(_) | GeometryElement::Arc(_) => Hold::OnCircle(geom.id()),
             GeometryElement::Ellipse(_) => Hold::OnEllipse(geom.id()),
+            // A text's outlines are the text's alone.
+            GeometryElement::Conic(_) | GeometryElement::BSpline(_)
+                if !sketch.derived.contains(&geom.id()) =>
+            {
+                Hold::OnCurve(geom.id())
+            }
             _ => continue,
         });
     }

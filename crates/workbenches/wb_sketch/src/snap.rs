@@ -242,11 +242,12 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
     if tol.is_nan() || tol <= 0.0 || !c.is_finite() {
         return bare(cursor);
     }
-    if let Some(guide) = &cx.guide {
-        return on_guide(sketch, cursor, tol, cx, guide);
-    }
     let scene = Scene::of(sketch);
-    resolve_in(&scene, &scene.near(c, tol), cursor, tol, cx)
+    let near = scene.near(c, tol);
+    match &cx.guide {
+        Some(guide) => on_guide(&scene, &near, cursor, tol, cx, guide),
+        None => resolve_in(&scene, &near, cursor, tol, cx),
+    }
 }
 
 /// The cursor itself, snapped to nothing.
@@ -377,18 +378,21 @@ fn resolve_in(
     bare(cursor)
 }
 
-/// Where `cursor` snaps on `guide`: the plain snap where it lies on the
-/// guide (a point standing on it); else the guide's nearest crossing
-/// within `tol` with a line, a circle, an arc or an axis; else the
-/// cursor's foot on the guide ([`Guide::foot`]), taking a point standing
-/// there but no other snap, so the cue never names one the click would
-/// leave behind.
-fn on_guide(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext, guide: &Guide) -> Snap {
-    let free = SnapContext {
-        guide: None,
-        ..cx.clone()
-    };
-    let plain = resolve(sketch, cursor, tol, &free);
+/// Where `cursor` snaps on `guide`, in `scene` with `near` its elements
+/// within `tol`: the plain snap where it lies on the guide (a point
+/// standing on it); else the guide's nearest crossing within `tol` with a
+/// curve or an axis; else the cursor's foot on the guide
+/// ([`Guide::foot`]), taking a point standing there but no other snap, so
+/// the cue never names one the click would leave behind.
+fn on_guide(
+    scene: &Scene,
+    near: &[(&Item, f64)],
+    cursor: Vec2D,
+    tol: f64,
+    cx: &SnapContext,
+    guide: &Guide,
+) -> Snap {
+    let plain = resolve_in(scene, near, cursor, tol, cx);
     let Some(foot) = guide.foot(cursor) else {
         return plain;
     };
@@ -403,22 +407,26 @@ fn on_guide(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext, guide: &
         curve: None,
         on: None,
     };
-    if let Some(p) = guide_crossing(&Scene::of(sketch).near(c, tol), guide, c, tol) {
+    if let Some(p) = guide_crossing(near, guide, c, tol) {
         let target = SnapTarget::New(Vec2D::from_glam(p));
         return snap(target, p, SnapKind::Intersection);
     }
-    match resolve(sketch, foot, tol, &free) {
-        at @ Snap {
-            target: SnapTarget::Existing(_),
-            ..
-        } if guide.holds(at.pos) => at,
+    match nearest_point(&scene.near(foot.to_glam(), tol), &cx.exclude) {
+        Some((id, p)) if guide.holds(Vec2D::from_glam(p)) => {
+            let kind = if scene.centres.contains(&id) {
+                SnapKind::Center
+            } else {
+                SnapKind::Endpoint
+            };
+            snap(SnapTarget::Existing(id), p, kind)
+        }
         _ => bare(foot),
     }
 }
 
-/// Where `guide` crosses a line, a circle or an arc among `near` or an
-/// axis, the crossing nearest `c` within `tol`: a circle's crossings
-/// worked out, every other found along both curves.
+/// Where `guide` crosses a curve among `near` or an axis, the crossing
+/// nearest `c` within `tol`: a circle's crossings with lines, circles and
+/// arcs worked out, every other found along both curves.
 fn guide_crossing(near: &[(&Item, f64)], guide: &Guide, c: DVec2, tol: f64) -> Option<DVec2> {
     let curve = guide.curve(c, tol);
     let mut best = Best::new();
@@ -447,6 +455,11 @@ fn guide_crossing(near: &[(&Item, f64)], guide: &Guide, c: DVec2, tol: f64) -> O
                 }
             }
             _ => along(&Curve::of_prim(&prim), &mut offer),
+        }
+    }
+    for (item, _) in near {
+        if let Shape::Curve(other) = &item.shape {
+            along(other, &mut offer);
         }
     }
     best.get()
