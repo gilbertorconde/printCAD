@@ -271,3 +271,75 @@ fn an_arc_s_end_lands_where_its_circle_meets_what_it_snapped_to() {
         assert!(off < 1e-3, "{case}: off the circle by {off}");
     }
 }
+
+/// A typed sweep puts the centre-point arc's end on its circle: a point
+/// there is reused, one near it but off the circle is left alone.
+#[test]
+fn a_typed_arc_end_reuses_only_a_point_on_its_circle() {
+    for (x, y, reused) in [(0.0, 10.0, true), (0.15, 10.1, false)] {
+        let mut h = Harness::sketching();
+        // The start on a point, so the radius is exactly 10.
+        let near = h.edit_sketch(|s| {
+            let mut at =
+                |x, y| s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+            at(10.0, 0.0);
+            at(x, y)
+        });
+        h.click(0.0, 0.0, "sketch.arc");
+        h.click(10.0, 0.0, "sketch.arc");
+        h.mouse_move(3.0, 9.0, "sketch.arc");
+        h.type_text("90", Some("sketch.arc"));
+        h.key(core_document::KeyCode::Enter, Some("sketch.arc"));
+        let sketch = h.sketch();
+        let arc = crate::arc_of(&sketch);
+        assert_eq!(arc.end == near, reused, "point at ({x}, {y})");
+        let [end, start] = [arc.end, arc.start].map(|p| sketch.point_position(p).unwrap());
+        let off = (end.to_glam().length() - start.to_glam().length()).abs();
+        assert!(off < 1e-6, "({x}, {y}): end off the circle by {off}");
+    }
+}
+
+/// A circle's rim clicked onto a text's outline keeps no point there: the
+/// outlines are made again from the text each time the sketch is read,
+/// which drops any constraint on them, so the circle is its centre and
+/// itself, and a reload keeps every constraint.
+#[test]
+fn a_click_on_a_text_outline_is_not_held_on_it() {
+    let mut h = Harness::sketching();
+    let spec = wb_sketch::text::TextSpec {
+        text: "I".into(),
+        ..Default::default()
+    };
+    h.edit_sketch(|s| wb_sketch::text::add(s, Vec2D::new(0.0, 0.0), &spec).unwrap());
+    let sketch = h.sketch();
+    let longest = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) if sketch.derived.contains(&l.id) => {
+                let a = sketch.point_position(l.start)?.to_glam();
+                Some((a, sketch.point_position(l.end)?.to_glam()))
+            }
+            _ => None,
+        })
+        .max_by(|x, y| x.0.distance(x.1).total_cmp(&y.0.distance(y.1)));
+    let (a, b) = longest.expect("an outline line");
+    let at = a.lerp(b, 0.3);
+    let made = core_document::testing::call_checked(
+        &mut wb_sketch::SketchWorkbench::default(),
+        &mut h.doc,
+        "sketch.draw",
+        serde_json::json!({
+            "sketch": h.active_object.unwrap().0.to_string(),
+            "tool": "circle",
+            "points": [[-10.0, at.y], [at.x, at.y]],
+            "params": {"auto_constraints": true},
+        }),
+    )
+    .unwrap();
+    assert_eq!(made["elements"].as_array().unwrap().len(), 2, "{made}");
+    let sketch = h.sketch();
+    let read: Sketch = serde_json::from_value(serde_json::to_value(&sketch).unwrap()).unwrap();
+    let ids = |s: &Sketch| s.constraints.iter().map(|c| c.id).collect::<Vec<_>>();
+    assert_eq!(ids(&read), ids(&sketch));
+}

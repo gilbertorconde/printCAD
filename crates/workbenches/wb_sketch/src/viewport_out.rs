@@ -778,7 +778,7 @@ impl SketchWorkbench {
             })
     }
 
-    fn draw_key(&self, ctx: &WorkbenchRuntimeContext) -> frame_memo::DrawKey {
+    pub(crate) fn draw_key(&self, ctx: &WorkbenchRuntimeContext) -> frame_memo::DrawKey {
         let sketch = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
         frame_memo::DrawKey::of(sketch, self.options, ctx)
     }

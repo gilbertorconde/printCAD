@@ -1,16 +1,16 @@
 //! What one frame's hooks read of the edited sketch, worked out once and
 //! shared by every hook that asks while nothing it was worked out from has
-//! changed: the sketch read from the document, the overlays and the
-//! constraint glyphs.
+//! changed: the sketch read from the document, the overlays, the
+//! constraint glyphs and where a click at the pointer lands.
 //!
 //! The sketch read holds while the document's content stamp, the edited
 //! sketch and a label's drag stay, across frames: the stamp moves with
 //! everything the document derives (a solved formula, a projection
 //! followed). The rest holds while the tab state's stamp and the content
-//! stamp stay; the overlays and glyphs also need the same settings and
-//! the same view. Any mutable borrow of the tab state takes a fresh stamp
-//! ([`Stamped`]), and `on_frame` takes one every frame, so those never
-//! outlive the frame they were made in.
+//! stamp stay; the overlays, glyphs and landing also need the same
+//! settings and the same view. Any mutable borrow of the tab state takes
+//! a fresh stamp ([`Stamped`]), and `on_frame` takes one every frame, so
+//! those never outlive the frame they were made in.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -209,11 +209,24 @@ pub(crate) struct FrameMemo {
     overlays: Slot<DrawKey, Arc<Overlays>>,
     glyphs: Slot<DrawKey, Arc<Vec<Glyph>>>,
     relations: Slot<(SketchKey, usize), Arc<Relations>>,
+    landing: Slot<(DrawKey, [u64; 2]), Landing>,
     #[cfg(feature = "egui")]
     row_text: Slot<ActiveKey, Arc<crate::panel::RowText>>,
 }
 
+/// Where a click at the pointer lands, and the snap that took it there.
+type Landing = (crate::sketch::Vec2D, Option<crate::snap::Snap>);
+
 impl FrameMemo {
+    /// Where a click at the pointer, as `key` names it, lands.
+    pub(crate) fn landing(
+        &self,
+        key: (DrawKey, [u64; 2]),
+        make: impl FnOnce() -> Landing,
+    ) -> Landing {
+        self.landing.get(key, make)
+    }
+
     /// The element list's row text for the sketch read under `key`.
     #[cfg(feature = "egui")]
     pub(crate) fn row_text(
@@ -267,6 +280,7 @@ impl FrameMemo {
         self.overlays.clear();
         self.glyphs.clear();
         self.relations.clear();
+        self.landing.clear();
         #[cfg(feature = "egui")]
         self.row_text.clear();
     }
