@@ -60,8 +60,12 @@ test("local and CI select the same gate list, including standalone checks", () =
   assert.deepEqual(selectedGates(["--only", "tests", "--", "-p", "settings"])[0][3],
     ["scripts/test-budget.mjs", "-p", "settings"]);
   assert.throws(() => selectedGates(["--only", "typo"]));
+  const heavy = selectedGates(["--only", "heavy", "--all"]);
+  assert.deepEqual(heavy.map(([, , , args]) => args), [["scripts/test-budget.mjs", "--heavy"]]);
+  assert.deepEqual(selectedGates(["--heavy", "--all"]), [...local, ...heavy]);
+  assert(lint.some(([name]) => name === "clippy heavy tests"));
   const workflow = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
-  for (const selection of ["lint --all", "clippy", "tests --"]) {
+  for (const selection of ["lint --all", "clippy", "tests --", "heavy --all"]) {
     assert(workflow.includes(`node scripts/gates.mjs --only ${selection}`));
   }
   assert(!workflow.includes("run: cargo clippy"));

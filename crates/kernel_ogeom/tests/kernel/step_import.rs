@@ -412,38 +412,6 @@ END-ISO-10303-21;
     );
 }
 
-/// Every face's triangulation must stay inside its own trimming boundary.
-///
-/// The fixture is two real parts with periodic faces that, triangulated the
-/// long way around their seam, throw fans and lobes ~30 mm out from sub-mm
-/// features.
-#[test]
-fn face_triangulations_stay_inside_their_boundaries() {
-    let imported = crate::real_part();
-
-    // The two parts' true extent: every real feature fits inside the body
-    // bounds reported from the B-rep. A triangle escaping those bounds by
-    // millimetres came from a face swept past its trim.
-    for body in &imported.bodies {
-        let Some((lo, hi)) = body.bounds_mm else {
-            continue;
-        };
-        let slack = 1.0_f32; // mm; tessellation sag allowance
-        let mut escaped = 0usize;
-        for p in &body.mesh.positions {
-            if (0..3).any(|a| p[a] < lo[a] - slack || p[a] > hi[a] + slack) {
-                escaped += 1;
-            }
-        }
-        assert_eq!(
-            escaped,
-            0,
-            "body `{}` has {escaped} mesh vertices outside its own B-rep bounds",
-            body.name.as_deref().unwrap_or("?")
-        );
-    }
-}
-
 /// A single M5x16 BHCS in its original exporter encoding (entities verbatim
 /// from the source assembly, not a round-trip). Its button head is a sphere
 /// zone that bulges between its rims, so a body whose bounds came from its
@@ -550,4 +518,41 @@ fn triangles_know_their_faces_and_a_curved_face_is_whole() {
         by_name > by_plane,
         "face {face}: {by_name} triangles by name, {by_plane} on one plane"
     );
+}
+
+/// What needs a big model or a long build, compiled and run only with the
+/// `heavy-tests` feature (`node scripts/test-budget.mjs --heavy`).
+#[cfg(feature = "heavy-tests")]
+mod heavy {
+    /// Every face's triangulation must stay inside its own trimming boundary.
+    ///
+    /// The fixture is two real parts with periodic faces that, triangulated the
+    /// long way around their seam, throw fans and lobes ~30 mm out from sub-mm
+    /// features.
+    #[test]
+    fn face_triangulations_stay_inside_their_boundaries() {
+        let imported = crate::real_part();
+
+        // The two parts' true extent: every real feature fits inside the body
+        // bounds reported from the B-rep. A triangle escaping those bounds by
+        // millimetres came from a face swept past its trim.
+        for body in &imported.bodies {
+            let Some((lo, hi)) = body.bounds_mm else {
+                continue;
+            };
+            let slack = 1.0_f32; // mm; tessellation sag allowance
+            let mut escaped = 0usize;
+            for p in &body.mesh.positions {
+                if (0..3).any(|a| p[a] < lo[a] - slack || p[a] > hi[a] + slack) {
+                    escaped += 1;
+                }
+            }
+            assert_eq!(
+                escaped,
+                0,
+                "body `{}` has {escaped} mesh vertices outside its own B-rep bounds",
+                body.name.as_deref().unwrap_or("?")
+            );
+        }
+    }
 }

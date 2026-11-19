@@ -33,79 +33,6 @@ fn a_clean_file_checks_clean() {
     }
 }
 
-#[test]
-fn a_repair_hands_back_a_mesh_and_the_checker_s_verdict() {
-    let (mut kernel, model) = import("drive_frame_upper.step");
-    for body in &model.bodies {
-        let result = kernel
-            .repair_brep(
-                &body.brep_blob,
-                &body.face_colors,
-                &TessellationSettings::default(),
-            )
-            .expect("the repair runs");
-        assert!(result.health.repaired);
-        assert!(!result.mesh.indices.is_empty(), "the mended shape draws");
-        assert!(!result.brep_blob.is_empty());
-        assert_eq!(
-            result.face_colors.len(),
-            body.face_colors.len(),
-            "no faces were sewn, so every face keeps its colour"
-        );
-        let before = body.health.as_ref().expect("checked on import");
-        assert!(
-            result.health.broken <= before.broken,
-            "a repair never adds defects"
-        );
-        // Its tolerance containment findings among them.
-        assert_eq!(result.health.broken, 0, "{}", result.health.describe());
-    }
-}
-
-#[test]
-fn a_well_formed_export_checks_clean() {
-    let (_, model) = import("drive_frame_upper.step");
-    for body in &model.bodies {
-        let health = body.health.as_ref().expect("every body is checked");
-        assert_eq!(health.broken, 0, "{}", health.describe());
-    }
-}
-
-/// A clean part takes features: a pocket cut down through its middle.
-#[test]
-fn a_clean_imported_part_takes_a_pocket() {
-    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
-    let (mut kernel, model) = import("drive_frame_upper.step");
-    let body = &model.bodies[0];
-    let (lo, hi) = body.bounds_mm.expect("bounds");
-    let pocket = SolidOp::Primitive {
-        kind: PrimitiveKind::Cylinder {
-            radius: 2.0,
-            height: f64::from(hi[2] - lo[2]) + 2.0,
-            angle_deg: 360.0,
-        },
-        placement: Placement {
-            origin: [
-                f64::from(lo[0] + hi[0]) / 2.0,
-                f64::from(lo[1] + hi[1]) / 2.0,
-                f64::from(lo[2]) - 1.0,
-            ],
-            ..Placement::default()
-        },
-        op: BooleanOp::Cut,
-    };
-    let base = SolidOp::Shape {
-        brep: body.brep_blob.clone(),
-    };
-    let built = kernel
-        .execute_solid_chain(
-            kernel_ogeom::ChainRequest::new(&[base, pocket], &TessellationSettings::default())
-                .tags(&[1, 2]),
-        )
-        .expect("the pocket is cut");
-    assert!(!built.mesh.indices.is_empty());
-}
-
 /// A box is a measure its own bounds can check.
 #[test]
 fn a_box_measures_its_volume_area_and_centre() {
@@ -252,33 +179,6 @@ fn fixture_as_iges(name: &str) -> PathBuf {
     ));
     std::fs::write(&path, iges).expect("staged");
     path
-}
-
-/// The real part written as IGES keeps every record 80 columns wide, and
-/// imports back as as many bodies.
-#[test]
-fn a_real_part_round_trips_through_iges() {
-    let path = fixture_as_iges("drive_frame_upper.step");
-    let text = std::fs::read_to_string(&path).expect("staged file");
-    let back = OgeomKernel::new().import_step(&path, &TessellationSettings::default());
-    let _ = std::fs::remove_file(&path);
-    let long = text.lines().filter(|l| l.len() != 80).count();
-    assert_eq!(long, 0, "{long} records are not 80 columns");
-    let (_, from_step) = import("drive_frame_upper.step");
-    let back = back.expect("the IGES file imports");
-    assert_eq!(back.bodies.len(), from_step.bodies.len());
-}
-/// Every face of a body meshes on itself: the carriage is a few
-/// centimetres across, and so is its mesh.
-#[test]
-fn a_body_meshes_within_its_own_extent() {
-    let (_, model) = import("monolith_carriage.step");
-    let body = model.bodies.first().expect("one body");
-    let (lo, hi) = body.mesh.bounds().expect("the body draws");
-    for axis in 0..3 {
-        let size = hi[axis] - lo[axis];
-        assert!(size < 150.0, "the mesh spans {size} mm along axis {axis}");
-    }
 }
 
 /// Repair names a swept face for what it is: a cylinder written as a
@@ -496,4 +396,141 @@ fn a_void_survives_a_step_export() {
         .volume_mm3
         .unwrap();
     assert!((volume - 992.0).abs() < 1e-6, "{volume}");
+}
+
+/// Every body of the fixture `name`, run through the kernel's repair,
+/// hands back a mesh, its colours and a clean verdict.
+fn repairs_clean(name: &str) {
+    let (mut kernel, model) = import(name);
+    for body in &model.bodies {
+        let result = kernel
+            .repair_brep(
+                &body.brep_blob,
+                &body.face_colors,
+                &TessellationSettings::default(),
+            )
+            .expect("the repair runs");
+        assert!(result.health.repaired);
+        assert!(!result.mesh.indices.is_empty(), "the mended shape draws");
+        assert!(!result.brep_blob.is_empty());
+        assert_eq!(
+            result.face_colors.len(),
+            body.face_colors.len(),
+            "no faces were sewn, so every face keeps its colour"
+        );
+        let before = body.health.as_ref().expect("checked on import");
+        assert!(
+            result.health.broken <= before.broken,
+            "a repair never adds defects"
+        );
+        // Its tolerance containment findings among them.
+        assert_eq!(result.health.broken, 0, "{}", result.health.describe());
+    }
+}
+
+/// A box run through the repair; the real part's is the heavy test's.
+#[test]
+fn a_repair_of_a_box_hands_back_a_mesh_and_the_checker_s_verdict() {
+    repairs_clean("box_native.step");
+}
+
+/// The fixture `name` written as IGES keeps every record 80 columns wide,
+/// and imports back as as many bodies.
+fn round_trips_through_iges(name: &str) {
+    let path = fixture_as_iges(name);
+    let text = std::fs::read_to_string(&path).expect("staged file");
+    let back = OgeomKernel::new().import_step(&path, &TessellationSettings::default());
+    let _ = std::fs::remove_file(&path);
+    let long = text.lines().filter(|l| l.len() != 80).count();
+    assert_eq!(long, 0, "{long} records are not 80 columns");
+    let (_, from_step) = import(name);
+    let back = back.expect("the IGES file imports");
+    assert_eq!(back.bodies.len(), from_step.bodies.len());
+}
+
+/// A box written as IGES; the real part's is the heavy test's.
+#[test]
+fn a_box_round_trips_through_iges() {
+    round_trips_through_iges("box_native.step");
+}
+
+/// What needs a big model or a long build, compiled and run only with the
+/// `heavy-tests` feature (`node scripts/test-budget.mjs --heavy`).
+#[cfg(feature = "heavy-tests")]
+mod heavy {
+    use super::*;
+
+    /// Every body of the bundled real part, a big model, run through the
+    /// repair hands back a mesh, its colours and a clean verdict.
+    #[test]
+    fn a_repair_hands_back_a_mesh_and_the_checker_s_verdict() {
+        repairs_clean("drive_frame_upper.step");
+    }
+
+    /// The bundled real part, a big model, imports with every body checked
+    /// clean.
+    #[test]
+    fn a_well_formed_export_checks_clean() {
+        let (_, model) = import("drive_frame_upper.step");
+        for body in &model.bodies {
+            let health = body.health.as_ref().expect("every body is checked");
+            assert_eq!(health.broken, 0, "{}", health.describe());
+        }
+    }
+
+    /// A clean part takes features: a pocket cut down through its middle.
+    /// The part is the bundled real one, a big model.
+    #[test]
+    fn a_clean_imported_part_takes_a_pocket() {
+        use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+        let (mut kernel, model) = import("drive_frame_upper.step");
+        let body = &model.bodies[0];
+        let (lo, hi) = body.bounds_mm.expect("bounds");
+        let pocket = SolidOp::Primitive {
+            kind: PrimitiveKind::Cylinder {
+                radius: 2.0,
+                height: f64::from(hi[2] - lo[2]) + 2.0,
+                angle_deg: 360.0,
+            },
+            placement: Placement {
+                origin: [
+                    f64::from(lo[0] + hi[0]) / 2.0,
+                    f64::from(lo[1] + hi[1]) / 2.0,
+                    f64::from(lo[2]) - 1.0,
+                ],
+                ..Placement::default()
+            },
+            op: BooleanOp::Cut,
+        };
+        let base = SolidOp::Shape {
+            brep: body.brep_blob.clone(),
+        };
+        let built = kernel
+            .execute_solid_chain(
+                kernel_ogeom::ChainRequest::new(&[base, pocket], &TessellationSettings::default())
+                    .tags(&[1, 2]),
+            )
+            .expect("the pocket is cut");
+        assert!(!built.mesh.indices.is_empty());
+    }
+
+    /// The real part written as IGES keeps every record 80 columns wide, and
+    /// imports back as as many bodies.
+    #[test]
+    fn a_real_part_round_trips_through_iges() {
+        round_trips_through_iges("drive_frame_upper.step");
+    }
+
+    /// Every face of a body meshes on itself: the carriage, a big model, is
+    /// a few centimetres across, and so is its mesh.
+    #[test]
+    fn a_body_meshes_within_its_own_extent() {
+        let (_, model) = import("monolith_carriage.step");
+        let body = model.bodies.first().expect("one body");
+        let (lo, hi) = body.mesh.bounds().expect("the body draws");
+        for axis in 0..3 {
+            let size = hi[axis] - lo[axis];
+            assert!(size < 150.0, "the mesh spans {size} mm along axis {axis}");
+        }
+    }
 }

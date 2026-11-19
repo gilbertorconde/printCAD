@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Compiles and runs the integration tests that need a big model or a long
+# build (the `heavy` modules); `node scripts/test-budget.mjs --heavy` runs
+# them. Nothing outside tests reads it.
+heavy-tests = []
+
 [dependencies]
 kernel_api.workspace = true
 ogeom = { workspace = true }

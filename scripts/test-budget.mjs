@@ -13,24 +13,37 @@
 //   node scripts/test-budget.mjs                  every crate
 //   node scripts/test-budget.mjs -p wb_sketch …   only these packages
 //   node scripts/test-budget.mjs --changed        what a change reaches
+//   node scripts/test-budget.mjs --heavy [...]    the heavy tests instead
 //
 // `--changed` asks scripts/affected-crates.mjs what the working tree's
 // changes since origin/master reach, and runs the programs of the crates
 // changed first, so their failures show before their dependents' do.
 //
-// TEST_BUDGET_PROGRAM_S (default 60) and TEST_BUDGET_TOTAL_S (default 150)
-// set the budgets in seconds; a slower machine raises them, the defaults
-// fit a CI runner with room to spare. TEST_JOBS (default 2) is how many
-// programs run at once.
+// The heavy tests (slow or big-model ones, in `heavy` modules a package
+// compiles only with its `heavy-tests` feature) stay out of the default
+// build; a default run fails if a program holds one. `--heavy`, with any
+// of the forms above, builds the packages declaring the feature with it
+// on and runs only their heavy tests, against budgets of their own.
+//
+// TEST_BUDGET_PROGRAM_S (default 60, 300 with --heavy) and
+// TEST_BUDGET_TOTAL_S (default 150, 600 with --heavy) set the budgets in
+// seconds; a slower machine raises them, the defaults fit a CI runner with
+// room to spare. TEST_JOBS (default 2) is how many programs run at once.
 
 import { execFileSync, spawn } from "node:child_process";
 import { basename } from "node:path";
-
-const programBudget = Number(process.env.TEST_BUDGET_PROGRAM_S ?? 60);
-const totalBudget = Number(process.env.TEST_BUDGET_TOTAL_S ?? 150);
-const jobs = Math.max(1, Number(process.env.TEST_JOBS ?? 2));
+import { HEAVY_FEATURE, heavyPackages } from "./lib/workspace.mjs";
 
 let args = process.argv.slice(2);
+const heavy = args.includes("--heavy");
+args = args.filter((a) => a !== "--heavy");
+
+const programBudget = Number(process.env.TEST_BUDGET_PROGRAM_S ?? (heavy ? 300 : 60));
+const totalBudget = Number(process.env.TEST_BUDGET_TOTAL_S ?? (heavy ? 600 : 150));
+const jobs = Math.max(1, Number(process.env.TEST_JOBS ?? 2));
+// A heavy test's name runs through its module: `<module>::heavy::<test>`.
+const HEAVY_TESTS = "::heavy::";
+
 let first = new Set();
 if (args[0] === "--changed") {
   const reach = JSON.parse(
@@ -45,7 +58,22 @@ if (args[0] === "--changed") {
   args = reach.everything ? [] : reach.affected.flatMap((name) => ["-p", name]);
   first = new Set(reach.touchedManifests);
 }
-const scope = args.length ? args : ["--workspace"];
+let scope = args.length ? args : ["--workspace"];
+if (heavy) {
+  // Only the packages that have heavy tests, those the scope names among them.
+  const named = new Set(args.filter((a, i) => args[i - 1] === "-p"));
+  const all = !args.length || args.includes("--workspace");
+  const packages = heavyPackages().filter((p) => all || named.has(p));
+  if (!packages.length) {
+    console.log("no package in scope has heavy tests; nothing to test");
+    process.exit(0);
+  }
+  scope = [
+    ...packages.flatMap((p) => ["-p", p]),
+    "--features",
+    packages.map((p) => `${p}/${HEAVY_FEATURE}`).join(","),
+  ];
+}
 
 const built = execFileSync(
   "cargo",
@@ -63,10 +91,29 @@ for (const line of built.split("\n")) {
 // The changed crates' programs go first; the order is otherwise cargo's.
 programs.sort((a, b) => Number(first.has(b.manifest)) - Number(first.has(a.manifest)));
 
+// What the default build compiled must hold no heavy test: they cost every
+// pull request their build time, run or not.
+if (!heavy) {
+  const compiled = programs.flatMap((program) =>
+    execFileSync(program.path, ["--list", HEAVY_TESTS], { encoding: "utf8" })
+      .split("\n")
+      .filter((line) => line.endsWith(": test"))
+      .map((line) => `${program.crate}: ${line.slice(0, -": test".length)}`),
+  );
+  if (compiled.length) {
+    console.error(
+      `heavy tests in the default build (a package turns its ${HEAVY_FEATURE} feature on ` +
+        `for another, or a heavy module lost its cfg):\n  ${compiled.join("\n  ")}`,
+    );
+    process.exit(1);
+  }
+}
+
 function run(program) {
   return new Promise((resolve) => {
     const started = process.hrtime.bigint();
-    const child = spawn(program.path, ["-q"], { stdio: ["ignore", "pipe", "pipe"] });
+    const filter = heavy ? [HEAVY_TESTS] : [];
+    const child = spawn(program.path, ["-q", ...filter], { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
@@ -95,15 +142,17 @@ await Promise.all(
 const total = Number(process.hrtime.bigint() - started) / 1e9;
 
 results.sort((a, b) => b.seconds - a.seconds);
+// A heavy run reports the programs that hold heavy tests.
+const shown = heavy ? results.filter((r) => r.passed || r.failed) : results;
 const tests = results.reduce((sum, r) => sum + r.passed, 0);
 let failed = results.some((r) => r.failed);
-console.log("slowest test programs:");
-for (const r of results.slice(0, 8)) {
+console.log(heavy ? "heavy test programs:" : "slowest test programs:");
+for (const r of shown.slice(0, 8)) {
   const over = r.seconds > programBudget ? "  OVER BUDGET" : "";
   console.log(`  ${r.seconds.toFixed(1).padStart(6)} s  ${String(r.passed).padStart(4)} tests  ${r.crate}${over}`);
 }
 console.log(
-  `${tests} tests in ${results.length} programs, ${total.toFixed(1)} s, ${jobs} at a time ` +
+  `${tests} ${heavy ? "heavy " : ""}tests in ${shown.length} programs, ${total.toFixed(1)} s, ${jobs} at a time ` +
     `(budget ${programBudget} s a program, ${totalBudget} s in all)`,
 );
 
@@ -119,7 +168,10 @@ if (overProgram.length) {
   failed = true;
   console.error(
     `over budget: ${overProgram.map((r) => r.crate).join(", ")}; make the slow tests ` +
-      "smaller, or mark the ones that need a big model #[ignore] with the reason",
+      (heavy
+        ? "smaller"
+        : `smaller, or move the ones that need a big model or a long build into the ` +
+          `package's \`heavy\` module under its ${HEAVY_FEATURE} feature`),
   );
 }
 if (total > totalBudget) {
