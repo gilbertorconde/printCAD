@@ -25,6 +25,9 @@ Nothing stays put until constrained: a dimension on free geometry moves every
 item it names, so tie a corner to "origin" first to keep it where it was
 drawn.
 
+"coincident" on two or more circles, arcs or ellipses makes them concentric:
+each centre on the first one's.
+
 "collinear" on two or more lines puts each after the first on the first one's
 line, wherever along it.
 

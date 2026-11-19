@@ -2587,6 +2587,7 @@ Notes:
 - Without `value` a dimension takes what it measures on the sketch as it stands. Angles are degrees, a diameter the diameter, a radius the radius.
 - "distance" on one line is its length (listed as Length), on two points the distance between them, on a point and a curve or two curves the gap. "dimension" picks as the toolbar does: a line's length, a circle's diameter, an arc's radius, two lines' angle (their distance when parallel).
 - Nothing stays put until constrained: a dimension on free geometry moves every item it names, so tie a corner to "origin" first to keep it where it was drawn.
+- "coincident" on two or more circles, arcs or ellipses makes them concentric: each centre on the first one's.
 - "collinear" on two or more lines puts each after the first on the first one's line, wherever along it.
 - "lock" holds a point by its distances along X and Y from the origin, each the size of a coordinate (a point at x = -5 takes 5 and stays at -5).
 - "group" makes its items one rigid unit, keeping the shape they have now: it moves and turns as a whole, three degrees of freedom, and a drag of any member carries all of it. Constraints among the members alone that say nothing of the axes rest while the group holds; of those that do (horizontal, vertical, an angle to an axis), the first turns the whole group and the rest rest.

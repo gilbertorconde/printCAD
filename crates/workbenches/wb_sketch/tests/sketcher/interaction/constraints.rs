@@ -132,3 +132,30 @@ fn collinear_puts_two_lines_on_one_line() {
     let refused = h.with_ctx(|wb, ctx| wb.run_command("sketch.constrain", &args, ctx));
     assert!(refused.unwrap_err().to_string().contains("already holds"));
 }
+
+/// Coincident on two circles puts their centres on one spot, each keeping
+/// its size.
+#[test]
+fn coincident_on_two_circles_makes_them_concentric() {
+    let mut h = Harness::sketching();
+    h.click(5.0, 5.0, "sketch.circle");
+    h.click(7.0, 5.0, "sketch.circle");
+    h.click(14.0, 6.0, "sketch.circle");
+    h.click(17.0, 6.0, "sketch.circle");
+    pick_two_then(
+        &mut h,
+        (7.0, 5.0),
+        (17.0, 6.0),
+        "sketch.constrain.coincident",
+    );
+    let sketch = h.sketch();
+    let circles = crate::all_circles(&sketch);
+    let at = |id| sketch.point_position(id).unwrap().to_glam();
+    let gap = (at(circles[0].center) - at(circles[1].center)).length();
+    assert!(gap < 1e-6, "centres {gap} apart");
+    let radii = [circles[0].radius, circles[1].radius];
+    assert!(
+        (radii[0] - 2.0).abs() < 1e-3 && (radii[1] - 3.0).abs() < 1e-3,
+        "{radii:?}"
+    );
+}

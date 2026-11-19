@@ -256,6 +256,10 @@ distance from A to B beside one from B to A. A reference dimension holds
 its size as much as a driving one, and so does one switched off; change
 the value of the one there, or make it driving, instead. **Block** fixes an element in place.
 
+**Coincident** (Shift+C) joins points; on a point and a curve it puts
+the point on the curve, and on two or more circles, arcs or ellipses it
+makes them concentric, each centre on the first one's.
+
 **Collinear** (Shift+J) puts two or more lines on one line: each after
 the first lands on the first one's line, wherever along it.
 
