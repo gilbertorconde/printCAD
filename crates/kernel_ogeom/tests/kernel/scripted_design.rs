@@ -7,7 +7,7 @@ use kernel_api::{FaceProbe, KernelQueries, PhysicalProperties};
 use kernel_ogeom::OgeomKernel;
 use scripting::ScriptEngine;
 
-use super::common::{benches, try_chain};
+use super::common::{benches, settle_as_host, try_chain};
 
 /// Run `script` on a document with one body, `BODY` in it standing for
 /// the body's id, and build the body: its snapshot.
@@ -218,6 +218,70 @@ fn text_round_a_whole_cylinder_is_sunk_into_it() {
         (four - 4.0 * one).abs() <= 0.01 * four,
         "each letter cut round the turn: {four} against {one} for one"
     );
+}
+
+/// Text spread round a whole cylinder goes round the cylinder as it is
+/// built, not as it was when the text went on: made smaller, the letters
+/// close up evenly as they would on a cylinder of that size from the
+/// start, rather than run past the seam into the first. Text longer than
+/// the turn says it does not fit.
+#[test]
+fn text_round_a_whole_cylinder_follows_its_radius() {
+    let script = |radius: f64| {
+        format!(
+            r#"
+            local b = "BODY"
+            pc.design.primitive{{body = b,
+              kind = {{Cylinder = {{radius = {radius}, height = 20, angle_deg = 360}}}}}}
+            pc.design.text{{body = b, text = "LLLLLL", size = 4, mode = "Deboss",
+              height = 0.5, wrap = true, radius = {radius}, full_turn = true,
+              face_point = {{0, -{radius}, 10}}, face_normal = {{0, -1, 0}}}}
+            "#
+        )
+    };
+    let run = |radius: f64| {
+        let mut document = Document::new("scripted");
+        let body: BodyId = document.create_body(None);
+        let mut host = benches(document);
+        let out = ScriptEngine::new().run_script(
+            &script(radius).replace("BODY", &body.0.to_string()),
+            "part.lua",
+            &mut host,
+        );
+        assert_eq!(out.error, None);
+        settle_as_host(&host.registry, &mut host.document);
+        (host, body)
+    };
+    let measure = |document: &Document, body: BodyId| {
+        measured(&document.imported_brep_blob_arc(body).expect("a solid"))
+    };
+    let (mut host, body) = run(10.0);
+    let primitive = wb_design::design_features_of_body(&host.document, body)
+        .into_iter()
+        .find(|(_, f)| matches!(f, wb_design::DesignFeature::Primitive { .. }))
+        .expect("the cylinder")
+        .0;
+    let mut data = host.document.get_feature_data(primitive).unwrap().clone();
+    *data
+        .pointer_mut("/Primitive/kind/Cylinder/radius")
+        .expect("a cylinder's radius") = serde_json::json!(8.0);
+    host.document.update_feature_data(primitive, data).unwrap();
+    host.document.mark_feature_dirty(primitive);
+    settle_as_host(&host.registry, &mut host.document);
+    let got = measure(&host.document, body);
+    let (fresh, fresh_body) = run(8.0);
+    let want = measure(&fresh.document, fresh_body);
+    let (v, w) = (got.volume_mm3.unwrap(), want.volume_mm3.unwrap());
+    assert!((v - w).abs() < 1e-3 * w, "{v} against {w}");
+    assert!(
+        (0..3).all(|i| (got.centre_mm[i] - want.centre_mm[i]).abs() < 1e-3),
+        "{:?} against {:?}",
+        got.centre_mm,
+        want.centre_mm
+    );
+
+    let long = built(&script(1.5)).expect_err("six letters do not fit round 3 mm");
+    assert!(long.contains("does not fit"), "{long}");
 }
 
 /// Letters carried straight onto a cylinder's side across its seam stand

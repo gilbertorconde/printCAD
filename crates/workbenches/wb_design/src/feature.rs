@@ -2295,8 +2295,9 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         full_turn: bool,
-        /// The cylinder's radius where the text was put on one, which a
-        /// whole turn goes round; zero on any other face.
+        /// The radius of the cylinder a whole turn goes round: where the
+        /// text was put on one, then as each build finds the face; zero on
+        /// any other face.
         #[serde(default)]
         #[walk(setting)]
         radius: f32,
@@ -2956,13 +2957,87 @@ impl DesignFeature {
         }
     }
 
-    pub fn start_face_mut(&mut self) -> Option<&mut FacePick> {
-        match self {
-            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
-                extras.start_face.as_mut()
+    /// The faces of the solid before the feature that place it, which a
+    /// build finds again by name (else by where they were picked) and the
+    /// feature follows: a start face, a mirror's or split's picked plane, a
+    /// draft's neutral face.
+    pub fn placing_faces(&self) -> Vec<&FacePick> {
+        fn mirror(plane: &MirrorPlane) -> Option<&FacePick> {
+            match plane {
+                MirrorPlane::Face(face) => Some(face),
+                _ => None,
             }
-            DesignFeature::Hole { start, .. } => start.face.as_mut(),
+        }
+        match self {
+            DesignFeature::Mirrored { plane, .. }
+            | DesignFeature::Split {
+                plane,
+                sketch: None,
+                ..
+            } => mirror(plane).into_iter().collect(),
+            DesignFeature::MultiTransform { steps, .. } => steps
+                .iter()
+                .filter_map(|step| match step {
+                    TransformStep::Mirror { plane } => mirror(plane),
+                    _ => None,
+                })
+                .collect(),
+            DesignFeature::Draft {
+                neutral,
+                neutral_plane: None,
+                ..
+            } => vec![neutral],
+            other => other.start_face().into_iter().collect(),
+        }
+    }
+
+    /// The cylinder face text spread round a whole turn goes round, whose
+    /// radius a build asks of the solid before it.
+    pub fn turn_face(&self) -> Option<&FacePick> {
+        match self {
+            DesignFeature::Text {
+                faces,
+                wrap: true,
+                along: false,
+                full_turn: true,
+                ..
+            } => faces.first(),
             _ => None,
+        }
+    }
+
+    /// [`Self::placing_faces`], to move.
+    pub fn placing_faces_mut(&mut self) -> Vec<&mut FacePick> {
+        fn mirror(plane: &mut MirrorPlane) -> Option<&mut FacePick> {
+            match plane {
+                MirrorPlane::Face(face) => Some(face),
+                _ => None,
+            }
+        }
+        match self {
+            DesignFeature::Mirrored { plane, .. }
+            | DesignFeature::Split {
+                plane,
+                sketch: None,
+                ..
+            } => mirror(plane).into_iter().collect(),
+            DesignFeature::MultiTransform { steps, .. } => steps
+                .iter_mut()
+                .filter_map(|step| match step {
+                    TransformStep::Mirror { plane } => mirror(plane),
+                    _ => None,
+                })
+                .collect(),
+            DesignFeature::Draft {
+                neutral,
+                neutral_plane: None,
+                ..
+            } => vec![neutral],
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_mut().into_iter().collect()
+            }
+            DesignFeature::Hole { start, .. } => start.face.as_mut().into_iter().collect(),
+            _ => Vec::new(),
         }
     }
 

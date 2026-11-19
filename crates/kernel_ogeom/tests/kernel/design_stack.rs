@@ -1045,6 +1045,114 @@ fn a_pad_starting_on_a_face_follows_the_face() {
     assert!((top(&doc) - 25.0).abs() < 1e-3, "followed: {}", top(&doc));
 }
 
+/// A mirror, a split and a draft placed by a block's top face follow the
+/// face when the block grows: each builds as it would had the face been
+/// picked where it stands now.
+#[test]
+fn features_placed_by_a_picked_face_follow_it() {
+    use wb_design::{FacePick, MirrorPlane};
+    let registry = registry();
+    let top_at = |z: f32| FacePick {
+        point: [20.0, 20.0, z],
+        normal: [0.0, 0.0, 1.0],
+        name: 0,
+    };
+    // The block `height` tall and the feature placed by its top face as
+    // picked at `picked`: the document and the body to measure.
+    let make = |kind: &str, height: f32, picked: f32| {
+        let (mut doc, body, base) = setup(40.0, 40.0);
+        let block = doc.add_in(body, "Pad", pad(base, height));
+        let face = top_at(picked);
+        let measured = match kind {
+            "mirror" => {
+                doc.add_in(body, "Mirror", mirrored(block, MirrorPlane::Face(face)));
+                body
+            }
+            "split" => {
+                let piece = doc.create_body(None);
+                doc.add_in(piece, "Clone", DesignFeature::Clone { source: body });
+                doc.add_in(
+                    piece,
+                    "Split",
+                    DesignFeature::Split {
+                        plane: MirrorPlane::Face(face),
+                        offset: -4.0,
+                        sketch: None,
+                        other_side: false,
+                        split: 0,
+                    },
+                );
+                piece
+            }
+            _ => {
+                doc.add_in(
+                    body,
+                    "Draft",
+                    DesignFeature::Draft {
+                        angle_deg: 5.0,
+                        neutral: face,
+                        faces: vec![FacePick {
+                            point: [40.0, 20.0, 5.0],
+                            normal: [1.0, 0.0, 0.0],
+                            name: 0,
+                        }],
+                        reversed: false,
+                        neutral_plane: None,
+                        pull: None,
+                    },
+                );
+                body
+            }
+        };
+        wb_design::mark_all_design_features_dirty(&mut doc);
+        settle_as_host(&registry, &mut doc);
+        (doc, block, base, measured)
+    };
+    let measure = |doc: &Document, body: BodyId| {
+        let bounds = doc
+            .imported_geometry(body)
+            .and_then(|g| g.bounds_mm)
+            .expect("a solid");
+        (bounds, body_volume(doc, body))
+    };
+    let mut failures = Vec::new();
+    for kind in ["mirror", "split", "draft"] {
+        let (mut doc, block, base, measured) = make(kind, 10.0, 10.0);
+        doc.set_feature(block, pad(base, 16.0));
+        doc.mark_feature_dirty(block);
+        settle_as_host(&registry, &mut doc);
+        let (fresh, _, _, fresh_body) = make(kind, 16.0, 16.0);
+        let ((lo, hi), volume) = measure(&doc, measured);
+        let ((want_lo, want_hi), want_volume) = measure(&fresh, fresh_body);
+        let close = (0..3)
+            .all(|i| (lo[i] - want_lo[i]).abs() < 1e-3 && (hi[i] - want_hi[i]).abs() < 1e-3)
+            && (volume - want_volume).abs() < 1e-3 * want_volume;
+        if !close {
+            failures.push(format!(
+                "{kind}: {lo:?}..{hi:?} {volume}, want {want_lo:?}..{want_hi:?} {want_volume}"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+
+    // A face whose name the solid no longer holds is found by where it
+    // was picked, and the feature says so.
+    let (mut doc, body, base) = setup(40.0, 40.0);
+    let block = doc.add_in(body, "Pad", pad(base, 10.0));
+    let lost = FacePick {
+        name: kernel_api::naming::name_of_id(&[7; 16]),
+        ..top_at(10.0)
+    };
+    let mirror = doc.add_in(body, "Mirror", mirrored(block, MirrorPlane::Face(lost)));
+    settle_as_host(&registry, &mut doc);
+    let node = doc.get_feature_meta(mirror).unwrap();
+    assert!(node.error.is_none(), "{:?}", node.error);
+    let said = registry
+        .feature_warning(&doc, None, mirror, node)
+        .expect("warned");
+    assert!(said.contains("not found by its name"), "{said}");
+}
+
 /// A symmetric pocket from the top face cuts half its depth into the
 /// material and half into the air above it.
 #[test]

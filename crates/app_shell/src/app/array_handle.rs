@@ -87,8 +87,8 @@ impl Handle {
         self.arrow().is_under(at)
     }
 
-    /// What draws it: the arrow, a knob at its tip and the spacing beside
-    /// it, brighter while it is held or under the pointer.
+    /// What draws it: the arrow and the spacing beside its tip, brighter
+    /// while it is held or under the pointer.
     pub fn drawn(
         &self,
         hot: bool,

@@ -34,7 +34,10 @@
   since the chain's names are its own body's. A sketch placed on its body's face
   follows it: Design's plan asks where the face stands at the
   sketch's place in history, and `Workbench::derive_on_solid` moves the
-  plane from the placement it recorded. One on a face a borrow lends
+  plane from the placement it recorded. Design features placed by a face
+  follow it the same way (`DesignFeature::placing_faces`: a Pad, Pocket or
+  Hole start face, a Mirror, Split or Multi-transform mirror's picked
+  plane, a Draft's neutral face), each asked of the solid before it. One on a face a borrow lends
   (`FaceSupport::lent_by`) is answered from the borrow instead
   (`answer_lent_faces`, which finds the face in the lender's mesh by
   name); `SketchAttachRequest::face_origin` says which a face is, and a

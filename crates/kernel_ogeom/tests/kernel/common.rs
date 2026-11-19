@@ -98,7 +98,9 @@ pub fn rebuilt(registry: &DocumentService, doc: &mut Document, body: BodyId) -> 
 
 /// Rebuild as the host does, probes, projections and face names all,
 /// until nothing is left to rebuild; how many passes that took. A body
-/// whose history does not plan is left as it stands.
+/// whose history does not plan is left as it stands; an op that fails
+/// carries the error on its feature, and the history before that feature
+/// builds and answers its questions, as the host's kernel worker does.
 pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
     let mut kernel = OgeomKernel::new();
     for pass in 0..16 {
@@ -109,26 +111,35 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
         }
         for job in jobs {
             doc.clear_body_feature_errors(job.body);
-            let Ok(plan) = job.plan else { continue };
-            if plan.ops.is_empty() {
-                continue;
-            }
-            let asked: Vec<kernel_api::ChainProbe> = plan.probes.iter().map(|p| p.probe).collect();
-            let projections: Vec<kernel_api::ChainProjection> =
-                plan.projections.iter().map(|p| p.projection).collect();
-            let tags: Vec<kernel_api::TopoName> = plan
-                .op_features
-                .iter()
-                .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
-                .collect();
-            let result = kernel
-                .execute_solid_chain(
+            let Ok(mut plan) = job.plan else { continue };
+            let result = loop {
+                if plan.ops.is_empty() {
+                    break None;
+                }
+                let asked: Vec<kernel_api::ChainProbe> =
+                    plan.probes.iter().map(|p| p.probe).collect();
+                let projections: Vec<kernel_api::ChainProjection> =
+                    plan.projections.iter().map(|p| p.projection).collect();
+                let tags: Vec<kernel_api::TopoName> = plan
+                    .op_features
+                    .iter()
+                    .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+                    .collect();
+                match kernel.execute_solid_chain(
                     kernel_ogeom::ChainRequest::new(&plan.ops, &TessellationSettings::default())
                         .tags(&tags)
                         .probes(&asked)
                         .projections(&projections),
-                )
-                .unwrap_or_else(|e| panic!("{e:?}"));
+                ) {
+                    Ok(result) => break Some(result),
+                    Err(e) => {
+                        let feature = *plan.op_features.get(e.op_index).expect("an op's feature");
+                        doc.set_feature_failure(feature, e.message.clone(), e.edges.clone());
+                        plan.keep_before_failure(e.op_index);
+                    }
+                }
+            };
+            let Some(result) = result else { continue };
             doc.store_build_warnings(&plan.op_features, &plan.probes, &plan.projections, &result);
             doc.store_probe_answers(&plan.probes, &result.probes);
             doc.store_projections(&plan.projections, &result.projections);

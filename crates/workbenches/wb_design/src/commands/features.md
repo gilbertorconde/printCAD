@@ -855,8 +855,10 @@ does to the face.
 On a curved face the text wraps onto it (`wrap`, set by itself when the face
 is curved): round a cylinder or cone, or with `along = true` along its axis;
 `full_turn = true` spreads the letters evenly round a whole cylinder (`radius`
-says how far round that is). The face's kind is read from the body's mesh, so
-on a body not built yet give `wrap = true` and `radius` yourself.
+says how far round that is, until a build reads the cylinder's own; letters
+longer than the turn do not fit, and the build says so). The face's kind is
+read from the body's mesh, so on a body not built yet give `wrap = true` and
+`radius` yourself.
 
 See also: `design.project`, `sketch.text`
 

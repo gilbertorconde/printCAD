@@ -94,7 +94,7 @@ impl DesignWorkbench {
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         let mut lines = self.centre_overlays(ctx);
         for handle in self.handles(ctx) {
-            lines.extend(handles::overlays(ctx, &handle));
+            lines.extend(handles::overlays(ctx, &handle, self.tab.held.is_some()));
         }
         lines.extend(self.failing_edge_overlays(ctx, active_feature));
         lines
