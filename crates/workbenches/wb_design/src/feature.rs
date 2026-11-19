@@ -1219,9 +1219,12 @@ pub enum HoleCut {
         #[walk(length("counterbore_depth", "Counterbore depth"))]
         depth: f32,
     },
+    /// A cone at the mouth: `angle_deg` is its included angle, 90° when
+    /// none is given.
     Countersink {
         #[walk(length("countersink_diameter", "Countersink diameter"))]
         diameter: f32,
+        #[serde(default = "countersink_angle")]
         #[walk(angle("countersink_angle", "Countersink angle"))]
         angle_deg: f32,
     },
@@ -1234,12 +1237,14 @@ pub enum HoleCut {
         depth: f32,
     },
     /// A wider bore ending in a cone that narrows to the hole, as a
-    /// stepped drill leaves it: `angle_deg` is the cone's included angle.
+    /// stepped drill leaves it: `angle_deg` is the cone's included angle,
+    /// the drill's 118° when none is given.
     Counterdrill {
         #[walk(length("counterdrill_diameter", "Counterdrill diameter"))]
         diameter: f32,
         #[walk(length("counterdrill_depth", "Counterdrill depth"))]
         depth: f32,
+        #[serde(default = "drill_point_angle")]
         #[walk(angle("counterdrill_angle", "Counterdrill angle"))]
         angle_deg: f32,
     },
@@ -1487,6 +1492,10 @@ fn z_axis() -> [f32; 3] {
 
 fn drill_point_angle() -> f32 {
     118.0
+}
+
+fn countersink_angle() -> f32 {
+    90.0
 }
 
 /// What a body borrows from another: one of its sketches, or faces and
@@ -3216,6 +3225,23 @@ pub fn primitive_preset(shape: &str) -> Option<kernel_api::PrimitiveKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A countersink or counterdrill given no angle takes the usual one,
+    /// as an angled drill point does, rather than refusing the hole.
+    #[test]
+    fn hole_cuts_given_no_angle_take_the_usual_one() {
+        let read = |json| serde_json::from_value::<HoleCut>(json).unwrap();
+        let sink = read(serde_json::json!({"Countersink": {"diameter": 6.0}}));
+        assert_eq!(
+            sink,
+            HoleCut::Countersink {
+                diameter: 6.0,
+                angle_deg: 90.0
+            }
+        );
+        let drill = read(serde_json::json!({"Counterdrill": {"diameter": 8.0, "depth": 2.0}}));
+        assert!(matches!(drill, HoleCut::Counterdrill { angle_deg, .. } if angle_deg == 118.0));
+    }
 
     /// A projection saved with only its sketch and faces reads as split
     /// lines at the default height, its sketch its one dependency, and

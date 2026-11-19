@@ -90,9 +90,11 @@ Design features in [EDITING.md](EDITING.md#design-features).
 
 - **Counterbore:** a wider bore, diameter and depth.
 - **Spotface:** a shallow counterbore, to face a seat.
-- **Countersink:** a cone, diameter at the face and included angle.
+- **Countersink:** a cone, diameter at the face and included angle
+  (90° when a script leaves it out).
 - **Counterdrill:** a wider bore ending in a cone down to the hole:
-  diameter, depth and the cone's angle.
+  diameter, depth and the cone's angle (118° when a script leaves it
+  out).
 
 The seats below are offered only for a hole sized from an ISO metric
 thread, and a size the seat's table lacks says so in the panel.
