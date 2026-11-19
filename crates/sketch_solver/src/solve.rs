@@ -163,12 +163,14 @@ fn follow(
 }
 
 /// The starting values with every pair of points a distance or length
-/// holds apart, but which sit on one spot, moved a little apart: there
+/// holds apart, and every point held on a circle's rim with that circle's
+/// centre, but which sit on one spot, moved a little apart: there
 /// `|p2 - p1|` changes the same way whichever way a point moves, so the
-/// solve would see no direction to pull them. The second point moves along
-/// x (its y, then the first point, when that is held), always the same way,
+/// solve would see no direction to pull them and a rank would not count
+/// what holds them. The second point (the one on the rim) moves along x
+/// (its y, then the first point, when that is held), always the same way,
 /// so one input always starts from one place.
-fn part_coincident_ends(sys: &System) -> Vec<f64> {
+pub(crate) fn part_coincident_ends(sys: &System) -> Vec<f64> {
     use crate::residual::{ResidualSpec, segment_length};
     let mut x = sys.vars.clone();
     let mut free = vec![false; x.len()];
@@ -179,6 +181,9 @@ fn part_coincident_ends(sys: &System) -> Vec<f64> {
         let (a, b, d) = match *spec {
             ResidualSpec::Distance { p1, p2, d } => (p1, p2, d),
             ResidualSpec::Length { s, e, len } => (s, e, len),
+            ResidualSpec::PointOnCircle { p, c, r } | ResidualSpec::ArcEndpoint { p, c, r } => {
+                (c, p, x[r])
+            }
             _ => continue,
         };
         // The finite-difference step, so the parted pair is seen apart by
@@ -195,6 +200,13 @@ fn part_coincident_ends(sys: &System) -> Vec<f64> {
         }
     }
     x
+}
+
+/// The Jacobian a rank is read from: at the system's values, with stacked
+/// points held apart parted ([`part_coincident_ends`]) so what holds them
+/// is counted.
+pub(crate) fn rank_jacobian(sys: &System) -> Vec<Vec<f64>> {
+    jacobian(sys, &part_coincident_ends(sys))
 }
 
 /// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
