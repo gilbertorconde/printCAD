@@ -32,6 +32,9 @@ pub fn draw_step_import_modal(
     draft: &mut TessellationSettings,
 ) -> StepImportDialogAction {
     let mut action = StepImportDialogAction::None;
+    // Enter while a tolerance is being typed is the field's: it ends the
+    // typing, and the next Enter imports.
+    let typing = ctx.memory(|m| m.focused()).is_some();
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -152,7 +155,7 @@ pub fn draw_step_import_modal(
                     });
                 });
             ui.input_mut(|i| {
-                if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                if !typing && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
                     action = StepImportDialogAction::Confirmed;
                 }
                 if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {

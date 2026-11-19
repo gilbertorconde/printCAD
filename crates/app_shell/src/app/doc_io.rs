@@ -1210,7 +1210,9 @@ impl PrintCadApp {
 
     pub(crate) fn start_file_dialog(&mut self, kind: FileDialogKind) {
         use std::sync::mpsc;
+        // One dialog at a time: a second request is refused aloud.
         if self.files.dialog_rx.is_some() {
+            app_log::warn("A file dialog is already open: finish it, then try again");
             return;
         }
         // A read-only file is not written in place: Save becomes Save As.

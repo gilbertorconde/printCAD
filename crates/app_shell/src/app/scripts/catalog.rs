@@ -710,7 +710,9 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
 }
 
 /// The commands a key can run that make sense without a key: all but
-/// those that open a window of the interface's own.
+/// those that open a window of the interface's own (Save view as picture
+/// is only its file dialog; `doc.picture` takes the path) or lay out the
+/// window (the split view).
 pub(super) fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
     use keymap::HostAction::*;
     keymap::host_actions()
@@ -719,6 +721,9 @@ pub(super) fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostA
                 action,
                 Palette
                     | Preferences
+                    | SavePicture
+                    | SplitView
+                    | LinkSplitCameras
                     | Console
                     | Assistant
                     | RunScript

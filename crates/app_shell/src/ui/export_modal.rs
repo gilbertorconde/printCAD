@@ -28,6 +28,9 @@ pub fn draw_export_modal(
     configurations: usize,
 ) -> DialogAction {
     let mut action = DialogAction::None;
+    // Enter while a tolerance is being typed is the field's: it ends the
+    // typing, and the next Enter exports.
+    let typing = ctx.memory(|m| m.focused()).is_some();
     let frame = egui::Frame::new()
         .fill(BG1)
         .stroke(egui::Stroke::new(1.0, BORDER_STRONG))
@@ -152,7 +155,7 @@ pub fn draw_export_modal(
                     });
                 });
             ui.input_mut(|i| {
-                if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                if !typing && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
                     action = DialogAction::Confirmed;
                 }
                 if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
@@ -161,4 +164,41 @@ pub fn draw_export_modal(
             });
         });
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Enter while a field has the keyboard is the field's; with none, it
+    /// exports.
+    #[test]
+    fn enter_exports_only_when_no_field_is_being_typed() {
+        let ctx = Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let mut draft = ExportDraft::default();
+        let mut frame = |enter: bool| {
+            let events = enter.then(|| egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            let raw = egui::RawInput {
+                events: events.into_iter().collect(),
+                ..Default::default()
+            };
+            let mut action = DialogAction::None;
+            let mut output = ctx.run_ui(raw, |ui| {
+                action = draw_export_modal(ui.ctx(), &mut draft, 0)
+            });
+            output.textures_delta.clear();
+            action
+        };
+        assert!(matches!(frame(false), DialogAction::None));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("typing")));
+        assert!(matches!(frame(true), DialogAction::None), "the field's");
+        assert!(matches!(frame(true), DialogAction::Confirmed));
+    }
 }
