@@ -561,6 +561,9 @@ struct Tab {
     /// The elements of the open sketch nothing left free can move, by the
     /// sketch and the document edit they were worked out at.
     locked: std::cell::RefCell<Option<LockedAt>>,
+    /// The freedom the verdict reports while no diagnosis is cached, with
+    /// the sketch it was worked out on.
+    freedom: std::cell::RefCell<Option<(Sketch, i32)>>,
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
     sketch_picker: Option<SketchPicker>,

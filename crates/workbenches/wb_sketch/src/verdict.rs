@@ -71,6 +71,22 @@ impl SketchWorkbench {
         set
     }
 
+    /// [`solver::dof_estimate`] of `sketch`, worked out again only when
+    /// `sketch` differs from the one the kept estimate was worked out on:
+    /// every reader of a frame, and every frame the sketch stays, share
+    /// one estimate, while any change to it (an edit, an undo, a peer's
+    /// op, a formula's new value, a card's draft) is a different sketch.
+    fn freedom(&self, sketch: &Sketch) -> i32 {
+        if let Some((at, dof)) = self.tab.freedom.borrow().as_ref()
+            && at == sketch
+        {
+            return *dof;
+        }
+        let dof = solver::dof_estimate(sketch);
+        *self.tab.freedom.borrow_mut() = Some((sketch.clone(), dof));
+        dof
+    }
+
     /// The solver's verdict from the cached diagnosis, or a cheap estimate
     /// of the freedom left when none is cached yet.
     pub(crate) fn solver_verdict(&self, sketch: &Sketch) -> SolverVerdict {
@@ -82,7 +98,7 @@ impl SketchWorkbench {
                 d.conflicting.clone(),
                 d.redundant.clone(),
             ),
-            None => (solver::dof_estimate(sketch), true, Vec::new(), Vec::new()),
+            None => (self.freedom(sketch), true, Vec::new(), Vec::new()),
         };
         let verdict = |kind, title: &str, body: String, offenders: Vec<Uuid>| SolverVerdict {
             kind,
@@ -170,5 +186,55 @@ impl SketchWorkbench {
             detail: verdict.body,
             tone,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core_document::{
+        Document, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    };
+
+    use crate::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+    use crate::{SketchFeature, SketchWorkbench, solver, stored_sketch};
+
+    /// A hover over an unchanged sketch reads the kept freedom through
+    /// every frame and every reader; the document changing under it, as a
+    /// peer's op or an undo changes it, works it out again.
+    #[test]
+    fn the_freedom_is_estimated_once_per_sketch() {
+        let mut sketch = Sketch::new("s");
+        let [a, b] = [0.0, 5.0]
+            .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
+        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let mut doc = Document::new("t");
+        let feature = SketchFeature::new(sketch, SketchPlane::xy());
+        let id = doc.add_feature(feature, "s".into()).unwrap();
+        let mut wb = SketchWorkbench::default();
+        let frame = |doc: &mut Document, wb: &mut SketchWorkbench, x: f32| {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(id);
+            let viewport_pos = (x, 300.0);
+            let event = WorkbenchInputEvent::MouseMove { viewport_pos };
+            wb.on_input(&event, Some("sketch.line"), &mut ctx);
+            wb.on_frame(0.016, &mut ctx);
+            wb.viewport_hud(&ctx);
+            wb.status_items(&ctx);
+            wb.solver_verdict(&wb.frame_displayed(&ctx).unwrap().sketch)
+                .dof
+        };
+        frame(&mut doc, &mut wb, 400.0);
+        // A planted value read back was not worked out again.
+        wb.tab.freedom.borrow_mut().as_mut().unwrap().1 = -7;
+        assert_eq!(frame(&mut doc, &mut wb, 420.0), -7);
+        assert_eq!(frame(&mut doc, &mut wb, 440.0), -7);
+        let mut edited = stored_sketch(&doc, id).unwrap();
+        let free = Point::new(Vec2D::new(2.0, 3.0));
+        edited.sketch.add_geometry(GeometryElement::Point(free));
+        doc.update_feature_data(id, edited.to_json()).unwrap();
+        let dof = frame(&mut doc, &mut wb, 460.0);
+        assert_eq!(dof, solver::dof_estimate(&edited.sketch));
+        assert!(dof > 0);
     }
 }
