@@ -135,6 +135,33 @@ pub(crate) struct FileDialogResult {
     kind: FileDialogKind,
     /// What was picked: one path, or several for an attachment.
     paths: Vec<PathBuf>,
+    /// The tab on screen when the dialog was asked for.
+    tab: uuid::Uuid,
+}
+
+impl FileDialogKind {
+    /// Whether the answer is for the document the dialog was asked from:
+    /// saving, exporting or importing it, or changing one of its bodies.
+    /// The rest stand apart from any tab (a document opened in a tab of
+    /// its own, a script, a package, a bench's bytes already made).
+    fn belongs_to_tab(&self) -> bool {
+        match self {
+            FileDialogKind::Save
+            | FileDialogKind::SaveAs
+            | FileDialogKind::ImportStep
+            | FileDialogKind::Export(_)
+            | FileDialogKind::BenchOpen(_)
+            | FileDialogKind::ReplaceShape(_)
+            | FileDialogKind::TexturePicture(..) => true,
+            FileDialogKind::Open
+            | FileDialogKind::RunScript
+            | FileDialogKind::Attach(_)
+            | FileDialogKind::SaveFile(_)
+            | FileDialogKind::SaveFiles(_)
+            | FileDialogKind::SaveAnimation(_)
+            | FileDialogKind::InstallPackage => false,
+        }
+    }
 }
 
 impl PrintCadApp {
@@ -619,11 +646,10 @@ impl PrintCadApp {
             .map(|s| s.to_ascii_lowercase())
         {
             Some(ext) if ext == "json" => {
-                let file = std::fs::File::create(path).with_context(|| {
-                    format!("Failed to create document file {}", path.display())
-                })?;
-                serde_json::to_writer_pretty(file, &self.session.document)
+                let bytes = serde_json::to_vec_pretty(&self.session.document)
                     .with_context(|| "Failed to serialize document")?;
+                crate::platform::write(path, &bytes)
+                    .with_context(|| format!("Failed to write document file {}", path.display()))?;
             }
             _ => {
                 let compression = if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
@@ -884,16 +910,28 @@ impl PrintCadApp {
         }
     }
 
-    /// Every tab's saves, before the process ends (CLAUDE.md invariant).
+    /// Every tab's saves, before the process ends (CLAUDE.md invariant),
+    /// their answers taken in, so a tab whose save failed still shows its
+    /// edits; and the recovery copies being written.
     pub(crate) fn wait_for_all_document_saves(&mut self) {
-        self.for_each_tab(|app| app.wait_for_document_saves());
-        // On the way out, after the user answered for every tab: no copy is
-        // left to come back from.
+        self.for_each_tab(|app| {
+            app.wait_for_document_saves();
+            app.drain_server_messages();
+        });
         for job in self.autosave.jobs.drain(..) {
             job.join();
         }
+        self.finish_export();
+    }
+
+    /// Take away the recovery copies of the tabs `forget` names, on the way
+    /// out once their edits are saved or let go.
+    pub(crate) fn forget_recovery_copies(&mut self, forget: impl Fn(uuid::Uuid) -> bool) {
         for slot in &self.tabs {
-            crate::app::recovery::forget(slot.tab);
+            if forget(slot.tab) {
+                self.autosave.saved.remove(&slot.tab);
+                crate::app::recovery::forget(slot.tab);
+            }
         }
     }
 
@@ -935,6 +973,13 @@ impl PrintCadApp {
             return;
         }
         self.autosave.at = std::time::Instant::now();
+        self.keep_recovery_copies();
+    }
+
+    /// A copy of each tab's document edited since its last copy, packed
+    /// and written on a thread of its own (`autosave.jobs`). A tab that is
+    /// saved has its copy taken away.
+    pub(crate) fn keep_recovery_copies(&mut self) {
         // The fields apart, as `self.autosave.saved` changes on the way.
         let sessions = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()));
@@ -1062,7 +1107,9 @@ impl PrintCadApp {
         self.session.connection.server.flush();
     }
 
-    /// Drain a finished file-dialog thread's result, if any.
+    /// Drain a finished file-dialog thread's result, if any. An answer for
+    /// a document goes to the tab it was asked from, brought on screen,
+    /// whichever tab is on screen now; it is let go when that tab closed.
     pub(crate) fn poll_file_dialog(&mut self) {
         let Some(rx) = &self.files.dialog_rx else {
             return;
@@ -1070,11 +1117,22 @@ impl PrintCadApp {
         let Ok(result) = rx.try_recv() else {
             return;
         };
+        self.files.dialog_rx = None;
         let path = result.paths.first().cloned();
+        // A bench hears of a cancelled pick too, in its own tab.
+        let answered =
+            !result.paths.is_empty() || matches!(result.kind, FileDialogKind::BenchOpen(_));
+        if result.kind.belongs_to_tab() && answered {
+            let Some(index) = self.tab_index_of(result.tab) else {
+                app_log::warn("The tab the file was picked for is closed: nothing done with it");
+                return;
+            };
+            self.switch_tab(index);
+        }
         match result.kind {
             FileDialogKind::Open => {
                 if let Some(path) = path {
-                    self.request_document_open(path);
+                    self.open_document_at(path);
                 }
             }
             FileDialogKind::Save | FileDialogKind::SaveAs => {
@@ -1108,7 +1166,7 @@ impl PrintCadApp {
             FileDialogKind::Attach(chat) => self.attach_files(&chat, result.paths),
             FileDialogKind::SaveFile(file) => {
                 if let Some(path) = path {
-                    match std::fs::write(&path, &file.contents) {
+                    match crate::platform::write(&path, &file.contents) {
                         Ok(()) => app_log::info(format!("Saved {}", path.display())),
                         Err(err) => {
                             app_log::error(format!("Could not save {}: {err}", path.display()))
@@ -1146,7 +1204,6 @@ impl PrintCadApp {
                 }
             }
         }
-        self.files.dialog_rx = None;
     }
 
     pub(crate) fn start_file_dialog(&mut self, kind: FileDialogKind) {
@@ -1168,6 +1225,7 @@ impl PrintCadApp {
 
         let (tx, rx) = mpsc::channel::<FileDialogResult>();
         self.files.dialog_rx = Some(rx);
+        let tab = self.session.tab;
 
         let current_path = self.session.file.path.clone();
         let stem = current_path
@@ -1313,7 +1371,7 @@ impl PrintCadApp {
                 }),
             };
 
-            let _ = tx.send(FileDialogResult { kind, paths });
+            let _ = tx.send(FileDialogResult { kind, paths, tab });
         });
     }
 }
@@ -1326,7 +1384,7 @@ fn write_into(folder: &std::path::Path, files: &[(String, Vec<u8>)]) {
             continue;
         }
         let path = folder.join(name);
-        match std::fs::write(&path, contents) {
+        match crate::platform::write(&path, contents) {
             Ok(()) => app_log::info(format!("Saved {}", path.display())),
             Err(err) => app_log::error(format!("Could not save {}: {err}", path.display())),
         }

@@ -806,9 +806,18 @@ impl PrintCadApp {
             }
 
             let render_started = Instant::now();
-            if let Err(err) = renderer.render(&mut self.frame_submission) {
+            let rendered = match renderer.render(&mut self.frame_submission) {
+                // A lost surface is made again and the frame drawn anew.
+                Err(render_wgpu::RenderError::SurfaceLost) => {
+                    renderer.recover_surface(window).map(|()| {
+                        window.request_redraw();
+                    })
+                }
+                other => other,
+            };
+            if let Err(err) = rendered {
                 app_log::error(format!("Render failure: {err}"));
-                event_loop.exit();
+                self.exit_unable_to_draw(event_loop);
                 return;
             }
             self.stats.frame_phase_accum.1 += render_started.elapsed().as_secs_f32() * 1000.0;

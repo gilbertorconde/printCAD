@@ -85,7 +85,7 @@ pub(crate) struct RendererCore {
     queue: wgpu::Queue,
     device: wgpu::Device,
     adapter: wgpu::Adapter,
-    _instance: wgpu::Instance,
+    instance: wgpu::Instance,
 }
 
 impl RendererCore {
@@ -350,7 +350,7 @@ impl RendererCore {
             queue,
             device,
             adapter,
-            _instance: instance,
+            instance,
         })
     }
 
@@ -368,6 +368,23 @@ impl RendererCore {
             self.mesh_renderer.picks_primitives(),
         );
         self.last_scene_fingerprint = None;
+    }
+
+    /// A new surface on `window`, the one the renderer was made for,
+    /// configured as the lost one was.
+    pub(crate) fn recreate_surface(&mut self, window: &Window) -> Result<(), RenderError> {
+        // SAFETY: as in `new`: the handles are the live window's, which
+        // outlives the surface, since the app drops the renderer first.
+        let surface = unsafe {
+            let target = wgpu::SurfaceTargetUnsafe::from_display_and_window(window, window)
+                .map_err(|e| RenderError::Surface(e.to_string()))?;
+            self.instance.create_surface_unsafe(target)
+        }
+        .map_err(|e| RenderError::Surface(e.to_string()))?;
+        surface.configure(&self.device, &self.config);
+        self.surface = surface;
+        self.last_scene_fingerprint = None;
+        Ok(())
     }
 
     pub(crate) fn surface_size(&self) -> (u32, u32) {
@@ -465,9 +482,7 @@ impl RendererCore {
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return Err(RenderError::SurfaceTooSmall);
             }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                return Err(RenderError::Surface("the window's surface was lost".into()));
-            }
+            wgpu::CurrentSurfaceTexture::Lost => return Err(RenderError::SurfaceLost),
             wgpu::CurrentSurfaceTexture::Validation => {
                 return Err(RenderError::Surface(
                     "acquiring the window's image failed validation".into(),

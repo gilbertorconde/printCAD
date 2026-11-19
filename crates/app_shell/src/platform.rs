@@ -34,9 +34,10 @@ pub(crate) fn read(path: &Path) -> std::io::Result<Vec<u8>> {
     std::fs::read(path)
 }
 
-/// Write `bytes` as the file at `path`.
+/// Write `bytes` as the file at `path`: into a file beside it, moved over
+/// it once whole, so a failed or cut-off write leaves the file as it was.
 pub(crate) fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, bytes)
+    local_ipc::write_atomically(path, bytes)
 }
 
 /// Take the file at `path` away; one that is not there is no error.

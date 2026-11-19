@@ -11,6 +11,7 @@ use core_document::{Document, FileAge, file_age};
 use uuid::Uuid;
 
 use crate::PrintCadApp;
+use crate::app::unsaved::Then;
 use crate::log_panel as app_log;
 
 /// The version this build is, as saves are stamped with it.
@@ -107,6 +108,19 @@ pub(crate) const READ_ONLY_LINK_TIP: &str =
 pub(crate) struct SaveOver {
     pub tab: Uuid,
     pub path: PathBuf,
+    /// The close or quit that asked for the save, which goes on once the
+    /// file is written.
+    pub then: Option<Then>,
+}
+
+/// What answering the question about saving over a file leads to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SaveOverOutcome {
+    /// The settings changed and want writing.
+    pub settings_changed: bool,
+    /// The close or quit waiting on the save, to go on with now that the
+    /// file is written.
+    pub go_on: Option<(Uuid, Then)>,
 }
 
 /// What the user chose about saving over a file from another version.
@@ -174,17 +188,11 @@ impl PrintCadApp {
     /// Save to `path`, picked by Save or Save As: over the tab's own file
     /// from another version, once the user says so.
     pub(crate) fn save_document_asking(&mut self, path: PathBuf) {
-        let own_file = self.session.file.path.as_deref() == Some(path.as_path());
-        if own_file
-            && self
-                .session
-                .file
-                .safety
-                .asks_before_saving(self.user_settings.files.ask_before_saving_older)
-        {
+        if self.asks_before_saving_at(&path) {
             self.questions.save_over = Some(SaveOver {
                 tab: self.session.tab,
                 path,
+                then: None,
             });
             self.redraw_needed = true;
             return;
@@ -192,6 +200,37 @@ impl PrintCadApp {
         if let Err(err) = self.save_document_at(&path) {
             app_log::error(format!("Failed to save document: {err:#}"));
         }
+    }
+
+    /// Whether saving the active tab to `path` asks first: it is the tab's
+    /// own file, from another version.
+    fn asks_before_saving_at(&self, path: &Path) -> bool {
+        self.session.file.path.as_deref() == Some(path)
+            && self
+                .session
+                .file
+                .safety
+                .asks_before_saving(self.user_settings.files.ask_before_saving_older)
+    }
+
+    /// Save of the active tab in place, asked for by a close or quit
+    /// (`then`): when its own file is from another version, put up the
+    /// question about saving over it, which carries `then` on. True when
+    /// the question is up.
+    pub(crate) fn ask_before_saving_over(&mut self, then: Option<Then>) -> bool {
+        let Some(path) = self.session.file.path.clone() else {
+            return false;
+        };
+        if self.current_file_read_only() || !self.asks_before_saving_at(&path) {
+            return false;
+        }
+        self.questions.save_over = Some(SaveOver {
+            tab: self.session.tab,
+            path,
+            then,
+        });
+        self.redraw_needed = true;
+        true
     }
 
     /// The question about saving over a file from another version, while
@@ -209,32 +248,42 @@ impl PrintCadApp {
         })
     }
 
-    /// The user answered the question about saving over the file.
-    /// Whether the settings changed and want writing.
-    pub(crate) fn answer_save_over(&mut self, answer: SaveOverAnswer) -> bool {
+    /// The user answered the question about saving over the file. A close
+    /// or quit waiting on it goes on only once the file is written; Save
+    /// As or Cancel stops it.
+    pub(crate) fn answer_save_over(&mut self, answer: SaveOverAnswer) -> SaveOverOutcome {
+        let mut outcome = SaveOverOutcome::default();
         let Some(asking) = self.questions.save_over.take() else {
-            return false;
+            return outcome;
         };
         if asking.tab != self.session.tab {
-            return false;
+            return outcome;
         }
+        let mut saved = false;
         match answer {
             SaveOverAnswer::Save { quiet } => {
-                if let Err(err) = self.save_document_at(&asking.path) {
-                    app_log::error(format!("Failed to save document: {err:#}"));
+                match self.save_document_at(&asking.path) {
+                    Ok(()) => saved = asking.then.is_none() || self.save_landed(),
+                    Err(err) => app_log::error(format!("Failed to save document: {err:#}")),
                 }
                 if quiet && self.user_settings.files.ask_before_saving_older {
                     self.user_settings.files.ask_before_saving_older = false;
-                    return true;
+                    outcome.settings_changed = true;
                 }
-                false
             }
             SaveOverAnswer::SaveAs => {
                 self.start_file_dialog(crate::app::doc_io::FileDialogKind::SaveAs);
-                false
             }
-            SaveOverAnswer::Cancel => false,
+            SaveOverAnswer::Cancel => {}
         }
+        if let Some(then) = asking.then {
+            if saved {
+                outcome.go_on = Some((asking.tab, then));
+            } else {
+                self.questions.quit_answered.clear();
+            }
+        }
+        outcome
     }
 }
 

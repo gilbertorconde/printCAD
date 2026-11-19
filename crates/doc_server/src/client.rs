@@ -25,6 +25,9 @@ pub struct DaemonClient {
     stream: UnixStream,
     /// Frames the reader thread has decoded, drained by `poll`.
     rx: Receiver<ServerMessage>,
+    /// Messages `flush` read while it waited, handed out by the next
+    /// `poll` before anything newer.
+    held: Vec<ServerMessage>,
     /// Messages queued for the writer thread. A save carries the whole
     /// document, so encoding and writing it must not happen on the caller's
     /// thread: that thread is the one drawing the window.
@@ -118,6 +121,7 @@ impl DaemonClient {
             actor,
             stream,
             rx,
+            held: Vec::new(),
             tx_out,
             child,
             opens_in_flight: 0,
@@ -160,7 +164,7 @@ impl DocumentServer for DaemonClient {
     }
 
     fn poll(&mut self) -> Vec<ServerMessage> {
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.held);
         loop {
             match self.rx.try_recv() {
                 Ok(message) => {
@@ -204,19 +208,27 @@ impl DocumentServer for DaemonClient {
 
     fn flush(&mut self) {
         // Saves are answered in order; wait (bounded) until every queued
-        // write has its reply, so exiting cannot truncate a document.
+        // write has its reply, so exiting cannot truncate a document. What
+        // arrives meanwhile is kept for the next `poll`: a save's answer
+        // says whether the document is on disk.
         let deadline = Instant::now() + Duration::from_secs(60);
         while self.saves_in_flight > 0 && self.connected && Instant::now() < deadline {
             match self.rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(message) => match &message {
-                    ServerMessage::SaveCompleted { .. } | ServerMessage::SaveFailed { .. } => {
-                        self.saves_in_flight = self.saves_in_flight.saturating_sub(1);
+                Ok(message) => {
+                    match &message {
+                        ServerMessage::SaveCompleted { .. } | ServerMessage::SaveFailed { .. } => {
+                            self.saves_in_flight = self.saves_in_flight.saturating_sub(1);
+                        }
+                        ServerMessage::Opened { .. } | ServerMessage::OpenFailed { .. } => {
+                            self.opens_in_flight = self.opens_in_flight.saturating_sub(1);
+                        }
+                        ServerMessage::Peers { peers } => {
+                            self.peers = *peers;
+                        }
+                        _ => {}
                     }
-                    ServerMessage::Opened { .. } | ServerMessage::OpenFailed { .. } => {
-                        self.opens_in_flight = self.opens_in_flight.saturating_sub(1);
-                    }
-                    _ => {}
-                },
+                    self.held.push(message);
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     self.connected = false;

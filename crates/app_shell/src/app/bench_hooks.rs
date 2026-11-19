@@ -306,6 +306,8 @@ impl PrintCadApp {
         {
             tracing::info!(target: "printcad.frame", "bench exit requested");
             self.wait_for_all_document_saves();
+            // A scripted run leaves nothing to recover.
+            self.forget_recovery_copies(|_| true);
             self.keep_session_for_next_run();
             event_loop.exit();
             return false;
