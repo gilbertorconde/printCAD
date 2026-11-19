@@ -201,5 +201,18 @@ sends it the saved bytes and every operation. The server stores them without
 reading them: the file, and the operation log beside it
 (`<file>.oplog.jsonl`).
 
+Several copies of the application can edit one document through its
+server. The server puts their edits in one order and sends each edit to
+every copy in that order. A copy shows its own edits at once; when another
+copy's edit comes in that the server ordered first, it is applied beneath
+the local ones still waiting for the server, so every copy ends with the
+same document. When two people change the same thing at once, the change
+the server received last is the one everybody keeps.
+
+Opening a document that another copy already has open gives the saved
+file plus the edits made since it was saved. A save leaves on the server
+the edits that its file does not hold yet, so a copy opened afterwards
+still gets them.
+
 If the server cannot start, the application writes the file directly and
 logs a warning.

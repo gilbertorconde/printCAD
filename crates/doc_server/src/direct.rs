@@ -1,9 +1,9 @@
 //! The no-daemon fallback: the same `DocumentServer` contract served by
 //! plain worker threads doing file I/O in-process. Behaviorally identical
 //! to the daemon path from the app's point of view, which is the proof the
-//! trait actually seals the seam. Ops are counted and dropped: with no
-//! server process there is nowhere durable to log them, and pretending
-//! otherwise would be worse than saying so.
+//! trait actually seals the seam. Ops are counted, acknowledged in the
+//! order sent and dropped: with no server process there is nowhere durable
+//! to log them, and pretending otherwise would be worse than saying so.
 
 use crate::file_io::write_atomically;
 
@@ -24,6 +24,8 @@ pub struct DirectFiles {
     opens_in_flight: u32,
     saves_in_flight: u32,
     ops_dropped: u64,
+    /// The last sequence number acknowledged; this client is the only one.
+    seq: u64,
 }
 
 impl Default for DirectFiles {
@@ -44,6 +46,7 @@ impl DirectFiles {
             opens_in_flight: 0,
             saves_in_flight: 0,
             ops_dropped: 0,
+            seq: 0,
         }
     }
 }
@@ -64,11 +67,14 @@ impl DocumentServer for DirectFiles {
             ClientMessage::Hello { .. } | ClientMessage::Rebase | ClientMessage::Presence(_) => {}
             ClientMessage::Ops(ops) => {
                 self.ops_dropped += ops.len() as u64;
+                self.seq += 1;
+                let _ = self.tx.send(ServerMessage::Acked { seq: self.seq });
             }
             ClientMessage::SaveDocument {
                 path,
                 bytes,
                 at_seq,
+                ..
             } => {
                 self.saves_in_flight = self.saves_in_flight.saturating_add(1);
                 let tx = self.tx.clone();

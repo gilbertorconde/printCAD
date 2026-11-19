@@ -57,6 +57,10 @@ pub(crate) struct OpenJob {
 pub(crate) struct SaveJob {
     path: std::path::PathBuf,
     at_seq: u64,
+    /// Which ops the snapshot holds, in the server's terms: the others'
+    /// batches up to this sequence number and this many of its own.
+    seen_seq: u64,
+    sent_batches: u64,
     result: Result<Vec<u8>, String>,
 }
 
@@ -233,8 +237,9 @@ impl PrintCadApp {
 
     /// Replace the in-memory document after a successful load (UI thread).
     fn apply_opened_document(&mut self, path: PathBuf, document: Document) {
-        // The outgoing document's held ops go with it, not with the new one.
-        self.session.send_outbox();
+        // The connection already serves the opened file, which the
+        // outgoing document's unsent ops do not describe: they leave with
+        // it.
         self.session.document = opened(&self.registry, document);
         self.session.file.path = Some(path.clone());
         // The chats kept with the file come back, resting until shown.
@@ -273,14 +278,11 @@ impl PrintCadApp {
                     .clamp_focal_to_settings(&self.user_settings.camera);
             }
         }
+        // No rebase: the file and the tail the server sent after it are the
+        // document as every other client on it holds it, unsaved edits and
+        // all. (set_name above records an op into the new document; it
+        // flows normally on the next drain.)
         self.session.journal.reset(&mut self.session.document);
-        // A fresh baseline: what the server logged before describes another
-        // state than this client's. (set_name above records an op into the
-        // new document; it flows normally on the next drain.)
-        self.session
-            .connection
-            .server
-            .send(core_document::server::ClientMessage::Rebase);
         app_log::info(format!("Opened document from {}", path.display()));
         self.note_opened_file(&path);
         self.report_missing_packages();
@@ -306,6 +308,7 @@ impl PrintCadApp {
                 self.session.connection.server.flush();
                 self.session.connection.server = server;
                 self.session.connection.socket = socket;
+                self.session.connection_replaced();
                 // The old connection's peers are not this one's.
                 self.session.connection.peer_presence.clear();
                 self.session.connection.last_sent_presence = None;
@@ -345,6 +348,7 @@ impl PrintCadApp {
         match crate::app::server::connect(&self.session.connection.socket.clone()) {
             Ok(server) => {
                 self.session.connection.server = server;
+                self.session.connection_replaced();
                 app_log::info("Document server reconnected");
             }
             Err(err) => {
@@ -520,6 +524,8 @@ impl PrintCadApp {
                 path,
                 token: self.session.connection.load_epoch,
             });
+        self.session.connection.awaiting_open = true;
+        self.session.connection.held_remote_ops.clear();
     }
 
     /// Apply everything the server answered since last frame: opened
@@ -542,14 +548,25 @@ impl PrintCadApp {
                         )
                     });
                 }
-                ServerMessage::Ops { actor, ops } => {
-                    if self.session.connection.server.status().opens_in_flight > 0 {
-                        // An open will replace the document; these ops
-                        // describe the incoming one. Apply them after it.
-                        self.session.connection.held_remote_ops.push((actor, ops));
+                ServerMessage::Ops { actor, seq, ops } => {
+                    if self.session.connection.awaiting_open {
+                        // The Opened reply's file and the tail after it
+                        // already hold every batch heard before it.
+                    } else if self.session.file.open_rx.is_some() {
+                        // The opened document is still being parsed; these
+                        // follow its file. Applied right after it lands.
+                        self.session
+                            .connection
+                            .held_remote_ops
+                            .push((actor, seq, ops));
                     } else {
-                        self.apply_remote_ops(actor, ops);
+                        self.apply_remote_ops(actor, seq, ops);
                     }
+                }
+                ServerMessage::Acked { seq } => {
+                    self.session.document.confirm_sent_ops();
+                    let connection = &mut self.session.connection;
+                    connection.server_seq = connection.server_seq.max(seq);
                 }
                 ServerMessage::PresencePeer { actor, state } => {
                     self.session.connection.peer_presence.insert(actor, state);
@@ -561,6 +578,7 @@ impl PrintCadApp {
                     if token != self.session.connection.load_epoch {
                         continue;
                     }
+                    self.session.connection.awaiting_open = false;
                     self.start_document_parse(token, path, bytes);
                 }
                 ServerMessage::OpenFailed { token, path, error } => {
@@ -568,6 +586,7 @@ impl PrintCadApp {
                     if token != self.session.connection.load_epoch {
                         continue;
                     }
+                    self.session.connection.awaiting_open = false;
                     app_log::error(format!(
                         "Failed to open document {}: {error}",
                         path.display()
@@ -672,18 +691,33 @@ impl PrintCadApp {
         Ok(())
     }
 
-    /// Apply a peer's relayed edits. The ops are resolved effects, replayed
-    /// through the same `apply_op` path the determinism tests pin, and the
-    /// daemon never echoes this client's own ops, so everything here is
-    /// foreign. Marking dirty is apply-side policy: it is what makes this replica
+    /// Apply a peer's batch of edits, number `seq` in the server's order.
+    /// The ops are resolved effects, replayed through the same `apply_op`
+    /// path the determinism tests pin, beneath this client's own edits the
+    /// server has not yet confirmed (`Document::apply_server_ops`): the
+    /// server ordered those later, so they stay on top. The daemon answers
+    /// this client's own batches with acks, so everything here is foreign.
+    /// Marking dirty is apply-side policy: it is what makes this replica
     /// re-derive the geometry the peer's edit invalidated.
-    fn apply_remote_ops(&mut self, _actor: uuid::Uuid, ops: Vec<core_document::op::DocumentOp>) {
+    fn apply_remote_ops(
+        &mut self,
+        _actor: uuid::Uuid,
+        seq: u64,
+        ops: Vec<core_document::op::DocumentOp>,
+    ) {
         use core_document::op::DocumentOp as Op;
+        let connection = &mut self.session.connection;
+        connection.server_seq = connection.server_seq.max(seq);
         if ops.is_empty() {
             return;
         }
+        if !self.session.document.apply_server_ops(&ops) {
+            app_log::warn(
+                "A peer's edit landed over one of yours not yet confirmed that cannot be \
+                 rolled back; if both touched the same thing, this copy may differ",
+            );
+        }
         for op in &ops {
-            self.session.document.apply_remote_op(op);
             if let Op::ImportModel {
                 asset,
                 bytes,
@@ -799,8 +833,10 @@ impl PrintCadApp {
         match job.result {
             Ok(document) => {
                 self.apply_opened_document(job.path, document);
-                for (actor, ops) in std::mem::take(&mut self.session.connection.held_remote_ops) {
-                    self.apply_remote_ops(actor, ops);
+                for (actor, seq, ops) in
+                    std::mem::take(&mut self.session.connection.held_remote_ops)
+                {
+                    self.apply_remote_ops(actor, seq, ops);
                 }
             }
             Err(err) => app_log::error(format!(
@@ -818,6 +854,8 @@ impl PrintCadApp {
         self.session.send_outbox();
         let mut document = self.whole_solids().into_owned();
         let at_seq = self.session.document.mutation_seq();
+        let seen_seq = self.session.connection.server_seq;
+        let sent_batches = self.session.connection.batches_sent;
         let path = path.to_path_buf();
         let preview = self.thumbnail_shapes();
         let (forward, up) = self.session.view.camera.view_basis();
@@ -833,6 +871,8 @@ impl PrintCadApp {
             let _ = tx.send(SaveJob {
                 path,
                 at_seq,
+                seen_seq,
+                sent_batches,
                 result: packed.map_err(|err| err.to_string()),
             });
         });
@@ -885,6 +925,8 @@ impl PrintCadApp {
                     path: job.path,
                     bytes,
                     at_seq: job.at_seq,
+                    seen_seq: Some(job.seen_seq),
+                    sent_batches: Some(job.sent_batches),
                 },
             ),
             Err(err) => app_log::error(format!("Failed to serialize document: {err}")),

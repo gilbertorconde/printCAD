@@ -215,6 +215,39 @@ fn concurrent_inserts_order_identically_on_every_replica() {
     );
 }
 
+/// A server's op lands beneath this replica's unconfirmed ones when each
+/// of those can be rolled back, and over them, reported, when one cannot.
+#[test]
+fn server_ops_land_beneath_unconfirmed_ones_that_roll_back() {
+    let mut alice = Document::new("Under");
+    let body = alice.create_body(Some("B".into()));
+    let _ = alice.take_pending_ops();
+    alice.confirm_sent_ops();
+    let mut bob = alice.clone();
+    bob.rename_body(body, "bob");
+    let from_bob = bob.take_pending_ops();
+
+    alice.rename_body(body, "alice, sent");
+    let _ = alice.take_pending_ops();
+    alice.rename_body(body, "alice, held");
+    assert!(alice.apply_server_ops(&from_bob));
+    assert_eq!(alice.bodies()[0].name, "alice, held");
+
+    alice.add_asset_with_data(
+        core_document::AssetReference::new(
+            "assets/part.step".to_string(),
+            core_document::AssetType::Step,
+            serde_json::json!({}),
+        ),
+        vec![1, 2, 3],
+    );
+    assert!(
+        !alice.apply_server_ops(&from_bob),
+        "an asset has no inverse"
+    );
+    assert_eq!(alice.bodies()[0].name, "bob");
+}
+
 #[test]
 fn removing_a_body_takes_its_features_and_its_geometry() {
     let mut doc = Document::new("t");

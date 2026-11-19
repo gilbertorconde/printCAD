@@ -253,11 +253,21 @@ pub(crate) struct Connection {
     /// What each peer has selected, keyed by actor. Bodies in here render
     /// with the peer tint; entries die with their peer.
     pub peer_presence: HashMap<Uuid, core_document::server::PresenceState>,
-    /// Relayed ops that arrived while an open was in flight. The daemon's
-    /// threads may interleave a relay before the Opened reply; applying it
-    /// to the document the open is about to replace would lose the edit,
-    /// so they wait here and apply right after the new document lands.
-    pub held_remote_ops: Vec<(Uuid, Vec<core_document::op::DocumentOp>)>,
+    /// The server's batches heard after the Opened reply while the opened
+    /// document is still being parsed: they follow the file, so they wait
+    /// here and apply in order right after the new document lands.
+    pub held_remote_ops: Vec<(Uuid, u64, Vec<core_document::op::DocumentOp>)>,
+    /// An open was asked of this connection and its Opened (or
+    /// OpenFailed) reply has not come yet. Batches heard meanwhile are
+    /// already in the file or the tail that follows the reply.
+    pub awaiting_open: bool,
+    /// The newest sequence number heard in the server's order, from
+    /// another's batch applied or an ack of this client's own: a save
+    /// tells the server its snapshot holds the others' batches up to here.
+    pub server_seq: u64,
+    /// Batches of ops sent on this connection: a save tells the server its
+    /// snapshot holds this many of this client's own.
+    pub batches_sent: u64,
     /// The last presence told to the server, so only changes cross the wire.
     pub last_sent_presence: Option<core_document::server::PresenceState>,
     pub load_epoch: u64,
@@ -714,6 +724,9 @@ impl Connection {
             remote_import_routes: HashMap::new(),
             peer_presence: HashMap::new(),
             held_remote_ops: Vec::new(),
+            awaiting_open: false,
+            server_seq: 0,
+            batches_sent: 0,
             last_sent_presence: None,
             load_epoch: 0,
         }

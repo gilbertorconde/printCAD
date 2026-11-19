@@ -9,6 +9,15 @@
 //! an implementation from in-process to daemon to remote changes transport,
 //! never semantics.
 //!
+//! The server puts every client's ops in one order: each batch gets the
+//! next sequence number and goes out to every client in that order, as
+//! [`ServerMessage::Ops`] to the others and [`ServerMessage::Acked`] to its
+//! sender. A client applies its own edits at once and others' as they come,
+//! rolling its unconfirmed edits back beneath each and replaying them on
+//! top (`Document::apply_server_ops`), so every replica ends in the state
+//! the server's order gives: for two writes of one field, the later in that
+//! order wins everywhere.
+//!
 //! The server never deserializes a `Document`. Snapshots cross the boundary
 //! as opaque `.prtcad` container bytes (see `Document::save_to_bytes` /
 //! `load_from_bytes`) and edits as [`DocumentOp`] envelopes, so a daemon
@@ -22,7 +31,7 @@ use crate::op::DocumentOp;
 
 /// Version of the client↔server protocol; the `Hello` handshake refuses a
 /// mismatch loudly rather than misreading frames quietly.
-pub const SERVER_PROTOCOL_VERSION: u32 = 3;
+pub const SERVER_PROTOCOL_VERSION: u32 = 4;
 
 /// A message whose container bytes travel beside it rather than inside it.
 ///
@@ -75,22 +84,35 @@ pub enum ClientMessage {
     /// `actor` identifies this client among the document's editors: it is
     /// how relayed ops name their author.
     Hello { protocol: u32, actor: uuid::Uuid },
-    /// User edits drained from the document's outbox, in order.
+    /// User edits drained from the document's outbox, in order: one
+    /// batch, answered by [`ServerMessage::Acked`] once it has its place in
+    /// the document's order.
     Ops(Vec<DocumentOp>),
-    /// The client's document history jumped (undo/redo/new/open): ops
-    /// recorded before this point do not describe the client's state.
-    /// The server truncates its log.
+    /// The client put another document in place of the one it had (a new
+    /// document, a recovered copy): the ops logged so far do not describe
+    /// its state. The server clears its log and unsaved tail only while
+    /// this client is its only one; with others editing, their unsaved
+    /// edits stay and the rebase is refused in the server's log.
     Rebase,
     /// Persist a client-serialized `.prtcad` container. `at_seq` is the
     /// client's mutation counter when the snapshot was taken; it rides back
     /// in [`ServerMessage::SaveCompleted`] so the client can decide whether
     /// the document is truly clean (edits may have landed mid-save).
+    /// `seen_seq` and `sent_batches` say which ops the snapshot holds: the
+    /// others' up to that sequence number, and the first `sent_batches`
+    /// batches this client sent on this connection; `None` stands for all
+    /// of them so far. The server keeps the rest in its unsaved tail for
+    /// clients that join later.
     SaveDocument {
         path: PathBuf,
         /// Carried beside the message, not inside it (see [`Payload`]).
         #[serde(skip)]
         bytes: Vec<u8>,
         at_seq: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seen_seq: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sent_batches: Option<u64>,
     },
     /// Read a document's bytes. `token` correlates the eventual response
     /// with the request that asked for it (an open may be abandoned by a
@@ -126,12 +148,21 @@ pub enum ServerMessage {
         /// How many other clients are editing this document right now.
         peers: u32,
     },
-    /// Another client's edits, relayed in the order the server received
-    /// them. The server never echoes a client's own ops back to it, so
-    /// applying these verbatim is echo-safe.
+    /// Another client's batch of edits and its place in the document's
+    /// order. Every client hears every batch in that order: the others' as
+    /// these, its own as [`ServerMessage::Acked`]. A client that opens a
+    /// document gets its unsaved tail as these, right after
+    /// [`ServerMessage::Opened`].
     Ops {
         actor: uuid::Uuid,
+        seq: u64,
         ops: Vec<DocumentOp>,
+    },
+    /// This client's oldest unanswered batch of ops has sequence number
+    /// `seq`: every batch heard before this came earlier in the order,
+    /// every one after it later.
+    Acked {
+        seq: u64,
     },
     /// A peer joined or left; `peers` counts the *other* editors.
     Peers {

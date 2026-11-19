@@ -77,14 +77,33 @@ pub(crate) struct DocumentSession {
 impl DocumentSession {
     /// Hand the document's outbox to the server: the edits recorded since
     /// the last send, in order. Every way a tab's document or connection
-    /// ends calls it, so a held gesture's ops are never left behind.
+    /// ends calls it, so a held gesture's ops are never left behind. While
+    /// a file is being opened into the tab they are let go instead.
     pub(crate) fn send_outbox(&mut self) {
         let ops = self.document.take_pending_ops();
+        if self.connection.awaiting_open || self.file.open_rx.is_some() {
+            // The connection already serves the file being opened, which
+            // these edits of the document it replaces do not describe.
+            self.document.forget_sent_ops();
+            return;
+        }
         if !ops.is_empty() {
             self.connection
                 .server
                 .send(core_document::server::ClientMessage::Ops(ops));
+            self.connection.batches_sent += 1;
         }
+    }
+
+    /// The connection was replaced (a switch to another server, a
+    /// reconnect): nothing sent on the old one will be confirmed, and the
+    /// new one's order starts afresh.
+    pub(crate) fn connection_replaced(&mut self) {
+        self.document.forget_sent_ops();
+        self.connection.held_remote_ops.clear();
+        self.connection.awaiting_open = false;
+        self.connection.server_seq = 0;
+        self.connection.batches_sent = 0;
     }
 
     /// The end of a frame's send. While a pointer gesture is under way on
@@ -423,6 +442,24 @@ mod tests {
         drag(&mut session, 1..=5);
         session.send_outbox();
         assert_eq!(only_payload(&sent.lock().unwrap()), 5);
+    }
+
+    /// While a file opens into a tab, the connection already belongs to
+    /// that file: an edit of the document it replaces never reaches the
+    /// file's server, where others editing it would take it in.
+    #[test]
+    fn edits_made_while_a_file_opens_stay_off_its_server() {
+        let sent = std::sync::Arc::default();
+        let mut session = session_on(Box::new(Recording(std::sync::Arc::clone(&sent))));
+        session.connection.awaiting_open = true;
+        session.document.create_body(Some("stray".into()));
+        session.send_outbox();
+        assert!(sent.lock().unwrap().is_empty());
+        session.connection.awaiting_open = false;
+        session.document.create_body(Some("kept".into()));
+        session.send_outbox();
+        assert_eq!(sent.lock().unwrap().len(), 1);
+        assert_eq!(session.connection.batches_sent, 1);
     }
 
     /// A body that went takes every pick on it along, faces and edges
