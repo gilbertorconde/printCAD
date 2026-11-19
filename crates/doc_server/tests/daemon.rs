@@ -152,6 +152,8 @@ fn two_documents_do_not_swap_their_unsaved_history() {
             path: home.document(),
             bytes,
             at_seq: doc.mutation_seq(),
+            seen_seq: None,
+            sent_batches: None,
         });
         wait_for(client, inbox, "save completion", |m| match m {
             ServerMessage::SaveCompleted { .. } => Some(()),
@@ -216,6 +218,8 @@ fn a_session_round_trips_through_the_daemon() {
         path: home.document(),
         bytes,
         at_seq: doc.mutation_seq(),
+        seen_seq: None,
+        sent_batches: None,
     });
     let saved_seq = wait_for(&mut client, &mut inbox, "save completion", |m| match m {
         ServerMessage::SaveCompleted { at_seq, .. } => Some(*at_seq),
@@ -316,7 +320,7 @@ fn a_peers_edits_relay_and_the_replicas_converge() {
 
     // Bob hears them (and only them), attributed to Alice.
     let relayed = wait_for(&mut bob, &mut bob_inbox, "relayed ops", |m| match m {
-        ServerMessage::Ops { actor, ops } => {
+        ServerMessage::Ops { actor, ops, .. } => {
             assert_eq!(*actor, alice_actor, "author must be preserved");
             Some(ops.clone())
         }
@@ -371,6 +375,8 @@ fn large_blobs_are_extracted_and_deduplicated() {
         path: home.document(),
         bytes,
         at_seq: doc.mutation_seq(),
+        seen_seq: None,
+        sent_batches: None,
     });
     wait_for(&mut client, &mut inbox, "save", |m| match m {
         ServerMessage::SaveCompleted { .. } => Some(()),
@@ -474,6 +480,8 @@ fn a_late_joiner_catches_up_to_the_unsaved_present() {
         path: home.document(),
         bytes,
         at_seq: alice_doc.mutation_seq(),
+        seen_seq: None,
+        sent_batches: None,
     });
     wait_for(&mut alice, &mut alice_inbox, "save", |m| match m {
         ServerMessage::SaveCompleted { .. } => Some(()),
@@ -554,6 +562,8 @@ fn a_flushed_save_still_answers_on_the_next_poll() {
                 path: path.clone(),
                 bytes: bytes.clone(),
                 at_seq,
+                seen_seq: None,
+                sent_batches: None,
             });
         }
         server.flush();
@@ -599,6 +609,8 @@ fn saves_sent_back_to_back_land_in_the_order_sent() {
                 path: path.clone(),
                 bytes: bytes.clone(),
                 at_seq,
+                seen_seq: None,
+                sent_batches: None,
             });
         }
         server.flush();
@@ -617,4 +629,292 @@ fn saves_sent_back_to_back_land_in_the_order_sent() {
             "{name}: the file holds the later save"
         );
     }
+}
+
+/// One editor as the app runs it: a connection and a document, its own
+/// edits applied at once and sent as batches, the server's applied in the
+/// order the server gives.
+struct Replica {
+    client: DaemonClient,
+    inbox: Inbox,
+    doc: Document,
+    /// The newest sequence number heard, as another's batch or an ack.
+    seen: u64,
+    /// Batches this replica sent on its connection.
+    sent: u64,
+    /// Every sequence number heard, in the order heard.
+    heard: Vec<u64>,
+}
+
+impl Replica {
+    fn join(home: &TestHome, doc: Document) -> Self {
+        Self {
+            client: DaemonClient::spawn_or_connect(&home.socket()).expect("client"),
+            inbox: Inbox::default(),
+            doc,
+            seen: 0,
+            sent: 0,
+            heard: Vec::new(),
+        }
+    }
+
+    /// Hand the outbox to the server as one batch.
+    fn send(&mut self) {
+        let ops = self.doc.take_pending_ops();
+        if !ops.is_empty() {
+            self.client.send(ClientMessage::Ops(ops));
+            self.sent += 1;
+        }
+    }
+
+    fn take(&mut self, message: ServerMessage) {
+        match message {
+            ServerMessage::Ops { seq, ops, .. } => {
+                assert!(self.doc.apply_server_ops(&ops), "rolled back exactly");
+                self.note(seq);
+            }
+            ServerMessage::Acked { seq } => {
+                self.doc.confirm_sent_ops();
+                self.note(seq);
+            }
+            _ => {}
+        }
+    }
+
+    fn note(&mut self, seq: u64) {
+        assert!(seq > self.seen, "sequence {seq} heard after {}", self.seen);
+        self.seen = seq;
+        self.heard.push(seq);
+    }
+
+    /// Take in what the server sends until `done` holds.
+    fn take_until(&mut self, what: &str, done: impl Fn(&Self) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done(self) {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            match self.inbox.next(&mut self.client) {
+                Some(message) => self.take(message),
+                None => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+    }
+
+    /// Wait until every batch sent is confirmed, and say where in the
+    /// order the last one landed.
+    fn settle(&mut self) -> u64 {
+        self.take_until("confirmations", |r| r.doc.sent_ops_unconfirmed() == 0);
+        self.seen
+    }
+
+    /// Wait until sequence number `seq` is heard.
+    fn catch_up(&mut self, seq: u64) {
+        self.take_until("the order to catch up", |r| r.seen >= seq);
+    }
+
+    /// Open `path` as the app does: whatever is heard before the file is
+    /// in the file or in the tail that follows it.
+    fn open(home: &TestHome, path: &std::path::Path) -> Self {
+        let mut replica = Self::join(home, Document::new("opening"));
+        replica.client.send(ClientMessage::OpenDocument {
+            path: path.to_path_buf(),
+            token: 9,
+        });
+        let bytes = wait_for(
+            &mut replica.client,
+            &mut replica.inbox,
+            "open",
+            |m| match m {
+                ServerMessage::Opened { bytes, .. } => Some(bytes.clone()),
+                ServerMessage::OpenFailed { error, .. } => panic!("open failed: {error}"),
+                _ => None,
+            },
+        );
+        replica.doc = Document::load_from_bytes(bytes).expect("parse");
+        replica
+    }
+
+    /// Save as the app does, saying what the snapshot holds, and wait for
+    /// the answer without taking in what arrives meanwhile.
+    fn save(&mut self, path: &std::path::Path) {
+        self.send();
+        let bytes = self
+            .doc
+            .save_to_bytes(core_document::Compression::None)
+            .expect("serialize");
+        self.client.send(ClientMessage::SaveDocument {
+            path: path.to_path_buf(),
+            bytes,
+            at_seq: self.doc.mutation_seq(),
+            seen_seq: Some(self.seen),
+            sent_batches: Some(self.sent),
+        });
+        let mut held = Vec::new();
+        wait_for(&mut self.client, &mut self.inbox, "save", |m| match m {
+            ServerMessage::SaveCompleted { .. } => Some(()),
+            ServerMessage::SaveFailed { error, .. } => panic!("save failed: {error}"),
+            ServerMessage::Ops { seq, ops, actor } => {
+                held.push(ServerMessage::Ops {
+                    actor: *actor,
+                    seq: *seq,
+                    ops: ops.clone(),
+                });
+                None
+            }
+            ServerMessage::Acked { seq } => {
+                held.push(ServerMessage::Acked { seq: *seq });
+                None
+            }
+            _ => None,
+        });
+        for message in held.into_iter().rev() {
+            self.inbox.0.push_front(message);
+        }
+    }
+}
+
+/// Three editors write one field at once, one of them from an edit it
+/// has not sent yet (a drag still held): every replica ends with the same
+/// value, the one the server ordered last.
+#[test]
+fn concurrent_writes_to_one_field_converge_on_the_servers_order() {
+    daemon_env();
+    let home = TestHome::new("same_field");
+    let mut base = Document::new("Shared");
+    let body = base.create_body(Some("Frame".into()));
+    let _ = base.take_pending_ops();
+    let mut replicas: Vec<Replica> = (0..3).map(|_| Replica::join(&home, base.clone())).collect();
+
+    // Alice and Bob each rename the body and send before hearing anything.
+    replicas[0].doc.rename_body(body, "alice");
+    replicas[1].doc.rename_body(body, "bob");
+    // Carol renames it too but holds the edit back.
+    replicas[2].doc.rename_body(body, "carol");
+    replicas[0].send();
+    replicas[1].send();
+    let alice = replicas[0].settle();
+    let bob = replicas[1].settle();
+    let last = alice.max(bob);
+    for replica in &mut replicas {
+        replica.catch_up(last);
+    }
+    // Carol's held edit comes after both and still shows on her screen.
+    assert_eq!(replicas[2].doc.bodies()[0].name, "carol");
+    let later = if alice > bob { "alice" } else { "bob" };
+    assert_eq!(replicas[0].doc.bodies()[0].name, later);
+    assert_eq!(replicas[1].doc.bodies()[0].name, later);
+
+    replicas[2].send();
+    let last = replicas[2].settle();
+    for replica in &mut replicas {
+        replica.catch_up(last);
+    }
+    let projection = replicas[0].doc.replicated_projection();
+    for replica in &replicas {
+        assert_eq!(replica.doc.bodies()[0].name, "carol");
+        assert_eq!(replica.doc.replicated_projection(), projection);
+    }
+}
+
+/// Two editors send many batches at once: every client hears every batch
+/// in one order, numbered without gaps, and the replicas end equal.
+#[test]
+fn batches_from_two_clients_arrive_in_one_order_everywhere() {
+    daemon_env();
+    let home = TestHome::new("one_order");
+    let mut base = Document::new("Shared");
+    let body = base.create_body(Some("Frame".into()));
+    let _ = base.take_pending_ops();
+    let mut replicas: Vec<Replica> = (0..4).map(|_| Replica::join(&home, base.clone())).collect();
+
+    for round in 0..20 {
+        for (writer, replica) in replicas.iter_mut().take(2).enumerate() {
+            let name = format!("{writer}-{round}");
+            replica.doc.rename_body(body, name.as_str());
+            if round % 3 == 0 {
+                replica.doc.set_name(name);
+            }
+            replica.send();
+        }
+    }
+    let last = replicas[0].settle().max(replicas[1].settle());
+    assert_eq!(last, 40, "one number per batch");
+    for replica in &mut replicas {
+        replica.catch_up(last);
+    }
+    let projection = replicas[0].doc.replicated_projection();
+    for replica in &replicas {
+        assert_eq!(
+            replica.heard,
+            (1..=last).collect::<Vec<_>>(),
+            "every batch, in one order"
+        );
+        assert_eq!(replica.doc.replicated_projection(), projection);
+    }
+}
+
+/// A client that opens a document another edits gets the unsaved edits;
+/// a rebase sent while others edit leaves those edits for the next
+/// joiner, and edits made after a join reach everyone.
+#[test]
+fn joiners_see_the_unsaved_edits_and_a_rebase_keeps_them() {
+    daemon_env();
+    let home = TestHome::new("join_tail");
+    let mut alice = Replica::join(&home, Document::new("Joined"));
+    let body = alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    alice.doc.rename_body(body, "unsaved by alice");
+    alice.send();
+    let after_rename = alice.settle();
+
+    let mut bob = Replica::open(&home, &home.document());
+    assert_eq!(
+        bob.doc.bodies()[0].name,
+        "Base",
+        "the file is the saved past"
+    );
+    bob.catch_up(after_rename);
+    assert_eq!(bob.doc.bodies()[0].name, "unsaved by alice");
+    // A rebase while Alice edits must not take her edits from the tail.
+    bob.client.send(ClientMessage::Rebase);
+    let second = bob.doc.create_body(Some("by bob".into()));
+    bob.send();
+    let after_bob = bob.settle();
+    alice.catch_up(after_bob);
+
+    let mut carol = Replica::open(&home, &home.document());
+    carol.catch_up(after_bob);
+    let projection = alice.doc.replicated_projection();
+    for replica in [&alice, &bob, &carol] {
+        assert_eq!(replica.doc.bodies()[0].name, "unsaved by alice");
+        assert!(replica.doc.body(second).is_some(), "bob's body reached all");
+        assert_eq!(replica.doc.replicated_projection(), projection);
+    }
+}
+
+/// A save takes from the tail only what its snapshot holds: a peer's edit
+/// the saver had not heard yet stays for clients that join later.
+#[test]
+fn a_save_keeps_the_edits_its_snapshot_lacks() {
+    daemon_env();
+    let home = TestHome::new("save_tail");
+    let mut alice = Replica::join(&home, Document::new("Saved"));
+    let body = alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    let mut bob = Replica::open(&home, &home.document());
+
+    bob.doc.rename_body(body, "bob, unheard by alice");
+    bob.send();
+    let after_bob = bob.settle();
+    // Alice saves before taking Bob's edit in.
+    alice.doc.set_name("Saved by alice");
+    alice.save(&home.document());
+
+    let mut carol = Replica::open(&home, &home.document());
+    carol.catch_up(after_bob);
+    assert_eq!(carol.doc.name(), "Saved by alice", "the snapshot");
+    assert_eq!(
+        carol.doc.bodies()[0].name,
+        "bob, unheard by alice",
+        "the edit the snapshot lacks"
+    );
 }

@@ -158,8 +158,8 @@ hacks, no silently degraded feature). Instead:
 - **The app is a client of a document server, one connection per tab**
   (`core_document/src/server.rs` trait = the wire protocol; `crates/doc_server`
   has the `printcad-serverd` daemon (one per document, unix socket under
-  `$XDG_RUNTIME_DIR/printcad`, any number of clients, relaying ops among
-  them, exits when the last leaves) plus the
+  `$XDG_RUNTIME_DIR/printcad`, any number of clients, exits when the last
+  leaves) plus the
   `DirectFiles` fallback). The daemon stores opaque `.prtcad` bytes and op
   envelopes (`<file>.oplog.jsonl`), never deserializing a `Document`. Ops
   recorded before a document has a file go to `unhomed-<socket hash>.oplog.jsonl`,
@@ -174,7 +174,18 @@ hacks, no silently degraded feature). Instead:
   `wait_for_document_saves`) calls `send_outbox` first. Saves cross as
   client-serialized bytes with `at_seq`;
   `mark_clean()` only fires if `at_seq` still equals `mutation_seq` on
-  completion. Undo/redo/new/open send `Rebase`. **Every exit path must call
+  completion. **The daemon gives each batch of ops one place in one order**
+  (a sequence number, the log, the unsaved tail and every client's queue
+  under one lock): the others hear it as `Ops`, its sender as `Acked`. A
+  client applies others' batches beneath its own unconfirmed ones
+  (`Document::apply_server_ops` rolls those back by their inverses and
+  replays them), so replicas converge on the server's order; never apply
+  a relayed op with plain `apply_remote_op`. Opening a file a server
+  already serves takes its bytes plus the unsaved tail; only a recovered
+  copy put in a tab sends `Rebase`, which the daemon refuses while other
+  clients are on it. A save says which ops its
+  snapshot holds (`seen_seq`, `sent_batches`) and the rest stay in the
+  tail. **Every exit path must call
   `wait_for_all_document_saves()`** (every tab, each flushing its server)
   or a write in flight is abandoned mid-file.
   `PRINTCAD_SERVERD` overrides the daemon binary for dev.

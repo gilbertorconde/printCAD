@@ -172,6 +172,8 @@ mod tests {
             path: std::path::PathBuf::from("/tmp/big.prtcad"),
             bytes: bytes.clone(),
             at_seq: 7,
+            seen_seq: None,
+            sent_batches: None,
         };
 
         let mut wire = Vec::new();
@@ -186,6 +188,7 @@ mod tests {
                 bytes: got,
                 at_seq,
                 path,
+                ..
             } => {
                 assert_eq!(got, bytes);
                 assert_eq!(at_seq, 7);

@@ -53,7 +53,20 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   length-prefixed JSON frames with the container bytes beside them, never
   inside (`framing.rs`, `server::Payload`), since a document as JSON numbers is
   four times its size and overran the frame cap outright, integration-tested against the
-  real spawned daemon (`tests/daemon.rs`).
+  real spawned daemon (`tests/daemon.rs`). The daemon's `Hub` holds one
+  lock (`state`) under which a batch gets its sequence number, its log
+  line, its place in the unsaved tail and a message in every client's
+  queue (`Ops` to the others, `Acked` to its sender; a writer thread per
+  client drains its queue), and a second (`file`, taken first) across a
+  file read or write and the tail change that goes with it, so an
+  `Opened` reply and the tail after it hold every batch heard before it
+  and none after. On the client, `OpBuffer` keeps each unsent op and each
+  sent, unconfirmed batch with its inverse, and
+  `Document::apply_server_ops` rolls those back, applies the server's
+  batch and replays them; an unconfirmed op without an inverse (an
+  import) makes it apply over them instead and return false. The
+  `Replica` harness in `tests/daemon.rs` drives clients the way the app
+  does (`settle` waits for acks, `catch_up` for a sequence number).
 - `doc_render`: what the app draws and lays out from a document with no
   window, linking neither the GPU, the window nor egui, so its tests and
   the save worker run without them: `thumbnail` (the CPU renderer: a

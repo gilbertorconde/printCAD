@@ -1,81 +1,93 @@
 //! The daemon: one document, one socket, N clients, no `Document` parsing.
 //!
 //! Responsibilities: own the document's file (reads on `OpenDocument`,
-//! atomic writes on `SaveDocument`), append every op frame to a sidecar log
-//! (`<file>.oplog.jsonl`: one JSON envelope per line, truncated on
-//! `Rebase`), and **relay** each client's ops to every other client in the
-//! order they arrived: the server's receive order is the document's total
-//! order. A client never hears its own ops back, so applying relayed ops
-//! verbatim is echo-safe. Everything stored or relayed is opaque bytes or
-//! op envelopes, so daemon and app can be versions apart and still
-//! cooperate. The daemon exits when its last client disconnects.
+//! atomic writes on `SaveDocument`), append every op batch to a sidecar log
+//! (`<file>.oplog.jsonl`: one JSON envelope per line), and put the clients'
+//! batches in **one order**: under a single lock each batch gets the next
+//! sequence number, goes into the log and the unsaved tail, and is queued
+//! for every client, as `Ops` to the others and `Acked` to its sender. Every
+//! message to a client goes through that client's queue and its writer
+//! thread, so all clients hear all batches in the same order, and a reply
+//! never overtakes a batch queued before it. A client joining gets the file
+//! and then the tail, both taken under the same locks that order batches
+//! and saves, so it misses none and hears none twice. Everything stored or
+//! relayed is opaque bytes or op envelopes, so daemon and app can be
+//! versions apart and still cooperate. The daemon exits when its last
+//! client disconnects.
 
 use local_ipc::{Listener as UnixListener, Stream as UnixStream};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 
+use core_document::op::DocumentOp;
 use core_document::server::{ClientMessage, SERVER_PROTOCOL_VERSION, ServerMessage};
 
 use crate::file_io::write_atomically;
 use crate::framing::{read_frame, write_frame};
 
-/// Everyone currently connected. Writes to a client go through its mutex:
-/// its own replies and relays from other clients' threads interleave here.
-#[derive(Default, Clone)]
-struct Roster {
-    inner: Arc<Mutex<HashMap<u64, Peer>>>,
+/// The document's shared state: who is connected and the order of edits.
+#[derive(Default)]
+struct Hub {
+    state: Mutex<State>,
+    /// Held across a read or write of the document's file and the change
+    /// to the tail that goes with it, so a joiner's file and tail, or a
+    /// save and the tail it leaves, describe one moment. Taken before
+    /// `state`, never after.
+    file: Mutex<()>,
 }
 
-#[derive(Clone)]
-struct Peer {
-    stream: Arc<Mutex<UnixStream>>,
+#[derive(Default)]
+struct State {
+    /// The last sequence number given to a batch.
+    seq: u64,
+    /// Batches since the last save, in order: the unsaved present a
+    /// joining client gets after the file.
+    tail: Vec<Logged>,
+    clients: HashMap<u64, Client>,
 }
 
-impl Roster {
-    /// Returns how many peers were already present.
-    fn join(&self, id: u64, peer: Peer) -> u32 {
-        let mut inner = lock(&self.inner);
-        let existing = inner.len() as u32;
-        inner.insert(id, peer);
-        existing
-    }
+struct Client {
+    /// Everything this client is to hear, written in order by its writer
+    /// thread.
+    outbox: Sender<ServerMessage>,
+    /// Batches this client has sent.
+    batches: u64,
+}
 
-    fn leave(&self, id: u64) {
-        lock(&self.inner).remove(&id);
-    }
+struct Logged {
+    seq: u64,
+    actor: uuid::Uuid,
+    /// The connection that sent it, and which of its batches it was.
+    client: u64,
+    batch: u64,
+    ops: Vec<DocumentOp>,
+}
 
-    /// Send to every client except `from`; a peer whose write fails is
-    /// dropped from the roster (its reader thread will notice separately).
-    fn broadcast_except(&self, from: u64, message: &ServerMessage) {
-        let peers: Vec<(u64, Peer)> = lock(&self.inner)
-            .iter()
-            .filter(|(id, _)| **id != from)
-            .map(|(id, peer)| (*id, peer.clone()))
-            .collect();
-        for (id, peer) in peers {
-            let mut stream = lock(&peer.stream);
-            if write_frame(&mut *stream, message).is_err() {
-                drop(stream);
-                self.leave(id);
+impl State {
+    /// Queue `message` for every client but `except`.
+    fn tell_others(&self, except: u64, message: impl Fn() -> ServerMessage) {
+        for (id, client) in &self.clients {
+            if *id != except {
+                let _ = client.outbox.send(message());
             }
+        }
+    }
+
+    fn tell(&self, id: u64, message: ServerMessage) {
+        if let Some(client) = self.clients.get(&id) {
+            let _ = client.outbox.send(message);
         }
     }
 
     /// Tell every client how many *other* editors it currently has.
     fn announce_peers(&self) {
-        let peers: Vec<Peer> = lock(&self.inner).values().cloned().collect();
-        let total = peers.len();
-        for peer in peers {
-            let mut stream = lock(&peer.stream);
-            let _ = write_frame(
-                &mut *stream,
-                &ServerMessage::Peers {
-                    peers: total.saturating_sub(1) as u32,
-                },
-            );
+        let peers = self.clients.len().saturating_sub(1) as u32;
+        for client in self.clients.values() {
+            let _ = client.outbox.send(ServerMessage::Peers { peers });
         }
     }
 }
@@ -85,11 +97,10 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// One client, served to disconnect on its own thread.
-fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
+fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
     let Ok(mut reader) = stream.try_clone() else {
         return;
     };
-    let writer = Arc::new(Mutex::new(stream));
 
     // Handshake first: a version mismatch is a refusal, not a guess.
     let actor = match read_frame::<_, ClientMessage>(&mut reader) {
@@ -110,28 +121,30 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
         }
     };
 
-    let peers_at_join = roster.join(
-        id,
-        Peer {
-            stream: Arc::clone(&writer),
-        },
-    );
-    {
-        let mut stream = lock(&writer);
-        if write_frame(
-            &mut *stream,
-            &ServerMessage::HelloOk {
-                protocol: SERVER_PROTOCOL_VERSION,
-                peers: peers_at_join,
-            },
-        )
-        .is_err()
-        {
-            roster.leave(id);
-            return;
+    // The writer: one thread per client drains its queue onto the socket.
+    // A failed write shuts the socket, which ends the reader below too.
+    let (outbox, queue) = channel::<ServerMessage>();
+    let mut writer = stream;
+    std::thread::spawn(move || {
+        for message in queue {
+            if write_frame(&mut writer, &message).is_err() {
+                let _ = writer.shutdown(std::net::Shutdown::Both);
+                return;
+            }
         }
-    }
-    roster.announce_peers();
+    });
+
+    let peers_at_join = {
+        let mut state = lock(&hub.state);
+        let peers = state.clients.len() as u32;
+        let _ = outbox.send(ServerMessage::HelloOk {
+            protocol: SERVER_PROTOCOL_VERSION,
+            peers,
+        });
+        state.clients.insert(id, Client { outbox, batches: 0 });
+        state.announce_peers();
+        peers
+    };
     tracing::info!(%actor, peers = peers_at_join, "client joined");
 
     // Serve until disconnect, or a broken frame: there is no resync point.
@@ -140,36 +153,54 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
             ClientMessage::Hello { .. } => {
                 tracing::warn!("repeated Hello mid-session; ignoring");
             }
-            ClientMessage::Ops(ops) => {
-                if let Err(err) = append_ops(actor, &ops) {
-                    tracing::error!("op log append failed: {err}");
-                }
-                lock(&OP_TAIL).push((actor, ops.clone()));
-                // Receive order is the total order; relaying inside this
-                // reader loop means no later op of this client can overtake
-                // these on any peer.
-                roster.broadcast_except(id, &ServerMessage::Ops { actor, ops });
-            }
+            ClientMessage::Ops(ops) => order_batch(hub, id, actor, ops),
             ClientMessage::Presence(state) => {
                 // Now-state, not history: relayed, never logged.
-                roster.broadcast_except(id, &ServerMessage::PresencePeer { actor, state });
+                lock(&hub.state).tell_others(id, || ServerMessage::PresencePeer {
+                    actor,
+                    state: state.clone(),
+                });
             }
             ClientMessage::Rebase => {
-                if let Err(err) = truncate_oplog() {
-                    tracing::error!("op log truncate failed: {err}");
+                let mut state = lock(&hub.state);
+                if state.clients.len() > 1 {
+                    // The others' replicas hold the tail; clearing it would
+                    // leave every later joiner without their unsaved edits.
+                    tracing::warn!(
+                        %actor,
+                        "a rebase while others edit the document; the log and tail stay"
+                    );
+                } else {
+                    if let Err(err) = truncate_oplog() {
+                        tracing::error!("op log truncate failed: {err}");
+                    }
+                    state.tail.clear();
                 }
-                lock(&OP_TAIL).clear();
             }
             ClientMessage::SaveDocument {
                 path,
                 bytes,
                 at_seq,
+                seen_seq,
+                sent_batches,
             } => {
-                let reply = match write_atomically(&path, &bytes) {
+                let _file = lock(&hub.file);
+                let written = write_atomically(&path, &bytes);
+                let mut state = lock(&hub.state);
+                let reply = match written {
                     Ok(()) => {
                         set_oplog_home(&path);
-                        // The snapshot embodies everything relayed so far.
-                        lock(&OP_TAIL).clear();
+                        // What the snapshot holds leaves the tail: the
+                        // others' batches this client had applied and its
+                        // own sent before the snapshot. The rest, sent
+                        // while it was packed, is still unsaved.
+                        state.tail.retain(|logged| {
+                            if logged.client == id {
+                                sent_batches.is_some_and(|sent| logged.batch >= sent)
+                            } else {
+                                seen_seq.is_some_and(|seen| logged.seq > seen)
+                            }
+                        });
                         ServerMessage::SaveCompleted { path, at_seq }
                     }
                     Err(err) => ServerMessage::SaveFailed {
@@ -177,64 +208,90 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
                         error: err.to_string(),
                     },
                 };
-                let mut stream = lock(&writer);
-                if write_frame(&mut *stream, &reply).is_err() {
-                    break;
-                }
+                state.tell(id, reply);
             }
             ClientMessage::OpenDocument { path, token } => {
-                let reply = match std::fs::read(&path) {
+                let _file = lock(&hub.file);
+                let read = std::fs::read(&path);
+                let state = lock(&hub.state);
+                match read {
                     Ok(bytes) => {
                         set_oplog_home(&path);
-                        ServerMessage::Opened { token, path, bytes }
-                    }
-                    Err(err) => ServerMessage::OpenFailed {
-                        token,
-                        path,
-                        error: err.to_string(),
-                    },
-                };
-                let opened = matches!(reply, ServerMessage::Opened { .. });
-                let mut stream = lock(&writer);
-                if write_frame(&mut *stream, &reply).is_err() {
-                    break;
-                }
-                if opened {
-                    // The file is the saved past; the tail is the unsaved
-                    // present. Sent on the same stream right after Opened,
-                    // so the joiner applies them in order.
-                    for (tail_actor, ops) in lock(&OP_TAIL).iter() {
-                        if write_frame(
-                            &mut *stream,
-                            &ServerMessage::Ops {
-                                actor: *tail_actor,
-                                ops: ops.clone(),
-                            },
-                        )
-                        .is_err()
-                        {
-                            break;
+                        // The file is the saved past; the tail is the
+                        // unsaved present. Queued together under the lock
+                        // that orders batches: every batch heard before
+                        // `Opened` is in one of them, every one after is
+                        // newer than both.
+                        state.tell(id, ServerMessage::Opened { token, path, bytes });
+                        for logged in &state.tail {
+                            state.tell(
+                                id,
+                                ServerMessage::Ops {
+                                    actor: logged.actor,
+                                    seq: logged.seq,
+                                    ops: logged.ops.clone(),
+                                },
+                            );
                         }
                     }
+                    Err(err) => state.tell(
+                        id,
+                        ServerMessage::OpenFailed {
+                            token,
+                            path,
+                            error: err.to_string(),
+                        },
+                    ),
                 }
             }
         }
     }
 
-    roster.leave(id);
-    roster.announce_peers();
-    roster.broadcast_except(id, &ServerMessage::PresenceGone { actor });
+    let mut state = lock(&hub.state);
+    state.clients.remove(&id);
+    state.announce_peers();
+    state.tell_others(id, || ServerMessage::PresenceGone { actor });
+    drop(state);
     tracing::info!(%actor, "client left");
 }
 
-// Ops since the last saved snapshot, in receive order. A client that joins
-// mid-session gets the file's bytes plus this tail, the unsaved present.
-// Cleared on save (the snapshot then embodies the tail) and on rebase. An
-// op racing a save may be cleared from the tail before the snapshot truly
-// contains it.
-static OP_TAIL: Mutex<Vec<(uuid::Uuid, Vec<core_document::op::DocumentOp>)>> =
-    Mutex::new(Vec::new());
-
+/// Give a client's batch its place in the document's order: the next
+/// sequence number, the log, the tail and every client's queue, all under
+/// one lock, so no two clients ever hear two batches in different orders.
+fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, ops: Vec<DocumentOp>) {
+    let mut state = lock(&hub.state);
+    state.seq += 1;
+    let seq = state.seq;
+    let batch = match state.clients.get_mut(&id) {
+        Some(client) => {
+            client.batches += 1;
+            client.batches - 1
+        }
+        None => return,
+    };
+    if let Err(err) = append_ops(actor, &ops) {
+        tracing::error!("op log append failed: {err}");
+    }
+    for (peer, client) in &state.clients {
+        let message = if *peer == id {
+            ServerMessage::Acked { seq }
+        } else {
+            ServerMessage::Ops {
+                actor,
+                seq,
+                ops: ops.clone(),
+            }
+        };
+        let _ = client.outbox.send(message);
+    }
+    state.tail.push(Logged {
+        seq,
+        actor,
+        client: id,
+        batch,
+        ops,
+    });
+}
 // The op log lives beside the document once we know where the document is.
 // Before the first save/open of a session it accumulates in the unhomed log.
 static OPLOG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -436,24 +493,24 @@ pub fn run(socket: &Path) -> std::io::Result<()> {
     let listener = UnixListener::bind(socket)?;
     tracing::info!(socket = %socket.display(), "printcad-serverd listening");
 
-    let roster = Roster::default();
+    let hub = Arc::new(Hub::default());
     let live = Arc::new(AtomicU64::new(0));
     let ids = AtomicU64::new(0);
     // The first drop-to-zero ends the daemon.
     let (exit_tx, exit_rx) = std::sync::mpsc::channel::<()>();
 
-    let accept_roster = roster.clone();
+    let accept_hub = Arc::clone(&hub);
     let accept_live = Arc::clone(&live);
     let accept_listener = listener.try_clone()?;
     std::thread::spawn(move || {
         for stream in accept_listener.incoming().flatten() {
             let id = ids.fetch_add(1, Ordering::Relaxed);
-            let roster = accept_roster.clone();
+            let hub = Arc::clone(&accept_hub);
             let live = Arc::clone(&accept_live);
             let exit_tx = exit_tx.clone();
             live.fetch_add(1, Ordering::AcqRel);
             std::thread::spawn(move || {
-                serve_client(stream, id, roster);
+                serve_client(stream, id, &hub);
                 if live.fetch_sub(1, Ordering::AcqRel) == 1 {
                     let _ = exit_tx.send(());
                 }
