@@ -1998,8 +1998,20 @@ impl SketchWorkbench {
     /// Where a click of the tool in hand at `cursor` lands before typed
     /// values place it, and the snap that took it there: the grid, the
     /// angle step and the cue's snap, worked out as the click works them
-    /// out. The preview and the on-view card both read it.
+    /// out. The preview and the on-view card both read it, worked out once
+    /// a frame for the frame's displayed `feature`.
     fn click_landing(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        cursor: Vec2D,
+    ) -> (Vec2D, Option<snap::Snap>) {
+        let key = (self.draw_key(ctx), [cursor.x.to_bits(), cursor.y.to_bits()]);
+        self.frame
+            .landing(key, || self.work_out_landing(ctx, feature, cursor))
+    }
+
+    fn work_out_landing(
         &self,
         ctx: &WorkbenchRuntimeContext,
         feature: &SketchFeature,
@@ -2014,17 +2026,21 @@ impl SketchWorkbench {
         if !is_draw_tool(tool) || self.tab.box_select.is_some() {
             return (cursor, None);
         }
-        let (at, tol) = self.landing(ctx, feature, tool, cursor);
+        let (at, tol, snapped) = self.landing_snap(ctx, feature, tool, cursor);
         if !self.tab.dim_capture.typed(ctx.document).is_empty() {
             return (at, None);
         }
-        let snap = tools::snap_at(
-            &self.tab.tool_state,
-            &feature.sketch,
-            at,
-            tol,
-            &self.snap_params(),
-        );
+        // The landing's own snap when it left the cursor where it was;
+        // moved onto the grid, the click snaps from there.
+        let snap = snapped.unwrap_or_else(|| {
+            tools::snap_at(
+                &self.tab.tool_state,
+                &feature.sketch,
+                at,
+                tol,
+                &self.snap_params(),
+            )
+        });
         (snap.pos, Some(snap))
     }
 

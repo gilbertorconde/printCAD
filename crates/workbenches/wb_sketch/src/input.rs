@@ -125,6 +125,20 @@ impl SketchWorkbench {
         tool: &str,
         cursor: Vec2D,
     ) -> (Vec2D, f64) {
+        let (at, tol, _) = self.landing_snap(ctx, feature, tool, cursor);
+        (at, tol)
+    }
+
+    /// [`Self::landing`], with the snap a drawing tool's click meets
+    /// there when the landing looked it up on the way: where the landing
+    /// left the cursor as it was, the snap it weighed is the click's.
+    pub(crate) fn landing_snap(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        tool: &str,
+        cursor: Vec2D,
+    ) -> (Vec2D, f64, Option<snap::Snap>) {
         let plane = feature.plane;
         let tol = if self.tab.snap_off && is_draw_tool(tool) {
             0.0
@@ -139,13 +153,13 @@ impl SketchWorkbench {
                 crate::snap::SnapTarget::Existing(_)
             );
             return if on_point {
-                (cursor, tol)
+                (cursor, tol, None)
             } else {
-                (self.grid_snapped(ctx, &plane, cursor), tol)
+                (self.grid_snapped(ctx, &plane, cursor), tol, None)
             };
         }
         if !is_draw_tool(tool) {
-            return (cursor, tol);
+            return (cursor, tol, None);
         }
         // With Shift held, a segment leaves its start in steps of the angle
         // snap's step, as far as the cursor reaches along that direction.
@@ -155,6 +169,7 @@ impl SketchWorkbench {
             return (
                 snap::angle_step(from, cursor, self.options.angle_step_deg),
                 tol,
+                None,
             );
         }
         // A snap onto a point wins over the grid; one onto a curve, an axis
@@ -180,12 +195,13 @@ impl SketchWorkbench {
                 )
             );
         if on_point {
-            (cursor, tol)
+            (cursor, tol, Some(snapped))
         } else if let Some((edge, _)) = self.edge_snap(ctx, feature, tool, cursor, tol) {
             // On a picture's edge, exactly: nothing else moves it.
-            (edge, 0.0)
+            (edge, 0.0, None)
         } else {
-            (self.grid_snapped(ctx, &plane, cursor), tol)
+            let at = self.grid_snapped(ctx, &plane, cursor);
+            (at, tol, (at == cursor).then_some(snapped))
         }
     }
 

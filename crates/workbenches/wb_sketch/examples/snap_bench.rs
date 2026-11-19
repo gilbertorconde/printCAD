@@ -1,6 +1,8 @@
 //! Cost of one pointer query on a large sketch: `snap::resolve` (what every
 //! drawing tool's cue and click go through) and `snap::hit_test` (what a
-//! selection click takes), timed and counted in allocations.
+//! selection click takes), timed and counted in allocations; then a hover
+//! through the bench as the host drives it, a pointer move and the frame's
+//! view.
 //!
 //! `cargo run --release -p wb_sketch --example snap_bench -- [cells]`: a
 //! square grid of `cells` × `cells` cells (20 by default), each a closed
@@ -10,8 +12,13 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use core_document::{
+    Document, MouseButton, Workbench, WorkbenchInputEvent, WorkbenchRuntimeContext,
+};
+use glam::{Mat4, Vec3};
 use wb_sketch::sketch::{Arc, Circle, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D};
 use wb_sketch::snap::{self, Guide, SnapContext};
+use wb_sketch::{SketchFeature, SketchWorkbench};
 
 struct Counting;
 
@@ -105,6 +112,76 @@ fn measure(label: &str, queries: &[Vec2D], mut run: impl FnMut(Vec2D)) {
     );
 }
 
+/// A pointer move with `tool` in hand over the edited `sketch`, and the
+/// view the host then asks for, with the view centred on the grid; with
+/// `from`, after a first click there.
+fn hover(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], tool: &str, from: bool) {
+    const VIEWPORT: (u32, u32, u32, u32) = (0, 0, 800, 600);
+    let mid = (span * 0.5) as f32;
+    let cam = [mid, mid, span as f32];
+    let proj =
+        glam::camera::rh::proj::directx::perspective(60f32.to_radians(), 800.0 / 600.0, 0.1, 1e4);
+    let view =
+        glam::camera::rh::view::look_at_mat4(Vec3::from(cam), Vec3::new(mid, mid, 0.0), Vec3::Y);
+    let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
+    let mut doc = Document::new("bench");
+    let plane = sketch.plane;
+    let id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch.clone(), plane),
+            "sketch".into(),
+            None,
+        )
+        .expect("sketch feature");
+    let mut wb = SketchWorkbench::default();
+    let mut send = |doc: &mut Document, event: Option<WorkbenchInputEvent>| {
+        let mut ctx = WorkbenchRuntimeContext::new(doc, cam, [mid, mid, 0.0], VIEWPORT);
+        ctx.view_proj = Some(vp);
+        ctx.active_document_object = Some(id);
+        ctx.selected_body_id = Some(uuid::Uuid::new_v4());
+        if let Some(event) = event {
+            wb.on_input(&event, Some(tool), &mut ctx);
+        }
+        wb.on_frame(0.016, &mut ctx);
+        std::hint::black_box(wb.viewport(&ctx));
+    };
+    let px = |doc: &mut Document, p: Vec2D| {
+        let mut ctx = WorkbenchRuntimeContext::new(doc, cam, [mid, mid, 0.0], VIEWPORT);
+        ctx.view_proj = Some(vp);
+        ctx.world_to_viewport([p.x as f32, p.y as f32, 0.0])
+            .expect("on screen")
+    };
+    send(&mut doc, Some(WorkbenchInputEvent::ToolActivated));
+    if from {
+        let viewport_pos = px(&mut doc, Vec2D::new(span * 0.31, span * 0.47));
+        let button = MouseButton::Left;
+        send(
+            &mut doc,
+            Some(WorkbenchInputEvent::MousePress {
+                button,
+                viewport_pos,
+            }),
+        );
+        send(
+            &mut doc,
+            Some(WorkbenchInputEvent::MouseRelease {
+                button,
+                viewport_pos,
+            }),
+        );
+    }
+    let moves: Vec<_> = queries.iter().map(|&c| px(&mut doc, c)).collect();
+    let mut k = 0;
+    measure(label, queries, |_| {
+        let viewport_pos = moves[k % moves.len()];
+        k += 1;
+        send(
+            &mut doc,
+            Some(WorkbenchInputEvent::MouseMove { viewport_pos }),
+        );
+    });
+}
+
 fn main() {
     let cells: usize = std::env::args()
         .nth(1)
@@ -164,4 +241,21 @@ fn main() {
     measure("hit_test", &queries, |c| {
         std::hint::black_box(snap::hit_test(&sketch, c, tol));
     });
+    let span = cells as f64 * CELL;
+    hover(
+        "hover, line tool",
+        &sketch,
+        span,
+        &queries,
+        "sketch.line",
+        false,
+    );
+    hover(
+        "hover, drawing a line",
+        &sketch,
+        span,
+        &queries,
+        "sketch.line",
+        true,
+    );
 }
