@@ -50,7 +50,7 @@ impl std::ops::Sub for Vec2D {
 ///
 /// Read, its text blocks' outlines are made into `geometry`; written,
 /// they are left out (`derived`), so a file holds each text as one object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(remote = "Self")]
 pub struct Sketch {
     /// Unique identifier for this sketch.
@@ -172,6 +172,14 @@ impl ElementIndex {
 impl Clone for ElementIndex {
     fn clone(&self) -> Self {
         Self(std::sync::RwLock::new(self.read().clone()))
+    }
+}
+
+/// A hint, not content: two sketches with the same elements are equal
+/// whatever either has looked up.
+impl PartialEq for ElementIndex {
+    fn eq(&self, _: &Self) -> bool {
+        true
     }
 }
 
@@ -1330,7 +1338,7 @@ impl Default for SketchPlane {
 }
 
 /// A geometry element in a sketch.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GeometryElement {
     Point(Point),
     Line(Line),
@@ -1356,7 +1364,7 @@ impl GeometryElement {
 }
 
 /// A point in 2D sketch space.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point {
     pub id: Uuid,
     /// Position in sketch coordinates (2D).
@@ -1373,7 +1381,7 @@ impl Point {
 }
 
 /// A line segment between two points.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Line {
     pub id: Uuid,
     /// Start point ID.
@@ -1393,7 +1401,7 @@ impl Line {
 }
 
 /// A circular arc.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Arc {
     pub id: Uuid,
     /// Center point ID.
@@ -1419,7 +1427,7 @@ impl Arc {
 }
 
 /// A circle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circle {
     pub id: Uuid,
     /// Center point ID.
@@ -1440,7 +1448,7 @@ impl Circle {
 
 /// A full ellipse. `major` is the vector from the center to one major-axis
 /// vertex; the minor radius is `|major| * ratio` with `ratio` in (0, 1].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Ellipse {
     pub id: Uuid,
     /// Center point ID.
@@ -1535,7 +1543,7 @@ impl Ellipse {
 /// A spline drawn through points keeps them, and the solver holds it
 /// through each at the parameter it was drawn at, so moving one reshapes
 /// the curve.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BSpline {
     pub id: Uuid,
     /// Control point IDs, in order.
@@ -1626,7 +1634,7 @@ pub enum ConicKind {
 /// vertex, `f` the focal distance, and the hyperbola's branch
 /// `(a·cosh t, b·sinh t)` from its centre. The shape (`axis`, `minor`)
 /// holds still in the solver; the centre and the end points move.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Conic {
     pub id: Uuid,
     pub kind: ConicKind,
@@ -1674,7 +1682,7 @@ pub enum AxisDirection {
 }
 
 /// A constraint record: the geometric relation plus solver metadata.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Constraint {
     pub id: Uuid,
     pub kind: ConstraintKind,
@@ -1778,7 +1786,7 @@ impl<'de> Deserialize<'de> for Constraint {
 }
 
 /// A geometric relation applied to sketch geometry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConstraintKind {
     /// Point is fixed at a specific position.
     FixedPoint { point: Uuid, position: Vec2D },

@@ -4,9 +4,10 @@
 //! through the bench as the host drives it, a pointer move and the frame's
 //! view.
 //!
-//! `cargo run --release -p wb_sketch --example snap_bench -- [cells]`: a
-//! square grid of `cells` × `cells` cells (20 by default), each a closed
-//! rectangle sharing its corners, a circle, an arc and an ellipse arc.
+//! `cargo run --release -p wb_sketch --example snap_bench -- [cells] [queries]`:
+//! a square grid of `cells` × `cells` cells (20 by default), each a closed
+//! rectangle sharing its corners, a circle, an arc and an ellipse arc,
+//! queried at `queries` cursors (400 by default).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -189,7 +190,11 @@ fn main() {
         .unwrap_or(20);
     let sketch = build(cells);
     println!("{cells}×{cells} cells: {} elements", sketch.geometry.len());
-    let queries = cursors(cells, 400);
+    let count: usize = std::env::args()
+        .nth(2)
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(400);
+    let queries = cursors(cells, count);
     let tol = 0.4;
     let free = SnapContext::default();
     measure("resolve, no segment", &queries, |c| {
