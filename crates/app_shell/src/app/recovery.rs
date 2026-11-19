@@ -1,8 +1,9 @@
 //! Autosave and recovery: every few minutes a copy of each document edited
 //! since it was saved goes to the recovery folder, beside a note of what it
 //! is. A tab saved or closed, and the application quitting, take their
-//! copies away, so what the folder holds at start is what a crash left:
-//! the start page offers it back.
+//! copies away, so what the folder holds at start is what a crash left,
+//! or an exit forced by a window that cannot draw: the start page offers
+//! it back.
 
 use std::path::{Path, PathBuf};
 

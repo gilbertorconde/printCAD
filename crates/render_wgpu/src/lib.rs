@@ -21,7 +21,7 @@ use kernel_api::TriMesh;
 use std::fmt;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 use winit::{dpi::PhysicalSize, event_loop::OwnedDisplayHandle, window::Window};
 
@@ -500,7 +500,13 @@ pub struct Renderer {
     core: Option<RendererCore>,
     /// A size the surface must take before the next frame.
     pending_size: Option<(u32, u32)>,
+    /// Surfaces made afresh since a frame was last drawn: past
+    /// `SURFACE_LOSSES_TOLERATED` a lost surface is not made again.
+    surface_losses: u32,
 }
+
+/// Lost surfaces in a row made afresh before the loss is a failure.
+const SURFACE_LOSSES_TOLERATED: u32 = 3;
 
 impl Renderer {
     /// Creates the device and the window's surface: what
@@ -537,7 +543,27 @@ impl Renderer {
             settings,
             core: None,
             pending_size: None,
+            surface_losses: 0,
         }
+    }
+
+    /// Make the window's surface again after a frame found it lost
+    /// ([`RenderError::SurfaceLost`]), for the next frame to draw on. A
+    /// surface lost again and again, with no frame drawn between, is an
+    /// error.
+    pub fn recover_surface(&mut self, window: &Window) -> Result<(), RenderError> {
+        let core = self.core.as_mut().ok_or(RenderError::NotReady)?;
+        if self.surface_losses >= SURFACE_LOSSES_TOLERATED {
+            return Err(RenderError::Surface(format!(
+                "the window's surface was lost {SURFACE_LOSSES_TOLERATED} times in a row"
+            )));
+        }
+        self.surface_losses += 1;
+        warn!(
+            "The window's surface was lost; making it again ({} of {SURFACE_LOSSES_TOLERATED})",
+            self.surface_losses
+        );
+        core.recreate_surface(window)
     }
 
     pub fn gpu_name(&self) -> Option<&str> {
@@ -589,7 +615,11 @@ impl RenderBackend for Renderer {
         if let Some(ui) = frame.egui.as_mut() {
             core.take_textures(std::mem::take(&mut ui.textures_delta));
         }
-        match core.draw_frame(frame) {
+        let drawn = core.draw_frame(frame);
+        if drawn.is_ok() {
+            self.surface_losses = 0;
+        }
+        match drawn {
             Err(RenderError::SwapchainOutOfDate) => {
                 self.pending_size = Some(core.surface_size());
                 Ok(())
@@ -671,6 +701,8 @@ pub enum RenderError {
     UnsupportedPlatform(String),
     #[error("initialization failed: {0}")]
     Initialization(String),
+    #[error("the window's surface was lost")]
+    SurfaceLost,
     #[error("surface error: {0}")]
     Surface(String),
 }

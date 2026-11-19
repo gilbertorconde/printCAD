@@ -973,6 +973,13 @@ impl PrintCadApp {
             return;
         }
         self.autosave.at = std::time::Instant::now();
+        self.keep_recovery_copies();
+    }
+
+    /// A copy of each tab's document edited since its last copy, packed
+    /// and written on a thread of its own (`autosave.jobs`). A tab that is
+    /// saved has its copy taken away.
+    pub(crate) fn keep_recovery_copies(&mut self) {
         // The fields apart, as `self.autosave.saved` changes on the way.
         let sessions = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()));
