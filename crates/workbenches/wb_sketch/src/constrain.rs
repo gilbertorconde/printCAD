@@ -134,6 +134,7 @@ pub const TOOLS: &[&str] = &[
     "horizontal",
     "horizontal_vertical",
     "parallel",
+    "collinear",
     "perpendicular",
     "tangent",
     "equal",
@@ -311,6 +312,27 @@ pub fn kinds_for(
                 point2: b,
             })
         }
+        // Curves with centres (circles, arcs, ellipses): their centres on
+        // one spot, each other one's on the first's.
+        "coincident" if round_curves(shape) => {
+            let centres = shape
+                .all
+                .iter()
+                .map(|id| centre_of(sketch, *id))
+                .collect::<Option<Vec<Uuid>>>()?;
+            let kinds: Vec<ConstraintKind> = centres[1..]
+                .iter()
+                .filter(|other| **other != centres[0])
+                .map(|other| ConstraintKind::Coincident {
+                    point1: centres[0],
+                    point2: *other,
+                })
+                .collect();
+            if kinds.is_empty() {
+                return None;
+            }
+            kinds
+        }
         // A point and a curve: coincident with the curve is the point on it.
         "coincident"
             if shape.only(1, 1, 0, 0) || shape.only(1, 0, 1, 0) || shape.only(1, 0, 0, 1) =>
@@ -400,6 +422,10 @@ pub fn kinds_for(
         }
         "parallel" if l.len() >= 2 && shape.only(0, l.len(), 0, 0) => {
             chain(l, &|a, b| ConstraintKind::Parallel { line1: a, line2: b })
+        }
+        // Every line on the first one's line.
+        "collinear" if l.len() >= 2 && shape.only(0, l.len(), 0, 0) => {
+            chain(l, &|a, b| ConstraintKind::Collinear { line1: a, line2: b })
         }
         "perpendicular" if shape.only(0, 2, 0, 0) => vec![ConstraintKind::Perpendicular {
             line1: l[0],
@@ -973,6 +999,23 @@ fn parallel(sketch: &Sketch, a: Uuid, b: Uuid) -> bool {
     }
 }
 
+/// Whether `shape` is two or more circles, arcs or ellipses and nothing
+/// else.
+fn round_curves(shape: &SelectionShape) -> bool {
+    let (c, e) = (shape.circles.len(), shape.ellipses.len());
+    c + e >= 2 && shape.only(0, 0, c, e)
+}
+
+/// The centre point of a circle, an arc or an ellipse.
+fn centre_of(sketch: &Sketch, curve: Uuid) -> Option<Uuid> {
+    match sketch.get_geometry(curve)? {
+        GeometryElement::Circle(c) => Some(c.center),
+        GeometryElement::Arc(a) => Some(a.center),
+        GeometryElement::Ellipse(e) => Some(e.center),
+        _ => None,
+    }
+}
+
 /// Whether `points` hold both ends of one line or arc of `sketch`.
 pub fn joins_own_ends(sketch: &Sketch, points: &[Uuid]) -> bool {
     sketch.geometry.iter().any(|g| {
@@ -988,9 +1031,11 @@ pub fn joins_own_ends(sketch: &Sketch, points: &[Uuid]) -> bool {
 /// Whether `tool` applies to `shape` at all.
 pub fn fits(tool: &str, shape: &SelectionShape) -> bool {
     // A line's horizontal or vertical distance, or two lines', reads their
-    // ends from the sketch, which this check does not have.
+    // ends from the sketch, which this check does not have; so do round
+    // curves made concentric.
     (matches!(tool, "distance_x" | "distance_y")
         && (shape.only(0, 1, 0, 0) || shape.only(0, 2, 0, 0)))
+        || (tool == "coincident" && round_curves(shape))
         || kinds_for(tool, shape, &Sketch::new("")).is_some()
 }
 
@@ -1234,6 +1279,14 @@ mod tests {
         )));
         let coincident = kinds_for("coincident", &many(&points), &sketch).unwrap();
         assert_eq!(coincident.len(), 3);
+        let centred = kinds_for("coincident", &many(&circles), &sketch).unwrap();
+        assert!(
+            centred.iter().zip(&points[1..]).all(|(k, p)| matches!(
+                k,
+                ConstraintKind::Coincident { point1, point2 } if *point1 == points[0] && point2 == p
+            )),
+            "round curves: their centres on the first's: {centred:?}"
+        );
         let on = kinds_for("coincident", &many(&[points[0], circles[1]]), &sketch).unwrap();
         assert!(
             matches!(on[..], [ConstraintKind::PointOnCircle { .. }]),

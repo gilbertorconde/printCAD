@@ -49,6 +49,13 @@ polygon's sides, a slot's width, a rounded rectangle's radius, a frame's
 wall, a B-spline's degree, whether it is closed and whether its clicks are
 points it passes through.
 
+A polygon's second click is a corner. With **Across flats** on in its
+Tool section, the click is the middle of a side instead: the polygon is
+sized by the circle inside it, the width across its flats (a hex nut
+trap's), and a second construction circle on the same centre touches the
+sides, so a diameter on it holds that width. A typed radius is then that
+circle's.
+
 A rectangle's preview is the rectangle the click makes. A rounded
 rectangle whose corners do not fit its radius, or a frame with no room
 for its wall, draws dashed, and the click adds nothing.
@@ -222,6 +229,7 @@ tool; Shift and a letter picks a constraint.
 | Horizontal | Shift+H | Horizontal, Horizontal or vertical (whichever is nearer) |
 | Vertical | Shift+V | |
 | Parallel | Shift+P | |
+| Collinear | Shift+J | |
 | Perpendicular | Shift+N | |
 | Tangent | Shift+T | |
 | Equal | Shift+E | |
@@ -254,6 +262,13 @@ between its ends (a length typed while drawing is that distance), and a
 distance from A to B beside one from B to A. A reference dimension holds
 its size as much as a driving one, and so does one switched off; change
 the value of the one there, or make it driving, instead. **Block** fixes an element in place.
+
+**Coincident** (Shift+C) joins points; on a point and a curve it puts
+the point on the curve, and on two or more circles, arcs or ellipses it
+makes them concentric, each centre on the first one's.
+
+**Collinear** (Shift+J) puts two or more lines on one line: each after
+the first lands on the first one's line, wherever along it.
 
 **Symmetric** takes two points and a line, three points (the last is the
 centre), or a curve and then a line: the curve's two ends mirror each
@@ -825,6 +840,7 @@ Enter, Escape and Backspace are fixed.
 | Shift+C, Shift+O | Coincident, point on object |
 | Shift+H, Shift+V | Horizontal, vertical |
 | Shift+P, Shift+N, Shift+T | Parallel, perpendicular, tangent |
+| Shift+J | Collinear |
 | Shift+E, Shift+S | Equal, symmetric |
 | Shift+B, Shift+G, Shift+K | Block, group, lock |
 | Shift+D, Shift+R, Shift+A | Dimension, radius, angle |

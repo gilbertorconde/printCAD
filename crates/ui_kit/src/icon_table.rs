@@ -150,6 +150,10 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/constraint-coincident.svg"),
     ),
     (
+        "constraint-collinear",
+        include_str!("../icons/constraint-collinear.svg"),
+    ),
+    (
         "constraint-diameter",
         include_str!("../icons/constraint-diameter.svg"),
     ),

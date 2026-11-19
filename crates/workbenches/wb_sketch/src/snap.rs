@@ -1130,10 +1130,47 @@ pub fn angle_step(from: Vec2D, cursor: Vec2D, step_deg: f64) -> Vec2D {
 /// (sketch units), of points on one spot the one drawn first. Points in
 /// `exclude` are ignored (e.g. the chain's own previous point).
 pub fn snap_to_point(sketch: &Sketch, cursor: Vec2D, tol: f64, exclude: &[Uuid]) -> SnapTarget {
-    let scene = Scene::of(sketch);
-    match nearest_point(&scene.near(cursor.to_glam(), tol), exclude) {
-        Some((id, _)) => SnapTarget::Existing(id),
-        None => SnapTarget::New(cursor),
+    Lookup::of(sketch).point(cursor, tol, exclude)
+}
+
+/// A sketch's points and curves looked up once, for the point and curve
+/// snaps of one click or one preview: [`snap_to_point`] and
+/// [`snap_to_curve`] each read the whole sketch again. Valid until the
+/// sketch changes.
+pub struct Lookup(Scene);
+
+impl Lookup {
+    pub fn of(sketch: &Sketch) -> Self {
+        Self(Scene::of(sketch))
+    }
+
+    /// [`snap_to_point`] on the sketch looked up.
+    pub fn point(&self, cursor: Vec2D, tol: f64, exclude: &[Uuid]) -> SnapTarget {
+        match nearest_point(&self.0.near(cursor.to_glam(), tol), exclude) {
+            Some((id, _)) => SnapTarget::Existing(id),
+            None => SnapTarget::New(cursor),
+        }
+    }
+
+    /// [`snap_to_curve`] on the sketch looked up.
+    pub fn curve(&self, cursor: Vec2D, tol: f64, exclude: &[Uuid]) -> Option<(Uuid, Vec2D)> {
+        if !exclude.contains(&ORIGIN_ID) && cursor.to_glam().length() <= tol {
+            return Some((ORIGIN_ID, Vec2D::new(0.0, 0.0)));
+        }
+        curve_near(&self.0, cursor.to_glam(), tol, exclude)
+    }
+
+    /// An existing point within `tol`, its id reused; else a new point
+    /// where a curve within `tol` takes the cursor, projected onto it;
+    /// else a new point at the cursor.
+    pub fn point_or_curve(&self, cursor: Vec2D, tol: f64) -> SnapTarget {
+        match self.point(cursor, tol, &[]) {
+            SnapTarget::New(pos) => match self.curve(cursor, tol, &[]) {
+                Some((_, proj)) => SnapTarget::New(proj),
+                None => SnapTarget::New(pos),
+            },
+            existing => existing,
+        }
     }
 }
 
@@ -1219,10 +1256,7 @@ pub fn snap_to_curve(
     tol: f64,
     exclude: &[Uuid],
 ) -> Option<(Uuid, Vec2D)> {
-    if !exclude.contains(&ORIGIN_ID) && cursor.to_glam().length() <= tol {
-        return Some((ORIGIN_ID, Vec2D::new(0.0, 0.0)));
-    }
-    curve_near(&Scene::of(sketch), cursor.to_glam(), tol, exclude)
+    Lookup::of(sketch).curve(cursor, tol, exclude)
 }
 
 /// Distance from `pos` to the nearest curve of the sketch, points left

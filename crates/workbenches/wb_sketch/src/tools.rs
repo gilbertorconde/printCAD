@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub(crate) use draw::snap_point_or_curve;
-pub use draw::{arc_slot_shape, bspline_preview, polygon_vertices, slot_corners};
+pub use draw::{arc_slot_shape, bspline_preview, polygon_corners, slot_corners};
 pub use join::{JOIN_TOLERANCE, join};
 pub use modify::{next_stroke_crossing, trim_preview};
 pub(crate) use transform::adapt_constraints;
@@ -240,6 +240,9 @@ impl PolySegment {
 pub struct ToolParams {
     /// Number of sides for the regular polygon tool (3..=12).
     pub polygon_sides: u32,
+    /// The polygon's click is the middle of a side rather than a corner:
+    /// it is sized across its flats, by its inscribed circle.
+    pub polygon_flats: bool,
     /// Full slot width (distance between the two parallel edges), mm.
     pub slot_width: f64,
     /// Corner fillet radius for the sketch fillet tool, mm.
@@ -304,6 +307,7 @@ impl Default for ToolParams {
     fn default() -> Self {
         Self {
             polygon_sides: 6,
+            polygon_flats: false,
             slot_width: 4.0,
             fillet_radius: 2.0,
             chamfer_length: 2.0,
@@ -830,7 +834,7 @@ fn run_click(
         "sketch.path" => draw::path(state, sketch, cursor, snap_tol),
         "sketch.parabola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Parabola),
         "sketch.hyperbola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Hyperbola),
-        "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params.polygon_sides),
+        "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params),
         "sketch.slot" => draw::slot(state, sketch, cursor, snap_tol, params.slot_width),
         "sketch.arc_slot" => draw::arc_slot(state, sketch, cursor, snap_tol, params.slot_width),
         "sketch.fillet" => modify::corner(

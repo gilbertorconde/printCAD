@@ -23,7 +23,8 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
   looked up once per query into a `Scene`, the kinds in a fixed order,
   ties settled by `Rank` from what the candidates are, never by ids,
-  which a replay draws anew; `examples/snap_bench.rs` times it, an edit and a label drag on a large
+  which a replay draws anew; `snap::Lookup` the one lookup a click's
+  or a preview's point and curve snaps share; `examples/snap_bench.rs` times it, an edit and a label drag on a large
   sketch), `solver.rs` (sketch_solver adapter, storage write-back and
   application diagnostics; `locked_elements`, through
   `sketch_solver::freedom::locked`, the elements nothing left free can

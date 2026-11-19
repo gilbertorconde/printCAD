@@ -443,6 +443,14 @@ fn main() {
         "sketch.line",
         true,
     );
+    hover(
+        "hover, drawing a rectangle",
+        &sketch,
+        span,
+        &queries,
+        "sketch.rect",
+        true,
+    );
     let marked = dimensioned(sketch.clone(), usize::MAX);
     let edits = &queries[..queries.len().min(100)];
     edit("edit, a segment drawn", &marked, span, edits);

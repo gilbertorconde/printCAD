@@ -493,6 +493,12 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                     specs.push(ResidualSpec::Parallel { s1, e1, s2, e2 });
                 }
             }
+            ConstraintKind::Collinear { line1, line2 } => {
+                if let (Some((s, e)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
+                    specs.push(ResidualSpec::PointOnLine { p: s2, s, e });
+                    specs.push(ResidualSpec::PointOnLine { p: e2, s, e });
+                }
+            }
             ConstraintKind::Perpendicular { line1, line2 } => {
                 if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
                     specs.push(ResidualSpec::Perpendicular { s1, e1, s2, e2 });

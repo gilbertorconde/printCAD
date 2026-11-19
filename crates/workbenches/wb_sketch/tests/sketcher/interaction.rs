@@ -2711,6 +2711,46 @@ fn polygon_typed_radius_creates_construction_circumcircle() {
     assert_eq!(on_radius, 6);
 }
 
+/// Sized across flats, the radius typed is the inscribed circle's: a
+/// hexagon 10 across its flats has its corners 10 / √3 out.
+#[test]
+fn polygon_across_flats_takes_its_radius_to_the_sides() {
+    let mut h = Harness::sketching();
+    h.wb.tool_params_mut().polygon_flats = true;
+    h.click(2.0, 3.0, "sketch.polygon");
+    h.keys("5\n", Some("sketch.polygon"));
+    let sketch = h.sketch();
+    let centre = sketch
+        .point_position(circle_of(&sketch).center)
+        .unwrap()
+        .to_glam();
+    assert!(
+        (centre - glam::DVec2::new(2.0, 3.0)).length() < 0.1,
+        "{centre}"
+    );
+    let corner = 10.0 / 3f64.sqrt();
+    let corners = all_points(&sketch)
+        .into_iter()
+        .filter(|p| ((p.position.to_glam() - centre).length() - corner).abs() < 1e-6)
+        .count();
+    assert_eq!(corners, 6, "corners {corner} out");
+    for side in all_lines(&sketch) {
+        let at = |id| sketch.point_position(id).unwrap().to_glam();
+        let mid = (at(side.start) + at(side.end)) * 0.5;
+        assert!(((mid - centre).length() - 5.0).abs() < 1e-6, "{mid}");
+    }
+    assert!(holds(&sketch, "Radius", Some(5.0)));
+    // Held regular at its size: only where it is and its turn are free.
+    let id = h.active_object.expect("a sketch").0.to_string();
+    let serde_json::Value::Object(args) = serde_json::json!({ "sketch": id }) else {
+        unreachable!()
+    };
+    let status = h.with_ctx(|wb, ctx| wb.run_command("sketch.status", &args, ctx));
+    let status = status.unwrap();
+    assert_eq!(status["dof"], 3, "{status}");
+    assert_eq!(status["redundant"], serde_json::json!([]), "{status}");
+}
+
 #[test]
 fn escape_clears_typed_buffer_then_cancels_tool() {
     let mut h = Harness::sketching();

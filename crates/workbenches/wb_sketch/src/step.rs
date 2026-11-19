@@ -493,6 +493,11 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         json!(params.polygon_sides),
         json!(d.polygon_sides),
     );
+    put(
+        "polygon_flats",
+        json!(params.polygon_flats),
+        json!(d.polygon_flats),
+    );
     put("slot_width", json!(params.slot_width), json!(d.slot_width));
     put(
         "fillet_radius",
@@ -617,6 +622,7 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
         };
         match name.as_str() {
             "polygon_sides" => p.polygon_sides = count(3, MAX_POLYGON_SIDES)?,
+            "polygon_flats" => p.polygon_flats = flag()?,
             "slot_width" => p.slot_width = number()?,
             "fillet_radius" => p.fillet_radius = number()?,
             "chamfer_length" => p.chamfer_length = number()?,

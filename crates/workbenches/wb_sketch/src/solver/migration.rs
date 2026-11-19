@@ -531,6 +531,7 @@ fn relation_name(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Refraction { .. } => "Refraction",
         ConstraintKind::InternalAlignment { .. } => "InternalAlignment",
         ConstraintKind::Group { .. } => "Group",
+        ConstraintKind::Collinear { .. } => "Collinear",
     }
 }
 
@@ -836,6 +837,13 @@ fn every_relation_has_an_equation_inventory_entry() {
             2,
         ),
         (crate::sketch::group_of(&sketch, &[la]).unwrap(), 4),
+        (
+            ConstraintKind::Collinear {
+                line1: la,
+                line2: lb,
+            },
+            2,
+        ),
     ];
     let inventory = include_str!("../../../../../docs/rfcs/0003-solver-equations.md");
     let mut names = std::collections::HashSet::new();
@@ -848,7 +856,7 @@ fn every_relation_has_an_equation_inventory_entry() {
         let sys = build_system_with(&probe, None, &[], true);
         assert_eq!(sys.residual_len - base_rows, rows, "{name}");
     }
-    assert_eq!(names.len(), 43);
+    assert_eq!(names.len(), 44);
 }
 
 fn outcome(value: SolveOutcome) -> Value {

@@ -160,11 +160,11 @@ pub(crate) struct Applied {
 
 /// The point at `pos` a click put there: an existing one exactly there,
 /// else one held on the curve it lies exactly on.
-fn clicked(sketch: &Sketch, pos: Vec2D, tol: f64) -> Corner {
+fn clicked(lookup: &snap::Lookup, pos: Vec2D, tol: f64) -> Corner {
     let eps = tools::curve_attach_eps(tol);
     Corner {
         at: pos,
-        target: tools::snap_point_or_curve(sketch, pos, eps),
+        target: lookup.point_or_curve(pos, eps),
         held: true,
     }
 }
@@ -172,11 +172,11 @@ fn clicked(sketch: &Sketch, pos: Vec2D, tol: f64) -> Corner {
 /// The point at `pos` worked out from the clicks: an existing one exactly
 /// there, else a new, free one. Nothing was snapped there, so nothing
 /// holds it there.
-fn derived(sketch: &Sketch, pos: Vec2D, tol: f64) -> Corner {
+fn derived(lookup: &snap::Lookup, pos: Vec2D, tol: f64) -> Corner {
     let eps = tools::curve_attach_eps(tol);
     Corner {
         at: pos,
-        target: snap::snap_to_point(sketch, pos, eps, &[]),
+        target: lookup.point(pos, eps, &[]),
         held: false,
     }
 }
@@ -204,9 +204,10 @@ pub(crate) fn propose(
     if !kind.finishes(state) {
         return Err(Rejection::Waiting);
     }
+    let lookup = snap::Lookup::of(sketch);
     let mut proposal = Proposal {
         kind,
-        corners: [derived(sketch, cursor, tol); 4],
+        corners: [derived(&lookup, cursor, tol); 4],
         centre: None,
         radius: params.fillet_radius,
         inner: None,
@@ -222,9 +223,9 @@ pub(crate) fn propose(
             let (b, d) = (Vec2D::new(c.x, a.at.y), Vec2D::new(a.at.x, c.y));
             proposal.corners = [
                 a,
-                derived(sketch, b, tol),
-                clicked(sketch, c, tol),
-                derived(sketch, d, tol),
+                derived(&lookup, b, tol),
+                clicked(&lookup, c, tol),
+                derived(&lookup, d, tol),
             ];
             let outline = [a.at, b, c, d];
             match kind {
@@ -275,13 +276,13 @@ pub(crate) fn propose(
             let (x0, x1) = (o.x.min(k.x), o.x.max(k.x));
             let (y0, y1) = (o.y.min(k.y), o.y.max(k.y));
             proposal.corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-                .map(|(x, y)| derived(sketch, Vec2D::new(x, y), tol));
-            proposal.centre = Some(clicked(sketch, center, tol));
+                .map(|(x, y)| derived(&lookup, Vec2D::new(x, y), tol));
+            proposal.centre = Some(clicked(&lookup, center, tol));
         }
         ToolState::Rect3B { a, b } => {
             let (a, b) = (picked(sketch, a)?, picked(sketch, b)?);
             let (c, d) = rect3_corners(a.at, b.at, cursor).ok_or(Rejection::Degenerate)?;
-            proposal.corners = [a, b, clicked(sketch, c, tol), derived(sketch, d, tol)];
+            proposal.corners = [a, b, clicked(&lookup, c, tol), derived(&lookup, d, tol)];
         }
         ToolState::RectCenter3Corner { center, corner } => {
             let (centre, k) = (picked(sketch, center)?, picked(sketch, corner)?);
@@ -289,9 +290,9 @@ pub(crate) fn propose(
                 rect_center3_corners(centre.at, k.at, cursor).ok_or(Rejection::Degenerate)?;
             proposal.corners = [
                 k,
-                derived(sketch, p2, tol),
-                derived(sketch, p3, tol),
-                derived(sketch, p4, tol),
+                derived(&lookup, p2, tol),
+                derived(&lookup, p3, tol),
+                derived(&lookup, p4, tol),
             ];
             proposal.centre = Some(centre);
         }
