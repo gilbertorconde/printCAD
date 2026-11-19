@@ -716,6 +716,61 @@ mod tests {
         );
     }
 
+    /// Text's size takes a formula, which the build writes into its
+    /// sketch as a plain size would be; a size not above zero does not
+    /// build.
+    #[test]
+    fn text_size_takes_a_formula_and_zero_is_refused() {
+        let text_at = |size: f64| {
+            let mut s = Session::new();
+            let body = s.doc.create_body(None);
+            let block = json!({"Box": {"length": 10.0, "width": 5.0, "height": 10.0}});
+            s.run("design.primitive", json!({"body": body, "kind": block}))
+                .unwrap();
+            let made = s
+                .run(
+                    "design.text",
+                    json!({"body": body.0.to_string(), "text": "I", "size": size,
+                           "face_point": [5.0, 2.5, 10.0], "face_normal": [0.0, 0.0, 1.0]}),
+                )
+                .unwrap();
+            (s, body, made_id(&made))
+        };
+        let profile = |s: &Session, body: BodyId| {
+            let ops = crate::build::body_build_ops(&s.doc, body).unwrap().ops;
+            match ops.last() {
+                Some(kernel_api::SolidOp::Project { profile, .. }) => {
+                    let wires = profile.wires.iter();
+                    wires.map(|w| w.segments.clone()).collect::<Vec<_>>()
+                }
+                other => panic!("{other:?}"),
+            }
+        };
+        let (mut s, body, id) = text_at(8.0);
+        s.doc
+            .set_feature_formula(id, "/Text/size", Some("1.5 * 2 mm".into()))
+            .unwrap();
+        let mut registry = core_document::DocumentService::default();
+        registry
+            .register_workbench(Box::new(DesignWorkbench::default()))
+            .unwrap();
+        registry.evaluate(&mut s.doc);
+        let (plain, plain_body, _) = text_at(3.0);
+        assert_eq!(profile(&s, body), profile(&plain, plain_body));
+
+        let (mut s, body, id) = text_at(8.0);
+        s.run(
+            "design.set",
+            json!({"feature": id.0.to_string(), "size": 0.0}),
+        )
+        .unwrap();
+        let error = crate::build::body_build_ops(&s.doc, body).unwrap_err();
+        assert!(
+            error.message.contains("size must be above zero"),
+            "{error:?}"
+        );
+    }
+
     /// A pipe takes the path it is given, from any body; given none it
     /// needs a second sketch in the profile's body, and says so in the
     /// arguments' terms.

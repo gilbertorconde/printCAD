@@ -282,8 +282,18 @@ pub(super) fn polar_transforms(
     if let Some(i) = angles[..gaps].iter().position(|gap| gap.abs() < 1e-6) {
         return Err(format!("step angle {} of the pattern is zero", i + 1));
     }
+    let offsets = uneven_offsets(occurrences - 1, step, angles);
+    // Stepped round, the last copy and one more step back to the original
+    // must stay within a turn, or copies land on the first ones.
+    let turn = offsets.last().map_or(0.0, |a| a.abs()) + step.abs();
+    if step_mode && turn > 360.0 + 1e-6 {
+        return Err(format!(
+            "the polar pattern's {occurrences} occurrences take {turn:.1} degrees, past a \
+             whole turn, so copies overlap: give fewer occurrences or a smaller angle"
+        ));
+    }
     let sign = if reversed { -1.0 } else { 1.0 };
-    uneven_offsets(occurrences - 1, step, angles)
+    offsets
         .into_iter()
         .map(|angle| mat_rotation(origin, dir, angle * sign))
         .collect()

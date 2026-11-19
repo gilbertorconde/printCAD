@@ -580,7 +580,8 @@ assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
 
 `mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`)
 or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far
-as a face too narrow for it goes, edge by edge.
+as a face too narrow for it goes, edge by edge. `size` and `size2` must be
+above zero and `angle_deg` between 0 and 90, or the chamfer does not build.
 
 See also: `design.fillet`
 
@@ -636,8 +637,8 @@ assert(math.abs(m.volume - (2000 + lean * 10 / 2 * 10)) < 1e-3, m.volume)
 `face_point` and `face_normal` name the face it opens and are required; `faces
 = {{point = .., normal = ..}, ...}` opens several, replacing that one.
 
-`value` is the wall, 1 mm when left out, inside the solid; `inward = false`
-puts the walls outside it, `both_sides = true` on both.
+`value` is the wall, 1 mm when left out and above zero, inside the solid;
+`inward = false` puts the walls outside it, `both_sides = true` on both.
 
 See also: `doc.faces`, `design.draft`
 
@@ -873,8 +874,9 @@ and an end cap comes nearer.
 
 `text` ("Text"; a `{formula}` shows its value), `font`, `size` (5 mm),
 `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set
-the text; `mode` ("Emboss", "Deboss" or "Split") and `height` (0.6 mm) what it
-does to the face.
+the text, `size`, `spacing` and `angle` taking formulas, and a `size` not
+above zero is an error on the feature; `mode` ("Emboss", "Deboss" or "Split")
+and `height` (0.6 mm) what it does to the face.
 
 On a curved face the text wraps onto it (`wrap`, set by itself when the face
 is curved): round a cylinder or cone, or with `along = true` along its axis;
@@ -989,7 +991,9 @@ assert(math.abs(volume - (30 * 10 - 2 * math.pi * 4) * 4) < 1e-3, volume)
 
 `axis` is Z through the body's origin when left out; `occurrences` (4) counts
 the original. `angle_deg` of 360 (the default) spreads them evenly round the
-turn; less puts the first and the last at its two ends.
+turn; less puts the first and the last at its two ends. With `step_mode =
+true` it is the angle from one occurrence to the next, and occurrences whose
+steps run past a whole turn are refused rather than laid over the first.
 
 See also: `design.linear_pattern`
 

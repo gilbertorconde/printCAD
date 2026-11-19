@@ -168,6 +168,55 @@ pub(crate) fn lay_round(sketch: &mut Sketch, radius: f32) -> Result<(), String> 
     text::change(sketch, id, &spec)
 }
 
+/// Write into the first text block of `sketch`, as a build loads it, the
+/// size, spacing and turn of `feature` (its values as formulas leave them)
+/// where they differ from `stored`, the numbers [`sync`] wrote in: a
+/// formula on the feature sets them without an edit to sync, while a
+/// formula set in the sketch itself is left to stand.
+pub(crate) fn take_formulas(
+    sketch: &mut Sketch,
+    feature: &DesignFeature,
+    stored: Option<&DesignFeature>,
+) -> Result<(), String> {
+    let numbers = |f: &DesignFeature| match f {
+        DesignFeature::Text {
+            size,
+            spacing,
+            angle,
+            along,
+            wrap,
+            ..
+        } => Some((*size, *spacing, *angle, *along && *wrap)),
+        _ => None,
+    };
+    let Some((size, spacing, angle, upright)) = numbers(feature) else {
+        return Ok(());
+    };
+    let was = stored.and_then(numbers);
+    let Some(block) = sketch.texts.first() else {
+        return Err("the text's sketch holds no text".to_string());
+    };
+    let mut spec = TextSpec::of(block);
+    let mut moved = false;
+    if was.is_none_or(|w| w.0 != size) {
+        spec.size = f64::from(size);
+        moved = true;
+    }
+    if was.is_none_or(|w| w.1 != spacing) {
+        spec.spacing = f64::from(spacing);
+        moved = true;
+    }
+    if was.is_none_or(|w| w.2 != angle) {
+        spec.angle = f64::from(angle) + if upright { 90.0 } else { 0.0 };
+        moved = true;
+    }
+    if !moved {
+        return Ok(());
+    }
+    let id = block.id;
+    text::change(sketch, id, &spec)
+}
+
 /// Bring the hidden sketch of Text feature `id` in step with its fields:
 /// what it says, its font, size and spacing (a whole turn's spacing worked
 /// out from its letters), its turn, and where its middle stands.
@@ -207,7 +256,10 @@ pub(crate) fn sync(document: &mut Document, id: FeatureId) -> Result<(), String>
     if !text::is_bundled(&spec.font) && block.font != spec.font {
         spec.font_asset = None;
     }
-    spec.size = f64::from(size).max(0.01);
+    // A size not above zero keeps the sketch's; the build says why.
+    if size > 0.0 {
+        spec.size = f64::from(size);
+    }
     spec.spacing = f64::from(spacing);
     spec.angle = f64::from(angle) + if along && wrap { 90.0 } else { 0.0 };
     if spec.layout.is_point() {

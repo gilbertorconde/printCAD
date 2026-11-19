@@ -2288,8 +2288,9 @@ pub enum DesignFeature {
     /// standing off the face it was put on) that the feature keeps in step
     /// with these fields, and carried onto the faces as `Project` carries
     /// a sketch: raised, sunk or imprinted, wrapped onto a curved face.
-    /// The text's own numbers are plain settings written into the sketch;
-    /// formulas set them in the sketch, where its text keeps them.
+    /// Its size, spacing and angle take formulas as other features'
+    /// numbers do, the build writing what they come to into the sketch;
+    /// its other numbers are plain settings written into the sketch.
     Text {
         sketch: FeatureId,
         faces: Vec<FacePick>,
@@ -2312,15 +2313,15 @@ pub enum DesignFeature {
         font: String,
         /// The font's em, mm.
         #[serde(default = "default_text_size")]
-        #[walk(setting)]
+        #[walk(length("size", "Size"))]
         size: f32,
         /// Added between letters, mm.
         #[serde(default)]
-        #[walk(setting)]
+        #[walk(length("spacing", "Spacing"))]
         spacing: f32,
         /// Turned on the face, degrees.
         #[serde(default)]
-        #[walk(setting)]
+        #[walk(angle("angle", "Angle"))]
         angle: f32,
         /// Where its middle stands from where the face was picked, mm
         /// across and up the face as the text reads.

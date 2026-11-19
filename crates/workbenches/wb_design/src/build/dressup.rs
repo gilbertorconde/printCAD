@@ -181,12 +181,20 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                     distance: *size as f64,
                 },
                 crate::feature::ChamferMode::TwoDistances => {
+                    if !(*size2 > 0.0 && size2.is_finite()) {
+                        return Err("a chamfer's second size must be positive".into());
+                    }
                     kernel_api::ChamferSpec::TwoDistances {
                         distance1: *size as f64,
                         distance2: *size2 as f64,
                     }
                 }
                 crate::feature::ChamferMode::DistanceAngle => {
+                    if !(*angle_deg > 0.0 && *angle_deg < 90.0) {
+                        return Err(format!(
+                            "a chamfer's angle lies between 0 and 90 degrees, not {angle_deg}"
+                        ));
+                    }
                     kernel_api::ChamferSpec::DistanceAngle {
                         distance: *size as f64,
                         angle_deg: *angle_deg as f64,
@@ -220,6 +228,7 @@ fn datum_origin(document: &Document, datum: FeatureId) -> Result<[f64; 3], Strin
 pub(super) fn plan_dressup(
     document: &Document,
     plan: &mut BuildPlan,
+    id: FeatureId,
     feature: &DesignFeature,
     fail: &impl Fn(String) -> BuildError,
 ) -> Result<(), BuildError> {
@@ -327,16 +336,28 @@ pub(super) fn plan_dressup(
                 ));
             }
             let profile = match feature {
-                // Off the face and, round a whole turn, spread round the
-                // cylinder as the build finds them.
+                // With the numbers formulas set, off the face and, round a
+                // whole turn, spread round the cylinder as the build finds
+                // them.
                 DesignFeature::Text {
                     wrap,
                     along,
                     full_turn,
                     radius,
+                    size,
                     ..
                 } => {
+                    if !(*size > 0.0 && size.is_finite()) {
+                        return Err(fail(format!(
+                            "the text's size must be above zero, not {size}"
+                        )));
+                    }
                     let mut laid = load_sketch(document, *sketch).map_err(&fail)?;
+                    let stored = document
+                        .get_feature_data(id)
+                        .and_then(|data| DesignFeature::from_json(data).ok());
+                    crate::text_feature::take_formulas(&mut laid.sketch, feature, stored.as_ref())
+                        .map_err(&fail)?;
                     crate::text_feature::stand_off(&mut laid, &faces[0]);
                     if *wrap && !*along && *full_turn {
                         crate::text_feature::lay_round(&mut laid.sketch, *radius).map_err(&fail)?;
@@ -411,6 +432,9 @@ pub(super) fn plan_dressup(
         } => {
             if faces.is_empty() {
                 return Err(fail("select at least one face to open".into()));
+            }
+            if !(*value > 0.0 && value.is_finite()) {
+                return Err(fail("the thickness must be positive".into()));
             }
             plan.ops.push(SolidOp::Thickness {
                 value: *value as f64,

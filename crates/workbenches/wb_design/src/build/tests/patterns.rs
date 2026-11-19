@@ -430,6 +430,15 @@ fn a_polar_pattern_by_step_turns_each_occurrence_by_the_step() {
         assert!(near(apply(t, x), turned(deg)), "{deg}");
     }
     assert!(polar_transforms(z, 30.0, 3, false, true, &[0.0]).is_err());
+    // Four 90° steps close the turn; a fifth runs past it onto the first.
+    assert_eq!(
+        polar_transforms(z, 90.0, 4, false, true, &[])
+            .unwrap()
+            .len(),
+        3
+    );
+    let past = polar_transforms(z, 90.0, 5, false, true, &[]).unwrap_err();
+    assert!(past.contains("past a whole turn"), "{past}");
 }
 
 #[test]
