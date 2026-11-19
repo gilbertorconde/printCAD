@@ -111,6 +111,10 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
   one runs. The status bar and the console show it with a Stop button.
   Lines and scripts started meanwhile wait their turn. On the command line
   a run stops after an hour.
+- A script may hold at most 512 MB of memory; one that needs more stops
+  with an error saying so.
+- Scripts you run have Lua's standard libraries, `io` and `os` among them.
+  An AI agent's scripts do not (see [AI agents](AI.md)).
 
 ## Recording
 

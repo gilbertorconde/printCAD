@@ -8,13 +8,23 @@ use std::time::{Duration, Instant};
 
 use core_document::CommandArgs;
 use mlua::serde::SerializeOptions;
-use mlua::{HookTriggers, Lua, LuaSerdeExt, MultiValue, VmState};
+use mlua::{HookTriggers, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, VmState};
 
 use crate::{Host, RunOutput, STOPPED, list_commands, search_commands};
 
 /// How long a run may take before it is stopped, unless the caller sets
 /// another limit.
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(10);
+
+/// How much memory an engine's Lua state may hold, unless the caller sets
+/// another limit.
+pub const DEFAULT_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
+
+/// Base functions a sandboxed engine removes: they read files (`dofile`,
+/// `loadfile`) or compile whatever chunk a script hands them, binary ones
+/// included (`load`). The console and the runner compile what they run
+/// from the Rust side, so no script needs them.
+const SANDBOX_REMOVED: [&str; 3] = ["dofile", "loadfile", "load"];
 
 /// Lua code every run starts with: the `pc` namespace, `print` into the
 /// run's output, `show` and `help`.
@@ -29,6 +39,7 @@ pub struct ScriptEngine {
     on_print: PrintSink,
     started: Rc<Cell<Instant>>,
     time_limit: Rc<Cell<Duration>>,
+    memory_limit: usize,
     stop: Rc<RefCell<Option<Arc<AtomicBool>>>>,
 }
 
@@ -39,8 +50,31 @@ impl Default for ScriptEngine {
 }
 
 impl ScriptEngine {
+    /// An engine with every library Lua counts as safe, `io` and `os`
+    /// included: for scripts the user runs.
     pub fn new() -> Self {
-        let lua = Lua::new();
+        Self::with(Lua::new())
+    }
+
+    /// An engine for scripts the user has not read, such as an agent's:
+    /// the base functions without those that load code or files, and the
+    /// `table`, `string`, `math`, `utf8` and `coroutine` libraries; no
+    /// `io`, `os`, `package` or `debug`. A script reaches files only
+    /// through commands, which check what they touch.
+    pub fn sandboxed() -> Self {
+        let libraries =
+            StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE;
+        let lua =
+            Lua::new_with(libraries, LuaOptions::default()).expect("the sandboxed libraries load");
+        for name in SANDBOX_REMOVED {
+            lua.globals()
+                .raw_set(name, mlua::Nil)
+                .expect("a base function is removed");
+        }
+        Self::with(lua)
+    }
+
+    fn with(lua: Lua) -> Self {
         let printed = Rc::new(RefCell::new(Vec::new()));
         let started = Rc::new(Cell::new(Instant::now()));
         let time_limit = Rc::new(Cell::new(DEFAULT_TIME_LIMIT));
@@ -85,7 +119,7 @@ impl ScriptEngine {
                     Err(mlua::Error::runtime(STOPPED))
                 } else if since.get().elapsed() > limit.get() {
                     Err(mlua::Error::runtime(format!(
-                        "stopped after {} s",
+                        "stopped after {} s, the longest a script may run here",
                         limit.get().as_secs_f32()
                     )))
                 } else {
@@ -99,12 +133,15 @@ impl ScriptEngine {
             .set_name("prelude")
             .exec()
             .expect("the prelude runs");
+        lua.set_memory_limit(DEFAULT_MEMORY_LIMIT)
+            .expect("a memory limit is set");
         Self {
             lua,
             printed,
             on_print,
             started,
             time_limit,
+            memory_limit: DEFAULT_MEMORY_LIMIT,
             stop,
         }
     }
@@ -134,9 +171,20 @@ impl ScriptEngine {
             .map_err(|e| e.to_string())
     }
 
-    /// Stop any run that takes longer than `limit`.
+    /// Stop any run whose Lua runs longer than `limit`. Time spent waiting
+    /// for a command's answer does not count.
     pub fn set_time_limit(&mut self, limit: Duration) {
         self.time_limit.set(limit);
+    }
+
+    /// Let the Lua state hold at most `bytes`; a run that needs more stops
+    /// with an error saying so.
+    pub fn set_memory_limit(&mut self, bytes: usize) -> Result<(), String> {
+        self.lua
+            .set_memory_limit(bytes)
+            .map_err(|e| e.to_string())?;
+        self.memory_limit = bytes;
+        Ok(())
     }
 
     /// Run one console line. An expression answers its value; anything
@@ -166,10 +214,12 @@ impl ScriptEngine {
         self.printed.borrow_mut().clear();
         self.started.set(Instant::now());
         let lua = &self.lua;
+        let started = &self.started;
         let result = lua.scope(|scope| {
             let call =
                 scope.create_function_mut(|lua, (id, args): (String, Option<mlua::Value>)| {
                     let args = to_args(lua, args)?;
+                    let asked = Instant::now();
                     let answer = if id == "app.commands" {
                         Ok(list_commands(host.commands(), &args))
                     } else if id == "app.search" {
@@ -177,6 +227,9 @@ impl ScriptEngine {
                     } else {
                         host.call(&id, args)
                     };
+                    // The time limit is on the script's own running, not
+                    // on the commands it waits for.
+                    started.set(started.get() + asked.elapsed());
                     match answer {
                         Ok(value) => lua.to_value_with(
                             &value,
@@ -214,12 +267,29 @@ impl ScriptEngine {
                 returned,
                 error: None,
             },
+            Err(error) if out_of_memory(&error) => RunOutput {
+                printed,
+                error: Some(format!(
+                    "out of memory: a script may use at most {} MB",
+                    self.memory_limit / (1024 * 1024)
+                )),
+                ..RunOutput::default()
+            },
             Err(error) => RunOutput {
                 printed,
                 error: Some(error_text(&error)),
                 ..RunOutput::default()
             },
         }
+    }
+}
+
+/// Whether `error` is the Lua state running past its memory limit.
+fn out_of_memory(error: &mlua::Error) -> bool {
+    match error {
+        mlua::Error::MemoryError(_) => true,
+        mlua::Error::CallbackError { cause, .. } => out_of_memory(cause),
+        _ => false,
     }
 }
 

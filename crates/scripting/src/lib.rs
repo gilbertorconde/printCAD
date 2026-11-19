@@ -13,10 +13,10 @@ mod engine;
 mod job;
 mod record;
 mod thread;
-pub use engine::ScriptEngine;
+pub use engine::{DEFAULT_MEMORY_LIMIT, ScriptEngine};
 pub use job::{Event, Job};
 pub use record::Recorder;
-pub use thread::ScriptThread;
+pub use thread::{AGENT_TIME_LIMIT, ScriptThread};
 
 use core_document::{CommandArgs, CommandError, CommandResult, CommandSpec};
 
@@ -169,6 +169,10 @@ mod tests {
                     _ => Ok(json!("pad-1")),
                 },
                 "doc.bodies" => Ok(json!([{"name": "Body", "id": "b-1", "parent": null}])),
+                "doc.wait" => {
+                    std::thread::sleep(Duration::from_millis(40));
+                    Ok(serde_json::Value::Null)
+                }
                 _ => unknown(id),
             }
         }
@@ -366,5 +370,68 @@ mod tests {
         // The engine still works afterwards.
         let out = engine.eval_line("1 + 1", &mut Recorder::default());
         assert_eq!(out.value.as_deref(), Some("2"));
+    }
+
+    /// The time limit is on the script's own Lua: a script that spends
+    /// longer than it waiting for commands (a rebuild, say) still ends.
+    #[test]
+    fn waiting_for_a_command_does_not_count_against_the_time_limit() {
+        let mut engine = ScriptEngine::sandboxed();
+        engine.set_time_limit(Duration::from_millis(50));
+        let out = engine.run_script(
+            "for _ = 1, 3 do pc.doc.wait() end return 'done'",
+            "slow commands",
+            &mut Recorder::default(),
+        );
+        assert_eq!(out.error, None);
+        assert_eq!(out.returned, Some(json!("done")));
+    }
+
+    /// A sandboxed engine has no library that reaches files, programs or
+    /// the interpreter's internals, and no base function that loads code;
+    /// the libraries scripts compute with are there. The user's engine
+    /// keeps `io` and `os`, which the documented examples use.
+    #[test]
+    fn a_sandboxed_engine_reaches_no_file_or_program() {
+        let mut engine = ScriptEngine::sandboxed();
+        let mut host = Recorder::default();
+        for name in [
+            "io", "os", "package", "require", "debug", "dofile", "loadfile", "load",
+        ] {
+            let out = engine.eval_line(&format!("{name} == nil"), &mut host);
+            assert_eq!(out.value.as_deref(), Some("true"), "{name}");
+        }
+        let out = engine.eval_line(
+            "string.rep('a', 2) .. table.concat({1, 2}) .. math.floor(2.5) \
+             .. utf8.char(66) .. tostring(coroutine.wrap(function() return 7 end)())",
+            &mut host,
+        );
+        assert_eq!(out.value.as_deref(), Some("\"aa122B7\""));
+        let out = engine.run_script("pc.design.pad{sketch = 's'}", "t", &mut host);
+        assert_eq!(out.error, None);
+
+        let mut user = ScriptEngine::new();
+        let out = user.eval_line("io ~= nil and os ~= nil", &mut host);
+        assert_eq!(out.value.as_deref(), Some("true"));
+    }
+
+    /// A script that allocates without end stops at the memory limit with
+    /// an error naming it, and the engine runs the next script.
+    #[test]
+    fn a_runaway_allocation_stops_at_the_memory_limit() {
+        for mut engine in [ScriptEngine::new(), ScriptEngine::sandboxed()] {
+            engine.set_memory_limit(32 * 1024 * 1024).unwrap();
+            let out = engine.run_script(
+                "local t = {} while true do t[#t + 1] = string.rep('x', 1 << 20) .. #t end",
+                "hog",
+                &mut Recorder::default(),
+            );
+            assert_eq!(
+                out.error.as_deref(),
+                Some("out of memory: a script may use at most 32 MB")
+            );
+            let out = engine.eval_line("1 + 1", &mut Recorder::default());
+            assert_eq!(out.value.as_deref(), Some("2"));
+        }
     }
 }
