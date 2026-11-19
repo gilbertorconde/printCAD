@@ -1218,7 +1218,9 @@ fn row_frame(ui: &mut egui::Ui) -> (egui::Rect, egui::Rect, egui::Rect) {
         rect.bottom() - 0.5,
         egui::Stroke::new(1.0, BG2),
     );
-    let split = rect.left() + rect.width() * 0.5;
+    // Values run longer than names: a size with its unit fits at the
+    // panel's first width.
+    let split = rect.left() + rect.width() * 0.42;
     ui.painter()
         .vline(split, rect.y_range(), egui::Stroke::new(1.0, BORDER));
     let name = egui::Rect::from_min_max(
@@ -1234,26 +1236,36 @@ fn row_frame(ui: &mut egui::Ui) -> (egui::Rect, egui::Rect, egui::Rect) {
 
 fn value_row(ui: &mut egui::Ui, row: &PropRow) {
     let (_, name, value) = row_frame(ui);
-    let painter = ui.painter().clone();
-    painter.with_clip_rect(name).text(
-        name.left_center(),
-        egui::Align2::LEFT_CENTER,
-        &row.name,
-        sans(FONT_SM),
-        TEXT2,
-    );
+    clipped_text(ui, name, &row.name, sans(FONT_SM), TEXT2);
     let font = if row.mono {
         ui_kit::mono(FONT_SM)
     } else {
         sans(FONT_SM)
     };
-    painter.with_clip_rect(value).text(
-        value.left_center(),
+    let color = if row.dim { TEXT3 } else { TEXT1 };
+    clipped_text(ui, value, &row.value, font, color);
+}
+
+/// `text` in `rect`, cut at its right edge; when cut, hovering `rect`
+/// shows the whole of it.
+fn clipped_text(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) {
+    let shown = ui.painter().with_clip_rect(rect).text(
+        rect.left_center(),
         egui::Align2::LEFT_CENTER,
-        &row.value,
+        text,
         font,
-        if row.dim { TEXT3 } else { TEXT1 },
+        color,
     );
+    if shown.right() > rect.right() {
+        ui.interact(rect, ui.id().with(("clipped", text)), egui::Sense::hover())
+            .on_hover_text(text);
+    }
 }
 
 /// The choice of what the inertia is about; the name picked, when it
