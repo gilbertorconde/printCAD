@@ -142,6 +142,40 @@ fn a_new_count_is_one_op_and_one_undo_step() {
     );
 }
 
+/// A copy taken away by a smaller count, or with its array, comes back on
+/// undo as it was: hidden, coloured and annotated.
+#[test]
+fn undoing_a_smaller_array_brings_each_copy_back_with_its_own_settings() {
+    let mut doc = Document::new("t");
+    let mut journal = OpJournal::new(16);
+    let source = part(&mut doc);
+    let array = doc.create_copy_array(source, row(10.0), 4).unwrap();
+    let last = doc.copy_array(array).unwrap().instances[2].body;
+    doc.set_body_visible(last, false);
+    doc.set_body_display(
+        last,
+        Some(core_document::BodyDisplay {
+            color: [1.0, 0.0, 0.0],
+            opacity: 0.5,
+        }),
+    );
+    let note = core_document::Note::pinned("Mind".into(), [0.0; 3], [0.0; 3], None);
+    doc.add_note(last, note).unwrap();
+    journal.note(&mut doc);
+    let before = serde_json::to_value(doc.body(last).unwrap()).unwrap();
+    for shrink in [
+        |d: &mut Document, a| d.set_copy_array(a, row(10.0), 2, Vec::new()).unwrap(),
+        |d: &mut Document, a| assert!(d.remove_copy_array(a)),
+    ] {
+        shrink(&mut doc, array);
+        journal.note(&mut doc);
+        assert!(doc.body(last).is_none());
+        journal.undo(&mut doc).expect("undoes");
+        let after = serde_json::to_value(doc.body(last).expect("back")).unwrap();
+        assert_eq!(after, before);
+    }
+}
+
 #[test]
 fn deleting_a_copy_skips_it_and_undoes() {
     let mut doc = Document::new("t");

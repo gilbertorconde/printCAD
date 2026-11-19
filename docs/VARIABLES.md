@@ -101,6 +101,13 @@ after a number is taken as a unit (`2 in`) and is left alone.
   `if(condition, then, else)` with `< <= > >= == !=`, `&&`, `||`, `!`.
 - Constants: `pi`, `tau`.
 
+`round`, `floor` and `ceil` take a length to whole units of the unit it is
+written in: `round(1.3 in)` is 1 in and `round(13.4 mm)` is 13 mm in any
+document. A length written in no one unit (a reference, a bare number, a
+sum of inches and millimetres) goes to whole units of the document's unit,
+so in an inch document `round(Plate.width)` is a whole number of inches.
+An angle goes to whole degrees.
+
 ## Units are checked
 
 Every value knows what it is: a length, an angle, a plain number, an area.

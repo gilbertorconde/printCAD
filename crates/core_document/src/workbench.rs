@@ -1078,9 +1078,10 @@ pub trait Workbench: std::any::Any + Send {
         Err("this input cannot be changed here".to_string())
     }
 
-    /// Formulas moved the values of `moved` (any bench's features): a
-    /// bench whose results are recorded rather than derived (placements a
-    /// joint solves for) records them here. Runs just before an undo step
+    /// Formulas moved the values of `moved` (any bench's features), or a
+    /// formula on one was set or taken away: a bench whose results are
+    /// recorded rather than derived (placements a joint solves for, a
+    /// formula kept in step with another) records them here. Runs just before an undo step
     /// closes, so the edit that moved a value and what follows from it
     /// are one step; it must record nothing when nothing is out of place.
     fn values_moved(&mut self, _ctx: &mut WorkbenchRuntimeContext, _moved: &[FeatureId]) {}

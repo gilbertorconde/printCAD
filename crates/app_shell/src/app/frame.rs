@@ -392,6 +392,7 @@ impl PrintCadApp {
             app.drive_mesh_solids();
             app.drive_mirrored_copies();
             app.drive_links();
+            app.drive_waiting_export();
         });
         // What formulas moved is followed within the gesture that moved
         // it: a joint an open panel binds re-solves on the next frame.
@@ -611,6 +612,7 @@ impl PrintCadApp {
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
                         // Field reads, not `&self` methods: `gfx` is borrowed
                         // for the whole block.
+                        export_waiting: self.session.file.export_waiting.is_some(),
                         document_saving: !self.session.file.saves.is_empty()
                             || server_status.saves_in_flight > 0,
                         save_progress: self.session.file.saves.progress().and_then(|p| p.read()),

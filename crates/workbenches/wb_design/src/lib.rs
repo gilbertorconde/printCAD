@@ -606,6 +606,20 @@ impl Workbench for DesignWorkbench {
         Some(&mut self.tab)
     }
 
+    /// A Text whose formulas changed, however they were set: its hidden
+    /// sketch reads the size, spacing and turn they set.
+    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
+        for id in moved {
+            let text = ctx
+                .document
+                .get_feature_data(*id)
+                .is_some_and(|data| data.get("Text").is_some());
+            if text && let Err(why) = text_feature::relink(ctx.document, *id) {
+                tracing::warn!("the text's sketch could not follow its formulas: {why}");
+            }
+        }
+    }
+
     fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
         if node.workbench_id.as_str() == "core.datum" {
             params::datum_parameters()

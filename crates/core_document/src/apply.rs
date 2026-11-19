@@ -67,9 +67,10 @@ impl Document {
                     created_at: body.created_at,
                 }
             }
-            Op::SetCopyArray { id, .. } => Op::SetCopyArray {
+            Op::SetCopyArray { id, array, .. } => Op::SetCopyArray {
                 id: *id,
                 array: self.copy_array(*id).cloned(),
+                restored: self.copies_dropped_by(*id, array.as_ref()),
             },
             Op::SetComponent { id, .. } => Op::SetComponent {
                 id: *id,
@@ -348,8 +349,12 @@ impl Document {
             Op::SetComponent { id, component } => {
                 self.apply_set_component(*id, component.as_ref());
             }
-            Op::SetCopyArray { id, array } => {
-                self.apply_set_copy_array(*id, array.as_ref());
+            Op::SetCopyArray {
+                id,
+                array,
+                restored,
+            } => {
+                self.apply_set_copy_array(*id, array.as_ref(), restored);
             }
             Op::SetBodyFrozen { id, frozen } => {
                 if let Some(entry) = self.body_mut(*id) {

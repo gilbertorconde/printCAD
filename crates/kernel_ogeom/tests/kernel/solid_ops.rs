@@ -8,8 +8,8 @@ use kernel_api::{
 };
 
 use super::common::{
-    assert_close, chain, circle_wire, new_kernel, plane_at_z, primitive, rect_wire, translate,
-    try_chain, volume, xy_plane,
+    assert_close, chain, circle_wire, count_shapes, is_sound, new_kernel, plane_at_z, primitive,
+    rect_wire, translate, try_chain, volume, xy_plane,
 };
 
 /// A `length` × `width` × `height` box primitive at the origin.
@@ -420,6 +420,28 @@ fn a_body_boolean_keeps_what_the_tool_shares() {
     let want = std::f64::consts::PI * 16.0 * 10.0;
     let got = volume(&common.brep_blob);
     assert!((got - want).abs() < 1e-3, "{got} against {want}");
+}
+
+/// A cut whose first tool splits the block in two still takes its later
+/// tools out of the pieces: a slot across the full width, then a hole.
+#[test]
+fn a_cut_that_splits_the_block_takes_its_later_tools_from_each_piece() {
+    let cut = chain(&[
+        block(),
+        extrude_on(
+            plane_at_z(-1.0),
+            vec![rect_wire(-1.0, 8.0, 21.0, 12.0), circle_wire(5.0, 4.0, 2.0)],
+            ExtrudeTermination::Blind { distance: 12.0 },
+            false,
+            BooleanOp::Cut,
+        ),
+    ]);
+    let want = 4000.0 - 20.0 * 4.0 * 10.0 - std::f64::consts::PI * 4.0 * 10.0;
+    let got = volume(&cut.brep_blob);
+    assert!((got - want).abs() < 0.5, "{got} against {want}");
+    let solids = count_shapes(&cut.brep_blob, ogeom::topo::ShapeType::Solid);
+    assert_eq!(solids, 2, "the slot leaves two pieces");
+    assert!(is_sound(&cut.brep_blob));
 }
 
 /// A dress-up the box cannot take fails, and the failure names the op: a

@@ -38,6 +38,8 @@ pub struct StatusBarInputs<'a> {
     pub kernel_progress: Option<(u64, u64)>,
     pub server: &'a ServerBadge,
     pub document_saving: bool,
+    /// An export waits for the tab's solids to rebuild.
+    pub export_waiting: bool,
     /// Bytes packed into the archive being saved, out of the whole.
     pub save_progress: Option<(u64, u64)>,
     /// The connected 6-DoF mouse, when there is one.
@@ -580,7 +582,8 @@ fn coords_text(inputs: &StatusBarInputs<'_>) -> Option<String> {
 /// open or a save is busy, a spinner or a bar with the announced stage and
 /// a Cancel button.
 fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut bool) {
-    let busy = inputs.pending_imports > 0 || inputs.pending_document_open > 0;
+    let busy =
+        inputs.pending_imports > 0 || inputs.pending_document_open > 0 || inputs.export_waiting;
     if !busy && !inputs.shown.state {
         return;
     }
@@ -631,6 +634,9 @@ fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut b
             }
             None => {}
         }
+        if inputs.export_waiting {
+            parts.push("Export waiting for the rebuild…".to_string());
+        }
         if inputs.document_saving {
             parts.push("Saving…".to_string());
         } else if inputs.pending_document_open > 0 {
@@ -665,6 +671,7 @@ mod tests {
             kernel_progress: None,
             server,
             document_saving: false,
+            export_waiting: false,
             save_progress: None,
             nav_device: None,
             items: None,

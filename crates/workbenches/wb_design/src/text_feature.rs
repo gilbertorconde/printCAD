@@ -257,6 +257,30 @@ fn link_formulas(
     Ok(())
 }
 
+/// Link the hidden sketch of Text feature `id` to the size, spacing and
+/// turn its formulas set, as they stand; anything else is left as it is.
+pub(crate) fn relink(document: &mut Document, id: FeatureId) -> Result<(), String> {
+    let Some(DesignFeature::Text {
+        sketch,
+        along,
+        wrap,
+        ..
+    }) = document
+        .get_feature_data(id)
+        .and_then(|data| DesignFeature::from_json(data).ok())
+    else {
+        return Ok(());
+    };
+    let block = document
+        .get_feature_data(sketch)
+        .and_then(|data| SketchFeature::from_json(data).ok())
+        .and_then(|f| f.sketch.texts.first().map(|b| b.id));
+    match block {
+        Some(block) => link_formulas(document, (id, sketch, block), along && wrap),
+        None => Ok(()),
+    }
+}
+
 /// Bring the hidden sketch of Text feature `id` in step with its fields:
 /// what it says, its font, size and spacing (a whole turn's spacing worked
 /// out from its letters), its turn, and where its middle stands; the
