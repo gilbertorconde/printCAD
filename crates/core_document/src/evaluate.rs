@@ -40,7 +40,8 @@ pub struct Parameter {
     /// What the JSON holds for one unit of formula value (millimetre or
     /// degree): 1, or π/180 for an angle kept in radians.
     pub scale: f64,
-    /// It holds a whole number (a count): a formula's value is rounded.
+    /// It holds a whole number (a count, stored as `u32`): a formula's value
+    /// is rounded, and one out of that range fails on the field.
     pub integer: bool,
 }
 
@@ -173,8 +174,28 @@ impl Graph {
                 .map_err(|e| e.message)
             }
         };
+        let result = match result {
+            Ok(q) if slot.integer => whole_number(q.value * slot.scale).map(|_| q),
+            other => other,
+        };
         self.state.borrow_mut()[i] = State::Done(result.clone());
         result
+    }
+}
+
+/// `value` rounded to the whole number a count field holds, or why it
+/// cannot be one: counts are stored as `u32`, so anything below zero or
+/// past `u32::MAX` (or not a number at all) is refused rather than written
+/// where the feature could no longer be read.
+pub(crate) fn whole_number(value: f64) -> Result<u32, String> {
+    let rounded = value.round();
+    if rounded.is_finite() && (0.0..=f64::from(u32::MAX)).contains(&rounded) {
+        Ok(rounded as u32)
+    } else {
+        Err(format!(
+            "{value} is out of range for a whole number (0 to {})",
+            u32::MAX
+        ))
     }
 }
 
@@ -269,7 +290,7 @@ fn evaluate_graph(document: &Document, graph: Graph) -> Evaluation {
             });
             if let Some(target) = data.pointer_mut(pointer) {
                 *target = if slot.integer {
-                    serde_json::json!((q.value * slot.scale).round() as i64)
+                    serde_json::json!((q.value * slot.scale).round() as u32)
                 } else {
                     serde_json::json!(q.value * slot.scale)
                 };
@@ -413,6 +434,7 @@ mod tests {
             Parameter::new("length", "Length", Dim::LENGTH, "/length"),
             Parameter::new("turn", "Turn", Dim::ANGLE, "/turn")
                 .scaled(std::f64::consts::PI / 180.0),
+            Parameter::count("teeth", "Teeth", "/teeth"),
         ]
     }
 
@@ -463,6 +485,42 @@ mod tests {
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
+    }
+
+    /// A count's formula that comes to less than nothing, or to more than a
+    /// count holds, fails on that field: the feature keeps the number it
+    /// had instead of a value its type cannot read.
+    #[test]
+    fn a_count_formula_out_of_whole_number_range_fails_on_its_field() {
+        let mut doc = Document::new("t");
+        set(&mut doc, "Gear", &[("n", "10")]);
+        let wheel = doc
+            .add_feature(
+                Block(json!({"length": 10.0, "turn": 0.0, "teeth": 12})),
+                "Wheel".to_string(),
+            )
+            .unwrap();
+        for formula in ["Gear.n - 20", "Gear.n * 1e12"] {
+            doc.set_feature_formula(wheel, "/teeth", Some(formula.to_string()))
+                .unwrap();
+            let e = evaluate_document(&doc, &parameters);
+            let why = slot(&e, wheel, "teeth").result.clone().unwrap_err();
+            assert!(
+                why.contains("out of range for a whole number"),
+                "{formula}: {why}"
+            );
+            let teeth = e.data.get(&wheel).map(|d| d["teeth"].clone());
+            assert!(teeth.is_none() || teeth == Some(json!(12)), "{teeth:?}");
+            doc.apply_evaluation(e);
+            let build = doc
+                .build_formula_error(wheel)
+                .expect("the build is refused");
+            assert!(build.contains("Teeth"), "{build}");
+        }
+        doc.set_feature_formula(wheel, "/teeth", Some("Gear.n + 0.4".to_string()))
+            .unwrap();
+        let e = evaluate_document(&doc, &parameters);
+        assert_eq!(e.data[&wheel]["teeth"], json!(10));
     }
 
     /// A typed read is of the evaluated values and of the type's kind only.

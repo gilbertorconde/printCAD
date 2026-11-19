@@ -400,6 +400,8 @@ pub struct Parameter {
     /// What the data holds for one millimetre or degree.
     #[serde(default = "unit_scale")]
     pub scale: f64,
+    /// A count: a formula's value is rounded, and one below 0 or past
+    /// `u32::MAX` fails on the field instead of being written.
     #[serde(default)]
     pub integer: bool,
 }
