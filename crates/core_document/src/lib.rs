@@ -9,6 +9,7 @@ pub mod components;
 pub mod configurations;
 mod copies;
 pub mod datum;
+pub mod describe;
 pub mod eigen;
 pub mod evaluate;
 pub mod expr;

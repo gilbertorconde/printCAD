@@ -7,6 +7,7 @@
 //! default. `pc.doc.feature{id = ...}` shows a feature's fields.
 
 mod bodies;
+mod described;
 mod features;
 mod history;
 mod measure;

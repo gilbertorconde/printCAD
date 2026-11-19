@@ -284,6 +284,29 @@ mod tests {
         assert!(text.contains("\"frobnicate\": not found."), "{text}");
     }
 
+    /// `describe` alone tells how to write a countersunk M3 hole, a
+    /// threaded one and a counterdrilled one: each field and form that
+    /// `design.hole`'s example making them uses (and which runs with the
+    /// other examples) is described, with its kind.
+    #[test]
+    fn describe_lists_every_field_and_form_a_hole_takes() {
+        let keys = serde_json::json!({"keys": ["design.hole"]});
+        let text = describe(&registry(), &keys).unwrap();
+        for line in [
+            "\ndiameter: length",
+            "\ndepth: length",
+            "\nthrough_all: bool",
+            "\nthread: a size such as \"M6\"",
+            "\nthreaded: bool",
+            "\nthread_depth: length",
+            "\ncut: form",
+            "\n  Countersink {diameter: length (required), angle_deg: angle",
+            "\n  Counterdrill {diameter: length (required), depth: length (required), angle_deg: angle",
+        ] {
+            assert!(text.contains(line), "{line:?} is not in:\n{text}");
+        }
+    }
+
     #[test]
     fn the_guides_are_entries_and_the_reference_is_not() {
         let catalog = catalog(&registry());

@@ -6,6 +6,7 @@
 //! rows in inches, as their standards print them, and convert on the way
 //! out.
 
+use core_document::describe::Describe;
 use serde::{Deserialize, Serialize};
 
 use crate::feature::HoleCut;
@@ -20,7 +21,7 @@ pub fn pipe_taper_deg() -> f64 {
 }
 
 /// A thread standard a hole can be sized from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Describe)]
 pub enum ThreadStandard {
     /// ISO metric, coarse pitch (ISO 261/262).
     #[default]
@@ -494,7 +495,7 @@ fn npt_size(&(name, tpi, e0, l1, tap): &(&'static str, f64, f64, f64, f64)) -> T
 }
 
 /// The seat a screw's head sits in, sized from the hole's metric size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
 pub enum ScrewSeat {
     /// A counterbore for an ISO 4762 socket head cap screw, DIN 974-1
     /// diameter, as deep as the head and a little more.
@@ -688,7 +689,7 @@ const HEX_HEAD_SEATS: &[(f64, f64, f64)] = &[
 ];
 
 /// A hex nut standard a nut trap is sized from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
 pub enum NutStandard {
     /// ISO 4032 hex nuts, style 1.
     #[default]

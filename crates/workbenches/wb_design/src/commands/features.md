@@ -403,8 +403,9 @@ true`. A sketch on the bottom of a pad drills away from the material and
 removes nothing, without an error; `reversed = true` turns it.
 
 Counterbores, countersinks and threads are fields too (`cut`, `threaded`,
-`thread`); docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` shows
-a hole's fields.
+`thread`): `describe` and `help("design.hole")` list every field with its
+forms, docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` shows a
+hole's fields.
 
 `nut_trap = true` cuts a hexagonal pocket for a captive nut at the hole's
 mouth, sized from the ISO 4032 nut of its metric `thread` with 0.3 mm
@@ -429,6 +430,26 @@ local hex = math.sqrt(3) / 2 * 5.8 ^ 2
 local bore = math.pi * 1.7 ^ 2
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (30 * 20 * 6 - bore * 3.3 - hex * 2.7)) < 1e-3, volume)
+```
+
+### A countersunk M3 hole, a threaded M5 hole and a counterdrilled one
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 60, height = 20}
+local body = pc.doc.feature{id = pc.design.pad{sketch = s, length = 10}}.body
+local function at(x)
+  local sketch = pc.sketch.new{body = body, plane = "XY", offset = 10}
+  pc.sketch.point{sketch = sketch, x = x, y = 10}
+  return sketch
+end
+pc.design.hole{sketch = at(10), thread = "M3", through_all = true,
+  cut = {Countersink = {diameter = 6.5, angle_deg = 90}}}
+pc.design.hole{sketch = at(30), thread = "M5", threaded = true, depth = 10, thread_depth = 8}
+pc.design.hole{sketch = at(50), diameter = 4, depth = 8,
+  cut = {Counterdrill = {diameter = 7, depth = 3, angle_deg = 118}}}
+assert(#pc.doc.rebuild() == 0, "the three holes build")
+assert(pc.doc.measure{body = body}.volume < 60 * 20 * 10)
 ```
 
 ### Two holes through a plate, one at a circle and one at a point
