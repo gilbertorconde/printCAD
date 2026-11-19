@@ -1,6 +1,6 @@
 # Solver equation inventory
 
-This inventory covers all **43** `ConstraintKind` variants at the captured
+This inventory covers all **44** `ConstraintKind` variants at the captured
 application baseline. The compiler and evaluator are in
 [solver.rs](../../crates/workbenches/wb_sketch/src/solver.rs); geometric
 solver tests are in that file, with internal geometry tests in
@@ -30,6 +30,7 @@ Internal hidden rows are counted separately below.
 | Coincident | 2; L | P1 minus P2 x/y | Point-to-point, origin allowed | `coincident_merges_two_points`, reference tests |
 | Parallel | 1; 1 | Four P; cross of unit line directions | Infinite lines, either orientation | `parallel_and_perpendicular_pair` |
 | Perpendicular | 1; 1 | Four P; dot of unit line directions | Infinite lines | `parallel_and_perpendicular_pair` |
+| Collinear | 2; L | Four P; each end of the second line's signed cross with the first divided by its length | Infinite first line | `collinear_puts_two_lines_on_one_line` |
 | EqualLength | 1; L | Four P; difference of endpoint distances | Unsigned lengths | `equal_length_matches_two_lines` |
 | Length | 1; L | Two P; endpoint distance minus target | Line only | `length_sets_line_length_keeping_direction` |
 | EqualRadius | 1; L | Two R; radius difference | Circles/arcs | `equal_radius_matches_two_circles` |

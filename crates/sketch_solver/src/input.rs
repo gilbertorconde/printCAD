@@ -206,6 +206,7 @@ fn validate_relation(
         | Relation::SymmetricAboutPoint { .. }
         | Relation::Block { .. } => true,
         Relation::Parallel { line1, line2 }
+        | Relation::Collinear { line1, line2 }
         | Relation::Perpendicular { line1, line2 }
         | Relation::EqualLength { line1, line2 } => line(*line1) && line(*line2),
         Relation::Length { line: l, length } => line(*l) && finite(length.0),

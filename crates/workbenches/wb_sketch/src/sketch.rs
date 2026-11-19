@@ -801,6 +801,7 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         ConstraintKind::FixedPoint { point, .. } => vec![*point],
         ConstraintKind::Coincident { point1, point2 } => vec![*point1, *point2],
         ConstraintKind::Parallel { line1, line2 }
+        | ConstraintKind::Collinear { line1, line2 }
         | ConstraintKind::Perpendicular { line1, line2 }
         | ConstraintKind::EqualLength { line1, line2 } => vec![*line1, *line2],
         ConstraintKind::Length { line, .. } => vec![*line],
@@ -1014,6 +1015,7 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::FixedPoint { .. } => "Fixed point".to_string(),
         ConstraintKind::Coincident { .. } => "Coincident".to_string(),
         ConstraintKind::Parallel { .. } => "Parallel".to_string(),
+        ConstraintKind::Collinear { .. } => "Collinear".to_string(),
         ConstraintKind::Perpendicular { .. } => "Perpendicular".to_string(),
         ConstraintKind::EqualLength { .. } => "Equal length".to_string(),
         ConstraintKind::Length { .. } => "Length".to_string(),
@@ -2048,6 +2050,9 @@ pub enum ConstraintKind {
         #[serde(default)]
         reference: Vec<GroupReference>,
     },
+    /// Two lines on one infinite line: both ends of `line2` lie on the line
+    /// through `line1`.
+    Collinear { line1: Uuid, line2: Uuid },
 }
 
 /// One entry of a group's shape as it was made.

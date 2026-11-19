@@ -631,6 +631,7 @@ fn dim_text(sketch: &Sketch, constraint: &sketch::Constraint) -> String {
 fn pair_refs(kind: &ConstraintKind) -> Option<[Uuid; 2]> {
     match *kind {
         ConstraintKind::Parallel { line1, line2 } => Some([line1, line2]),
+        ConstraintKind::Collinear { line1, line2 } => Some([line1, line2]),
         ConstraintKind::Perpendicular { line1, line2 } => Some([line1, line2]),
         ConstraintKind::EqualLength { line1, line2 } => Some([line1, line2]),
         ConstraintKind::EqualRadius { circle1, circle2 } => Some([circle1, circle2]),

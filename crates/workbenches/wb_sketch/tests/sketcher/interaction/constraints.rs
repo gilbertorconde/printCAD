@@ -87,3 +87,48 @@ fn a_relation_held_already_is_not_added_again() {
     assert!(refused.unwrap_err().to_string().contains("already holds"));
     assert_eq!(horizontals(&h), 1);
 }
+
+/// Two picked elements, then `tool`.
+fn pick_two_then(h: &mut Harness, a: (f64, f64), b: (f64, f64), tool: &str) {
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.tap(a.0, a.1);
+    h.click_ctrl(b.0, b.1, "sketch.select");
+    h.release_ctrl(b.0, b.1, "sketch.select");
+    assert!(h.tool_enabled(tool), "{tool}");
+    h.key(KeyCode::A, Some(tool));
+}
+
+/// Collinear on two separate lines puts both on one line, and the same
+/// pair either way round is not held twice.
+#[test]
+fn collinear_puts_two_lines_on_one_line() {
+    let mut h = Harness::sketching();
+    h.line((2.0, 3.0), (12.0, 4.0));
+    h.line((20.0, 8.0), (30.0, 10.0));
+    pick_two_then(
+        &mut h,
+        (7.0, 3.5),
+        (25.0, 9.0),
+        "sketch.constrain.collinear",
+    );
+    let sketch = h.sketch();
+    let lines = crate::all_lines(&sketch);
+    let at = |id| sketch.point_position(id).unwrap().to_glam();
+    let (s, e) = (at(lines[0].start), at(lines[0].end));
+    for p in [lines[1].start, lines[1].end] {
+        let off = (e - s).normalize().perp_dot(at(p) - s);
+        assert!(off.abs() < 1e-6, "{off} off the first line");
+    }
+    assert!(crate::holds(&sketch, "Collinear", None));
+
+    let args = serde_json::json!({
+        "sketch": h.active_object.expect("a sketch").0.to_string(),
+        "kind": "collinear",
+        "items": [lines[1].id.to_string(), lines[0].id.to_string()],
+    });
+    let serde_json::Value::Object(args) = args else {
+        unreachable!()
+    };
+    let refused = h.with_ctx(|wb, ctx| wb.run_command("sketch.constrain", &args, ctx));
+    assert!(refused.unwrap_err().to_string().contains("already holds"));
+}

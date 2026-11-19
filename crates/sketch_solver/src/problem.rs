@@ -498,6 +498,12 @@ pub enum Relation {
         elements: Vec<ItemReference>,
         reference: Vec<GroupReference>,
     },
+    /// Two lines on one infinite line: both ends of `line2` on `line1`'s
+    /// line.
+    Collinear {
+        line1: CurveReference,
+        line2: CurveReference,
+    },
 }
 
 /// One entry of a group's shape as it was made.
@@ -539,6 +545,7 @@ impl Relation {
             | Self::VerticalPoints { point1, point2 }
             | Self::Distance { point1, point2, .. } => vec![(*point1).into(), (*point2).into()],
             Self::Parallel { line1, line2 }
+            | Self::Collinear { line1, line2 }
             | Self::Perpendicular { line1, line2 }
             | Self::EqualLength { line1, line2 }
             | Self::Angle { line1, line2, .. } => vec![(*line1).into(), (*line2).into()],

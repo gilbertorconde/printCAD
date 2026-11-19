@@ -76,6 +76,7 @@ const LOCAL = new Set([
   "script",
   "console",
   "constraint-arc-length",
+  "constraint-collinear",
   "sketch-text",
   "sketch-fillet",
   "sketch-chamfer",

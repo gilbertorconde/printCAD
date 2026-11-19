@@ -66,6 +66,10 @@ fn relation(sketch: &Sketch, kind: &C) -> core::Relation {
             line1: curve(line1),
             line2: curve(line2),
         },
+        C::Collinear { line1, line2 } => R::Collinear {
+            line1: curve(line1),
+            line2: curve(line2),
+        },
         C::Perpendicular { line1, line2 } => R::Perpendicular {
             line1: curve(line1),
             line2: curve(line2),

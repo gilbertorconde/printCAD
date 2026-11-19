@@ -222,6 +222,7 @@ tool; Shift and a letter picks a constraint.
 | Horizontal | Shift+H | Horizontal, Horizontal or vertical (whichever is nearer) |
 | Vertical | Shift+V | |
 | Parallel | Shift+P | |
+| Collinear | Shift+J | |
 | Perpendicular | Shift+N | |
 | Tangent | Shift+T | |
 | Equal | Shift+E | |
@@ -254,6 +255,9 @@ between its ends (a length typed while drawing is that distance), and a
 distance from A to B beside one from B to A. A reference dimension holds
 its size as much as a driving one, and so does one switched off; change
 the value of the one there, or make it driving, instead. **Block** fixes an element in place.
+
+**Collinear** (Shift+J) puts two or more lines on one line: each after
+the first lands on the first one's line, wherever along it.
 
 **Symmetric** takes two points and a line, three points (the last is the
 centre), or a curve and then a line: the curve's two ends mirror each
@@ -825,6 +829,7 @@ Enter, Escape and Backspace are fixed.
 | Shift+C, Shift+O | Coincident, point on object |
 | Shift+H, Shift+V | Horizontal, vertical |
 | Shift+P, Shift+N, Shift+T | Parallel, perpendicular, tangent |
+| Shift+J | Collinear |
 | Shift+E, Shift+S | Equal, symmetric |
 | Shift+B, Shift+G, Shift+K | Block, group, lock |
 | Shift+D, Shift+R, Shift+A | Dimension, radius, angle |

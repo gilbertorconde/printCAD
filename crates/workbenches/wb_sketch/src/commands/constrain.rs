@@ -26,7 +26,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "kind",
             ParamKind::String,
             "coincident, point_on_object, midpoint, horizontal, vertical, \
-             horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, group, lock, dimension, distance, \
+             horizontal_vertical, parallel, collinear, perpendicular, tangent, equal, symmetric, block, group, lock, dimension, distance, \
              distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, \
              angle, angle_x, angle_y, angle_at_point, arc_angle, angle_three_points (items: \
              arm, corner, arm), ellipse_minor or refraction; radius on an ellipse is its \

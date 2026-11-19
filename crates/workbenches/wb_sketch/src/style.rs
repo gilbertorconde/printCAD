@@ -12,6 +12,7 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::FixedPoint { .. } => "constraint-lock",
         ConstraintKind::Coincident { .. } => "constraint-coincident",
         ConstraintKind::Parallel { .. } => "constraint-parallel",
+        ConstraintKind::Collinear { .. } => "constraint-collinear",
         ConstraintKind::Perpendicular { .. } | ConstraintKind::PerpendicularCurves { .. } => {
             "constraint-perpendicular"
         }

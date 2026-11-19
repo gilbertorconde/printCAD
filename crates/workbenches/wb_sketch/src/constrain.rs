@@ -134,6 +134,7 @@ pub const TOOLS: &[&str] = &[
     "horizontal",
     "horizontal_vertical",
     "parallel",
+    "collinear",
     "perpendicular",
     "tangent",
     "equal",
@@ -400,6 +401,10 @@ pub fn kinds_for(
         }
         "parallel" if l.len() >= 2 && shape.only(0, l.len(), 0, 0) => {
             chain(l, &|a, b| ConstraintKind::Parallel { line1: a, line2: b })
+        }
+        // Every line on the first one's line.
+        "collinear" if l.len() >= 2 && shape.only(0, l.len(), 0, 0) => {
+            chain(l, &|a, b| ConstraintKind::Collinear { line1: a, line2: b })
         }
         "perpendicular" if shape.only(0, 2, 0, 0) => vec![ConstraintKind::Perpendicular {
             line1: l[0],
