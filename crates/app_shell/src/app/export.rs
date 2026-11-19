@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::channel;
 
 use kernel_api::{LinearDeflectionMode, TessellationSettings, TriMesh};
 use kernel_ogeom::export::{
@@ -189,6 +189,9 @@ fn borrowed<'a>(
         .collect()
 }
 
+/// What the log says of an export thread that ended without an outcome.
+const EXPORT_STOPPED: &str = "The export stopped without writing the file";
+
 /// A finished export, for the log.
 pub(crate) struct ExportOutcome {
     path: PathBuf,
@@ -278,18 +281,12 @@ impl PrintCadApp {
                 app_log::warn("Nothing to export: select a body with geometry first");
                 return;
             }
-            let quoted: Vec<String> = selected.iter().map(|b| format!("\"{b}\"")).collect();
-            format!("{{{}}}", quoted.join(", "))
+            Some(selected)
         } else {
-            "nil".to_string()
+            None
         };
-        let source = every_configuration_script(
-            &base.display().to_string(),
-            draft.format.extension(),
-            draft.detail.chord_tolerance,
-            &bodies,
-            draft.layout,
-        );
+        let source =
+            every_configuration_script(&base.display().to_string(), draft, bodies.as_deref());
         self.submit_script(
             scripting::Job::Script {
                 name: "Export every configuration".to_string(),
@@ -300,7 +297,7 @@ impl PrintCadApp {
     }
 
     /// Hand every visible body to the slicer: written to a file of the
-    /// slicer's format in the temporary folder, then opened with the
+    /// slicer's format in this run's private folder, then opened with the
     /// slicer command from Preferences. Laid out for printing when
     /// `laid_out`, or when Preferences say so.
     pub(crate) fn send_to_slicer(&mut self, laid_out: bool) {
@@ -322,11 +319,23 @@ impl PrintCadApp {
             app_log::warn("Nothing to send: no visible body has geometry");
             return;
         }
-        let folder = std::env::temp_dir().join("printcad").join("slicer");
-        if let Err(err) = std::fs::create_dir_all(&folder) {
-            app_log::error(format!("Could not make {}: {err}", folder.display()));
+        if self.files.export_rx.is_some() {
+            app_log::warn("An export is still being written");
             return;
         }
+        let folder = match self.files.slicer_folder.clone().filter(|f| f.is_dir()) {
+            Some(folder) => folder,
+            None => match make_slicer_folder(&slicer_base()) {
+                Ok(folder) => {
+                    self.files.slicer_folder = Some(folder.clone());
+                    folder
+                }
+                Err(err) => {
+                    app_log::error(format!("Could not make a folder for the slicer: {err}"));
+                    return;
+                }
+            },
+        };
         let stem = self
             .session
             .file
@@ -335,7 +344,16 @@ impl PrintCadApp {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| file_stem_of(self.session.document.name()));
-        let path = folder.join(format!("{stem}.{}", draft.format.extension()));
+        let path = match reserve_slicer_file(&folder, &stem, draft.format.extension()) {
+            Ok(path) => path,
+            Err(err) => {
+                app_log::error(format!(
+                    "Could not make a file for the slicer in {}: {err}",
+                    folder.display()
+                ));
+                return;
+            }
+        };
         let command = printing.slicer_command.clone();
         self.write_export(path, draft, Some(command));
     }
@@ -400,60 +418,58 @@ impl PrintCadApp {
             });
         });
         if let Err(err) = started {
+            self.files.export_rx = None;
             crate::app_log::error(format!("Could not start the export: {err}"));
         }
     }
 
-    /// Log a finished export, if one has finished.
+    /// Log a finished export, if one has finished. An animation written
+    /// stops keeping frames coming once its thread ends.
     pub(crate) fn poll_export(&mut self) {
-        let Some(outcome) = self
-            .files
-            .export_rx
-            .as_ref()
-            .and_then(|rx: &Receiver<ExportOutcome>| rx.try_recv().ok())
-        else {
-            return;
-        };
-        self.files.export_rx = None;
-        report_export(outcome, true);
+        self.files.animations.retain(|job| !job.is_finished());
+        match crate::platform::take_answer(&mut self.files.export_rx) {
+            Some(Ok(outcome)) => report_export(outcome, true),
+            Some(Err(_)) => app_log::error(EXPORT_STOPPED),
+            None => {}
+        }
     }
 
-    /// Wait for an export being written, before the process ends: one cut
-    /// off would leave no file. Nothing opens in the slicer on the way out.
+    /// Wait for an export and the animations being written, before the
+    /// process ends: one cut off would leave no file. Nothing opens in the
+    /// slicer on the way out.
     pub(crate) fn finish_export(&mut self) {
+        let animations = std::mem::take(&mut self.files.animations);
+        if animations.iter().any(|job| !job.is_finished()) {
+            app_log::info("Finishing the animation before exit…");
+        }
+        for job in animations {
+            job.join();
+        }
         let Some(rx) = self.files.export_rx.take() else {
             return;
         };
         app_log::info("Finishing the export before exit…");
-        if let Ok(outcome) = rx.recv() {
-            report_export(outcome, false);
+        match rx.recv() {
+            Ok(outcome) => report_export(outcome, false),
+            Err(_) => app_log::error(EXPORT_STOPPED),
         }
     }
 
-    /// The bodies the draft asks for: the selected one, or every visible
-    /// body with geometry that is made, in the document's body order; or
-    /// the print layout's copies.
+    /// The bodies the draft asks for: the selected ones, or every visible
+    /// body with geometry that is made; or the print layout's copies.
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
-        let document = &self.session.document;
-        let textured = draft.textures && draft.format.is_mesh();
-        if draft.layout {
-            let layout = self.current_print_layout();
-            return layout_bodies(document, &layout, textured);
-        }
-        let selected = self.bodies_to_export_selected();
-        // What a bench says is not made (a bought part) stays out of an
-        // export of everything.
-        let not_made = self.registry.not_printed(document);
-        bodies_to_export(
-            document,
-            |id| {
-                if draft.selected_only {
-                    selected.contains(&id.0)
-                } else {
-                    document.imported_body_effective_visible(id) && !not_made.contains(&id)
-                }
-            },
-            textured,
+        let layout = draft.layout.then(|| self.current_print_layout());
+        let selected: Option<Vec<core_document::BodyId>> = draft.selected_only.then(|| {
+            self.bodies_to_export_selected()
+                .into_iter()
+                .map(core_document::BodyId)
+                .collect()
+        });
+        owned_bodies(
+            (&self.session.document, &self.registry),
+            draft,
+            selected.as_deref(),
+            layout.as_ref(),
         )
     }
 
@@ -585,30 +601,115 @@ fn layout_bodies(
 }
 
 /// The script that writes every configuration: `base-<name>.<ext>` each,
-/// `bodies` a Lua list of body ids or `nil` for every visible body, or
-/// the print layout when `layout`.
+/// as the export `draft` says, of `bodies` or of every body an export of
+/// everything takes when `None`.
 pub(crate) fn every_configuration_script(
     base: &str,
-    ext: &str,
-    tolerance: f32,
-    bodies: &str,
-    layout: bool,
+    draft: &ExportDraft,
+    bodies: Option<&[uuid::Uuid]>,
 ) -> String {
+    let mut args = crate::app::scripts::export_args(draft);
+    if let Some(bodies) = bodies {
+        let ids = bodies.iter().map(|b| b.to_string().into()).collect();
+        args.insert("bodies".into(), serde_json::Value::Array(ids));
+    }
+    let options = lua_table(&args);
+    let ext = draft.format.extension();
     format!(
         r#"-- Export every configuration
-local base, ext, tolerance, bodies, layout = {base:?}, {ext:?}, {tolerance}, {bodies}, {layout}
+local base, ext, options = {base:?}, {ext:?}, {options}
 local table = pc.config.list()
 local was = table.active
 for _, row in ipairs(table.rows) do
   pc.config.activate{{name = row.name}}
   pc.doc.rebuild()
   local file = base .. "-" .. row.name:gsub("[^%w%-_. ]", "-") .. "." .. ext
-  pc.file.export{{path = file, tolerance = tolerance, bodies = bodies, layout = layout}}
+  options.path = file
+  pc.file.export(options)
   print("Wrote " .. file)
 end
 pc.config.activate{{name = was}}
 "#
     )
+}
+
+/// A command's arguments as a Lua table: strings, numbers, booleans and
+/// lists of them.
+fn lua_table(args: &core_document::CommandArgs) -> String {
+    fn lua(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::String(s) => format!("{s:?}"),
+            serde_json::Value::Array(items) => {
+                let items: Vec<String> = items.iter().map(lua).collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            other => other.to_string(),
+        }
+    }
+    let fields: Vec<String> = args
+        .iter()
+        .map(|(k, v)| format!("{k} = {}", lua(v)))
+        .collect();
+    format!("{{{}}}", fields.join(", "))
+}
+
+/// Where this run's folder for the slicer goes: the user's own runtime
+/// folder, else the temporary folder.
+fn slicer_base() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute() && dir.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// A folder in `base` for the files this run sends to the slicer, made now
+/// under a name no other run or user takes, and open to this user alone.
+fn make_slicer_folder(base: &Path) -> std::io::Result<PathBuf> {
+    loop {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let folder = base.join(format!(
+            "printcad-slicer-{}-{}",
+            std::process::id(),
+            &id[..12]
+        ));
+        #[cfg(unix)]
+        let builder = {
+            let mut builder = std::fs::DirBuilder::new();
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
+        match builder.create(&folder) {
+            Ok(()) => return Ok(folder),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// A new, empty file in `folder` for one send to the slicer: `stem.ext`,
+/// else `stem-2.ext` and on, each made only where nothing is, so two
+/// documents of one name never write the same file and nothing put there
+/// beforehand is written through.
+fn reserve_slicer_file(folder: &Path, stem: &str, ext: &str) -> std::io::Result<PathBuf> {
+    let mut n = 1;
+    loop {
+        let name = match n {
+            1 => format!("{stem}.{ext}"),
+            n => format!("{stem}-{n}.{ext}"),
+        };
+        let path = folder.join(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => return Ok(path),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 /// A document name as a file name: letters, digits and a few marks kept,
@@ -699,37 +800,53 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
     Ok(program)
 }
 
-/// Write `bodies` of `document` (every visible one when `None`), or the
-/// copies of `layout` when given, to `path` now, on this thread: what a
-/// script's export does. A mesh format makes up for the printer as
-/// `compensation` says, when given.
+/// The bodies an export of `draft` writes: the copies of `layout` when
+/// given, else those `listed`, else every visible body with geometry that
+/// no bench calls bought; their textures with them when the draft presses
+/// them into a mesh format. The dialog, the slicer and a script's export
+/// all take their bodies here.
+fn owned_bodies(
+    (document, registry): (&core_document::Document, &core_document::DocumentService),
+    draft: &ExportDraft,
+    listed: Option<&[core_document::BodyId]>,
+    layout: Option<&doc_render::print_layout::Layout>,
+) -> Vec<OwnedBody> {
+    let textured = draft.textures && draft.format.is_mesh();
+    if let Some(layout) = layout {
+        return layout_bodies(document, layout, textured);
+    }
+    let not_made = match listed {
+        Some(_) => Vec::new(),
+        None => registry.not_printed(document),
+    };
+    bodies_to_export(
+        document,
+        |id| match listed {
+            Some(list) => list.contains(&id),
+            None => document.imported_body_effective_visible(id) && !not_made.contains(&id),
+        },
+        textured,
+    )
+}
+
+/// Write what `draft` asks for to `path` now, on this thread: `bodies` of
+/// `document` (every one an export of everything takes when `None`), or
+/// the copies of `layout` when given. What a script's export does. A mesh
+/// format makes up for the printer as `compensation` says, when given.
 pub(crate) fn export_document(
     (document, registry): (&core_document::Document, &core_document::DocumentService),
     path: PathBuf,
-    format: ExportFormat,
+    draft: &ExportDraft,
     bodies: Option<Vec<core_document::BodyId>>,
-    tolerance: Option<f32>,
     layout: Option<&doc_render::print_layout::Layout>,
     compensation: Option<&settings::PrintCompensation>,
 ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
-    let owned = match layout {
-        Some(layout) => layout_bodies(document, layout, format.is_mesh()),
-        None => bodies_to_export(
-            document,
-            |id| match &bodies {
-                Some(list) => list.contains(&id),
-                None => document.imported_body_effective_visible(id),
-            },
-            format.is_mesh(),
-        ),
-    };
+    let format = draft.format;
+    let owned = owned_bodies((document, registry), draft, bodies.as_deref(), layout);
     if owned.is_empty() {
         return Err("there is nothing to export".to_string());
     }
-    let mut detail = ExportDraft::default().detail;
-    if let Some(tolerance) = tolerance {
-        detail.chord_tolerance = tolerance;
-    }
+    let detail = &draft.detail;
     let finishes: Vec<_> = owned.iter().map(OwnedBody::finish).collect();
     let compensation = compensation.filter(|_| format.is_mesh());
     let borrowed = borrowed(
@@ -743,9 +860,10 @@ pub(crate) fn export_document(
     let path = with_extension(&path, format);
     let notes = export_notes(&owned);
     let semantic = export_pmi(document, registry, &owned, format);
-    let exported = export_with_annotations(&borrowed, &notes, &semantic, format, &detail)
+    let exported = export_with_annotations(&borrowed, &notes, &semantic, format, detail)
         .map_err(|e| e.to_string())?;
-    std::fs::write(&path, &exported.bytes).map_err(|e| format!("could not write the file: {e}"))?;
+    crate::platform::write(&path, &exported.bytes)
+        .map_err(|e| format!("could not write the file: {e}"))?;
     Ok((path, exported))
 }
 
@@ -858,8 +976,10 @@ mod tests {
         let (path, exported) = export_document(
             (doc, &core_document::DocumentService::default()),
             path,
-            format,
-            None,
+            &ExportDraft {
+                format,
+                ..Default::default()
+            },
             None,
             layout,
             None,
@@ -1135,8 +1255,10 @@ mod tests {
         let (_, exported) = export_document(
             (&doc, &registry),
             path.clone(),
-            ExportFormat::Step,
-            None,
+            &ExportDraft {
+                format: ExportFormat::Step,
+                ..Default::default()
+            },
             None,
             None,
             None,
@@ -1155,6 +1277,89 @@ mod tests {
         assert!(list.contains(&rim), "{list} starts at {rim}");
     }
 
+    /// Every configuration is written by a script; its export reads back
+    /// every option the dialog was confirmed with, whatever the file's
+    /// extension says.
+    #[test]
+    fn the_every_configuration_script_carries_the_dialogs_options() {
+        let mut draft = ExportDraft {
+            format: ExportFormat::StepNurbs,
+            textures: false,
+            layout: true,
+            ..Default::default()
+        };
+        draft.detail.chord_tolerance = 0.05;
+        draft.detail.angular_tolerance_deg = 12.0;
+        let args = crate::app::scripts::export_args(&draft);
+        let back =
+            crate::app::scripts::export_draft(&core_document::Args(&args), Path::new("a.step"))
+                .unwrap();
+        assert_eq!(back.format, ExportFormat::StepNurbs);
+        assert!(!back.textures && back.layout);
+        assert_eq!(back.detail.chord_tolerance, 0.05);
+        assert_eq!(back.detail.angular_tolerance_deg, 12.0);
+        let script = every_configuration_script("/t/a", &draft, None);
+        assert!(script.contains(&lua_table(&args)), "{script}");
+        assert!(script.contains("format = \"step_nurbs\""), "{script}");
+    }
+
+    /// A script's export of everything takes the bodies the dialog's does,
+    /// leaving out what a bench says is bought, and presses textures in
+    /// only when asked to.
+    #[test]
+    fn a_script_export_leaves_out_bought_bodies_and_unticked_textures() {
+        struct Bought;
+        impl core_document::Workbench for Bought {
+            fn descriptor(&self) -> core_document::WorkbenchDescriptor {
+                core_document::WorkbenchDescriptor::new("test.bought", "Bought", "")
+            }
+            fn configure(&self, _: &mut core_document::WorkbenchContext) {}
+            fn not_printed(
+                &self,
+                document: &core_document::Document,
+                _: &[core_document::WorkbenchId],
+            ) -> Vec<core_document::BodyId> {
+                document.bodies().iter().map(|b| b.id).collect()
+            }
+        }
+        let doc = textured_box(true);
+        let body = doc.bodies()[0].id;
+        let mut registry = core_document::DocumentService::default();
+        registry.register_workbench(Box::new(Bought)).unwrap();
+        let stl = |textures: bool| ExportDraft {
+            format: ExportFormat::Stl,
+            textures,
+            ..Default::default()
+        };
+        let path = std::env::temp_dir().join(format!("export-{}.stl", uuid::Uuid::new_v4()));
+        let everything = export_document(
+            (&doc, &registry),
+            path.clone(),
+            &stl(true),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            everything.err().as_deref(),
+            Some("there is nothing to export")
+        );
+
+        let untextured = export_document(
+            (&doc, &registry),
+            path.clone(),
+            &stl(false),
+            Some(vec![body]),
+            None,
+            None,
+        )
+        .unwrap()
+        .1;
+        let plain = export(&textured_box(false), ExportFormat::Stl, None);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(untextured.triangles, plain.triangles);
+    }
+
     #[test]
     fn the_slicer_command_takes_the_file_where_it_says_or_last() {
         let file = Path::new("/tmp/printcad/slicer/part.3mf");
@@ -1166,6 +1371,39 @@ mod tests {
         assert_eq!(args, ["--single", "/tmp/printcad/slicer/part.3mf"]);
         let (_, args) = slicer_invocation("slice --load={file} --go", file);
         assert_eq!(args, ["--load=/tmp/printcad/slicer/part.3mf", "--go"]);
+    }
+
+    /// Each run sends to a folder of its own, open to its user alone; two
+    /// documents of one name get a file each, and a link put where a file
+    /// would go is passed over rather than written through.
+    #[test]
+    fn slicer_files_are_private_and_never_shared() {
+        let base = std::env::temp_dir().join(format!("slicer-base-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&base).unwrap();
+        let folder = make_slicer_folder(&base).unwrap();
+        let other = make_slicer_folder(&base).unwrap();
+        assert_ne!(folder, other, "a folder per run");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        let first = reserve_slicer_file(&folder, "bracket", "3mf").unwrap();
+        let second = reserve_slicer_file(&folder, "bracket", "3mf").unwrap();
+        assert_ne!(first, second);
+        assert!(first.is_file() && second.is_file());
+        #[cfg(unix)]
+        {
+            let target = base.join("target");
+            std::fs::write(&target, b"keep").unwrap();
+            std::os::unix::fs::symlink(&target, other.join("part.stl")).unwrap();
+            let path = reserve_slicer_file(&other, "part", "stl").unwrap();
+            assert_eq!(path, other.join("part-2.stl"));
+            crate::platform::write(&path, b"mesh").unwrap();
+            assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        }
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

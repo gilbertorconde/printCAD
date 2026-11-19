@@ -572,3 +572,49 @@ fn a_flushed_save_still_answers_on_the_next_poll() {
         );
     }
 }
+
+/// Two saves of one file sent back to back are written and answered in
+/// the order sent, through either server: the file holds the later one
+/// even when the earlier takes far longer to write.
+#[test]
+fn saves_sent_back_to_back_land_in_the_order_sent() {
+    daemon_env();
+    let home = TestHome::new("save_order");
+    let daemon = DaemonClient::spawn_or_connect(&home.socket()).expect("spawn daemon");
+    let servers: [(Box<dyn DocumentServer>, &str); 2] = [
+        (Box::new(daemon), "daemon"),
+        (Box::new(doc_server::DirectFiles::new()), "direct"),
+    ];
+    let bytes = |name: &str| {
+        Document::new(name)
+            .save_to_bytes(core_document::Compression::None)
+            .expect("serialize")
+    };
+    let earlier = bytes(&"e".repeat(16 << 20));
+    let later = bytes("Later");
+    for (mut server, name) in servers {
+        let path = home.dir.join(format!("{name}.prtcad"));
+        for (bytes, at_seq) in [(&earlier, 1), (&later, 2)] {
+            server.send(ClientMessage::SaveDocument {
+                path: path.clone(),
+                bytes: bytes.clone(),
+                at_seq,
+            });
+        }
+        server.flush();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut order = Vec::new();
+        while order.len() < 2 && Instant::now() < deadline {
+            order.extend(server.poll().into_iter().filter_map(|m| match m {
+                ServerMessage::SaveCompleted { at_seq, .. } => Some(at_seq),
+                _ => None,
+            }));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(order, [1, 2], "{name}: answered in the order sent");
+        assert!(
+            std::fs::read(&path).expect("written") == later,
+            "{name}: the file holds the later save"
+        );
+    }
+}

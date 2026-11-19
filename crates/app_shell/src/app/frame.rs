@@ -189,6 +189,7 @@ impl PrintCadApp {
             || self.any_tab_busy()
             || self.files.dialog_rx.is_some()
             || self.files.export_rx.is_some()
+            || !self.files.animations.is_empty()
             || !self.nav_device.motion().is_idle()
             || self.scripting.thread.busy()
             || self.registry.any_busy()
@@ -608,14 +609,9 @@ impl PrintCadApp {
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
                         // Field reads, not `&self` methods: `gfx` is borrowed
                         // for the whole block.
-                        document_saving: self.session.file.save_rx.is_some()
+                        document_saving: !self.session.file.saves.is_empty()
                             || server_status.saves_in_flight > 0,
-                        save_progress: self
-                            .session
-                            .file
-                            .save_progress
-                            .as_ref()
-                            .and_then(|p| p.read()),
+                        save_progress: self.session.file.saves.progress().and_then(|p| p.read()),
                         server: crate::ui::status_bar::ServerBadge {
                             name: self.session.connection.server.name().to_string(),
                             standalone: self.session.connection.server.standalone(),

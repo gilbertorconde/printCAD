@@ -828,12 +828,23 @@ pub(crate) fn export_options(spec: CommandSpec) -> CommandSpec {
     .optional(
         "bodies",
         ParamKind::List,
-        "The bodies to write; every visible one when left out",
+        "The bodies to write; every visible one a bench does not mark as bought \
+         when left out",
     )
     .optional(
         "tolerance",
         ParamKind::Number,
         "The mesh formats' distance to the true surface, mm (0.01)",
+    )
+    .optional(
+        "angle",
+        ParamKind::Number,
+        "The mesh formats' largest turn between facets, degrees (5)",
+    )
+    .optional(
+        "textures",
+        ParamKind::Bool,
+        "Whether the mesh formats press the bodies' surface textures in (true)",
     )
     .optional(
         "layout",
