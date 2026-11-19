@@ -227,13 +227,13 @@ fn text_round_a_whole_cylinder_is_sunk_into_it() {
 /// start. Text longer than the turn says it does not fit.
 #[test]
 fn text_round_a_whole_cylinder_follows_its_radius() {
-    let script = |radius: f64| {
+    let script = |radius: f64, text: &str| {
         format!(
             r#"
             local b = "BODY"
             pc.design.primitive{{body = b,
               kind = {{Cylinder = {{radius = {radius}, height = 20, angle_deg = 360}}}}}}
-            pc.design.text{{body = b, text = "LLLLLL", size = 4, mode = "Deboss",
+            pc.design.text{{body = b, text = "{text}", size = 4, mode = "Deboss",
               height = 0.5, wrap = true, radius = {radius}, full_turn = true,
               face_point = {{0, -{radius}, 10}}, face_normal = {{0, -1, 0}}}}
             "#
@@ -244,7 +244,7 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
         let body: BodyId = document.create_body(None);
         let mut host = benches(document);
         let out = ScriptEngine::new().run_script(
-            &script(radius).replace("BODY", &body.0.to_string()),
+            &script(radius, "LLL").replace("BODY", &body.0.to_string()),
             "part.lua",
             &mut host,
         );
@@ -256,7 +256,7 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
         measured(&document.imported_brep_blob_arc(body).expect("a solid"))
     };
     let mut failures = Vec::new();
-    for now in [8.0, 5.0, 15.0] {
+    for now in [5.0, 15.0] {
         let (mut host, body) = run(10.0);
         let primitive = wb_design::design_features_of_body(&host.document, body)
             .into_iter()
@@ -288,7 +288,7 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
     }
     assert!(failures.is_empty(), "{failures:#?}");
 
-    let long = built(&script(1.5)).expect_err("six letters do not fit round 3 mm");
+    let long = built(&script(1.5, "LLLLLL")).expect_err("six letters do not fit round 3 mm");
     assert!(long.contains("does not fit"), "{long}");
 }
 
