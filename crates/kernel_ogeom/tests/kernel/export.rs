@@ -173,38 +173,6 @@ fn the_format_follows_the_file_name() {
     assert_eq!(of("a.obj"), None);
 }
 
-#[test]
-fn a_real_part_written_as_3mf_is_closed() {
-    let source = crate::real_part();
-    let bodies: Vec<ExportBody<'_>> = source
-        .bodies
-        .iter()
-        .map(|b| ExportBody {
-            name: "part".into(),
-            brep: Some(&b.brep_blob),
-            transform: None,
-            mesh: &b.mesh,
-            finish: None,
-            scale: None,
-            rounds: None,
-        })
-        .collect();
-    let out = export(
-        &bodies,
-        ExportFormat::ThreeMf,
-        &TessellationSettings::default(),
-    )
-    .unwrap();
-    let path =
-        std::env::temp_dir().join(format!("printcad-export-real-{}.3mf", std::process::id()));
-    std::fs::write(&path, &out.bytes).unwrap();
-    let back = import(&path);
-    let _ = std::fs::remove_file(&path);
-    for body in &back.bodies {
-        assert!(closed(&body.mesh), "an exported body comes back open");
-    }
-}
-
 /// A placed body is written where it sits, shape and mesh alike.
 #[test]
 fn a_placed_body_is_written_where_it_sits() {
@@ -774,4 +742,45 @@ fn a_mesh_export_offsets_round_holes_and_bosses() {
         (volume(&built.brep_blob) - drawn).abs() < 1e-6,
         "the solid as drawn"
     );
+}
+
+/// What needs a big model or a long build, compiled and run only with the
+/// `heavy-tests` feature (`node scripts/test-budget.mjs --heavy`).
+#[cfg(feature = "heavy-tests")]
+mod heavy {
+    use super::*;
+
+    /// The bundled real part, a big model, written as 3MF reads back with
+    /// every body closed.
+    #[test]
+    fn a_real_part_written_as_3mf_is_closed() {
+        let source = crate::real_part();
+        let bodies: Vec<ExportBody<'_>> = source
+            .bodies
+            .iter()
+            .map(|b| ExportBody {
+                name: "part".into(),
+                brep: Some(&b.brep_blob),
+                transform: None,
+                mesh: &b.mesh,
+                finish: None,
+                scale: None,
+                rounds: None,
+            })
+            .collect();
+        let out = export(
+            &bodies,
+            ExportFormat::ThreeMf,
+            &TessellationSettings::default(),
+        )
+        .unwrap();
+        let path =
+            std::env::temp_dir().join(format!("printcad-export-real-{}.3mf", std::process::id()));
+        std::fs::write(&path, &out.bytes).unwrap();
+        let back = import(&path);
+        let _ = std::fs::remove_file(&path);
+        for body in &back.bodies {
+            assert!(closed(&body.mesh), "an exported body comes back open");
+        }
+    }
 }

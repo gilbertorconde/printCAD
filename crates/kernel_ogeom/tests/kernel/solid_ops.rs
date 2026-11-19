@@ -3712,45 +3712,6 @@ fn a_cylinder_bevels_every_edge_and_its_top_face_s_leaving_the_seam() {
     }
 }
 
-/// A worm (a revolved core with a helical groove and a bore) and a 608
-/// ball bearing, as the hardware package makes them, the worm seven and a
-/// half turns of its groove shorter than the package's 60 mm (12.9 mm
-/// long): below where its groove starts, 7.3 mm up, just clear of the
-/// bearing's 7 mm, it is the package's own.
-fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
-    let text = include_str!("../data/worm_and_608.json");
-    let parts: std::collections::HashMap<String, Vec<SolidOp>> =
-        serde_json::from_str(text).expect("the fixture reads");
-    let build = |name: &str| {
-        try_chain(&parts[name])
-            .unwrap_or_else(|e| panic!("{name} builds: {e}"))
-            .brep_blob
-    };
-    (build("worm"), build("bearing_608"))
-}
-
-/// A worm passing through a bearing's bore shares the ring between the
-/// bore and the worm's outside with it: the kernel answers with that
-/// solid rather than failing, with both standing on one plane, where the
-/// groove runs out through the end faces they share.
-#[test]
-fn a_worm_through_a_bearing_shares_material_with_it() {
-    use kernel_api::KernelQueries;
-    let (worm, bearing) = worm_and_bearing();
-    let shared = kernel_ogeom::QUERIES
-        .overlap(&worm, &bearing, &translate(0.0, 0.0, 0.0))
-        .unwrap_or_else(|e| panic!("{e}"))
-        .expect("they share material");
-    // At most the ring between the bore (4 mm) and the worm's outside
-    // (8 mm), 7 mm tall.
-    let ring = std::f64::consts::PI * (64.0 - 16.0) * 7.0;
-    assert!(
-        shared.volume_mm3 > 0.0 && shared.volume_mm3 < ring,
-        "{}",
-        shared.volume_mm3
-    );
-}
-
 /// A T of two equal drums: an upright and a rod into its side, small
 /// since a round along a curve takes time by its length.
 fn drum_tee() -> Vec<SolidOp> {
@@ -3807,32 +3768,78 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
     );
 }
 
-/// An arm as wide as the hub it runs into, its sides tangent to the hub's
-/// wall: the round of the arm's top side edge runs on tangentially into
-/// the round of the arm's top against the hub, convex into concave.
-#[test]
-fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
-    let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, -6.0, 40.0, 6.0)],
-            5.0,
-            BooleanOp::NewSolid,
-        ),
-        blind_pad(vec![circle_wire(0.0, 0.0, 6.0)], 10.0, BooleanOp::Fuse),
-        SolidOp::Fillet {
-            radius: 1.0,
-            edges: EdgeSelection::Picked(vec![kernel_api::EdgeProbe {
-                point: [20.0, 6.0, 5.0],
-                direction: [1.0, 0.0, 0.0],
-                faces: [0, 0],
-            }]),
-            follow_tangent: true,
-            corner: Default::default(),
-            distances: None,
-            auto: false,
-            variable: None,
-        },
-    ];
-    let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");
-    assert!(super::common::is_sound(&built.brep_blob));
+/// What needs a big model or a long build, compiled and run only with the
+/// `heavy-tests` feature (`node scripts/test-budget.mjs --heavy`).
+#[cfg(feature = "heavy-tests")]
+mod heavy {
+    use super::*;
+
+    /// A worm (a revolved core with a helical groove and a bore) and a 608
+    /// ball bearing, as the hardware package makes them, the worm seven and a
+    /// half turns of its groove shorter than the package's 60 mm (12.9 mm
+    /// long): below where its groove starts, 7.3 mm up, just clear of the
+    /// bearing's 7 mm, it is the package's own.
+    fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
+        let text = include_str!("../data/worm_and_608.json");
+        let parts: std::collections::HashMap<String, Vec<SolidOp>> =
+            serde_json::from_str(text).expect("the fixture reads");
+        let build = |name: &str| {
+            try_chain(&parts[name])
+                .unwrap_or_else(|e| panic!("{name} builds: {e}"))
+                .brep_blob
+        };
+        (build("worm"), build("bearing_608"))
+    }
+
+    /// A worm passing through a bearing's bore shares the ring between the
+    /// bore and the worm's outside with it: the kernel answers with that
+    /// solid rather than failing, with both standing on one plane, where the
+    /// groove runs out through the end faces they share.
+    #[test]
+    fn a_worm_through_a_bearing_shares_material_with_it() {
+        use kernel_api::KernelQueries;
+        let (worm, bearing) = worm_and_bearing();
+        let shared = kernel_ogeom::QUERIES
+            .overlap(&worm, &bearing, &translate(0.0, 0.0, 0.0))
+            .unwrap_or_else(|e| panic!("{e}"))
+            .expect("they share material");
+        // At most the ring between the bore (4 mm) and the worm's outside
+        // (8 mm), 7 mm tall.
+        let ring = std::f64::consts::PI * (64.0 - 16.0) * 7.0;
+        assert!(
+            shared.volume_mm3 > 0.0 && shared.volume_mm3 < ring,
+            "{}",
+            shared.volume_mm3
+        );
+    }
+
+    /// An arm as wide as the hub it runs into, its sides tangent to the hub's
+    /// wall: the round of the arm's top side edge runs on tangentially into
+    /// the round of the arm's top against the hub, convex into concave.
+    #[test]
+    fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
+        let ops = [
+            blind_pad(
+                vec![rect_wire(0.0, -6.0, 40.0, 6.0)],
+                5.0,
+                BooleanOp::NewSolid,
+            ),
+            blind_pad(vec![circle_wire(0.0, 0.0, 6.0)], 10.0, BooleanOp::Fuse),
+            SolidOp::Fillet {
+                radius: 1.0,
+                edges: EdgeSelection::Picked(vec![kernel_api::EdgeProbe {
+                    point: [20.0, 6.0, 5.0],
+                    direction: [1.0, 0.0, 0.0],
+                    faces: [0, 0],
+                }]),
+                follow_tangent: true,
+                corner: Default::default(),
+                distances: None,
+                auto: false,
+                variable: None,
+            },
+        ];
+        let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");
+        assert!(crate::common::is_sound(&built.brep_blob));
+    }
 }

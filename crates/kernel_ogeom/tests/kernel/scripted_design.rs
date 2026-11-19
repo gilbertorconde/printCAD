@@ -193,11 +193,29 @@ fn a_pad_closes_an_outline_that_nearly_meets() {
     assert!(pad(3.0).is_err(), "a 3 mm gap is no near miss");
 }
 
-/// Text spread round a whole cylinder, its letters sunk in: wrapped across
-/// the cylinder's seam, all the way round, every letter cutting as much as
-/// one alone does. Straight letters keep the wrap quick to build.
+/// Letters carried straight onto a cylinder's side across its seam stand
+/// out: the seam halves a letter into narrow pieces, whose slabs are told
+/// from the solid by the exact shape.
 #[test]
-fn text_round_a_whole_cylinder_is_sunk_into_it() {
+fn text_projected_across_a_cylinders_seam_stands_out() {
+    let blob = built(
+        r#"
+        local b = "BODY"
+        pc.design.primitive{body = b,
+          kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
+        pc.design.text{body = b, text = "LLL", size = 4, height = 0.5,
+          face_point = {10, 0, 10}, face_normal = {1, 0, 0}}
+        "#,
+    )
+    .unwrap();
+    let volume = measured(&blob).volume_mm3.unwrap();
+    let whole = std::f64::consts::PI * 100.0 * 20.0;
+    assert!(volume > whole + 1.0, "letters added: {volume}");
+}
+
+/// `letters` straight letters spread round a whole Ø20 cylinder and sunk
+/// in, each cutting as much as one alone does.
+fn letters_cut_alike(letters: usize) {
     let removed = |text: &str| {
         let blob = built(&format!(
             r#"
@@ -212,22 +230,26 @@ fn text_round_a_whole_cylinder_is_sunk_into_it() {
         .unwrap();
         std::f64::consts::PI * 100.0 * 20.0 - measured(&blob).volume_mm3.unwrap()
     };
-    let (one, four) = (removed("L"), removed("LLLL"));
+    let (one, all) = (removed("L"), removed(&"L".repeat(letters)));
     assert!(one > 0.1, "a letter cut: {one}");
     assert!(
-        (four - 4.0 * one).abs() <= 0.01 * four,
-        "each letter cut round the turn: {four} against {one} for one"
+        (all - letters as f64 * one).abs() <= 0.01 * all,
+        "each letter cut round the turn: {all} against {one} for one"
     );
 }
 
-/// Text spread round a whole cylinder goes round the cylinder as it is
-/// built, not as it was when the text went on: made smaller (even past
-/// where its face was picked) or larger (past where its sketch stood, and
-/// so far an end cap lies nearer the pick than the side), the letters sit
-/// as they would on a cylinder of that size from the start. Text longer
-/// than the turn says it does not fit.
+/// Two letters spread round a whole cylinder each cut as much as one alone
+/// does; four are the heavy test's.
 #[test]
-fn text_round_a_whole_cylinder_follows_its_radius() {
+fn text_round_a_whole_cylinder_cuts_each_letter_alike() {
+    letters_cut_alike(2);
+}
+
+/// `text` spread round a whole cylinder built at radius 10, then the
+/// cylinder's radius set to each of `radii`: the letters sit as they would
+/// on a cylinder of that size from the start. Six letters round a 3 mm
+/// cylinder say they do not fit.
+fn follows_its_radius(radii: &[f64], text: &str) {
     let script = |radius: f64, text: &str| {
         format!(
             r#"
@@ -245,7 +267,7 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
         let body: BodyId = document.create_body(None);
         let mut host = benches(document);
         let out = ScriptEngine::new().run_script(
-            &script(radius, "LL").replace("BODY", &body.0.to_string()),
+            &script(radius, text).replace("BODY", &body.0.to_string()),
             "part.lua",
             &mut host,
         );
@@ -257,7 +279,7 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
         measured(&document.imported_brep_blob_arc(body).expect("a solid"))
     };
     let mut failures = Vec::new();
-    for now in [5.0, 30.0] {
+    for &now in radii {
         let (mut host, body) = run(10.0);
         let primitive = wb_design::design_features_of_body(&host.document, body)
             .into_iter()
@@ -293,22 +315,37 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
     assert!(long.contains("does not fit"), "{long}");
 }
 
-/// Letters carried straight onto a cylinder's side across its seam stand
-/// out: the seam halves a letter into narrow pieces, whose slabs are told
-/// from the solid by the exact shape.
+/// A letter spread round a whole cylinder made smaller, past where its face
+/// was picked, sits as it would on the smaller cylinder from the start, and
+/// text longer than the turn says it does not fit; two letters, and the
+/// cylinder made larger, are the heavy test's.
 #[test]
-fn text_projected_across_a_cylinders_seam_stands_out() {
-    let blob = built(
-        r#"
-        local b = "BODY"
-        pc.design.primitive{body = b,
-          kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
-        pc.design.text{body = b, text = "LLL", size = 4, height = 0.5,
-          face_point = {10, 0, 10}, face_normal = {1, 0, 0}}
-        "#,
-    )
-    .unwrap();
-    let volume = measured(&blob).volume_mm3.unwrap();
-    let whole = std::f64::consts::PI * 100.0 * 20.0;
-    assert!(volume > whole + 1.0, "letters added: {volume}");
+fn text_round_a_whole_cylinder_follows_a_smaller_radius() {
+    follows_its_radius(&[5.0], "L");
+}
+
+/// What needs a big model or a long build, compiled and run only with the
+/// `heavy-tests` feature (`node scripts/test-budget.mjs --heavy`).
+#[cfg(feature = "heavy-tests")]
+mod heavy {
+    use super::*;
+
+    /// Text spread round a whole cylinder, its letters sunk in: wrapped across
+    /// the cylinder's seam, all the way round, every letter cutting as much as
+    /// one alone does. Straight letters keep the wrap quick to build.
+    #[test]
+    fn text_round_a_whole_cylinder_is_sunk_into_it() {
+        letters_cut_alike(4);
+    }
+
+    /// Text spread round a whole cylinder goes round the cylinder as it is
+    /// built, not as it was when the text went on: made smaller (even past
+    /// where its face was picked) or larger (past where its sketch stood, and
+    /// so far an end cap lies nearer the pick than the side), the letters sit
+    /// as they would on a cylinder of that size from the start. Text longer
+    /// than the turn says it does not fit.
+    #[test]
+    fn text_round_a_whole_cylinder_follows_its_radius() {
+        follows_its_radius(&[5.0, 30.0], "LL");
+    }
 }

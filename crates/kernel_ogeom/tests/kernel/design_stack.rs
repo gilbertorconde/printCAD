@@ -809,35 +809,6 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
     );
 }
 
-/// An M3 through a 5 mm plate threaded its whole length builds from
-/// nothing built before, and its groove takes only part of the wall
-/// between the 2.5 mm tap drill and the 3 mm major diameter.
-#[test]
-fn a_through_hole_threads_only_the_plate_it_passes_through() {
-    const T: f64 = 2.0;
-    let built = |modeled: bool| {
-        drilled_block(10.0, T as f32, |s| {
-            with(
-                tapped_hole(s, 1.0, iso("M3"), modeled.then_some(0.0)),
-                serde_json::json!({"through_all": true, "thread_length": "HoleDepth"}),
-            )
-        })
-        .unwrap_or_else(|e| panic!("builds: {e}"))
-    };
-    let plate = 10.0 * 10.0 * T;
-    let tapped = built(false);
-    assert!(
-        (tapped - (plate - PI * 1.25 * 1.25 * T)).abs() < 0.01,
-        "{tapped}"
-    );
-    let threaded = built(true);
-    let shell = PI * (1.5 * 1.5 - 1.25 * 1.25) * T;
-    assert!(
-        threaded < tapped - 0.2 * shell && threaded > tapped - 0.8 * shell,
-        "the groove takes part of the wall: {threaded} (tapped {tapped})"
-    );
-}
-
 /// `original` mirrored across `plane`.
 fn mirrored(original: FeatureId, plane: wb_design::MirrorPlane) -> DesignFeature {
     DesignFeature::Mirrored {
@@ -1711,28 +1682,18 @@ fn a_hole_cuts_what_its_cut_and_taper_say() {
 }
 
 /// A tapped 1/4 NPT hole is drilled at the thread's minor diameter where
-/// it opens and narrows 1:16 on the diameter toward its bottom. Its thread,
-/// modeled, follows the taper: the groove cuts into the tapered wall and no
-/// further out than the major diameter at the face.
+/// it opens and narrows 1:16 on the diameter toward its bottom. Its
+/// modeled thread, a long build, is the heavy test's.
 #[test]
-fn an_npt_hole_tapers_one_in_sixteen_and_its_thread_follows() {
+fn an_npt_hole_tapers_one_in_sixteen() {
     let npt = wb_design::ThreadStandard::Npt.size("1/4").unwrap();
-    let built = |modeled| {
-        let spec = wb_design::ThreadSpec::new(wb_design::ThreadStandard::Npt, "1/4");
-        drilled_block(30.0, 15.0, |s| tapped_hole(s, 10.0, spec, modeled))
-            .unwrap_or_else(|e| panic!("builds: {e}"))
-    };
-    let tapped = built(None);
+    let spec = wb_design::ThreadSpec::new(wb_design::ThreadStandard::Npt, "1/4");
+    let tapped = drilled_block(30.0, 15.0, |s| tapped_hole(s, 10.0, spec, None))
+        .unwrap_or_else(|e| panic!("builds: {e}"));
     let r1 = npt.minor * 0.5;
     let r2 = r1 - 10.0 / 32.0;
     let want = 30.0 * 30.0 * 15.0 - PI * 10.0 / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);
     assert!((tapped - want).abs() < 0.05, "{tapped} against {want}");
-    let threaded = built(Some(1.5));
-    let outer = PI * (npt.major * 0.5).powi(2) * 7.0;
-    assert!(
-        threaded < tapped - 5.0 && threaded > tapped - outer,
-        "the groove takes some of the wall, not all of it: {threaded} (tapped {tapped})"
-    );
 }
 
 /// A left-hand modeled thread is the mirror of the right-hand one. A
@@ -4288,24 +4249,6 @@ fn projected_text_embosses_and_debosses_a_cylinder() {
 }
 
 #[test]
-fn wrapped_text_embosses_and_debosses_a_cylinder() {
-    let [split, up, down] = text_on_a_cylinder(true).each_ref().map(meshed_volume);
-    let (gained, lost) = (up - split, split - down);
-    assert!(
-        (gained / lost - 21.0 / 19.0).abs() < 0.03,
-        "{gained} raised against {lost} sunk"
-    );
-    // Wrapped, the letter keeps its width; carried straight it stretches
-    // round the side away from its middle, and raises more.
-    let [plain, straight, _] = straight_text_on_a_cylinder();
-    let straight_gain = meshed_volume(straight) - meshed_volume(plain);
-    assert!(
-        gained < straight_gain,
-        "{gained} wrapped, {straight_gain} straight"
-    );
-}
-
-#[test]
 fn embossed_text_measures_what_it_adds() {
     let plain = std::f64::consts::PI * 100.0 * 20.0;
     let measured = volume(&straight_text_on_a_cylinder()[1].brep_blob);
@@ -5335,4 +5278,83 @@ fn a_fillet_between_two_faces_rounds_across_a_groove() {
         build(&doc, body).is_err(),
         "a ball of radius 1 reaches no further than the groove's side"
     );
+}
+
+/// What needs a big model or a long build, compiled and run only with the
+/// `heavy-tests` feature (`node scripts/test-budget.mjs --heavy`).
+#[cfg(feature = "heavy-tests")]
+mod heavy {
+    use super::*;
+
+    #[test]
+    fn wrapped_text_embosses_and_debosses_a_cylinder() {
+        let [split, up, down] = text_on_a_cylinder(true).each_ref().map(meshed_volume);
+        let (gained, lost) = (up - split, split - down);
+        assert!(
+            (gained / lost - 21.0 / 19.0).abs() < 0.03,
+            "{gained} raised against {lost} sunk"
+        );
+        // Wrapped, the letter keeps its width; carried straight it stretches
+        // round the side away from its middle, and raises more.
+        let [plain, straight, _] = straight_text_on_a_cylinder();
+        let straight_gain = meshed_volume(straight) - meshed_volume(plain);
+        assert!(
+            gained < straight_gain,
+            "{gained} wrapped, {straight_gain} straight"
+        );
+    }
+
+    /// An M3 through a 2 mm plate threaded its whole length builds from
+    /// nothing built before, and its groove takes only part of the wall
+    /// between the 2.5 mm tap drill and the 3 mm major diameter.
+    #[test]
+    fn a_through_hole_threads_only_the_plate_it_passes_through() {
+        const T: f64 = 2.0;
+        let built = |modeled: bool| {
+            drilled_block(10.0, T as f32, |s| {
+                with(
+                    tapped_hole(s, 1.0, iso("M3"), modeled.then_some(0.0)),
+                    serde_json::json!({"through_all": true, "thread_length": "HoleDepth"}),
+                )
+            })
+            .unwrap_or_else(|e| panic!("builds: {e}"))
+        };
+        let plate = 10.0 * 10.0 * T;
+        let tapped = built(false);
+        assert!(
+            (tapped - (plate - PI * 1.25 * 1.25 * T)).abs() < 0.01,
+            "{tapped}"
+        );
+        let threaded = built(true);
+        let shell = PI * (1.5 * 1.5 - 1.25 * 1.25) * T;
+        assert!(
+            threaded < tapped - 0.2 * shell && threaded > tapped - 0.8 * shell,
+            "the groove takes part of the wall: {threaded} (tapped {tapped})"
+        );
+    }
+
+    /// A tapped 1/4 NPT hole is drilled at the thread's minor diameter where
+    /// it opens and narrows 1:16 on the diameter toward its bottom. Its thread,
+    /// modeled, follows the taper: the groove cuts into the tapered wall and no
+    /// further out than the major diameter at the face.
+    #[test]
+    fn an_npt_hole_tapers_one_in_sixteen_and_its_thread_follows() {
+        let npt = wb_design::ThreadStandard::Npt.size("1/4").unwrap();
+        let built = |modeled| {
+            let spec = wb_design::ThreadSpec::new(wb_design::ThreadStandard::Npt, "1/4");
+            drilled_block(30.0, 15.0, |s| tapped_hole(s, 10.0, spec, modeled))
+                .unwrap_or_else(|e| panic!("builds: {e}"))
+        };
+        let tapped = built(None);
+        let r1 = npt.minor * 0.5;
+        let r2 = r1 - 10.0 / 32.0;
+        let want = 30.0 * 30.0 * 15.0 - PI * 10.0 / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);
+        assert!((tapped - want).abs() < 0.05, "{tapped} against {want}");
+        let threaded = built(Some(1.5));
+        let outer = PI * (npt.major * 0.5).powi(2) * 7.0;
+        assert!(
+            threaded < tapped - 5.0 && threaded > tapped - outer,
+            "the groove takes some of the wall, not all of it: {threaded} (tapped {tapped})"
+        );
+    }
 }
