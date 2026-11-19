@@ -263,18 +263,29 @@ impl DesignWorkbench {
     }
 
     /// What a dress-up takes from the viewport selection, in `body`'s
-    /// frame: the picked edges first, else the edges of the picked face,
-    /// else every edge.
-    pub(crate) fn selected_edges(ctx: &WorkbenchRuntimeContext, body: BodyId) -> EdgeSel {
+    /// frame: the picked edges first, else the edges of the picked faces.
+    /// With nothing picked a command rounds every edge, as its reference
+    /// says; the toolbar asks for a pick instead, since every edge of a
+    /// real part is slow to try and seldom takes one radius.
+    pub(crate) fn selected_edges(
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+        given: Given,
+        what: &str,
+    ) -> Result<EdgeSel, String> {
         let edges = ctx.selected_edges_in(body);
         if !edges.is_empty() {
-            return EdgeSel::Edges(edges.iter().map(EdgePick::of).collect());
+            return Ok(EdgeSel::Edges(edges.iter().map(EdgePick::of).collect()));
         }
         let faces = Self::selected_face_picks(ctx, body);
-        if faces.is_empty() {
-            EdgeSel::All
+        if !faces.is_empty() {
+            Ok(EdgeSel::Faces(faces))
+        } else if given.scripted {
+            Ok(EdgeSel::All)
         } else {
-            EdgeSel::Faces(faces)
+            Err(format!(
+                "Click the edges to {what} in the viewport first, or a face for all of its edges"
+            ))
         }
     }
 

@@ -305,7 +305,10 @@ fn default_feature(
         core_document::tool_variant(tool),
         ctx,
         body,
-        crate::Given::default(),
+        crate::Given {
+            scripted: true,
+            spine: None,
+        },
     );
     ctx.active_document_object = saved.0;
     ctx.selected_face = saved.1;
@@ -1152,6 +1155,30 @@ mod tests {
             near(&draft["Draft"]["faces"][0], [10.0, 2.5, 5.0]),
             "{draft}"
         );
+    }
+
+    /// Fillet and chamfer from the toolbar with nothing picked ask for a
+    /// pick rather than taking every edge; a script still rounds every
+    /// edge, by default or asked for by name.
+    #[test]
+    fn a_dress_up_from_the_toolbar_asks_for_edges_and_a_script_may_take_all() {
+        let mut s = Session::new();
+        let (body, sketch) = s.sketch();
+        s.run("design.pad", json!({"sketch": sketch, "length": 10.0}))
+            .unwrap();
+        for tool in ["design.fillet", "design.chamfer"] {
+            let ctx = core_document::testing::ctx(&mut s.doc);
+            let refused =
+                DesignWorkbench::feature_for_tool(tool, None, &ctx, body, crate::Given::default())
+                    .unwrap_err();
+            assert!(refused.contains("Click the edges"), "{tool}: {refused}");
+        }
+        let made = s.run("design.fillet", json!({"body": body})).unwrap();
+        assert_eq!(s.fields(&made)["Fillet"]["edges"], json!("All"));
+        let made = s
+            .run("design.chamfer", json!({"body": body, "edges": "All"}))
+            .unwrap();
+        assert_eq!(s.fields(&made)["Chamfer"]["edges"], json!("All"));
     }
 
     /// One frame of the task panel, as the host runs it; what it recorded

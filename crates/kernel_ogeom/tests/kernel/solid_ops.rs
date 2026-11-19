@@ -2501,6 +2501,7 @@ fn helix_of(profile: ProfileWire, cone_angle_deg: f64, pitch: f64, height: f64) 
             reversed: false,
             turns: None,
             growth: None,
+            through_all: false,
         },
         op: BooleanOp::NewSolid,
     }
@@ -2569,6 +2570,36 @@ fn a_helical_sweep_reaches_its_profile_and_is_as_big_as_pappus_says() {
     assert!((ccw - turn).abs() <= turn * 1e-4, "1 turn: {ccw}");
     let cw = volume_of(&[helix_of(walked_back(&coil), 0.0, 5.0, 5.0)]).unwrap();
     assert!((ccw - cw).abs() < 1e-6, "{ccw} vs {cw}");
+}
+
+/// A through-all helix climbs as far as the solid it joins reaches along
+/// its axis, then its height beyond: the coil fused to a 3 mm slab of
+/// the axis runs 3 + 5 up, its profile 2 more.
+#[test]
+fn a_through_all_helix_runs_as_far_as_the_solid_reaches() {
+    let coil = |boolean| {
+        let mut coil = helix_of(rect_wire(10.0, 0.0, 12.0, 2.0), 0.0, 5.0, 5.0);
+        if let SolidOp::Sweep {
+            kind: SweepKind::Helix { through_all, .. },
+            op,
+            ..
+        } = &mut coil
+        {
+            *through_all = true;
+            *op = boolean;
+        }
+        coil
+    };
+    let built = chain(&[box_of(30.0, 3.0, 30.0), coil(BooleanOp::Fuse)]);
+    let (_, max) = built.bounds_mm.unwrap();
+    assert_close(
+        max[1],
+        10.0,
+        1e-3,
+        "the slab's reach, the height, the profile",
+    );
+    let alone = try_chain(&[coil(BooleanOp::NewSolid)]);
+    assert!(alone.is_err(), "with no solid to run through it refuses");
 }
 
 /// Part turns and cut primitives measure what their angles keep: a
@@ -3303,6 +3334,7 @@ fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
             reversed: false,
             turns: None,
             growth: None,
+            through_all: false,
         },
         op: BooleanOp::Cut,
     };

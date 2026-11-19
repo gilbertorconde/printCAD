@@ -116,8 +116,9 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             };
             spec.note(&format!(
                 "Without `edges` it {round} every edge of the solid (`edges = \"All\"`); \
-                 {size} is 1 mm when left out. In the app, edges selected in the view \
-                 are taken instead."
+                 {size} is 1 mm when left out. In the app, the edges selected in the \
+                 view are taken instead, or every edge of a face selected; with nothing \
+                 selected the tool asks for a pick."
             ))
         }
         _ => spec,

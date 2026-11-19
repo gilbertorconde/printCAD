@@ -727,27 +727,17 @@ pub(super) fn hole_ops(
             .as_ref()
             .zip(size)
             .ok_or("a modeled thread needs a standard size")?;
-        // A through hole's whole depth: as far as the solid reaches.
-        let hole_depth = if *through_all {
-            document
-                .get_feature_meta(*sketch)
-                .and_then(|n| n.body)
-                .and_then(|b| document.imported_geometry(b))
-                .and_then(|g| g.bounds_mm)
-                .map(|(lo, hi)| {
-                    let d = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
-                    f64::from((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt())
-                })
-                .ok_or("a through hole's thread needs the solid built first, or a depth given")?
-        } else {
-            f64::from(*depth)
-        };
+        // A through hole threaded its whole length runs as far as the
+        // solid reaches along its axis, which the kernel measures on the
+        // solid it cuts; run-out means nothing where the tap leaves the
+        // far side.
         let length = match thread_length {
-            crate::feature::ThreadLength::Given => f64::from(*thread_depth),
-            crate::feature::ThreadLength::HoleDepth => hole_depth,
-            crate::feature::ThreadLength::RunOut => hole_depth - 3.0 * size.pitch,
+            crate::feature::ThreadLength::Given => Some(f64::from(*thread_depth)),
+            _ if *through_all => None,
+            crate::feature::ThreadLength::HoleDepth => Some(f64::from(*depth)),
+            crate::feature::ThreadLength::RunOut => Some(f64::from(*depth) - 3.0 * size.pitch),
         };
-        if length <= 0.0 {
+        if length.is_some_and(|length| length <= 0.0) {
             return Err("give the modeled thread a depth".into());
         }
         let form = ThreadForm {
@@ -899,8 +889,9 @@ struct ThreadForm {
     /// The thread's major radius at the face.
     major: f64,
     pitch: f64,
-    /// How far into the material it runs.
-    depth: f64,
+    /// How far into the material it runs; `None` through all of it, a
+    /// pitch out past the far side.
+    depth: Option<f64>,
     /// The included angle between its flanks, degrees.
     flank_deg: f64,
     /// How far its diameters lean in toward the bottom, degrees.
@@ -912,7 +903,8 @@ struct ThreadForm {
 /// space of the form's flank angle from inside the drilled wall out to the
 /// thread's major radius, flat-topped a pitch's eighth wide there, swept
 /// along a helix at the pitch (narrowing along a cone as the wall tapers)
-/// from a pitch above the surface to the form's depth into the material.
+/// from a pitch above the surface to the form's depth into the material,
+/// or out through the far side of the solid.
 fn thread_cut(
     plane: &kernel_api::ProfilePlane,
     center: [f64; 2],
@@ -966,12 +958,13 @@ fn thread_cut(
             axis_origin: [0.0, 0.0],
             axis_dir: [0.0, 1.0],
             pitch,
-            height: form.depth + pitch,
+            height: form.depth.unwrap_or(pitch) + pitch,
             left_handed: form.left_handed,
             cone_angle_deg: -form.taper_deg,
             reversed: false,
             turns: None,
             growth: None,
+            through_all: form.depth.is_none(),
         },
         op: BooleanOp::Cut,
     }

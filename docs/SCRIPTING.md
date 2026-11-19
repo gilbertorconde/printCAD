@@ -4208,7 +4208,7 @@ assert(math.abs(volume - (30 * 20 * 6 - bore * 3.3 - hex * 2.7)) < 1e-3, volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- Without `edges` it rounds every edge of the solid (`edges = "All"`); `radius` is 1 mm when left out. In the app, edges selected in the view are taken instead.
+- Without `edges` it rounds every edge of the solid (`edges = "All"`); `radius` is 1 mm when left out. In the app, the edges selected in the view are taken instead, or every edge of a face selected; with nothing selected the tool asks for a pick.
 - `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
 - Edges running on tangentially are taken too (`follow_tangent`, on by default).
 - `mode` is Auto (when left out), Radius, TwoDistances or Variable. Auto on one edge takes each face's contact `radius` from the edge or as far as the face goes, whichever is less; with Radius, a radius larger than the faces beside an edge can take fails at `pc.doc.rebuild()`. TwoDistances puts `radius` on one face and `radius2` on the other (`flip` swaps them), its `profile` Elliptical or Conic (with `rho` strictly between 0 and 1, 0.5 when left out), on one edge, a tangent chain of edges, or the three edges meeting at a box's corner.
@@ -4247,7 +4247,7 @@ assert(math.abs(volume - want) < 0.01, volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- Without `edges` it bevels every edge of the solid (`edges = "All"`); `size` is 1 mm when left out. In the app, edges selected in the view are taken instead.
+- Without `edges` it bevels every edge of the solid (`edges = "All"`); `size` is 1 mm when left out. In the app, the edges selected in the view are taken instead, or every edge of a face selected; with nothing selected the tool asks for a pick.
 - `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
 - Edges running on tangentially are taken too (`follow_tangent`, on by default).
 - `mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far as a face too narrow for it goes, edge by edge.

@@ -351,6 +351,7 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
                     reversed,
                     turns,
                     growth,
+                    through_all,
                 } if reflects(m) => SweepKind::Helix {
                     axis_origin: flip_v(*axis_origin),
                     axis_dir: flip_v(*axis_dir),
@@ -361,6 +362,7 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
                     reversed: *reversed,
                     turns: *turns,
                     growth: *growth,
+                    through_all: *through_all,
                 },
                 SweepKind::HelixNormal {
                     axis_origin,
