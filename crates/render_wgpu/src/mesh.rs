@@ -256,6 +256,13 @@ impl DrawUniform {
     }
 }
 
+/// Whether `body` draws as nothing but its edges, in its own colour: a
+/// mesh of lines alone (a sketch), or a wireframe whose mesh carries
+/// edges (a solid's face boundaries, a datum's outline).
+fn draws_as_lines(body: &BodySubmission, cached: &CachedMesh) -> bool {
+    cached.index_count == 0 || (body.is_wireframe && cached.edge_segments > 0)
+}
+
 pub(crate) fn uuid_to_u32s(uuid: Uuid) -> [u32; 4] {
     let b = uuid.as_bytes();
     [
@@ -565,7 +572,7 @@ pub(crate) enum MeshPipelineMode {
     /// the plane in front of them, so the cap hides what lies behind it.
     SolidCut,
     /// Triangle wireframe overlay drawn on top of the solid pass with depth
-    /// bias.
+    /// bias: a wireframe body whose mesh carries no edges.
     WireframeTriangles,
     /// The solid pass again, but blended over what is already there and
     /// never writing depth: for bodies drawn with an opacity under 1.0,
@@ -814,7 +821,7 @@ impl MeshRenderer {
         let stride = self.draw_stride as usize;
         let mut bytes = vec![0u8; frame.bodies.len() * stride];
         for (i, body) in frame.bodies.iter().enumerate() {
-            let line_body = cache.of(body).is_some_and(|c| c.index_count == 0);
+            let line_body = cache.of(body).is_some_and(|c| draws_as_lines(body, c));
             let mut draw = DrawUniform::new(body, &frame.lighting, line_body);
             if let Some(field) = &body.scalar {
                 let row = self.ramps.row(queue, &field.ramp).unwrap_or_else(|| {
@@ -947,9 +954,10 @@ impl MeshRenderer {
             .iter()
             .zip(&visible)
             .map(|(body, v)| {
-                // Line bodies (sketches) are all edges: never skipped for size.
+                // Line bodies (sketches, wireframes) are all edges: never
+                // skipped for size.
                 *v && cache.of(body).is_none_or(|c| {
-                    c.index_count == 0
+                    draws_as_lines(body, c)
                         || placed_bounds(body, c).is_none_or(|(lo, hi)| {
                             edge_min_px <= 0.0
                                 || aabb_screen_px(&view_proj, lo, hi, viewport[0], viewport[1])
@@ -992,20 +1000,19 @@ impl MeshRenderer {
         // The frame says whether edges draw (the draw style); the
         // experiment hook PRINTCAD_NO_EDGES=1 forces them off.
         let force_off = !frame.draw_edges || std::env::var_os("PRINTCAD_NO_EDGES").is_some();
-        // A line body (a sketch, a guide) is nothing but its edges and draws
-        // whatever the style; a solid's boundary edges follow it.
-        let draws_edges = |cached: &CachedMesh| {
-            cached.edge_segments > 0 && (cached.index_count == 0 || !force_off)
+        // A line body (a sketch, a guide, a wireframe with edges) is
+        // nothing but its edges and draws whatever the style; a solid's
+        // boundary edges follow it.
+        let draws_edges = |body: &BodySubmission, cached: &CachedMesh| {
+            cached.edge_segments > 0 && (draws_as_lines(body, cached) || !force_off)
         };
         // A see-through body drawn one layer deep has its edges drawn after
-        // its faces, over them.
-        let edges_later = |b: &BodySubmission| b.front_only && b.opacity < 1.0;
-        let edges_now = |b: &BodySubmission| !b.is_wireframe && !b.on_top && !edges_later(b);
-        if bodies
-            .iter()
-            .enumerate()
-            .any(|(i, b)| edges_eligible[i] && edges_now(b) && cache.of(b).is_some_and(draws_edges))
-        {
+        // its faces, over them; a wireframe has no faces to wait for.
+        let edges_later = |b: &BodySubmission| !b.is_wireframe && b.front_only && b.opacity < 1.0;
+        let edges_now = |b: &BodySubmission| !b.on_top && !edges_later(b);
+        if bodies.iter().enumerate().any(|(i, b)| {
+            edges_eligible[i] && edges_now(b) && cache.of(b).is_some_and(|c| draws_edges(b, c))
+        }) {
             pass.set_pipeline(&self.edges);
             // Solids' boundary edges first, then line bodies: a sketch drawn
             // along a solid's own edges ties with them in depth, and the
@@ -1017,7 +1024,7 @@ impl MeshRenderer {
                     }
                     let Some(cached) = cache
                         .of(body)
-                        .filter(|c| draws_edges(c) && (c.index_count == 0) == lines)
+                        .filter(|c| draws_edges(body, c) && draws_as_lines(body, c) == lines)
                     else {
                         continue;
                     };
@@ -1027,7 +1034,11 @@ impl MeshRenderer {
             }
         }
 
-        faces(pass, &mut stats, &self.wireframe, &|b| b.is_wireframe);
+        // A wireframe whose mesh carries no edges (a scan) shows its
+        // triangles instead.
+        faces(pass, &mut stats, &self.wireframe, &|b| {
+            b.is_wireframe && cache.of(b).is_some_and(|c| c.edge_segments == 0)
+        });
 
         // Grids show through translucent bodies while staying behind their
         // tint. Their pipeline binds its own uniforms at group zero.
@@ -1048,14 +1059,14 @@ impl MeshRenderer {
         });
         let late_edges = |b: &BodySubmission| translucent(b) && edges_later(b);
         if bodies.iter().enumerate().any(|(i, b)| {
-            edges_eligible[i] && late_edges(b) && cache.of(b).is_some_and(draws_edges)
+            edges_eligible[i] && late_edges(b) && cache.of(b).is_some_and(|c| draws_edges(b, c))
         }) {
             pass.set_pipeline(&self.edges);
             for (i, body) in bodies.iter().enumerate() {
                 if !edges_eligible[i] || !late_edges(body) {
                     continue;
                 }
-                let Some(cached) = cache.of(body).filter(|c| draws_edges(c)) else {
+                let Some(cached) = cache.of(body).filter(|c| draws_edges(body, c)) else {
                     continue;
                 };
                 stats.edge_indices += u64::from(cached.edge_index_count);

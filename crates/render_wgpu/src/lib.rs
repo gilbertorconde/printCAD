@@ -210,7 +210,8 @@ pub struct BodySubmission {
     /// selection highlight that lets the face show through.
     pub opacity: f32,
     pub highlight: HighlightState,
-    /// If true, render as wireframe/line with depth bias to appear on top of solid geometry
+    /// Drawn as lines alone, in its own colour: its mesh's edges (a solid's
+    /// face boundaries), or its triangles where the mesh carries none.
     pub is_wireframe: bool,
     /// Whether the pick pass sees it. Paint over a surface (a selection
     /// overlay) and guides are not; a body is, however see-through.
