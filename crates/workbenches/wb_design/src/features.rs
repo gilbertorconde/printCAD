@@ -187,29 +187,13 @@ impl DesignWorkbench {
         let Ok(made) = DesignFeature::from_json(&node.data) else {
             return false;
         };
-        // Text round a whole turn takes the cylinder's radius as it is now.
-        if let Some(asked) = made.turn_face().map(|face| face.probe()) {
-            let Some(Ok(kernel_api::ProbeAnswer::Face {
-                surface: kernel_api::FaceSurface::Cylinder { radius: now, .. },
-                ..
-            })) = probed.answers.first()
-            else {
-                return false;
-            };
-            let DesignFeature::Text { radius, .. } = &mut feature else {
-                return false;
-            };
-            if probed.probes != [asked] || *radius == *now {
-                return false;
-            }
-            *radius = *now;
-            *values = feature.to_json();
-            return true;
-        }
-        // A feature placed by faces of the solid takes where they are now.
+        // A feature placed by faces of the solid takes where they are now,
+        // text on any face it went on, and text round a whole turn the
+        // cylinder's radius as well.
         let asked: Vec<kernel_api::ShapeProbe> =
             made.placing_faces().iter().map(|f| f.probe()).collect();
         if !asked.is_empty() {
+            let curved = matches!(made, DesignFeature::Text { .. });
             let mut faces = feature.placing_faces_mut();
             if probed.probes != asked || faces.len() != asked.len() {
                 return false;
@@ -217,10 +201,23 @@ impl DesignWorkbench {
             let mut moved = false;
             for (face, answer) in faces.iter_mut().zip(&probed.answers) {
                 let before = **face;
-                if !face.take_answer(answer) {
+                if !face.take_answer(answer, curved) {
                     return false;
                 }
                 moved |= **face != before;
+            }
+            if made.turn_face().is_some() {
+                let Some(Ok(kernel_api::ProbeAnswer::Face {
+                    surface: kernel_api::FaceSurface::Cylinder { radius: now, .. },
+                    ..
+                })) = probed.answers.first()
+                else {
+                    return false;
+                };
+                if let DesignFeature::Text { radius, .. } = &mut feature {
+                    moved |= *radius != *now;
+                    *radius = *now;
+                }
             }
             if !moved {
                 return false;

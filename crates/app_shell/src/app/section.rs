@@ -7,7 +7,7 @@ use core_document::{ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, Sketc
 use glam::{Vec2, Vec3};
 
 use super::gesture::HandleTarget;
-use super::scalar_arrow::{ARROW_PX, Held, ScalarArrow, ScalarDrag};
+use super::scalar_arrow::{ARROW_PT, Held, ScalarArrow, ScalarDrag};
 use crate::PrintCadApp;
 use crate::app::measure::{DatumPick, MeasurePick};
 use crate::camera::CameraController;
@@ -28,6 +28,8 @@ pub(crate) struct Handle {
     /// The scene's span along the normal: the offsets that cut something,
     /// which a drag stops at the ends of.
     pub range: (f32, f32),
+    /// The view's pixels per point, which the arrow's sizes scale by.
+    pub scale: f32,
 }
 
 impl Handle {
@@ -64,12 +66,14 @@ pub(crate) fn handle(camera: &CameraController, plane: &SectionPlane) -> Option<
         (per_mm.normalize(), per_mm)
     };
     let sign = if plane.flipped { -1.0 } else { 1.0 };
+    let scale = camera.pixels_per_point().max(0.5);
     Some(Handle {
         base,
-        tip: base + way * sign * ARROW_PX,
+        tip: base + way * sign * ARROW_PT * scale,
         pixels_per_mm,
         offset: plane.offset,
         range: plane.range(camera.scene_bounds()),
+        scale,
     })
 }
 
@@ -105,6 +109,7 @@ impl Handle {
         ScalarArrow {
             base: self.base,
             tip: self.tip,
+            scale: self.scale,
         }
     }
 }
@@ -487,11 +492,26 @@ mod tests {
             (Vec3::from_array(camera.target()) - Vec3::from_array(camera.position())).normalize();
         let mut plane = SectionPlane::square_to_view(forward, camera.scene_bounds()).unwrap();
         let normal = handle(&camera, &plane).unwrap();
-        assert!((normal.tip - normal.base - Vec2::NEG_Y * ARROW_PX).length() < 1e-3);
+        assert!((normal.tip - normal.base - Vec2::NEG_Y * ARROW_PT).length() < 1e-3);
         assert!(normal.pixels_per_mm.y < 0.0);
         plane.flipped = true;
         let flipped = handle(&camera, &plane).unwrap();
-        assert!((flipped.tip - flipped.base + Vec2::NEG_Y * ARROW_PX).length() < 1e-3);
+        assert!((flipped.tip - flipped.base + Vec2::NEG_Y * ARROW_PT).length() < 1e-3);
         assert_eq!(normal.pixels_per_mm, flipped.pixels_per_mm);
+
+        // On a screen of two pixels a point, the arrow and its head are
+        // twice as large, as a bench handle's are.
+        let mut dense = camera;
+        dense.set_pixels_per_point(2.0);
+        let handle = handle(&dense, &plane).unwrap();
+        assert!(((handle.tip - handle.base).length() - 2.0 * ARROW_PT).abs() < 1e-3);
+        let (_, marks, _) = handle.drawn(false, core_document::Unit::default());
+        let [head] = marks.as_slice() else {
+            panic!("one head: {marks:?}")
+        };
+        let core_document::MarkKind::Arrowhead { length, .. } = head.kind else {
+            panic!("{:?}", head.kind)
+        };
+        assert_eq!(length, 2.0 * core_document::handle_arrow::HEAD_LENGTH);
     }
 }

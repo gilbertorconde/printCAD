@@ -327,16 +327,20 @@ pub(super) fn plan_dressup(
                 ));
             }
             let profile = match feature {
-                // Spread round the cylinder as the build finds it.
+                // Off the face and, round a whole turn, spread round the
+                // cylinder as the build finds them.
                 DesignFeature::Text {
-                    wrap: true,
-                    along: false,
-                    full_turn: true,
+                    wrap,
+                    along,
+                    full_turn,
                     radius,
                     ..
                 } => {
                     let mut laid = load_sketch(document, *sketch).map_err(&fail)?;
-                    crate::text_feature::lay_round(&mut laid.sketch, *radius).map_err(&fail)?;
+                    crate::text_feature::stand_off(&mut laid, &faces[0]);
+                    if *wrap && !*along && *full_turn {
+                        crate::text_feature::lay_round(&mut laid.sketch, *radius).map_err(&fail)?;
+                    }
                     profile_of(&laid, &[]).map_err(&fail)?
                 }
                 _ => sketch_profile(document, *sketch, &[]).map_err(&fail)?,

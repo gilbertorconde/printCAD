@@ -22,6 +22,9 @@ use crate::feature::{
 
 /// How close to a handle, in logical pixels, a press takes hold of it.
 const REACH_PX: f32 = 10.0;
+/// How far to the side of its path, in logical pixels, a handle drawn
+/// [`Handle::beside`] stands.
+const BESIDE_PX: f32 = 14.0;
 /// The smallest number a drag sets.
 const LEAST: f32 = 0.01;
 /// Line pieces an arc handle's path is drawn with, per full turn.
@@ -80,6 +83,10 @@ pub(crate) struct Handle {
     /// The largest a drag sets it to, below `most`: a size past which the
     /// feature does not build. Typing may go past it.
     pub stop: f32,
+    /// Drawn and taken a little to the side of its path on screen: where a
+    /// feature starts, whose path the feature's own length or angle goes
+    /// on from, so the two read as two arrows rather than one.
+    pub beside: bool,
 }
 
 impl Handle {
@@ -111,6 +118,14 @@ impl Handle {
                 centre + (from * cos + axis.cross(from) * sin) * radius
             }
             Shape::Line { origin, .. } => origin,
+        }
+    }
+
+    /// The handle drawn [`Self::beside`] its path.
+    fn set_beside(self) -> Self {
+        Self {
+            beside: true,
+            ..self
         }
     }
 
@@ -285,6 +300,7 @@ impl Maker<'_> {
             range,
             most: f32::INFINITY,
             stop: f32::INFINITY,
+            beside: false,
         })
     }
 
@@ -415,15 +431,19 @@ fn extrude_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
         return Vec::new();
     };
     let base = maker.world(centre) + maker.world_dir(normal) * to_start as f32;
-    let mut out = vec![maker.handle(
-        "/extras/start_offset",
-        Shape::Line {
-            origin: base,
-            dir,
-            scale: 1.0,
-        },
-        Range::Signed,
-    )];
+    let mut out = vec![
+        maker
+            .handle(
+                "/extras/start_offset",
+                Shape::Line {
+                    origin: base,
+                    dir,
+                    scale: 1.0,
+                },
+                Range::Signed,
+            )
+            .map(Handle::set_beside),
+    ];
     let start = base + dir * extras.start_offset;
     let (first_mode, second_mode) = mode.sides(*mode2);
     if first_mode == ExtrudeMode::Dimension {
@@ -483,15 +503,19 @@ fn hole_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
         plane.origin[k] + plane.x_axis[k] * centre[0] + plane.y_axis[k] * centre[1]
     });
     let (base, dir) = (maker.world64(at), maker.world_dir64(into));
-    let mut out = vec![maker.handle(
-        "/start/offset",
-        Shape::Line {
-            origin: base,
-            dir,
-            scale: 1.0,
-        },
-        Range::Signed,
-    )];
+    let mut out = vec![
+        maker
+            .handle(
+                "/start/offset",
+                Shape::Line {
+                    origin: base,
+                    dir,
+                    scale: 1.0,
+                },
+                Range::Signed,
+            )
+            .map(Handle::set_beside),
+    ];
     if !*through_all {
         out.push(maker.handle(
             "/depth",
@@ -538,7 +562,9 @@ fn revolve_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     let Some(ring) = revolve_ring(maker, *sketch, axis, *project_axis, *reversed) else {
         return Vec::new();
     };
-    let mut start = maker.handle("/start_angle_deg", ring.arc(0.0, 1.0), Range::Signed);
+    let mut start = maker
+        .handle("/start_angle_deg", ring.arc(0.0, 1.0), Range::Signed)
+        .map(Handle::set_beside);
     if let Some(h) = &mut start {
         h.most = 360.0;
     }
@@ -927,7 +953,7 @@ pub(crate) fn under(
         .iter()
         .enumerate()
         .filter_map(|(i, h)| {
-            let (x, y) = ctx.world_to_viewport(h.position().to_array())?;
+            let (x, y) = head_at(ctx, h)?;
             let d = (x - pos.0).hypot(y - pos.1);
             (d <= reach).then_some((i, d))
         })
@@ -937,10 +963,13 @@ pub(crate) fn under(
 
 /// The handle's path on screen from its start to where it stands (a
 /// straight line, or the arc), and the way its head points there: the way
-/// the number shown grows, away from the start.
+/// the number shown grows, away from the start. One drawn
+/// [`Handle::beside`] its path stands `scale` times [`BESIDE_PX`] to its
+/// left as the number grows, the same side either sign.
 fn arrow_path(
     handle: &Handle,
     to_screen: impl Fn(Vec3) -> Option<(f32, f32)>,
+    scale: f32,
 ) -> Option<(Vec<[f32; 2]>, [f32; 2])> {
     let points: Vec<Vec3> = match handle.shape {
         Shape::Line { .. } => vec![handle.start(), handle.position()],
@@ -954,14 +983,38 @@ fn arrow_path(
                 .collect()
         }
     };
+    let tip = to_screen(handle.position())?;
+    let nudge = handle.value.abs().max(1.0) * 0.01;
+    let ahead = to_screen(handle.at(handle.value + nudge))?;
+    let grows = [ahead.0 - tip.0, ahead.1 - tip.1];
+    let shift = match grows[0].hypot(grows[1]) {
+        n if handle.beside && n > 1e-6 => {
+            let aside = BESIDE_PX * scale.max(0.5) / n;
+            [grows[1] * aside, -grows[0] * aside]
+        }
+        _ => [0.0, 0.0],
+    };
     let path: Vec<[f32; 2]> = points
         .into_iter()
-        .filter_map(|p| to_screen(p).map(|(x, y)| [x, y]))
+        .filter_map(|p| to_screen(p).map(|(x, y)| [x + shift[0], y + shift[1]]))
         .collect();
-    let tip = to_screen(handle.position())?;
-    let outward = if handle.value < 0.0 { -1.0 } else { 1.0 };
-    let ahead = to_screen(handle.at(handle.value + outward * handle.value.abs().max(1.0) * 0.01))?;
-    Some((path, [ahead.0 - tip.0, ahead.1 - tip.1]))
+    let way = if handle.value < 0.0 {
+        let behind = to_screen(handle.at(handle.value - nudge))?;
+        [behind.0 - tip.0, behind.1 - tip.1]
+    } else {
+        grows
+    };
+    Some((path, way))
+}
+
+/// Where the handle's head stands on screen, which a press takes hold of.
+fn head_at(ctx: &WorkbenchRuntimeContext, handle: &Handle) -> Option<(f32, f32)> {
+    let (path, _) = arrow_path(
+        handle,
+        |p| ctx.world_to_viewport(p.to_array()),
+        ctx.pixels_per_point,
+    )?;
+    path.last().map(|p| (p[0], p[1]))
 }
 
 /// The handle as an arrow from its start, its head where the number
@@ -976,9 +1029,13 @@ fn arrow(
     } else {
         ctx.sketch_palette.selected
     };
-    arrow_path(handle, |p| ctx.world_to_viewport(p.to_array()))
-        .map(|(path, way)| core_document::handle_arrow(&path, way, color, ctx.pixels_per_point))
-        .unwrap_or_default()
+    arrow_path(
+        handle,
+        |p| ctx.world_to_viewport(p.to_array()),
+        ctx.pixels_per_point,
+    )
+    .map(|(path, way)| core_document::handle_arrow(&path, way, color, ctx.pixels_per_point))
+    .unwrap_or_default()
 }
 
 /// The handle's shaft.
@@ -1001,7 +1058,7 @@ pub(crate) fn marks(
 
 /// The number beside the handle while it is held.
 pub(crate) fn labels(ctx: &WorkbenchRuntimeContext, handle: &Handle) -> Vec<ScreenSpaceLabel> {
-    ctx.world_to_viewport(handle.position().to_array())
+    head_at(ctx, handle)
         .map(|(x, y)| {
             vec![
                 ScreenSpaceLabel::new(
@@ -1026,7 +1083,7 @@ pub(crate) fn typed_label(
     handle: &Handle,
     typed: &str,
 ) -> Vec<ScreenSpaceLabel> {
-    ctx.world_to_viewport(handle.position().to_array())
+    head_at(ctx, handle)
         .map(|(x, y)| {
             vec![
                 ScreenSpaceLabel::new(
@@ -1074,6 +1131,7 @@ mod tests {
             range,
             most: f32::INFINITY,
             stop: f32::INFINITY,
+            beside: false,
         }
     }
 
@@ -1114,13 +1172,22 @@ mod tests {
             [w[0] / n, w[1] / n]
         };
         let mut pad = line(1.0, Range::Signed);
-        let (path, way) = arrow_path(&pad, side_on).unwrap();
+        let (path, way) = arrow_path(&pad, side_on, 1.0).unwrap();
         assert_eq!(path, vec![[0.0, 0.0], [0.0, -100.0]]);
         assert_eq!(unit(way), [0.0, -1.0], "up the screen");
         pad.value = -4.0;
-        let (path, way) = arrow_path(&pad, side_on).unwrap();
+        let (path, way) = arrow_path(&pad, side_on, 1.0).unwrap();
         assert_eq!(path.last(), Some(&[0.0, 40.0]));
         assert_eq!(unit(way), [0.0, 1.0], "away from the start");
+        // A start handle stands beside the path the length goes on along,
+        // on the same side whichever sign, in points.
+        pad.beside = true;
+        for value in [0.0, -4.0, 3.0] {
+            pad.value = value;
+            let (path, _) = arrow_path(&pad, side_on, 2.0).unwrap();
+            let aside = |p: &[f32; 2]| (p[0] + 2.0 * BESIDE_PX).abs() < 1e-3;
+            assert!(path.iter().all(aside), "{path:?}");
+        }
 
         // A quarter turn about +X from +Y: it ends at +Z, heading on
         // towards -Y.
@@ -1137,7 +1204,7 @@ mod tests {
             angle: true,
             ..line(1.0, Range::Positive)
         };
-        let (path, way) = arrow_path(&turn, side_on).unwrap();
+        let (path, way) = arrow_path(&turn, side_on, 1.0).unwrap();
         let tip = path.last().unwrap();
         assert!(
             tip[0].abs() < 1e-4 && (tip[1] + 10.0).abs() < 1e-4,

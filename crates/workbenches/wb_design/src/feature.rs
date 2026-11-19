@@ -336,14 +336,19 @@ impl FacePick {
     }
 
     /// The pick moved to where a build found its face: `false` when the
-    /// answer is not a face's, or the face is not flat.
-    pub fn take_answer(&mut self, answer: &Result<kernel_api::ProbeAnswer, String>) -> bool {
+    /// answer is not a face's, or the face is not flat and `curved` does
+    /// not allow it.
+    pub fn take_answer(
+        &mut self,
+        answer: &Result<kernel_api::ProbeAnswer, String>,
+        curved: bool,
+    ) -> bool {
         match answer {
             Ok(kernel_api::ProbeAnswer::Face {
                 point,
                 normal,
-                surface: kernel_api::FaceSurface::Plane { .. },
-            }) => {
+                surface,
+            }) if curved || matches!(surface, kernel_api::FaceSurface::Plane { .. }) => {
                 self.point = point.map(|c| c as f32);
                 self.normal = normal.map(|c| c as f32);
                 true
@@ -2999,7 +3004,7 @@ impl DesignFeature {
     /// The faces of the solid before the feature that place it, which a
     /// build finds again by name (else by where they were picked) and the
     /// feature follows: a start face, a mirror's or split's picked plane, a
-    /// draft's neutral face.
+    /// draft's neutral face, the faces text goes on.
     pub fn placing_faces(&self) -> Vec<&FacePick> {
         fn mirror(plane: &MirrorPlane) -> Option<&FacePick> {
             match plane {
@@ -3026,12 +3031,13 @@ impl DesignFeature {
                 neutral_plane: None,
                 ..
             } => vec![neutral],
+            DesignFeature::Text { faces, .. } => faces.iter().collect(),
             other => other.start_face().into_iter().collect(),
         }
     }
 
-    /// The cylinder face text spread round a whole turn goes round, whose
-    /// radius a build asks of the solid before it.
+    /// The cylinder face text spread round a whole turn goes round, the
+    /// first of its placing faces, whose radius the build's answer gives.
     pub fn turn_face(&self) -> Option<&FacePick> {
         match self {
             DesignFeature::Text {
@@ -3072,6 +3078,7 @@ impl DesignFeature {
                 neutral_plane: None,
                 ..
             } => vec![neutral],
+            DesignFeature::Text { faces, .. } => faces.iter_mut().collect(),
             DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
                 extras.start_face.as_mut().into_iter().collect()
             }

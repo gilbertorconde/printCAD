@@ -119,6 +119,19 @@ pub(crate) fn make_sketch(
     Ok((id, curved, radius))
 }
 
+/// Stand the text's sketch off `face` where the build finds it, the
+/// plane moved along its normal only, so the text keeps its place across
+/// the face while a face that moved out (a cylinder grown past the
+/// standoff) leaves the plane outside the solid still.
+pub(crate) fn stand_off(feature: &mut SketchFeature, face: &crate::FacePick) {
+    let n = DVec3::from_array(feature.plane.normal).normalize_or_zero();
+    let origin = DVec3::from_array(feature.plane.origin);
+    let on_face = DVec3::from_array(face.point.map(f64::from));
+    let moved = origin + n * ((on_face - origin).dot(n) + STANDOFF);
+    feature.plane.origin = moved.to_array();
+    feature.sketch.plane.origin = moved.to_array();
+}
+
 /// Spread the first text block of `sketch` round a whole turn of a
 /// cylinder `radius` across: what the letters leave of the circumference
 /// shared between them, the gap across the seam as wide as the rest. An
