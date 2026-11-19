@@ -135,6 +135,33 @@ pub(crate) struct FileDialogResult {
     kind: FileDialogKind,
     /// What was picked: one path, or several for an attachment.
     paths: Vec<PathBuf>,
+    /// The tab on screen when the dialog was asked for.
+    tab: uuid::Uuid,
+}
+
+impl FileDialogKind {
+    /// Whether the answer is for the document the dialog was asked from:
+    /// saving, exporting or importing it, or changing one of its bodies.
+    /// The rest stand apart from any tab (a document opened in a tab of
+    /// its own, a script, a package, a bench's bytes already made).
+    fn belongs_to_tab(&self) -> bool {
+        match self {
+            FileDialogKind::Save
+            | FileDialogKind::SaveAs
+            | FileDialogKind::ImportStep
+            | FileDialogKind::Export(_)
+            | FileDialogKind::BenchOpen(_)
+            | FileDialogKind::ReplaceShape(_)
+            | FileDialogKind::TexturePicture(..) => true,
+            FileDialogKind::Open
+            | FileDialogKind::RunScript
+            | FileDialogKind::Attach(_)
+            | FileDialogKind::SaveFile(_)
+            | FileDialogKind::SaveFiles(_)
+            | FileDialogKind::SaveAnimation(_)
+            | FileDialogKind::InstallPackage => false,
+        }
+    }
 }
 
 impl PrintCadApp {
@@ -1073,7 +1100,9 @@ impl PrintCadApp {
         self.session.connection.server.flush();
     }
 
-    /// Drain a finished file-dialog thread's result, if any.
+    /// Drain a finished file-dialog thread's result, if any. An answer for
+    /// a document goes to the tab it was asked from, brought on screen,
+    /// whichever tab is on screen now; it is let go when that tab closed.
     pub(crate) fn poll_file_dialog(&mut self) {
         let Some(rx) = &self.files.dialog_rx else {
             return;
@@ -1081,11 +1110,22 @@ impl PrintCadApp {
         let Ok(result) = rx.try_recv() else {
             return;
         };
+        self.files.dialog_rx = None;
         let path = result.paths.first().cloned();
+        // A bench hears of a cancelled pick too, in its own tab.
+        let answered =
+            !result.paths.is_empty() || matches!(result.kind, FileDialogKind::BenchOpen(_));
+        if result.kind.belongs_to_tab() && answered {
+            let Some(index) = self.tab_index_of(result.tab) else {
+                app_log::warn("The tab the file was picked for is closed: nothing done with it");
+                return;
+            };
+            self.switch_tab(index);
+        }
         match result.kind {
             FileDialogKind::Open => {
                 if let Some(path) = path {
-                    self.request_document_open(path);
+                    self.open_document_at(path);
                 }
             }
             FileDialogKind::Save | FileDialogKind::SaveAs => {
@@ -1157,7 +1197,6 @@ impl PrintCadApp {
                 }
             }
         }
-        self.files.dialog_rx = None;
     }
 
     pub(crate) fn start_file_dialog(&mut self, kind: FileDialogKind) {
@@ -1179,6 +1218,7 @@ impl PrintCadApp {
 
         let (tx, rx) = mpsc::channel::<FileDialogResult>();
         self.files.dialog_rx = Some(rx);
+        let tab = self.session.tab;
 
         let current_path = self.session.file.path.clone();
         let stem = current_path
@@ -1324,7 +1364,7 @@ impl PrintCadApp {
                 }),
             };
 
-            let _ = tx.send(FileDialogResult { kind, paths });
+            let _ = tx.send(FileDialogResult { kind, paths, tab });
         });
     }
 }
