@@ -39,6 +39,10 @@ const SKIP = new Set([
   "auto-constraints",
   "constraint-auto",
   "toggle-driving",
+  // The source sets the corner tools' change at the corner, too small
+  // to tell a round from a bevel; the local copies draw it mid-leg.
+  "sketch-fillet",
+  "sketch-chamfer",
 ]);
 // Icons authored in this repo (not part of the source set) that the table
 // must keep.
@@ -73,6 +77,8 @@ const LOCAL = new Set([
   "console",
   "constraint-arc-length",
   "sketch-text",
+  "sketch-fillet",
+  "sketch-chamfer",
   "assistant",
   "log",
   "chevrons-down",
