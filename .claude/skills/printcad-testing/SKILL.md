@@ -1,6 +1,6 @@
 ---
 name: printcad-testing
-description: "printCAD's testing conventions: one integration-test program per crate (tests/<name>/main.rs plus modules), the suite's time budget and --changed runs, CI scope on Linux, Windows and macOS, the test-lines ceiling and shared harnesses, where sketcher end-to-end and full-stack design tests live, STEP fixtures, and before/after pictures or measures in pull requests. Use when adding, moving or speeding up a test, choosing where a test goes, reasoning about what CI runs, or preparing a pull request's evidence. Not for judging whether a test earns its place (use test-audit) or a red CI run (use ci-iterate)."
+description: "printCAD's testing conventions: one integration-test program per crate (tests/<name>/main.rs plus modules), the suite's time budget and --changed runs, CI scope on Linux, Windows and macOS, the test-lines report and shared harnesses, where sketcher end-to-end and full-stack design tests live, STEP fixtures, and before/after pictures or measures in pull requests. Use when adding, moving or speeding up a test, choosing where a test goes, reasoning about what CI runs, or preparing a pull request's evidence. Not for judging whether a test earns its place (use test-audit) or a red CI run (use ci-iterate)."
 ---
 
 # printCAD: testing conventions
@@ -51,8 +51,9 @@ The before-committing checks and the comment rule are in `CLAUDE.md`. Pictures f
   file with a `cfg(windows)`/`cfg(unix)`/`target_os` gate, the manifests)
   or carries the `platforms` label. Changes to CI, the test scripts or the
   manifests test everything.
-- Tests stay a bounded share of the code: `scripts/test-lines.mjs` counts
-  test lines per crate and fails CI above its ceiling. A new case goes
+- What a test costs is its build and run time, which the budget bounds;
+  `scripts/test-lines.mjs` reports tests' share of the lines per crate
+  (in the lint gates, for information: it never fails). A new case goes
   into an existing table or shared harness (the sketcher `Harness`,
   `tests/kernel/common.rs`) rather than a near-copy of a sibling test; a
   test whose property a stronger test already asserts is retired. A

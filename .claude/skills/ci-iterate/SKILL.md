@@ -37,7 +37,6 @@ remain (the owner pushes, tags and approves).
   cargo clippy --workspace --all-targets -- -D warnings
   node scripts/test-budget.mjs
   node scripts/lint-comment-rot.mjs --all
-  node scripts/test-lines.mjs
   ! git grep -nE 'wb_design|wb_sketch|"wb\.(design|part|sketch)"|core\.datum' -- crates/app_shell/src ':!crates/app_shell/src/app/seam_lint.rs'
   ```
 
@@ -83,8 +82,8 @@ remain (the owner pushes, tags and approves).
 
    Every `ci.yml` job gates: `scope` (what a pull request reaches,
    `scripts/ci-scope.mjs`), `lint` (Linux: format, clippy,
-   the standalone solver, the comment-rot lint, the test-lines
-   ceiling, the seam grep), `test` (Linux: the tests within their budget,
+   the standalone solver, the comment-rot lint, the seam grep; the
+   test-lines report prints there but never fails), `test` (Linux: the tests within their budget,
    on a pull request only the crates it reaches) and `platforms` (Windows
    and macOS: clippy, and the tests on master or when the change can
    differ by platform) and `heavy` (Linux: the heavy tests, on master,

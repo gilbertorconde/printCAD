@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// How much of the Rust code is tests, per crate, and a ceiling on the whole.
+// How much of the Rust code is tests, per crate, and on the whole.
 //
 // A line is test code when it sits in a `tests/` directory, in a module
 // declared under `#[cfg(test)]` (inline, or the file such a `mod x;`
@@ -7,18 +7,17 @@
 // `#[cfg(test)]`. The SDK's test packages
 // (`sdk/tests/`) are tests too; examples and benches are code.
 //
-//   node scripts/test-lines.mjs              the table, and the check
-//   TEST_LINES_CEILING=0.3 node …            another ceiling
+//   node scripts/test-lines.mjs              the table
 //
-// Fails when tests are more than the ceiling's share of all lines, so
-// the suite grows by consolidating and replacing rather than piling up.
+// A report, not a gate: it always exits 0. What a test costs CI is its
+// build and run time, which scripts/test-budget.mjs bounds; a line of
+// test code the default build never compiles costs nothing.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { root, ownerOf } from "./lib/workspace.mjs";
 
-const ceiling = Number(process.env.TEST_LINES_CEILING ?? 0.27);
 const files = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.rs"], { cwd: root, encoding: "utf8" })
   .split("\0")
   .filter((f) => f && existsSync(join(root, f)));
@@ -131,14 +130,4 @@ for (const [crate, c] of rows) {
   );
 }
 const share = test / total;
-console.log(
-  `${test} of ${total} lines are tests: ${(share * 100).toFixed(1)}% (ceiling ${(ceiling * 100).toFixed(1)}%)`,
-);
-if (share > ceiling) {
-  console.error(
-    "tests are over their share of the code: fold a new case into a table or a " +
-      "shared harness, retire what a stronger test already proves, or raise " +
-      "TEST_LINES_CEILING in this script with the reason",
-  );
-  process.exit(1);
-}
+console.log(`${test} of ${total} lines are tests: ${(share * 100).toFixed(1)}%`);
