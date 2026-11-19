@@ -1036,9 +1036,12 @@ pub enum TransformStep {
     Mirror {
         plane: MirrorPlane,
     },
+    /// Scaled about `center`, in the body's own frame: its origin when
+    /// none is given.
     Scale {
         #[walk(number("factor", "Factor"))]
         factor: f32,
+        #[serde(default)]
         #[walk(setting)]
         center: [f32; 3],
         #[walk(count("occurrences", "Occurrences"))]
