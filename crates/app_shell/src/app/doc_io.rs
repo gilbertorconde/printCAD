@@ -816,11 +816,7 @@ impl PrintCadApp {
         // The snapshot embodies every op so far; the server clears its
         // unsaved tail when the save lands, so they go to it first.
         self.session.send_outbox();
-        let mut document = self.session.document.clone();
-        // A body showing a feature's preview is saved whole.
-        for (body, preview) in &self.session.builds.previews {
-            crate::app::recompute::store_built_solid(&mut document, *body, preview.full.clone());
-        }
+        let mut document = self.whole_solids().into_owned();
         let at_seq = self.session.document.mutation_seq();
         let path = path.to_path_buf();
         let preview = self.thumbnail_shapes();
@@ -902,6 +898,7 @@ impl PrintCadApp {
         self.for_each_tab(|app| {
             app.wait_for_document_saves("exit");
             app.drain_server_messages();
+            app.settle_waiting_export("printCAD closed");
         });
         for job in self.autosave.jobs.drain(..) {
             job.join();

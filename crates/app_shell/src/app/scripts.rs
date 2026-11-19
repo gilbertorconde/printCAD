@@ -338,7 +338,7 @@ impl PrintCadApp {
                     .as_ref()
                     .filter(|_| printing.apply_compensation);
                 let (path, exported) = crate::app::export::export_document(
-                    (&self.session.document, &self.registry),
+                    (&self.whole_solids(), &self.registry),
                     path,
                     &draft,
                     bodies,

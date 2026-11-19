@@ -13,6 +13,7 @@ use crate::log_panel as app_log;
 
 impl PrintCadApp {
     pub(crate) fn drive_part_recompute(&mut self) {
+        self.session.builds.cycles += 1;
         self.sync_feature_preview();
         // Nothing is out on the kernel thread: a body still marked as
         // building lost its answer (it left the tab while it built), and
@@ -487,6 +488,14 @@ impl PrintCadApp {
                     .invalidate_body(&mut self.session.document, body);
             }
         }
+    }
+
+    /// The tab's document with every body that shows a feature's preview
+    /// whole again, as its history makes it with the feature as the task
+    /// has it: what saves and exports write, never the body without the
+    /// feature that stands in the document while its task is open.
+    pub(crate) fn whole_solids(&self) -> std::borrow::Cow<'_, core_document::Document> {
+        with_whole_solids(&self.session.document, &self.session.builds.previews)
     }
 
     /// A body's build failed while it showed a preview: the tool drawn is
@@ -1241,9 +1250,51 @@ pub(crate) fn store_built_solid(
     }
 }
 
+/// `document` with each body of `previews` given its whole solid back.
+fn with_whole_solids<'a>(
+    document: &'a core_document::Document,
+    previews: &std::collections::HashMap<core_document::BodyId, crate::app::session::BodyPreview>,
+) -> std::borrow::Cow<'a, core_document::Document> {
+    if previews.is_empty() {
+        return std::borrow::Cow::Borrowed(document);
+    }
+    let mut document = document.clone();
+    for (body, preview) in previews {
+        store_built_solid(&mut document, *body, preview.full.clone());
+    }
+    std::borrow::Cow::Owned(document)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// While a task previews a feature, the body without it stands in the
+    /// document; what is saved or exported is the whole solid.
+    #[test]
+    fn a_previewed_body_is_written_whole() {
+        let solid = |size: f32| kernel_api::SolidBuildResult {
+            bounds_mm: Some(([0.0; 3], [size; 3])),
+            ..Default::default()
+        };
+        let mut document = core_document::Document::new("t");
+        let body = document.create_body(None);
+        store_built_solid(&mut document, body, solid(1.0));
+        let preview = crate::app::session::BodyPreview {
+            full: solid(2.0),
+            complete: true,
+            tool: Default::default(),
+            id: uuid::Uuid::new_v4(),
+            revision: 0,
+        };
+        let previews = std::collections::HashMap::from([(body, preview)]);
+        let top = |d: &core_document::Document| d.imported_geometry(body).unwrap().bounds_mm;
+        assert_eq!(
+            top(&with_whole_solids(&document, &previews)).unwrap().1,
+            [2.0; 3]
+        );
+        assert_eq!(top(&document).unwrap().1, [1.0; 3], "the shown body stays");
+    }
 
     /// A moving body's mesh is coarser along and round its curves, and
     /// keeps everything else of the fine settings.
