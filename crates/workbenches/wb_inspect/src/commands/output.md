@@ -51,18 +51,16 @@ local drum = pc.doc.new_body{}
 pc.design.primitive{body = drum, variant = "cylinder",
   kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {drum}}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local cut = pc.inspect.section{scan = scan}
 pc.doc.rename{id = cut.section, name = "Section, centre"}
-local out = os.tmpname() .. ".igs"
+local out = pc.file.temp_path{name = "part.igs"}
 local saved = pc.inspect.export_iges{path = out, scan = scan}
-os.remove(out)
 assert(saved.path == out and saved.items == 1)
 assert(#saved.warnings == 1)
 assert(saved.warnings[1]:find("Section, centre", 1, true))

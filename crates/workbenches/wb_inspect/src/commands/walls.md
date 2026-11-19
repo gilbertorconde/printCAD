@@ -30,12 +30,11 @@ local drum = pc.doc.new_body{}
 pc.design.primitive{body = drum, variant = "cylinder",
   kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {drum}}
 pc.doc.set_visible{id = drum, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local fit = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5, 0, 5}}

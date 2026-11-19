@@ -125,8 +125,9 @@ pub fn run(invocation: &Invocation, registry: DocumentService) -> Result<bool> {
 }
 
 /// Run `source` from an empty document with `registry`'s workbenches, the
-/// way `printcad --script` runs a file, and hand the registry back: the
-/// document the script left, or the error that stopped it.
+/// way `printcad --script` runs a file but in the engine an agent's script
+/// gets (no `io` or `os`), and hand the registry back: the document the
+/// script left, or the error that stopped it.
 #[cfg(test)]
 pub(crate) fn run_in_empty_document(
     registry: &mut DocumentService,
@@ -151,7 +152,7 @@ pub(crate) fn run_in_document(
         document,
         file: None,
     };
-    let out = scripting::ScriptEngine::new().run_script(source, name, &mut host);
+    let out = scripting::ScriptEngine::sandboxed().run_script(source, name, &mut host);
     *registry = host.registry;
     let answer = match out.error {
         Some(error) => Err(error),
@@ -221,6 +222,7 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.sections",
     "doc.save_section",
     "doc.remove_section",
+    "file.temp_path",
 ];
 
 fn file_commands() -> Vec<CommandSpec> {

@@ -193,6 +193,13 @@ pub(crate) fn document_command(
     }
     let a = Args(args);
     let answer = (|| match id {
+        "file.temp_path" => {
+            let name = a.opt_string("name")?.unwrap_or("file");
+            let text = a.opt_string("text")?.unwrap_or_default();
+            let path = crate::platform::temp_file(name, text.as_bytes())
+                .map_err(|e| CommandError::failed(format!("could not make the file: {e}")))?;
+            Ok(json!(path.display().to_string()))
+        }
         "doc.agent_rules" => Ok(json!(document.agent_rules())),
         "doc.set_agent_rules" => {
             document.set_agent_rules(a.string("rules")?);
@@ -231,6 +238,10 @@ pub(crate) fn document_command(
                             .iter()
                             .map(|n| n.id.0.to_string())
                             .collect::<Vec<_>>(),
+                        "face_colors": b.face_colors.iter().map(|c| json!({
+                            "face": c.face.index,
+                            "color": {"r": c.color[0], "g": c.color[1], "b": c.color[2]},
+                        })).collect::<Vec<_>>(),
                     })
                 })
                 .collect(),

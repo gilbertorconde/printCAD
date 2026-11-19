@@ -114,6 +114,12 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   (`unsaved::Then` names what goes on after each answer); a document with
   no file of its own asks its name in the threaded file dialog
   (`FileDialogKind::SaveThen`) and goes on once that save lands.
+  Where no one can answer (the window unable to draw; SIGTERM or SIGINT
+  on unix, `platform::on_termination` waking the loop with
+  `AppEvent::Terminate`) the exit is `exit_without_asking`: a recovery
+  copy of every tab with edits, the saves in flight waited for. Each
+  menu entry has one place (Preferences in Edit, Console in Windows with
+  the other panels), and the keymap's group is the menu it is in.
 
 ## Application features
 
@@ -149,7 +155,12 @@ solid sectioned by the plane's half space and the edges on the face kept;
 `ExternalSource::section`), refreshed the same way. File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
-tolerance and welded closed, on a thread of its own. The registry gathers
+tolerance and welded closed, on a thread of its own. It waits for the tab's
+next build cycle, which sends an edit of the same frame, and for the builds
+out (`Builds::built_since`); a body showing a task's preview is written
+whole (`whole_solids`, as a save does); a waiting export is written, or
+logged as not written, when its tab closes or the app exits
+(`settle_waiting_export`). The registry gathers
 `Workbench::semantic_pmi` (`kernel_api::SemanticPmi`, re-exported by
 `core_document`); `app/export.rs::export_pmi` takes its world probes into
 each body's frame, and `kernel_ogeom::export::export_with_annotations`

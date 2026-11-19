@@ -349,6 +349,10 @@ pub(crate) struct Builds {
     pub preview_rest: std::collections::HashMap<Uuid, crate::app::recompute::QueuedBuild>,
     /// Bodies whose build out stops at the edited feature.
     pub partial_out: std::collections::HashSet<Uuid>,
+    /// How many times the tab's dirty features have been handed out to
+    /// build (`drive_part_recompute` runs), so a wait can tell that the
+    /// edits made before it began have gone out.
+    pub cycles: u64,
 }
 
 /// What the view drew last and the meshes made for drawing.
@@ -728,6 +732,14 @@ impl Builds {
     pub fn quiet(&self) -> bool {
         self.out.is_empty() && !self.settling()
     }
+
+    /// The edits made before build cycle `cycle` have gone out and every
+    /// build is in: one cycle has run since, so features marked dirty in
+    /// the same frame have been sent, and nothing is out or waiting. A
+    /// feature that stays dirty (one that fails) does not hold it back.
+    pub fn built_since(&self, cycle: u64) -> bool {
+        self.cycles > cycle && self.quiet()
+    }
 }
 
 #[cfg(test)]
@@ -752,17 +764,20 @@ mod tests {
         assert!(file.idle());
     }
 
-    /// An export waits while a build is out, and the tab with it counts
-    /// as busy so frames keep coming until it is written.
+    /// An export waits for the next build cycle, which sends what an edit
+    /// in the same frame marked dirty, then while a build is out; the tab
+    /// with it counts as busy so frames keep coming until it is written.
     #[test]
     fn an_export_waits_for_the_build_out() {
         let mut builds = Builds::default();
-        assert!(builds.quiet());
+        let asked = builds.cycles;
+        assert!(builds.quiet() && !builds.built_since(asked));
+        builds.cycles += 1;
         let body = Uuid::new_v4();
         builds.out.sent(body, None);
-        assert!(!builds.quiet());
+        assert!(!builds.built_since(asked));
         builds.out.landed(body);
-        assert!(builds.quiet());
+        assert!(builds.built_since(asked));
         let file = FileState {
             export_waiting: Some(Default::default()),
             ..Default::default()

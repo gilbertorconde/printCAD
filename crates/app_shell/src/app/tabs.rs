@@ -193,6 +193,7 @@ impl PrintCadApp {
     /// when it was the last.
     fn close_active_tab(&mut self) {
         self.end_gestures(GestureEnd::Lost);
+        self.settle_waiting_export("its tab closed");
         let index = self.active_tab;
         let replacement = neighbour_of(index, self.tabs.len())
             .and_then(|neighbour| self.tabs[neighbour].parked.take());

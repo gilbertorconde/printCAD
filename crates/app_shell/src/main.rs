@@ -177,6 +177,18 @@ fn main() -> Result<()> {
         app.check_app_release(true);
     }
     app.start_agent_server();
+    // A desktop logout or Ctrl+C in a terminal quits the way the window's
+    // close does, though with no one to answer a question.
+    let proxy = std::sync::Mutex::new(event_loop.create_proxy());
+    if let Err(err) = platform::on_termination(move || {
+        if let Ok(proxy) = proxy.lock() {
+            let _ = proxy.send_event(AppEvent::Terminate);
+        }
+    }) {
+        app_log::warn(format!(
+            "Signals to end printCAD will not wait for saves: {err}"
+        ));
+    }
     event_loop.run_app(&mut app).context("event loop error")?;
     // The dialog's thread ends with the process; a chooser it started as
     // a process of its own would not.
@@ -221,6 +233,8 @@ pub enum AppEvent {
     Script,
     /// An agent called a tool, or a chat has news.
     Agent,
+    /// The system asked the process to end (SIGTERM, SIGINT).
+    Terminate,
 }
 
 /// Where a re-derived remote import's meshes belong.
@@ -452,7 +466,7 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
         profile::event(began.elapsed());
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             // The device thread only knocks when the puck starts or stops
             // moving, or a button changes; while it is deflected the frame
@@ -460,6 +474,11 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
             AppEvent::DeviceInput | AppEvent::Script | AppEvent::Agent => {
                 self.redraw_needed = true;
             }
+            AppEvent::Terminate => self.exit_without_asking(
+                event_loop,
+                "printCAD was asked to close by the system; unsaved documents are kept as \
+                 recovery copies, offered at the next start",
+            ),
         }
     }
 

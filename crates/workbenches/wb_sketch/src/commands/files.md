@@ -36,15 +36,18 @@ See also: `sketch.export_csv`, `sketch.import_dxf`
 ```lua
 local s = pc.sketch.new{plane = "XY"}
 pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 25.4}
-local path = os.tmpname()
+local path = pc.file.temp_path{name = "circle.dxf"}
 local out = pc.sketch.export_dxf{sketch = s, path = path, units = "inch"}
 assert(out.curves == 1 and out.notes == 1, out.notes)
-local file = io.open(path, "r")
-local text = file:read("a")
-file:close()
-os.remove(path)
-assert(text:find("$INSUNITS\n70\n1\n", 1, true), "declared in inches")
-assert(text:find("1:1 in inch", 1, true), "the traceability note")
+local function radius(sketch)
+  for _, e in ipairs(pc.sketch.geometry{sketch = sketch}) do
+    if e.kind == "circle" then return e.radius end
+  end
+end
+local inches = pc.sketch.import_dxf{path = path, scale = 1}
+assert(math.abs(radius(inches) - 1) < 1e-9, "written in inches")
+local back = pc.sketch.import_dxf{path = path}
+assert(math.abs(radius(back) - 25.4) < 1e-9, "declared in inches")
 ```
 
 ## sketch.export_svg

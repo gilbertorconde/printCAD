@@ -477,10 +477,6 @@ pub fn draw_menu_bar(
                                 commands.push(UiCommand::ShowStartPage);
                             }
                             ui.separator();
-                            if item(ui, "Preferences…", key("app.preferences")) {
-                                result.show_preferences = true;
-                            }
-                            ui.separator();
                             if item(ui, "Quit", key("app.quit")) {
                                 commands.push(UiCommand::Quit);
                             }
@@ -791,9 +787,6 @@ pub fn draw_menu_bar(
                         fitted_menu(ui, |ui| {
                             if item(ui, "Run script…", key("file.run_script")) {
                                 commands.push(UiCommand::File(super::FileCommand::RunScript));
-                            }
-                            if choice(ui, inputs.show_console, "Console", key("app.console")) {
-                                result.toggle_console = true;
                             }
                             let record = if inputs.recording {
                                 "Stop recording"

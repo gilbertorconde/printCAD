@@ -35,12 +35,11 @@ pc.design.primitive{body = part, kind = {Box = {length = 20, width = 20, height 
 local short = pc.doc.new_body{}
 pc.design.primitive{body = short, kind = {Box = {length = 20, width = 20, height = 10}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {short}}
 pc.doc.set_visible{id = short, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local c = pc.inspect.compare{scan = scan, reference = part}

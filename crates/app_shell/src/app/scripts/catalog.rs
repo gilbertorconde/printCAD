@@ -38,7 +38,9 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .agent_never("only the user sets the rules an agent keeps to"),
         CommandSpec::new("doc.bodies", "List the bodies")
             .returns(
-                "a list of {id, name, visible, frozen, scan, selectable, material, array, features}",
+                "a list of {id, name, visible, frozen, scan, selectable, material, array, features, \
+                 face_colors}: face_colors a list of {face, color = {r, g, b}}, face as doc.faces \
+                 numbered it when it was coloured",
             )
             .read_only(),
         CommandSpec::new("doc.features", "List the features in build order")
@@ -569,6 +571,23 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         )
         .returns("{path, width, height, renderer}")
         .agent_always_asks(),
+        CommandSpec::new(
+            "file.temp_path",
+            "A new file's path in this run's private folder, for a script's own files",
+        )
+        .optional(
+            "name",
+            ParamKind::String,
+            "Its name, such as \"part.stl\": the extension is what readers go by; \"file\" \
+             when left out",
+        )
+        .optional(
+            "text",
+            ParamKind::String,
+            "What to write in it; empty when left out",
+        )
+        .returns("the path")
+        .read_only(),
         CommandSpec::new(
             "doc.parameters",
             "A feature's numbers that formulas set and read",

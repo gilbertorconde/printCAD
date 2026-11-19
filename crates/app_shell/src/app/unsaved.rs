@@ -134,14 +134,20 @@ impl PrintCadApp {
         }
     }
 
-    /// Exit with the window unable to draw, so no question can be asked:
-    /// every tab with edits keeps a fresh recovery copy, which the next
-    /// start offers back, and the saves in flight finish first.
+    /// Exit with the window unable to draw, so no question can be asked.
     pub(crate) fn exit_unable_to_draw(&mut self, event_loop: &ActiveEventLoop) {
-        app_log::error(
+        self.exit_without_asking(
+            event_loop,
             "printCAD cannot draw its window and closes; unsaved documents are kept as \
              recovery copies, offered at the next start",
         );
+    }
+
+    /// Exit where no question can be answered, saying `why` in the log:
+    /// every tab with edits keeps a fresh recovery copy, which the next
+    /// start offers back, and the saves in flight finish first.
+    pub(crate) fn exit_without_asking(&mut self, event_loop: &ActiveEventLoop, why: &str) {
+        app_log::error(why);
         self.keep_recovery_copies();
         self.wait_for_all_document_saves();
         self.keep_session_for_next_run();

@@ -196,9 +196,11 @@ impl ScriptEngine {
 
     /// Run one console line. An expression answers its value; anything
     /// else runs as a statement, answering what it `return`s. Globals stay
-    /// set for the next line.
+    /// set for the next line. The expression is handed to a function
+    /// rather than returned as it is, so a call in it is no tail call and
+    /// an error it raises keeps the line it was raised on.
     pub fn eval_line(&mut self, line: &str, host: &mut dyn Host) -> RunOutput {
-        let expression = format!("return {line}");
+        let expression = format!("return (function(...) return ... end)({line}\n)");
         if self.lua.load(&expression).into_function().is_ok() {
             self.run(&expression, "console", host, true)
         } else {
@@ -378,11 +380,13 @@ impl std::fmt::Display for ScriptCommandError {
 
 impl std::error::Error for ScriptCommandError {}
 
-/// The message of an error, without the traceback Lua appends.
+/// The message of an error, without the traceback Lua appends or the
+/// `runtime error: ` its display starts with.
 fn error_text(error: &mlua::Error) -> String {
     let text = match error {
         mlua::Error::CallbackError { cause, .. } => return error_text(cause),
         mlua::Error::ExternalError(inner) => inner.to_string(),
+        mlua::Error::RuntimeError(message) => message.clone(),
         other => other.to_string(),
     };
     text.split("\nstack traceback:")

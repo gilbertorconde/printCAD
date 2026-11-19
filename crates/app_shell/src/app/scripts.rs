@@ -338,7 +338,7 @@ impl PrintCadApp {
                     .as_ref()
                     .filter(|_| printing.apply_compensation);
                 let (path, exported) = crate::app::export::export_document(
-                    (&self.session.document, &self.registry),
+                    (&self.whole_solids(), &self.registry),
                     path,
                     &draft,
                     bodies,
@@ -1267,8 +1267,10 @@ mod tests {
             }
         }
         // The scripts run on every core: each worker takes the next one and
-        // runs it from an empty document in the worker's own registry. Files
-        // a script writes go to `os.tmpname()`, so no two collide.
+        // runs it from an empty document in the worker's own registry, in the
+        // engine agents' scripts run in, so an example an agent copies never
+        // reaches for `io` or `os`. Files a script writes come from
+        // `pc.file.temp_path`, a new one each, so no two collide.
         let next = std::sync::atomic::AtomicUsize::new(0);
         let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
         let mut failed: Vec<String> = std::thread::scope(|scope| {
@@ -1312,6 +1314,7 @@ mod tests {
                 .flat_map(|h| h.join().unwrap())
                 .collect()
         });
+        crate::platform::remove_temp_folder();
         failed.sort();
         assert!(
             failed.is_empty(),

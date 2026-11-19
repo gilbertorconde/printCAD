@@ -208,6 +208,8 @@ pub(crate) struct WaitingExport {
     path: PathBuf,
     draft: ExportDraft,
     open_with: Option<String>,
+    /// The tab's build cycle when it was asked for.
+    after: u64,
 }
 
 /// `path` with the format's extension, unless it already names one the
@@ -371,37 +373,58 @@ impl PrintCadApp {
     }
 
     /// Write `draft` to `path` on a thread of its own, then open it with
-    /// `open_with` when given. While the tab's solids rebuild it waits
-    /// for them, so the file holds the shapes the history makes rather
-    /// than the ones from before an edit.
+    /// `open_with` when given. It waits for the tab's next build cycle,
+    /// which sends what an edit of the same frame marked dirty, and for
+    /// the builds out to land, so the file holds the shapes the history
+    /// makes rather than the ones from before an edit.
     fn write_export(&mut self, path: PathBuf, draft: ExportDraft, open_with: Option<String>) {
-        if self.files.export_rx.is_some() {
+        if self.files.export_rx.is_some() || self.session.file.export_waiting.is_some() {
             app_log::warn("An export is still being written");
             return;
         }
         if !self.session.builds.quiet() {
             app_log::info("Waiting for the rebuild before writing the export");
-            self.session.file.export_waiting = Some(WaitingExport {
-                path,
-                draft,
-                open_with,
-            });
-            return;
         }
-        self.write_export_now(path, draft, open_with);
+        self.session.file.export_waiting = Some(WaitingExport {
+            path,
+            draft,
+            open_with,
+            after: self.session.builds.cycles,
+        });
     }
 
     /// Write the export that waits for the tab's rebuild, once its solids
     /// are built and no other export is being written.
     pub(crate) fn drive_waiting_export(&mut self) {
-        if self.session.file.export_waiting.is_none()
-            || !self.session.builds.quiet()
-            || self.files.export_rx.is_some()
-        {
+        let ready = self
+            .session
+            .file
+            .export_waiting
+            .as_ref()
+            .is_some_and(|w| self.session.builds.built_since(w.after));
+        if !ready || self.files.export_rx.is_some() {
             return;
         }
         if let Some(waiting) = self.session.file.export_waiting.take() {
             self.write_export_now(waiting.path, waiting.draft, waiting.open_with);
+        }
+    }
+
+    /// End the tab's waiting export as its tab or the app goes (`why`):
+    /// written now when its rebuild is done, the export in flight
+    /// finished first, else said in the log not to be written.
+    pub(crate) fn settle_waiting_export(&mut self, why: &str) {
+        let Some(waiting) = self.session.file.export_waiting.take() else {
+            return;
+        };
+        if self.session.builds.built_since(waiting.after) {
+            self.finish_export();
+            self.write_export_now(waiting.path, waiting.draft, None);
+        } else {
+            app_log::warn(format!(
+                "The export to {} was not written: {why} before the rebuild it waited for",
+                waiting.path.display()
+            ));
         }
     }
 
@@ -528,7 +551,7 @@ impl PrintCadApp {
                 .collect()
         });
         owned_bodies(
-            (&self.session.document, &self.registry),
+            (&self.whole_solids(), &self.registry),
             draft,
             selected.as_deref(),
             layout.as_ref(),

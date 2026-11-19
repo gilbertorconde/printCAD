@@ -98,6 +98,69 @@ pub(crate) fn read_only(path: &Path) -> bool {
     false
 }
 
+/// Call `asked` on a thread of its own each time the system asks the
+/// process to end (SIGTERM, as a desktop logout sends; SIGINT, as Ctrl+C
+/// in a terminal does), in place of ending it there and then. The
+/// handler only writes a byte to a pipe a thread reads; it puts the
+/// system's own handling back as it runs, so a second signal ends the
+/// process. Nothing on systems without these signals.
+#[cfg(unix)]
+pub(crate) fn on_termination(asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    use std::sync::atomic::Ordering;
+
+    let mut fds = [0; 2];
+    // SAFETY: `fds` has room for the two descriptors pipe writes.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: the read end is this process's, owned by the file alone.
+    let mut read = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    TERMINATION_PIPE.store(fds[1], Ordering::SeqCst);
+    spawn("termination", move || {
+        let mut byte = [0];
+        while matches!(read.read(&mut byte), Ok(1)) {
+            asked();
+        }
+    })?;
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        // SAFETY: the action is zeroed, then given a handler that only
+        // calls `write`, which is safe in a signal handler.
+        let failed = unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = termination_handler as *const () as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART | libc::SA_RESETHAND;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(signal, &action, std::ptr::null_mut()) != 0
+        };
+        if failed {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn on_termination(_asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// The pipe's write end the termination handler writes to.
+#[cfg(unix)]
+static TERMINATION_PIPE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+#[cfg(unix)]
+extern "C" fn termination_handler(_signal: libc::c_int) {
+    let fd = TERMINATION_PIPE.load(std::sync::atomic::Ordering::SeqCst);
+    if fd >= 0 {
+        // SAFETY: write is safe in a signal handler; the byte outlives it.
+        unsafe {
+            libc::write(fd, [1u8].as_ptr().cast(), 1);
+        }
+    }
+}
+
 /// End a file chooser still open as the app quits. On Linux the dialog
 /// crate falls back to a chooser of its own process when the desktop
 /// portal is missing, and that process outlives the app unless ended; a
@@ -219,14 +282,30 @@ static SCRATCH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 /// scratch folder, for the kernel to read by path. The folder is made on
 /// first use, and again should it go.
 pub(crate) fn scratch_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
-    scratch_file_in(&SCRATCH, &private_base(), name, bytes)
+    scratch_file_in(&SCRATCH, &private_base(), "scratch", name, bytes)
 }
 
-/// Remove this run's scratch folder with whatever is left in it, on the
-/// way out: its files are the kernel's copies, read by then or no longer
-/// wanted.
+/// This run's folder for scripts' own files, once made.
+static TEMP: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// A new file named after `name` holding `bytes`, in this run's private
+/// folder for scripts' own files (`file.temp_path`), made on first use.
+pub(crate) fn temp_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    scratch_file_in(&TEMP, &private_base(), "temp", name, bytes)
+}
+
+/// Remove this run's scratch folder and its folder for scripts' files
+/// with whatever is left in them, on the way out: the scratch files are
+/// the kernel's copies, read by then or no longer wanted, and a script's
+/// files last for the run.
 pub(crate) fn remove_scratch_folder() {
     remove_kept_folder(&SCRATCH);
+    remove_temp_folder();
+}
+
+/// Remove this run's folder for scripts' files, made again on next use.
+pub(crate) fn remove_temp_folder() {
+    remove_kept_folder(&TEMP);
 }
 
 fn remove_kept_folder(kept: &std::sync::Mutex<Option<PathBuf>>) {
@@ -241,6 +320,7 @@ fn remove_kept_folder(kept: &std::sync::Mutex<Option<PathBuf>>) {
 fn scratch_file_in(
     kept: &std::sync::Mutex<Option<PathBuf>>,
     base: &Path,
+    what: &str,
     name: &str,
     bytes: &[u8],
 ) -> std::io::Result<PathBuf> {
@@ -249,7 +329,7 @@ fn scratch_file_in(
         match kept.clone().filter(|f| f.is_dir()) {
             Some(folder) => folder,
             None => {
-                let folder = make_private_folder(base, "scratch")?;
+                let folder = make_private_folder(base, what)?;
                 *kept = Some(folder.clone());
                 folder
             }
@@ -271,6 +351,22 @@ fn scratch_file_in(
 mod private_tests {
     use super::*;
 
+    /// SIGTERM reaches the thread that asks the app to quit instead of
+    /// ending the process.
+    #[cfg(unix)]
+    #[test]
+    fn a_termination_signal_is_handed_to_a_thread() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        on_termination(move || {
+            let _ = tx.lock().unwrap().send(());
+        })
+        .unwrap();
+        // SAFETY: raise only sends a signal to this process.
+        unsafe { libc::raise(libc::SIGTERM) };
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    }
+
     /// Each folder is new and open to its user alone; two files of one
     /// name get a path each, and a link put where a file would go is
     /// passed over rather than written through.
@@ -287,10 +383,10 @@ mod private_tests {
             let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&folder), 0o700);
             let kept = std::sync::Mutex::new(None);
-            let scratch = scratch_file_in(&kept, &base, "part.step", b"solid").unwrap();
+            let scratch = scratch_file_in(&kept, &base, "scratch", "part.step", b"solid").unwrap();
             assert_eq!(mode(scratch.parent().unwrap()), 0o700);
             assert_eq!(std::fs::read(&scratch).unwrap(), b"solid");
-            let again = scratch_file_in(&kept, &base, "part.step", b"x").unwrap();
+            let again = scratch_file_in(&kept, &base, "scratch", "part.step", b"x").unwrap();
             assert_ne!(again, scratch);
             remove_kept_folder(&kept);
             assert!(!scratch.parent().unwrap().exists(), "gone on the way out");
