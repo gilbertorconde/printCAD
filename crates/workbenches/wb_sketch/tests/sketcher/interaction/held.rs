@@ -9,10 +9,11 @@ use wb_sketch::snap::distance_to_element;
 /// Each tool's clicks on a sketch holding a level line along y = 10, an
 /// upright one along x = 20 and a point at (0, -6); the clicks on them
 /// are held there and the shape through them, until those three move,
-/// with nothing redundant or conflicting.
+/// with nothing redundant or conflicting. An arc's end (and a parabola's
+/// start) lands on its curve: on a line, where the curve crosses it.
 #[test]
 fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
-    let cases: [(&str, &[(f64, f64)]); 10] = [
+    let cases: [(&str, &[(f64, f64)]); 13] = [
         ("sketch.circle", &[(-3.0, 2.0), (1.0, 10.0)]),
         ("sketch.circle3", &[(-8.0, 10.0), (20.0, 3.0), (0.0, -6.0)]),
         ("sketch.arc3", &[(-8.0, 10.0), (20.0, 3.0), (0.0, -6.0)]),
@@ -28,8 +29,20 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
             &[(-6.0, 10.0), (4.0, 4.0), (-3.0, 13.0), (-14.0, 12.0)],
         ),
         (
+            "sketch.ellipse_arc",
+            &[(-6.0, 10.0), (4.0, 4.0), (-1.0, 10.0), (-11.0, 10.0)],
+        ),
+        (
             "sketch.parabola",
             &[(-6.0, 10.0), (-6.0, 4.0), (-16.0, 3.0), (4.0, 3.0)],
+        ),
+        (
+            "sketch.parabola",
+            &[(-6.0, 10.0), (-6.0, 4.0), (-16.0, 3.0), (20.0, -18.1667)],
+        ),
+        (
+            "sketch.hyperbola",
+            &[(-6.0, 10.0), (-6.0, 4.0), (20.0, -3.0), (-16.0, 3.0)],
         ),
         (
             "sketch.arc_slot",

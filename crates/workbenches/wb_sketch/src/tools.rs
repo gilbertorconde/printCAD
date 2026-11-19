@@ -629,10 +629,22 @@ pub(crate) fn held_point(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64)
     }
 }
 
+/// The parabola or hyperbola branch a conic arc's clicks land on.
+fn conic_guide(
+    sketch: &Sketch,
+    kind: ConicKind,
+    center: SnapTarget,
+    axis: Vec2D,
+    minor: f64,
+) -> Option<snap::Guide> {
+    let shape = crate::conic::Shape::new(kind, center.position(sketch)?, axis, minor)?;
+    Some(snap::Guide::Conic(shape))
+}
+
 /// What a snap made in tool `state` knows of the drawing in
 /// progress: a straight segment's start, for alignment, which it must not
-/// land back on; or the circle a centre-point arc's end lands on, which
-/// takes only snaps on that circle. Arcs' circles are left to
+/// land back on; or the curve an arc's end (or a parabola's start) lands
+/// on, which takes only snaps on that curve. Arcs' circles are left to
 /// [`snap_at`], which knows the tool's settings.
 pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
     let from = match state {
@@ -644,17 +656,55 @@ pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
         } => Some(*from),
         _ => None,
     };
-    let guide = match state {
+    let guide = match *state {
         ToolState::ArcStart { center, start } => center
             .position(sketch)
             .zip(start.position(sketch))
-            .map(|(c, s)| (c, (s - c).to_glam().length())),
+            .map(|(centre, s)| snap::Guide::Circle {
+                centre,
+                r: (s - centre).to_glam().length(),
+            }),
+        ToolState::EllipseArcStart {
+            center,
+            major,
+            ratio,
+            ..
+        } => center.position(sketch).map(|centre| snap::Guide::Ellipse {
+            centre,
+            major,
+            ratio,
+        }),
+        // A hyperbola's start sets how wide it opens, so lies on it.
+        ToolState::ConicAxis {
+            kind: ConicKind::Parabola,
+            center,
+            axis,
+        } => conic_guide(sketch, ConicKind::Parabola, center, axis, 0.0),
+        ToolState::ConicStart {
+            kind,
+            center,
+            axis,
+            minor,
+            ..
+        } => conic_guide(sketch, kind, center, axis, minor),
         _ => None,
     };
     snap::SnapContext {
         from: from.and_then(|f| f.position(sketch)),
-        exclude: match from {
-            Some(SnapTarget::Existing(id)) => vec![id],
+        // A parabola's vertex lies on it but makes no end.
+        exclude: match (from, state) {
+            (Some(SnapTarget::Existing(id)), _)
+            | (
+                None,
+                &ToolState::ConicAxis {
+                    center: SnapTarget::Existing(id),
+                    ..
+                }
+                | &ToolState::ConicStart {
+                    center: SnapTarget::Existing(id),
+                    ..
+                },
+            ) => vec![id],
             _ => Vec::new(),
         },
         arcs: false,

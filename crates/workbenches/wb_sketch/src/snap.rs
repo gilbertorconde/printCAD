@@ -14,7 +14,7 @@ use core_document::mesh_query::nearest_on_segment;
 use glam::DVec2;
 use uuid::Uuid;
 
-use crate::curves::Curve;
+use crate::curves::{Curve, crossings_near};
 use crate::geom2d::{Prim, raw_hits, within};
 use crate::sketch::{
     GeometryElement, IdHasher, IdMap, ORIGIN_ID, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
@@ -116,16 +116,101 @@ pub struct Snap {
 /// What a snap knows of the drawing in progress: the point a segment is
 /// drawn from (for horizontal and vertical alignment), points it must
 /// not land on (that same point), whether arcs' circles past their
-/// ends take a point, and the circle the click must land on.
+/// ends take a point, and the curve the click must land on.
 #[derive(Debug, Clone, Default)]
 pub struct SnapContext {
     pub from: Option<Vec2D>,
     pub exclude: Vec<Uuid>,
     pub arcs: bool,
-    /// A circle, its centre and radius, that the point lands on whatever
-    /// the snap (an arc's end on the arc's circle): only snaps on it are
-    /// taken ([`resolve`]).
-    pub guide: Option<(Vec2D, f64)>,
+    /// The curve the point lands on whatever the snap (an arc's end on
+    /// the curve the arc is of): only snaps on it are taken ([`resolve`]).
+    pub guide: Option<Guide>,
+}
+
+/// A curve a tool puts its click on, wherever the cursor is: the circle
+/// of a centre-point arc's end, the ellipse of an elliptic arc's end, the
+/// parabola or hyperbola branch of a conic arc's ends.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Guide {
+    Circle {
+        centre: Vec2D,
+        r: f64,
+    },
+    /// About `centre`, `major` its semi-major axis and the semi-minor
+    /// `ratio` of it, a quarter turn counter-clockwise.
+    Ellipse {
+        centre: Vec2D,
+        major: Vec2D,
+        ratio: f64,
+    },
+    Conic(crate::conic::Shape),
+}
+
+impl Guide {
+    /// Where the tool puts a click at `p` on the curve: along the ray from
+    /// a circle's centre, at the ellipse's parameter of `p`
+    /// ([`Ellipse::param_at`](crate::sketch::Ellipse::param_at)), level
+    /// with `p` across a conic's axis
+    /// ([`Shape::param`](crate::conic::Shape::param)). A point on the
+    /// curve stays where it is. `None` at a circle's centre and on a
+    /// circle or an ellipse with no size.
+    pub fn foot(&self, p: Vec2D) -> Option<Vec2D> {
+        let sized = |len: f64| len.is_finite() && len > 1e-12;
+        match *self {
+            Guide::Circle { centre, r } => {
+                let dir = (p - centre).to_glam().try_normalize()?;
+                sized(r).then(|| Vec2D::from_glam(centre.to_glam() + dir * r))
+            }
+            Guide::Ellipse {
+                centre,
+                major,
+                ratio,
+            } => {
+                let a = major.to_glam();
+                if !sized(a.length()) || !sized(ratio) {
+                    return None;
+                }
+                let probe = crate::sketch::Ellipse::new(Uuid::nil(), major, ratio);
+                let (sin, cos) = probe.param_at(centre, p).sin_cos();
+                Some(Vec2D::from_glam(
+                    centre.to_glam() + a * cos + a.perp() * ratio * sin,
+                ))
+            }
+            Guide::Conic(shape) => {
+                let [x, y] = shape.point(shape.param([p.x, p.y]));
+                Some(Vec2D::new(x, y))
+            }
+        }
+    }
+
+    /// Whether `p` lies on the curve, to rounding.
+    pub fn holds(&self, p: Vec2D) -> bool {
+        let size = match *self {
+            Guide::Circle { r, .. } => r,
+            Guide::Ellipse { major, .. } => major.to_glam().length(),
+            Guide::Conic(shape) => shape.a,
+        };
+        self.foot(p)
+            .is_some_and(|f| (f - p).to_glam().length() <= 1e-9 * size.max(1.0))
+    }
+
+    /// The curve, over at least the part of it within `tol` of `c`.
+    fn curve(&self, c: DVec2, tol: f64) -> Curve {
+        match *self {
+            Guide::Circle { centre, r } => Curve::circle(centre.to_glam(), r),
+            Guide::Ellipse {
+                centre,
+                major,
+                ratio,
+            } => Curve::ellipse(centre.to_glam(), major.to_glam(), ratio),
+            // Its parameter goes with the distance across the axis.
+            Guide::Conic(shape) => {
+                let across = DVec2::new(-shape.u[1], shape.u[0]) * tol;
+                let [t0, t1] = [c - across, c + across].map(|p| shape.param(p.into()));
+                Curve::conic(shape, (t0.min(t1), t0.max(t1)))
+            }
+        }
+    }
 }
 
 /// Where `cursor` snaps, within `tol` (sketch units). The kinds are tried
@@ -151,22 +236,40 @@ pub struct SnapContext {
 /// finite take no snap. The one function every drawing click and the cue
 /// before it go through, so what is shown is where the click lands.
 ///
-/// With `cx.guide`, the snap is on that circle ([`on_guide`]).
+/// With `cx.guide`, the snap is on that curve ([`on_guide`]).
 pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Snap {
-    let bare = Snap {
+    let c = cursor.to_glam();
+    if tol.is_nan() || tol <= 0.0 || !c.is_finite() {
+        return bare(cursor);
+    }
+    if let Some(guide) = &cx.guide {
+        return on_guide(sketch, cursor, tol, cx, guide);
+    }
+    let scene = Scene::of(sketch);
+    resolve_in(&scene, &scene.near(c, tol), cursor, tol, cx)
+}
+
+/// The cursor itself, snapped to nothing.
+fn bare(cursor: Vec2D) -> Snap {
+    Snap {
         target: SnapTarget::New(cursor),
         pos: cursor,
         kind: None,
         curve: None,
         on: None,
-    };
+    }
+}
+
+/// [`resolve`] in `scene`, `near` being its elements within `tol` of
+/// `cursor`, `cx.guide` aside.
+fn resolve_in(
+    scene: &Scene,
+    near: &[(&Item, f64)],
+    cursor: Vec2D,
+    tol: f64,
+    cx: &SnapContext,
+) -> Snap {
     let c = cursor.to_glam();
-    if tol.is_nan() || tol <= 0.0 || !c.is_finite() {
-        return bare;
-    }
-    if let Some(guide) = cx.guide {
-        return on_guide(sketch, cursor, tol, cx, guide);
-    }
     let at = |target: SnapTarget, pos: Vec2D, kind: SnapKind| Snap {
         target,
         pos,
@@ -174,9 +277,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         curve: None,
         on: None,
     };
-    let scene = Scene::of(sketch);
-    let near = scene.near(c, tol);
-    if let Some((id, pos)) = nearest_point(&near, &cx.exclude) {
+    if let Some((id, pos)) = nearest_point(near, &cx.exclude) {
         let kind = if scene.centres.contains(&id) {
             SnapKind::Center
         } else {
@@ -188,7 +289,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
     if !cx.exclude.contains(&ORIGIN_ID) && c.length() <= tol {
         return at(SnapTarget::New(origin), origin, SnapKind::Origin);
     }
-    if let Some(cross) = crossing_near(&near, c, tol) {
+    if let Some(cross) = crossing_near(near, c, tol) {
         let cross = Vec2D::from_glam(cross);
         return at(SnapTarget::New(cross), cross, SnapKind::Intersection);
     }
@@ -207,14 +308,14 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         return at(SnapTarget::New(m), m, SnapKind::Midpoint);
     }
     if let Some(from) = cx.from
-        && let Some((id, pos, kind)) = square_or_touching(&near, from.to_glam(), c, tol)
+        && let Some((id, pos, kind)) = square_or_touching(near, from.to_glam(), c, tol)
     {
         return Snap {
             curve: Some(id),
             ..at(SnapTarget::New(pos), pos, kind)
         };
     }
-    if let Some((id, proj)) = curve_near(&scene, c, tol, &cx.exclude) {
+    if let Some((id, proj)) = curve_near(scene, c, tol, &cx.exclude) {
         let kind = if id == X_AXIS_ID || id == Y_AXIS_ID {
             SnapKind::OnAxis
         } else {
@@ -223,7 +324,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         // Lying along a direction from the point drawn from too: where
         // the direction crosses the curve, so the click keeps both.
         if let Some(from) = cx.from
-            && let Some(both) = direction_onto(&scene, from, cursor, tol, &cx.exclude, id)
+            && let Some(both) = direction_onto(scene, from, cursor, tol, &cx.exclude, id)
         {
             return Snap {
                 on: Some(kind),
@@ -242,7 +343,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
             }
             _ => {}
         }
-        if let Some((id, pos, kind)) = along_a_line(&scene, from, cursor, tol, &cx.exclude) {
+        if let Some((id, pos, kind)) = along_a_line(scene, from, cursor, tol, &cx.exclude) {
             return Snap {
                 curve: Some(id),
                 ..at(SnapTarget::New(pos), pos, kind)
@@ -273,69 +374,82 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
             ..at(SnapTarget::New(pos), pos, SnapKind::OnExtension)
         };
     }
-    bare
+    bare(cursor)
 }
 
-/// Where `cursor` snaps on the circle `guide` (centre, radius): the plain
-/// snap where it lies on the circle (a point at the radius); else the
-/// circle's nearest crossing within `tol` with a line, a circle, an arc
-/// or an axis; else
-/// the cursor's foot on the circle, taking a point standing there but no
-/// other snap, so the cue never names one the click would leave behind.
-fn on_guide(
-    sketch: &Sketch,
-    cursor: Vec2D,
-    tol: f64,
-    cx: &SnapContext,
-    (centre, r): (Vec2D, f64),
-) -> Snap {
-    let (c, o) = (cursor.to_glam(), centre.to_glam());
+/// Where `cursor` snaps on `guide`: the plain snap where it lies on the
+/// guide (a point standing on it); else the guide's nearest crossing
+/// within `tol` with a line, a circle, an arc or an axis; else the
+/// cursor's foot on the guide ([`Guide::foot`]), taking a point standing
+/// there but no other snap, so the cue never names one the click would
+/// leave behind.
+fn on_guide(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext, guide: &Guide) -> Snap {
     let free = SnapContext {
         guide: None,
         ..cx.clone()
     };
-    let Some(dir) = (c - o).try_normalize().filter(|_| r.is_finite() && r > 0.0) else {
-        return resolve(sketch, cursor, tol, &free);
-    };
-    let on = |s: &Snap| ((s.pos.to_glam() - o).length() - r).abs() <= 1e-9 * r.max(1.0);
     let plain = resolve(sketch, cursor, tol, &free);
-    if plain.kind.is_some() && on(&plain) {
+    let Some(foot) = guide.foot(cursor) else {
+        return plain;
+    };
+    if plain.kind.is_some() && guide.holds(plain.pos) {
         return plain;
     }
-    let circle = Prim::Circle { c: o, r };
-    let mut best = Best::new();
-    for prim in prims_near(&Scene::of(sketch).near(c, tol), c, tol) {
-        for p in raw_hits(&circle, &prim) {
-            let d = (p - c).length();
-            if d <= tol && within(&prim, p) {
-                best.offer(Rank::new(d, 0, p), p);
-            }
-        }
+    let c = cursor.to_glam();
+    let snap = |target: SnapTarget, pos: DVec2, kind: SnapKind| Snap {
+        target,
+        pos: Vec2D::from_glam(pos),
+        kind: Some(kind),
+        curve: None,
+        on: None,
+    };
+    if let Some(p) = guide_crossing(&Scene::of(sketch).near(c, tol), guide, c, tol) {
+        let target = SnapTarget::New(Vec2D::from_glam(p));
+        return snap(target, p, SnapKind::Intersection);
     }
-    if let Some(p) = best.get() {
-        let p = Vec2D::from_glam(p);
-        return Snap {
-            target: SnapTarget::New(p),
-            pos: p,
-            kind: Some(SnapKind::Intersection),
-            curve: None,
-            on: None,
-        };
-    }
-    let foot = Vec2D::from_glam(o + dir * r);
     match resolve(sketch, foot, tol, &free) {
         at @ Snap {
             target: SnapTarget::Existing(_),
             ..
-        } if on(&at) => at,
-        _ => Snap {
-            target: SnapTarget::New(foot),
-            pos: foot,
-            kind: None,
-            curve: None,
-            on: None,
-        },
+        } if guide.holds(at.pos) => at,
+        _ => bare(foot),
     }
+}
+
+/// Where `guide` crosses a line, a circle or an arc among `near` or an
+/// axis, the crossing nearest `c` within `tol`: a circle's crossings
+/// worked out, every other found along both curves.
+fn guide_crossing(near: &[(&Item, f64)], guide: &Guide, c: DVec2, tol: f64) -> Option<DVec2> {
+    let curve = guide.curve(c, tol);
+    let mut best = Best::new();
+    let mut offer = |p: DVec2| {
+        let d = (p - c).length();
+        if d <= tol {
+            best.offer(Rank::new(d, 0, p), p);
+        }
+    };
+    let along = |other: &Curve, offer: &mut dyn FnMut(DVec2)| {
+        for (t, _) in crossings_near(&curve, curve.span, other, other.span, c, tol) {
+            offer(curve.at(t));
+        }
+    };
+    for prim in prims_near(near, c, tol) {
+        match *guide {
+            Guide::Circle { centre, r } => {
+                let circle = Prim::Circle {
+                    c: centre.to_glam(),
+                    r,
+                };
+                for p in raw_hits(&circle, &prim) {
+                    if within(&prim, p) {
+                        offer(p);
+                    }
+                }
+            }
+            _ => along(&Curve::of_prim(&prim), &mut offer),
+        }
+    }
+    best.get()
 }
 
 /// A candidate's standing among others of one kind, compared field by
