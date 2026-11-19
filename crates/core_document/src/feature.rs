@@ -303,6 +303,41 @@ impl FeatureTree {
         self.roots.retain(|&id| id != dependent);
     }
 
+    /// Make `dependent` read `dependency` at place `at` among what it
+    /// reads (at the end when `at` is past it). Nothing happens when
+    /// either is not in the tree or the edge is already there.
+    pub fn insert_dependency(&mut self, dependent: FeatureId, dependency: FeatureId, at: usize) {
+        if !self.features.contains_key(&dependent)
+            || !self.features.contains_key(&dependency)
+            || self.dependencies(dependent).contains(&dependency)
+        {
+            return;
+        }
+        let deps = self.dependencies.entry(dependent).or_default();
+        deps.insert(at.min(deps.len()), dependency);
+        self.dependents
+            .entry(dependency)
+            .or_default()
+            .push(dependent);
+        self.roots.retain(|&id| id != dependent);
+    }
+
+    /// The features that read `feature`, each with the place `feature`
+    /// takes among what that feature reads.
+    pub fn dependent_slots(&self, feature: FeatureId) -> Vec<(FeatureId, usize)> {
+        self.dependents(feature)
+            .into_iter()
+            .filter_map(|dependent| {
+                let at = self
+                    .dependencies
+                    .get(&dependent)?
+                    .iter()
+                    .position(|&d| d == feature)?;
+                Some((dependent, at))
+            })
+            .collect()
+    }
+
     pub fn dependencies(&self, feature: FeatureId) -> Vec<FeatureId> {
         self.dependencies.get(&feature).cloned().unwrap_or_default()
     }
@@ -400,15 +435,16 @@ impl FeatureTree {
         }
     }
 
-    /// Remove a node and every dependency-graph edge that references it.
-    /// Returns false when the id is unknown.
+    /// Remove a node and every dependency-graph edge that references it;
+    /// a feature that read nothing else becomes a root. Returns false when
+    /// the id is unknown.
     pub fn remove_node(&mut self, id: FeatureId) -> bool {
         if self.features.remove(&id).is_none() {
             return false;
         }
         self.roots.retain(|&r| r != id);
         self.dependencies.remove(&id);
-        self.dependents.remove(&id);
+        let readers = self.dependents.remove(&id).unwrap_or_default();
         self.dependencies.retain(|_, deps| {
             deps.retain(|&d| d != id);
             !deps.is_empty()
@@ -417,6 +453,11 @@ impl FeatureTree {
             deps.retain(|&d| d != id);
             !deps.is_empty()
         });
+        for reader in readers {
+            if !self.dependencies.contains_key(&reader) && !self.roots.contains(&reader) {
+                self.roots.push(reader);
+            }
+        }
         true
     }
 
@@ -561,6 +602,20 @@ mod tests {
         tree.mark_dirty(x);
         let order = tree.recompute_order(&tree.dirty_features());
         assert!(order.is_empty(), "cycle members are dropped, got {order:?}");
+    }
+
+    #[test]
+    fn removing_a_features_only_input_makes_it_a_root() {
+        let (mut tree, a, b, c, d) = diamond();
+        tree.remove_node(a);
+        let mut roots = tree.roots().to_vec();
+        roots.sort_by_key(|id| format!("{id:?}"));
+        let mut expected = vec![b, c];
+        expected.sort_by_key(|id| format!("{id:?}"));
+        assert_eq!(roots, expected);
+        tree.remove_node(b);
+        assert_eq!(tree.dependencies(d), vec![c]);
+        assert!(!tree.roots().contains(&d));
     }
 
     #[test]

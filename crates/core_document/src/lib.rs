@@ -521,6 +521,9 @@ impl Document {
             formulas: Default::default(),
             made_by: None,
             package_source: None,
+            dependents: Vec::new(),
+            hidden: false,
+            suppressed: false,
         });
         self.insert_at_tip(id);
         Ok(id)
@@ -593,6 +596,9 @@ impl Document {
             formulas: Default::default(),
             made_by,
             package_source,
+            dependents: Vec::new(),
+            hidden: false,
+            suppressed: false,
         });
         self.insert_at_tip(id);
         id

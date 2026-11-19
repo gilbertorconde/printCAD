@@ -278,6 +278,15 @@ pub enum DocumentOp {
         /// repository.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         package_source: Option<String>,
+        /// The features that read it, each with the place it takes among
+        /// what that feature reads: what undoing its removal puts back. A
+        /// listed feature that is not there is passed over.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        dependents: Vec<(FeatureId, usize)>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        hidden: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        suppressed: bool,
     },
     /// Whole-payload feature write (sketch edits, panel editors). Consecutive
     /// updates to the same feature coalesce in the outbox: nothing observes
