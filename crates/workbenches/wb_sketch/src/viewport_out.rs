@@ -851,7 +851,7 @@ impl SketchWorkbench {
             }
         });
         let params = ovp::typed_params(&self.tab.tool_params, &self.tab.tool_state, &typed);
-        let locked = self.locked_elements(ctx, &feature.sketch);
+        let locked = self.locked_elements(&feature.sketch);
         overlay::build_overlays(
             proj,
             pal,

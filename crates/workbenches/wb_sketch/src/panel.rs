@@ -1121,7 +1121,7 @@ impl SketchWorkbench {
             .into_iter()
             .collect();
         let external = sketch.external_ids();
-        let locked = self.locked_elements(ctx, sketch);
+        let locked = self.locked_elements(sketch);
         let text = self
             .frame
             .row_text(self.active_key(ctx), || RowText::of(sketch));

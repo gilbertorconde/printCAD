@@ -101,9 +101,9 @@ use uuid::Uuid;
 /// per frame from the current zoom.
 const SNAP_TOLERANCE_PX: f64 = 8.0;
 
-/// The open sketch's locked elements with the sketch and the document
-/// edit they were worked out at.
-type LockedAt = ((FeatureId, u64), std::sync::Arc<HashSet<Uuid>>);
+/// The open sketch's locked elements with the sketch they were worked
+/// out on.
+type LockedAt = (Sketch, std::sync::Arc<HashSet<Uuid>>);
 
 /// Elements-panel filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -558,8 +558,8 @@ struct Tab {
     /// Where the scans cross the open sketch's plane, by what they were cut
     /// from.
     scan_guides: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<scan::Chain2>>)>>,
-    /// The elements of the open sketch nothing left free can move, by the
-    /// sketch and the document edit they were worked out at.
+    /// The elements of the open sketch nothing left free can move, with
+    /// the sketch they were worked out on.
     locked: std::cell::RefCell<Option<LockedAt>>,
     /// The freedom the verdict reports while no diagnosis is cached, with
     /// the sketch it was worked out on.

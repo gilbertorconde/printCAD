@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use core_document::{SketchPalette, WorkbenchRuntimeContext};
+use core_document::SketchPalette;
 use uuid::Uuid;
 
 use crate::sketch::Sketch;
@@ -47,27 +47,21 @@ impl SolverKind {
 
 impl SketchWorkbench {
     /// The open sketch's elements nothing left free can move, worked out
-    /// once per document edit; none while the sketch is fully constrained,
-    /// when everything draws in that colour instead.
-    pub(crate) fn locked_elements(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) -> std::sync::Arc<HashSet<Uuid>> {
-        let Some(id) = self.tab.active_sketch_id else {
-            return Default::default();
-        };
-        if sketch.is_fully_constrained {
+    /// again only when `sketch` differs from the one the kept set was
+    /// worked out on other than in where its labels sit (an edit, an undo,
+    /// a formula's new value, a card's draft); none while the sketch is
+    /// fully constrained, when everything draws in that colour instead.
+    pub(crate) fn locked_elements(&self, sketch: &Sketch) -> std::sync::Arc<HashSet<Uuid>> {
+        if self.tab.active_sketch_id.is_none() || sketch.is_fully_constrained {
             return Default::default();
         }
-        let key = (id, ctx.document.mutation_seq());
         if let Some((at, set)) = self.tab.locked.borrow().as_ref()
-            && *at == key
+            && at.eq_but_labels(sketch)
         {
             return set.clone();
         }
         let set = std::sync::Arc::new(solver::locked_elements(sketch));
-        *self.tab.locked.borrow_mut() = Some((key, set.clone()));
+        *self.tab.locked.borrow_mut() = Some((sketch.clone(), set.clone()));
         set
     }
 
@@ -195,7 +189,7 @@ mod tests {
         Document, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
     };
 
-    use crate::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+    use crate::sketch::{ConstraintKind, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
     use crate::{SketchFeature, SketchWorkbench, solver, stored_sketch};
 
     /// A hover over an unchanged sketch reads the kept freedom through
@@ -236,5 +230,31 @@ mod tests {
         let dof = frame(&mut doc, &mut wb, 460.0);
         assert_eq!(dof, solver::dof_estimate(&edited.sketch));
         assert!(dof > 0);
+    }
+
+    /// A card's draft is a sketch the document does not hold: what it
+    /// fixes is drawn locked though no document edit came with it.
+    #[test]
+    fn the_locked_elements_follow_a_draft() {
+        let mut sketch = Sketch::new("s");
+        let [a, b, _] = [0.0, 5.0, 9.0]
+            .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
+        let fix = |sketch: &mut Sketch, point, x| {
+            let position = Vec2D::new(x, 1.0);
+            sketch.add_constraint(ConstraintKind::FixedPoint { point, position });
+        };
+        fix(&mut sketch, a, 0.0);
+        let mut doc = Document::new("t");
+        let feature = SketchFeature::new(sketch.clone(), SketchPlane::xy());
+        let id = doc.add_feature(feature, "s".into()).unwrap();
+        let mut wb = SketchWorkbench::default();
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        wb.on_frame(0.016, &mut ctx);
+        assert_eq!(*wb.locked_elements(&sketch), [a].into());
+        let mut draft = sketch;
+        fix(&mut draft, b, 5.0);
+        assert_eq!(*wb.locked_elements(&draft), [a, b].into());
     }
 }
