@@ -23,6 +23,7 @@ pub enum HostAction {
     SaveAs,
     Import,
     Export,
+    SavePicture,
     SendToSlicer,
     PrintLayout,
     Quit,
@@ -71,6 +72,8 @@ pub enum HostAction {
     ShadedWithEdges,
     Shaded,
     Wireframe,
+    SplitView,
+    LinkSplitCameras,
     Console,
     RunScript,
     Record,
@@ -127,6 +130,13 @@ const HOST: &[HostSpec] = {
         spec(SaveAs, "file.save_as", "Save as", "File", &["Ctrl+Shift+S"]),
         spec(Import, "file.import", "Import", "File", &["Ctrl+I"]),
         spec(Export, "file.export", "Export", "File", &["Ctrl+E"]),
+        spec(
+            SavePicture,
+            "file.save_picture",
+            "Save view as picture",
+            "File",
+            &[],
+        ),
         spec(
             SendToSlicer,
             "file.send_to_slicer",
@@ -280,6 +290,14 @@ const HOST: &[HostSpec] = {
         spec(PrintBed, "view.print_bed", "Print bed", "View", &[]),
         spec(Annotations, "view.annotations", "Annotations", "View", &[]),
         spec(Grid, "view.grid", "Grid", "View", &[]),
+        spec(SplitView, "view.split", "Split view", "View", &[]),
+        spec(
+            LinkSplitCameras,
+            "view.split_link",
+            "Link split cameras",
+            "View",
+            &[],
+        ),
         spec(
             OriginPlanes,
             "view.origin_planes",
@@ -824,6 +842,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         SaveAs => C(UiCommand::File(FileCommand::SaveAs)),
         Import => C(UiCommand::File(FileCommand::ImportStep)),
         Export => C(UiCommand::File(FileCommand::Export)),
+        SavePicture => C(UiCommand::File(FileCommand::SavePicture)),
         SendToSlicer => C(UiCommand::File(FileCommand::SendToSlicer)),
         PrintLayout => HostOutcome::Local(super::MenuLocal::Task(super::OpenTask::PrintLayout)),
         Quit => C(UiCommand::Quit),
@@ -868,6 +887,8 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         PrintBed => C(UiCommand::TogglePrintBed),
         Annotations => C(UiCommand::ToggleAnnotations),
         Grid => C(UiCommand::ToggleGrid),
+        SplitView => C(UiCommand::ToggleSplitView),
+        LinkSplitCameras => C(UiCommand::ToggleSplitLink),
         OriginPlanes => C(UiCommand::ToggleOriginPlanes),
         LeftPanel => C(UiCommand::EditSettings(SettingsEdit::new(|s| {
             s.left_panel_folded = !s.left_panel_folded;
@@ -1057,6 +1078,17 @@ mod tests {
         let two = WorkbenchId::from("wb.two");
         assert!(keymap.lookup(key("F"), &two).is_none());
         assert_eq!(keymap.text("file.save").as_deref(), Some("F5"));
+        // The picture and the split view take no key until given one.
+        let ids = ["file.save_picture", "view.split", "view.split_link"];
+        for (id, k) in ids.into_iter().zip(["F6", "F7", "F8"]) {
+            assert!(keymap.get(id).unwrap().defaults.is_empty());
+            user.bindings.insert(id.into(), vec![k.into()]);
+        }
+        let keymap = Keymap::build(&registry(), &user, &[]);
+        let ran = |k| keymap.lookup(key(k), &two).map(|b| b.target.clone());
+        assert_eq!(ran("F6"), Some(Target::Host(HostAction::SavePicture)));
+        assert_eq!(ran("F7"), Some(Target::Host(HostAction::SplitView)));
+        assert_eq!(ran("F8"), Some(Target::Host(HostAction::LinkSplitCameras)));
     }
 
     /// The bindings a frame with these key presses runs in `wb.two`, and

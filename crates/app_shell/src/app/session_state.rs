@@ -394,8 +394,9 @@ pub(crate) struct Drawn {
     /// Whether each shown note's point is hidden by its own body, kept
     /// with what it was worked out from.
     pub note_occlusions: crate::app::note_tool::Occlusions,
-    /// Bounds of the last measured body mesh, keyed by body and revision.
-    pub dimension_cache: Option<DimensionCache>,
+    /// Bounds of the last two measured body meshes, keyed by body and
+    /// revision.
+    pub dimension_cache: Vec<DimensionCache>,
     /// Each measured body's volume, area and centre, with the geometry
     /// revision it was measured at.
     pub physical: std::collections::HashMap<Uuid, (u64, crate::ui::Physical)>,

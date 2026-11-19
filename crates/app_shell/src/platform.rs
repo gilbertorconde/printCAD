@@ -98,14 +98,139 @@ pub(crate) fn read_only(path: &Path) -> bool {
     false
 }
 
-/// Write `bytes` as a file named `name` under the temporary folder, for the
-/// kernel to read by path.
-pub(crate) fn scratch_file(folder: &str, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
-    let dir = std::env::temp_dir().join("printcad").join(folder);
-    let path = dir.join(name);
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(&path, bytes)?;
+/// Where this run's private folders go: the user's own runtime folder,
+/// else the temporary folder.
+pub(crate) fn private_base() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute() && dir.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// A folder in `base` for this run's `what` files, made now under a name
+/// no other run or user takes, and open to this user alone.
+pub(crate) fn make_private_folder(base: &Path, what: &str) -> std::io::Result<PathBuf> {
+    loop {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let folder = base.join(format!(
+            "printcad-{what}-{}-{}",
+            std::process::id(),
+            &id[..12]
+        ));
+        #[cfg(unix)]
+        let builder = {
+            let mut builder = std::fs::DirBuilder::new();
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
+        match builder.create(&folder) {
+            Ok(()) => return Ok(folder),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// A new, empty file in `folder`: `stem.ext`, else `stem-2.ext` and on
+/// (no dot when `ext` is empty), each made only where nothing is, so two
+/// files of one name never share a path and nothing put there beforehand
+/// is written through.
+pub(crate) fn reserve_file(folder: &Path, stem: &str, ext: &str) -> std::io::Result<PathBuf> {
+    let mut n = 1;
+    loop {
+        let stem = match n {
+            1 => stem.to_string(),
+            n => format!("{stem}-{n}"),
+        };
+        let path = match ext {
+            "" => folder.join(stem),
+            ext => folder.join(format!("{stem}.{ext}")),
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => return Ok(path),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Write `bytes` as a new file named after `name` in this run's private
+/// scratch folder, for the kernel to read by path. The folder is made on
+/// first use, and again should it go.
+pub(crate) fn scratch_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    static FOLDER: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+    let folder = {
+        let mut kept = FOLDER.lock().unwrap_or_else(|e| e.into_inner());
+        match kept.clone().filter(|f| f.is_dir()) {
+            Some(folder) => folder,
+            None => {
+                let folder = make_private_folder(&private_base(), "scratch")?;
+                *kept = Some(folder.clone());
+                folder
+            }
+        }
+    };
+    let name = Path::new(name);
+    let stem = name
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "file".to_string());
+    let ext = name.extension().unwrap_or_default().to_string_lossy();
+    let path = reserve_file(&folder, &stem, &ext)?;
+    write(&path, bytes)?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod private_tests {
+    use super::*;
+
+    /// Each folder is new and open to its user alone; two files of one
+    /// name get a path each, and a link put where a file would go is
+    /// passed over rather than written through.
+    #[test]
+    fn private_files_are_private_and_never_shared() {
+        let base = std::env::temp_dir().join(format!("private-base-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&base).unwrap();
+        let folder = make_private_folder(&base, "slicer").unwrap();
+        let other = make_private_folder(&base, "slicer").unwrap();
+        assert_ne!(folder, other, "a folder per call");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&folder), 0o700);
+            let scratch = scratch_file("part.step", b"solid").unwrap();
+            assert_eq!(mode(scratch.parent().unwrap()), 0o700);
+            assert_eq!(std::fs::read(&scratch).unwrap(), b"solid");
+            let again = scratch_file("part.step", b"x").unwrap();
+            assert_ne!(again, scratch);
+            remove(&scratch);
+            remove(&again);
+        }
+        let first = reserve_file(&folder, "bracket", "3mf").unwrap();
+        let second = reserve_file(&folder, "bracket", "3mf").unwrap();
+        assert_ne!(first, second);
+        assert!(first.is_file() && second.is_file());
+        #[cfg(unix)]
+        {
+            let target = base.join("target");
+            std::fs::write(&target, b"keep").unwrap();
+            std::os::unix::fs::symlink(&target, other.join("part.stl")).unwrap();
+            let path = reserve_file(&other, "part", "stl").unwrap();
+            assert_eq!(path, other.join("part-2.stl"));
+            write(&path, b"mesh").unwrap();
+            assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        }
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }
 
 #[cfg(test)]

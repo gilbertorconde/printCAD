@@ -575,7 +575,7 @@ impl Headless {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let shape = crate::platform::scratch_file("shapes", &name, &bytes)
+            let shape = crate::platform::scratch_file(&name, &bytes)
                 .map_err(|e| e.to_string())
                 .and_then(|path| {
                     let shape = kernel.read_solid(&path, &detail).map_err(|e| e.to_string());

@@ -91,6 +91,8 @@ pub struct UiFrameInputs<'a> {
     pub selection_mass: Option<super::SelectionMass>,
     /// Volume, area and centre of the body the property panel shows.
     pub physical: Option<Physical>,
+    /// That body's bounds where it sits (millimetres, document axes).
+    pub panel_bounds_mm: Option<([f32; 3], [f32; 3])>,
     /// What the Physical group can take the inertia about, the centre of
     /// mass first.
     pub inertia_references: Vec<super::property_panel::InertiaReference>,

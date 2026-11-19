@@ -380,7 +380,7 @@ pub fn draw_menu_bar(
                             if item_needing_document(
                                 ui,
                                 "Save view as picture…",
-                                None,
+                                key("file.save_picture"),
                                 have_document,
                             ) {
                                 commands.push(UiCommand::File(FileCommand::SavePicture));
@@ -571,11 +571,16 @@ pub fn draw_menu_bar(
                             ) {
                                 commands.push(UiCommand::ToggleOriginPlanes);
                             }
-                            if choice(ui, inputs.split_view, "Split view", None) {
+                            if choice(ui, inputs.split_view, "Split view", key("view.split")) {
                                 commands.push(UiCommand::ToggleSplitView);
                             }
                             if inputs.split_view
-                                && choice(ui, inputs.split_linked, "Link split cameras", None)
+                                && choice(
+                                    ui,
+                                    inputs.split_linked,
+                                    "Link split cameras",
+                                    key("view.split_link"),
+                                )
                             {
                                 commands.push(UiCommand::ToggleSplitLink);
                             }

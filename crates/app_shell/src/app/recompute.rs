@@ -588,18 +588,17 @@ impl PrintCadApp {
                 .file_name()
                 .map(|n| n.to_owned())
                 .unwrap_or_else(|| format!("{asset}.step").into());
-            let path =
-                match crate::platform::scratch_file("shapes", &name.to_string_lossy(), &bytes) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        self.session.jobs.shapes_failed.insert(body.0, asset);
-                        app_log::error(format!(
-                            "Could not stage the new shape of `{}`: {e}",
-                            self.body_name(body)
-                        ));
-                        continue;
-                    }
-                };
+            let path = match crate::platform::scratch_file(&name.to_string_lossy(), &bytes) {
+                Ok(path) => path,
+                Err(e) => {
+                    self.session.jobs.shapes_failed.insert(body.0, asset);
+                    app_log::error(format!(
+                        "Could not stage the new shape of `{}`: {e}",
+                        self.body_name(body)
+                    ));
+                    continue;
+                }
+            };
             self.session.jobs.shapes.insert(body.0);
             let what = if self.session.document.is_stand_in(body, asset) {
                 "the shape kept for"
@@ -826,7 +825,7 @@ impl PrintCadApp {
 impl PrintCadApp {
     /// The body the property panel is showing: a body row, or an imported
     /// part linked to one.
-    fn panel_body(&self) -> Option<core_document::BodyId> {
+    pub(crate) fn panel_body(&self) -> Option<core_document::BodyId> {
         match self.session.selection.tree? {
             crate::ui::TreeItemId::Body(body) => Some(body),
             crate::ui::TreeItemId::ImportedObject(id) => {

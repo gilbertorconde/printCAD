@@ -445,6 +445,7 @@ impl PrintCadApp {
         self.follow_section_formula();
         let selection_mass = self.selection_mass();
         let physical = self.panel_physical();
+        let panel_bounds_mm = self.panel_body().and_then(|body| self.body_bounds(body));
         let inertia_references = self.inertia_references();
         let host_params = ui::HostCtxParams {
             pixels_per_point: self.pixels_per_point(),
@@ -579,6 +580,7 @@ impl PrintCadApp {
                         quick_measure,
                         selection_mass,
                         physical,
+                        panel_bounds_mm,
                         inertia_references,
                         field_of_view_deg: self.session.view.camera.field_of_view_deg(),
                         projection: self.session.view.camera.projection(),
@@ -1648,30 +1650,35 @@ impl PrintCadApp {
             .body
             .map(core_document::BodyId)
             .or(self.session.active_body_id)?;
-        let geometry = self.session.document.imported_geometry(body)?;
-        let bounds = match geometry.bounds_mm {
-            Some(bounds) => bounds,
-            None => {
-                // The mesh scan is linear; keep it per revision.
-                match self.session.drawn.dimension_cache {
-                    Some((cached_body, revision, bounds))
-                        if cached_body == body && revision == geometry.revision =>
-                    {
-                        bounds
-                    }
-                    _ => {
-                        let bounds = geometry.mesh.bounds()?;
-                        self.session.drawn.dimension_cache =
-                            Some((body, geometry.revision, bounds));
-                        bounds
-                    }
-                }
-            }
-        };
+        let bounds = self.body_bounds(body)?;
         Some(ui::status_bar::size_text(
             bounds,
             self.session.document.display_unit(),
         ))
+    }
+
+    /// `body`'s bounds where it sits, millimetres in document axes.
+    fn body_bounds(&mut self, body: core_document::BodyId) -> Option<([f32; 3], [f32; 3])> {
+        let geometry = self.session.document.imported_geometry(body)?;
+        if let Some(bounds) = geometry.bounds_mm {
+            return Some(bounds);
+        }
+        // The mesh scan is linear; keep it per body and revision, for the
+        // two bodies the status bar and the property panel ask about.
+        let cache = &mut self.session.drawn.dimension_cache;
+        if let Some((_, _, bounds)) = cache
+            .iter()
+            .find(|(b, revision, _)| *b == body && *revision == geometry.revision)
+        {
+            return Some(*bounds);
+        }
+        let bounds = geometry.mesh.bounds()?;
+        cache.retain(|(b, ..)| *b != body);
+        if cache.len() >= 2 {
+            cache.remove(0);
+        }
+        cache.push((body, geometry.revision, bounds));
+        Some(bounds)
     }
 }
 
