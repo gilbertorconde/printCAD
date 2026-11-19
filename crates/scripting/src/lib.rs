@@ -339,6 +339,34 @@ mod tests {
         assert!(looped.to_string().contains("table: "), "a loop ends");
     }
 
+    /// A table raised as an error is told as JSON by either engine, a
+    /// `pcall` still catching the table itself, and a message keeps the
+    /// place it was raised at.
+    #[test]
+    fn a_table_raised_as_an_error_is_told_as_json() {
+        for mut engine in [ScriptEngine::new(), ScriptEngine::sandboxed()] {
+            let mut host = Recorder::default();
+            let mut error = |source: &str| {
+                let out = engine.run_script(source, "t", &mut host).error;
+                out.map(|e| e.trim_start_matches("runtime error: ").to_string())
+            };
+            let told = error("error({field = 'angle_deg', sizes = {1, 2}})").unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&told).expect(&told),
+                json!({"field": "angle_deg", "sizes": [1, 2]})
+            );
+            let told = error("assert(false, {ok = false})");
+            assert_eq!(told.as_deref(), Some(r#"{"ok":false}"#));
+            assert_eq!(
+                error("local x = 1\nerror('boom')").as_deref(),
+                Some(r#"[string "t"]:2: boom"#)
+            );
+            let caught = error("local ok, e = pcall(error, {n = 1}); error(e.n + 1, 0)");
+            assert_eq!(caught.as_deref(), Some("2"));
+            assert_eq!(error("assert(1 < 2, 'fine')"), None);
+        }
+    }
+
     #[test]
     fn a_console_statement_shows_what_it_returns() {
         let mut engine = ScriptEngine::new();

@@ -104,6 +104,13 @@ impl ScriptEngine {
             })
             .expect("array function");
         lua.globals().set("array", array).expect("array global");
+        // `__pc_json(value)`: a value as JSON text, as a run returns it.
+        let to_json = lua
+            .create_function(|lua, value: mlua::Value| Ok(lua_json(lua, &value, 0).to_string()))
+            .expect("json function");
+        lua.globals()
+            .set("__pc_json", to_json)
+            .expect("json global");
 
         let (since, limit) = (started.clone(), time_limit.clone());
         let stop: Rc<RefCell<Option<Arc<AtomicBool>>>> = Rc::new(RefCell::new(None));

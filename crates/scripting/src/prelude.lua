@@ -22,6 +22,27 @@ function print(...)
   __pc_print(table.concat(parts, "\t"))
 end
 
+-- A table raised as an error is told as JSON when nothing catches it: it
+-- is given a `__tostring` (unless it has a metatable), and stays the same
+-- table for a `pcall` that does. `error`'s level counts one more for the
+-- wrapper, so a message still names the line that raised it.
+local as_error = function(value)
+  if type(value) == "table" and getmetatable(value) == nil then
+    setmetatable(value, { __tostring = __pc_json })
+  end
+  return value
+end
+local raise, check = error, assert
+function error(value, level)
+  level = level or 1
+  if type(level) == "number" and level > 0 then level = level + 1 end
+  return raise(as_error(value), level)
+end
+function assert(value, message, ...)
+  if not value then return check(value, as_error(message), ...) end
+  return value, message, ...
+end
+
 function show(value, indent)
   indent = indent or ""
   if type(value) == "string" then return string.format("%q", value) end
