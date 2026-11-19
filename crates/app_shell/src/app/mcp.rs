@@ -1147,6 +1147,7 @@ mod tests {
             "file.new",
             "file.open",
             "file.save_as",
+            "file.save_all",
             "file.import",
             "file.export",
             "file.send_to_slicer",
@@ -1190,6 +1191,11 @@ mod tests {
             "doc.notes",
         ] {
             assert!(agent_check(&access(free), free, false).is_ok(), "{free}");
+        }
+        // Splitting the view moves cameras, never the document.
+        for split in ["view.split", "view.split_link"] {
+            let spec = specs.iter().find(|c| c.id == split).expect(split);
+            assert!(spec.read_only, "{split}");
         }
         // What an agent may not do is in the command list it reads.
         let quit = specs.iter().find(|c| c.id == "app.quit").unwrap().to_json();

@@ -98,6 +98,58 @@ pub(crate) fn read_only(path: &Path) -> bool {
     false
 }
 
+/// End a file chooser still open as the app quits. On Linux the dialog
+/// crate falls back to a chooser of its own process when the desktop
+/// portal is missing, and that process outlives the app unless ended; a
+/// portal's chooser closes once its caller goes. The macOS and Windows
+/// choosers are part of the app's process and end with it.
+pub(crate) fn end_file_choosers() {
+    #[cfg(target_os = "linux")]
+    end_children_named("zenity");
+}
+
+/// Ask each child process of this one named `name` to end.
+#[cfg(target_os = "linux")]
+fn end_children_named(name: &str) {
+    for pid in children_named(name) {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            continue;
+        };
+        // SAFETY: kill only sends a signal. The pid was this process's
+        // child a moment ago; the thread waiting on it is the only one
+        // that frees it for reuse.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+}
+
+/// The child processes of this one whose name is `name`, read from
+/// `/proc`.
+#[cfg(target_os = "linux")]
+fn children_named(name: &str) -> Vec<u32> {
+    let me = std::process::id();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| {
+            // `pid (name) state parent ...`; the name may hold spaces or
+            // brackets, so the fields after it are read past the last `)`.
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
+            let (Some(open), Some(close)) = (stat.find('('), stat.rfind(')')) else {
+                return false;
+            };
+            let parent = stat[close + 1..].split_whitespace().nth(1);
+            &stat[open + 1..close] == name && parent == Some(me.to_string().as_str())
+        })
+        .collect()
+}
+
 /// Where this run's private folders go: the user's own runtime folder,
 /// else the temporary folder.
 pub(crate) fn private_base() -> PathBuf {
@@ -258,6 +310,23 @@ mod private_tests {
             assert_eq!(std::fs::read(&target).unwrap(), b"keep");
         }
         std::fs::remove_dir_all(&base).unwrap();
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod child_tests {
+    /// A child process of a given name is found among this process's
+    /// children and ended; the exit leaves none behind.
+    #[test]
+    fn a_child_by_its_name_is_ended() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("sleep runs");
+        assert!(super::children_named("sleep").contains(&child.id()));
+        super::end_children_named("sleep");
+        let status = child.wait().expect("it ends");
+        assert!(!status.success(), "ended, not left to finish: {status}");
     }
 }
 

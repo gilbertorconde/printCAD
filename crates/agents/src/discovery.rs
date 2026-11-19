@@ -402,6 +402,42 @@ pub const DEFAULT_LIMIT: usize = 8;
 /// leaving the rest to `search` (about 10,000 tokens).
 pub const INDEX_BUDGET: usize = 40_000;
 
+/// How to read [`Catalog::index`], for whoever is handed it.
+pub const INDEX_FORMAT: &str = "\
+Under each `[group]` line, `name: summary` is the command `group.name`, its summary \
+up to the first colon or semicolon (`describe` has the rest); a line of bare names \
+lists commands that do what their names say; a guide's line ends with its sections, \
+each `guide#section`.";
+
+/// `text`'s words, lower case, joined by `-`: a heading's anchor, and
+/// what a command's name and a summary that only says it share.
+pub fn slug(text: &str) -> String {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// A summary's first clause, up to its first `: ` or `; `: what the
+/// index says of a command, the rest spelling it out.
+fn headline(summary: &str) -> &str {
+    [": ", "; "]
+        .iter()
+        .filter_map(|mark| summary.find(mark))
+        .min()
+        .filter(|&at| at > 0)
+        .map_or(summary, |at| &summary[..at])
+}
+
+/// Whether `summary` only says `name`, maybe with its group's word
+/// (`Front view` for `view.front`, `Close tab` for `tab.close`).
+fn says_only_its_name(summary: &str, name: &str, group: &str) -> bool {
+    let summary = slug(summary);
+    let words: Vec<&str> = summary.split('-').filter(|w| *w != group).collect();
+    words.join("-") == slug(name)
+}
+
 /// The entries, and their words ready to rank.
 pub struct Catalog {
     entries: Vec<Entry>,
@@ -571,9 +607,13 @@ impl Catalog {
         }
     }
 
-    /// One line per entry, grouped: every command an agent can run and
-    /// every document, small enough to read in full. Past
-    /// [`INDEX_BUDGET`] only the groups and their sizes.
+    /// Every command an agent can run and every document, grouped, small
+    /// enough to read in full ([`INDEX_FORMAT`] tells how to read it).
+    /// Under a `[group]` line a command is `name: headline`, its id
+    /// `group.name`; the commands whose summary only says their name
+    /// share one line of names, and a guide's sections follow its own
+    /// line by their anchors. Past [`INDEX_BUDGET`] only the groups and
+    /// their sizes.
     pub fn index(&self) -> String {
         let mut groups: Vec<&str> = Vec::new();
         for e in &self.entries {
@@ -584,8 +624,46 @@ impl Catalog {
         let mut out = String::new();
         for g in &groups {
             let _ = writeln!(out, "[{g}]");
+            let mut named = Vec::new();
+            // The guide whose line is last written, and its sections.
+            let mut guide: Option<(&str, Vec<&str>)> = None;
+            let end_guide = |out: &mut String, guide: &mut Option<(&str, Vec<&str>)>| {
+                if let Some((_, sections)) = guide.take() {
+                    if !sections.is_empty() {
+                        let _ = write!(out, "; sections #{}", sections.join(", #"));
+                    }
+                    out.push('\n');
+                }
+            };
             for e in self.entries.iter().filter(|e| e.group == *g) {
-                let _ = writeln!(out, "{}", e.line());
+                if e.kind == Kind::Document {
+                    if let Some((base, sections)) = guide.as_mut()
+                        && let Some(anchor) =
+                            e.id.strip_prefix(*base).and_then(|r| r.strip_prefix('#'))
+                        && slug(&e.summary) == anchor
+                    {
+                        sections.push(anchor);
+                        continue;
+                    }
+                    end_guide(&mut out, &mut guide);
+                    let _ = write!(out, "{}", e.line());
+                    guide = Some((&e.id, Vec::new()));
+                    continue;
+                }
+                end_guide(&mut out, &mut guide);
+                let name =
+                    e.id.strip_prefix(*g)
+                        .and_then(|n| n.strip_prefix('.'))
+                        .unwrap_or(&e.id);
+                if says_only_its_name(&e.summary, name, g) {
+                    named.push(name);
+                } else {
+                    let _ = writeln!(out, "{name}: {}", headline(&e.summary));
+                }
+            }
+            end_guide(&mut out, &mut guide);
+            if !named.is_empty() {
+                let _ = writeln!(out, "{}", named.join(", "));
             }
         }
         if out.len() <= INDEX_BUDGET {
@@ -812,10 +890,27 @@ mod tests {
 
     #[test]
     fn the_index_lists_every_entry_by_group() {
-        let index = catalog().index();
-        assert!(index.starts_with("[design]\ndesign.pad: Pad a sketch\n"));
-        assert!(index.contains("[guides]\nguide/scripting#recording: Recording\n"));
-        assert_eq!(index.lines().count(), 7 + 4);
+        let doc = |id: &str, title: &str| Entry::document(id, "guides", title, "Text.");
+        let index = Catalog::new(vec![
+            Entry::command("design.pad", "Pad a sketch"),
+            Entry::command("view.fit_all", "Fit all"),
+            Entry::command("view.section", "Cut the view: at a plane; or none"),
+            Entry::command("view.top", "Top view"),
+            Entry::command("design.fillet", "Round edges"),
+            doc("guide/ai", "AI agents"),
+            doc("guide/ai#rules", "Rules"),
+            doc("guide/ai#past-chats", "Past chats"),
+            doc("guide/ai#odd", "A title that is not its anchor"),
+            doc("recipe/plate", "A plate"),
+        ])
+        .index();
+        assert_eq!(
+            index,
+            "[design]\npad: Pad a sketch\nfillet: Round edges\n\
+             [view]\nsection: Cut the view\nfit_all, top\n\
+             [guides]\nguide/ai: AI agents; sections #rules, #past-chats\n\
+             guide/ai#odd: A title that is not its anchor\nrecipe/plate: A plate\n"
+        );
     }
 
     #[test]

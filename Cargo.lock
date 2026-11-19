@@ -163,6 +163,7 @@ dependencies = [
  "gif",
  "glam 0.33.7",
  "kernel_ogeom",
+ "libc",
  "local_ipc",
  "notify-rust",
  "png",

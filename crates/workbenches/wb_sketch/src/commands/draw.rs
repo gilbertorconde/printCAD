@@ -56,7 +56,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
     t.add_free(
         sketch(CommandSpec::new(
             "sketch.rect",
-            "Add a rectangle from its corner (x, y), its width and its height, its sides held \
+            "Add a rectangle from its corner (x, y), its width and its height: its sides held \
              level and upright",
         ))
         .param("x", ParamKind::Number, "")

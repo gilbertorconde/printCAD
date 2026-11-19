@@ -1033,9 +1033,9 @@ impl JointTool {
             JointTool::Mate => "Put two flat faces against each other",
             JointTool::Align => "Put two round faces on one axis",
             JointTool::Angle => "Hold two faces or axes at an angle",
-            JointTool::Hinge => "Put two axes on one line: the body can only turn about it",
+            JointTool::Hinge => "Put two axes on one line, the body free only to turn about it",
             JointTool::Slider => {
-                "Put two axes on one line without turning: the body can only slide along it"
+                "Put two axes on one line without turning, the body free only to slide along it"
             }
             JointTool::Fixed => "Hold a body to another where it sits",
             JointTool::Parallel => "Keep two faces or axes parallel",
@@ -1045,12 +1045,14 @@ impl JointTool {
                  between axes or points"
             }
             JointTool::Tangent => "Rest a round face on a flat one",
-            JointTool::Ball => "Put two points together: the body can turn every way about them",
+            JointTool::Ball => {
+                "Put two points together, the body free to turn every way about them"
+            }
             JointTool::Universal => {
                 "Cross two yokes' pins at one point, square to each other: the body turns \
                  about either"
             }
-            JointTool::Slot => "Keep a point on a line: a pin sliding in a slot",
+            JointTool::Slot => "Keep a point on a line, as a pin slides in a slot",
             JointTool::Path => "Keep a point on an edge of any shape: it runs along it",
             JointTool::Cam => "Keep a follower on a cam's face, a roller's radius off it",
             JointTool::Width => "Centre a tab's two faces between a slot's two walls",

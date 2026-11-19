@@ -12,7 +12,7 @@ pub(super) fn table(t: &mut CommandTable) {
     t.add(
         CommandSpec::new(
             "asm.parts",
-            "Every part: bodies of the same shape counted together",
+            "Every part, bodies of the same shape counted together",
         )
         .optional(
             "by_component",

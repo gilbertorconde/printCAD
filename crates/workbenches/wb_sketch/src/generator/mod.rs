@@ -303,8 +303,8 @@ pub(crate) fn table(t: &mut core_document::CommandTable<crate::SketchWorkbench>)
     t.add(
         CommandSpec::new(
             "sketch.generator",
-            "Change the numbers a generated sketch (a gear, a sprocket, a shaft, a keyway) is \
-             made from, or detach it into a plain sketch",
+            "Change the numbers a generated sketch is made from, or detach it into a plain \
+             sketch: a gear, a sprocket, a shaft or a keyway",
         )
         .param("sketch", ParamKind::Id, "The generated sketch")
         .optional(

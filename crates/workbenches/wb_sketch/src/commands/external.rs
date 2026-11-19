@@ -22,7 +22,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
         sketch(
             CommandSpec::new(
                 "sketch.external_from",
-                "Bring another sketch's curves and points, or a datum, into this sketch as \
+                "Bring another sketch's curves and points, or a datum, into this sketch: \
                  external geometry that follows them",
             )
             .param("from", ParamKind::Id, "A sketch or a datum")

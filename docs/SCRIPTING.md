@@ -248,7 +248,7 @@ pc.sketch.new{plane = "XY"}
 assert(pc.doc.info().modified, "an edit marks it modified")
 ```
 
-`pc.doc.agent_rules`: The rules an AI agent working on this document keeps to, beside the ones in Preferences for every document.
+`pc.doc.agent_rules`: The rules an AI agent keeps to on this document; Preferences hold the ones for every document.
 
 - Returns the rules, as text
 
@@ -448,7 +448,7 @@ pc.doc.rename{id = pc.doc.feature{id = pad}.body, name = "Bracket"}
 assert(pc.doc.bodies()[1].name == "Bracket")
 ```
 
-`pc.doc.set_body`: Change a body: its colour, how much shows through, material, placement, whether it is frozen, a scan, or clicks pick it.
+`pc.doc.set_body`: Change a body's colour, how much shows through, material or placement, whether it is frozen or a scan, or whether clicks pick it.
 
 - `body` (id)
 - `color` (any, optional): {r, g, b} from 0 to 1, or nil for the colour it came with
@@ -604,7 +604,7 @@ assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
 ```
 
-`pc.doc.array`: Repeat a body along a line, around an axis, along a path or at points, each repeat a linked copy.
+`pc.doc.array`: Repeat a body along a line, around an axis, along a path or at points: each repeat a linked copy.
 
 - `body` (id, optional): The body repeated, the array's source; or give `component`
 - `component` (id, optional): A component repeated in place of a body: every body in it copied, each occurrence's copies held together in a rigid component of their own
@@ -1254,7 +1254,7 @@ Notes:
 
 See also `pc.inspect.report`, `pc.doc.picture`.
 
-`pc.doc.picture`: Write a PNG of the bodies, the same for the same arguments whatever the user's camera (except view "current").
+`pc.doc.picture`: Write a PNG of the bodies: the same for the same arguments whatever the user's camera (except view "current").
 
 - `path` (string): Where to write the PNG
 - `view` (any, optional): Where to look from: "current" (the user's view direction; the default), "iso", "front", "back", "left", "right", "top", "bottom", {azimuth, elevation} in degrees (azimuth 0 the front, 90 the right side; elevation 90 from straight above), or {direction, up?}, the way the view looks. Always orthographic and framed to what is drawn
@@ -1962,6 +1962,10 @@ See also `pc.doc.save_section`.
 
 `pc.view.grid`: Grid.
 
+`pc.view.split`: Split view.
+
+`pc.view.split_link`: Link split cameras.
+
 `pc.view.origin_planes`: Origin planes.
 
 `pc.view.left_panel`: Fold the left panel.
@@ -1982,6 +1986,12 @@ See also `pc.doc.save_section`.
 `pc.file.save_as`: Save as.
 
 - `path` (string, optional): Where to save; the dialog when left out
+
+`pc.file.save_all`: Save all.
+
+Notes:
+
+- Saves every open document with edits, each in its own file. One with no file yet, or whose file another version of printCAD wrote, asks the user in the window, and the saves after it wait for the answer.
 
 `pc.file.import`: Import.
 
@@ -2237,7 +2247,7 @@ local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - 30 * 20 / 2 * 5) < 1e-3)
 ```
 
-`pc.sketch.rect`: Add a rectangle from its corner (x, y), its width and its height, its sides held level and upright.
+`pc.sketch.rect`: Add a rectangle from its corner (x, y), its width and its height: its sides held level and upright.
 
 - `sketch` (id): The sketch to draw in
 - `x` (number)
@@ -2716,7 +2726,7 @@ local m = pc.doc.measure{body = body}
 assert(math.abs(m.min[3] - 15) < 1e-6, "5 mm off the datum at 10, however often it is set")
 ```
 
-`pc.sketch.external_from`: Bring another sketch's curves and points, or a datum, into this sketch as external geometry that follows them.
+`pc.sketch.external_from`: Bring another sketch's curves and points, or a datum, into this sketch: external geometry that follows them.
 
 - `from` (id): A sketch or a datum
 - `counts` (boolean, optional): true: it counts in the profile, as drawn geometry does; false (the default): it only guides the sketch
@@ -3125,7 +3135,7 @@ assert(#knots == 1 and knots[1].multiplicity == 1)
 assert(math.abs(knots[1].knot - 0.5) < 1e-6, "halfway along this symmetric spline")
 ```
 
-`pc.sketch.knot_multiplicity`: Set how many times a spline's knot stands (1 up to the degree), or remove it with 0.
+`pc.sketch.knot_multiplicity`: Set how many times a spline's knot stands: 1 up to the degree, or 0 to remove it.
 
 - `sketch` (id): The sketch to draw in
 - `spline` (id): The spline
@@ -3266,7 +3276,7 @@ pc.sketch.set_constraint{sketch = s, items = top, driving = false}
 assert(#pc.sketch.status{sketch = s}.redundant == 0, "a reference only measures")
 ```
 
-`pc.sketch.mirror_sketch`: A new sketch on the same plane: this one's geometry mirrored across its Y axis.
+`pc.sketch.mirror_sketch`: Mirror this sketch's geometry across its Y axis into a new sketch on the same plane.
 
 - `sketch` (id): The sketch to draw in
 - Returns the new sketch's id
@@ -3685,7 +3695,7 @@ pc.sketch.section_view{sketch = s, on = false}
 assert(pc.doc.feature{id = s}.fields.section_view == nil)
 ```
 
-`pc.sketch.remove_axis_alignment`: Turn the horizontal and vertical constraints of lines into parallel and perpendicular ones among them, so the group keeps its shape and turns as a whole.
+`pc.sketch.remove_axis_alignment`: Turn lines' horizontal and vertical constraints into parallel and perpendicular ones among them: the group keeps its shape and turns as a whole.
 
 - `sketch` (id): The sketch to draw in
 - `items` (list): The lines
@@ -3710,7 +3720,7 @@ end
 assert(pc.sketch.status{sketch = s}.dof == 5, "still a rectangle, free to turn")
 ```
 
-`pc.sketch.generator`: Change the numbers a generated sketch (a gear, a sprocket, a shaft, a keyway) is made from, or detach it into a plain sketch.
+`pc.sketch.generator`: Change the numbers a generated sketch is made from, or detach it into a plain sketch: a gear, a sprocket, a shaft or a keyway.
 
 - `sketch` (id): The generated sketch
 - `detach` (boolean, optional): Keep the curves as they are and forget the numbers: a plain sketch to edit by hand
@@ -4516,7 +4526,7 @@ assert(math.abs(m.volume - 2000) < 1e-3, "what one end gains the other loses")
 assert(math.abs(m.max[3] - (10 + 10 * math.tan(math.rad(10)))) < 1e-4, m.max[3])
 ```
 
-`pc.design.project`: Project a sketch onto faces: split lines, emboss or deboss.
+`pc.design.project`: Project a sketch onto faces as split lines, an emboss or a deboss.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
@@ -5548,7 +5558,7 @@ assert(math.abs(line.length - math.pi * 10 / 2) < 0.05, line.length)
 assert(not line.straight)
 ```
 
-`pc.design.gear`: Make an involute spur gear's profile, outer or internal (ring): a sketch to pad.
+`pc.design.gear`: Make an involute spur gear's profile, outer or internal (ring), as a sketch to pad.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
 - `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
@@ -5582,7 +5592,7 @@ assert(math.abs(m.max[1] - 14) < 1e-3 and math.abs(m.min[1] + 14) < 1e-3)
 assert(math.abs(m.max[3] - 5) < 1e-6)
 ```
 
-`pc.design.sprocket`: Make a roller chain sprocket's profile (ISO 606 teeth): a sketch to pad.
+`pc.design.sprocket`: Make a roller chain sprocket's profile (ISO 606 teeth), as a sketch to pad.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
 - `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
@@ -5612,7 +5622,7 @@ local pad = pc.design.pad{sketch = sprocket, length = 3}
 assert(#pc.doc.rebuild() == 0, "the sprocket builds")
 ```
 
-`pc.design.shaft`: Make a stepped shaft's half section: a sketch to revolve about its vertical axis.
+`pc.design.shaft`: Make a stepped shaft's half section, as a sketch to revolve about its vertical axis.
 
 - `body` (id, optional): The body it goes in; the selected one, else a new one
 - `plane` (string, optional): The base plane it lies on: XY, XZ or YZ (a gear and a sprocket take XY, a shaft XZ)
@@ -5644,7 +5654,7 @@ assert(math.abs(m.volume - volume) < 1e-3, m.volume)
 assert(math.abs(m.max[3] - 50) < 1e-6, "50 mm long, up Z")
 ```
 
-`pc.design.keyway`: Make the slot of a parallel key in a shaft (DIN 6885): a sketch to pocket.
+`pc.design.keyway`: Make the slot of a parallel key in a shaft (DIN 6885), as a sketch to pocket.
 
 - `along` (list, optional): With face_point: the way it runs on the face, {x, y, z}, such as the shaft's axis
 - `body` (id, optional): The body it goes in; the selected one, else a new one
@@ -6775,7 +6785,7 @@ assert(math.abs(math.deg(2 * math.acos(w)) - 30) < 1e-3, "turned 30 degrees")
 assert(pc.asm.freedom{body = plate}[1].free == 5, "only the angle is held")
 ```
 
-`pc.asm.hinge`: Put two axes on one line: the body can only turn about it.
+`pc.asm.hinge`: Put two axes on one line, the body free only to turn about it.
 
 - `body` (id): The body that moves
 - `face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
@@ -6818,7 +6828,7 @@ local q = pc.asm.placement{body = arm}.rotation
 assert(math.abs(q[3] - math.sin(math.rad(45))) < 1e-4, "a quarter turn about +Z")
 ```
 
-`pc.asm.slider`: Put two axes on one line without turning: the body can only slide along it.
+`pc.asm.slider`: Put two axes on one line without turning, the body free only to slide along it.
 
 - `body` (id): The body that moves
 - `face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
@@ -7055,7 +7065,7 @@ local at = pc.asm.placement{body = roller}.translation
 assert(math.abs(80 + at[1] - 43) < 1e-3, "its axis 3 mm out from x = 40")
 ```
 
-`pc.asm.ball`: Put two points together: the body can turn every way about them.
+`pc.asm.ball`: Put two points together, the body free to turn every way about them.
 
 - `body` (id): The body that moves
 - `face` (any): A point: a ball's {centre}, or {point} alone, as pc.doc.faces lists them
@@ -7130,7 +7140,7 @@ assert(math.abs(at[1] + 40) < 1e-3 and math.abs(at[3] - 8) < 1e-3,
   "the two pins cross at (20, 20, 10)")
 ```
 
-`pc.asm.slot`: Keep a point on a line: a pin sliding in a slot.
+`pc.asm.slot`: Keep a point on a line, as a pin slides in a slot.
 
 - `body` (id): The body that moves
 - `face` (any): The pin: a point ({centre} or {point}) on the moving body; the slot: a line {axis = {point, direction}} on the other
@@ -8209,7 +8219,7 @@ assert(m.centre[1] == 10 and m.centre[3] == 2.5)
 assert(math.abs(m.inertia.tensor[3][3] - 2.48 * 800 / 12) < 1e-6)
 ```
 
-`pc.asm.parts`: Every part: bodies of the same shape counted together.
+`pc.asm.parts`: Every part, bodies of the same shape counted together.
 
 - `by_component` (boolean, optional): Each component's parts under it: every entry gains a depth, and components come as {component, name, depth}
 - Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number or nil, bought, values = {column = text}, print, volume (mm³) or nil, mass (g) or nil, density, threads = {{designation, count}}}, numbered parts first by number, then by name
@@ -9507,7 +9517,7 @@ Notes:
 
 ### project
 
-`pc.project.import`: Bring a FreeCAD file's bodies, sketches, texts and links into the document as bodies of Design features, sketches and linked copies, and what has no counterpart as the shapes the file saved.
+`pc.project.import`: Bring a FreeCAD file's bodies, sketches, texts and links into the document: bodies of Design features, sketches and linked copies, and what has no counterpart as the shapes the file saved.
 
 - `path` (string): The .FCStd file
 - Returns {bodies = [{id, name, kind, features}], sketches, findings}

@@ -41,6 +41,19 @@ pub(crate) enum Then {
     Revert,
 }
 
+impl Then {
+    /// What goes on once a save waited on lands, as the log's
+    /// "Finishing document save before …" says it.
+    pub(crate) fn after_save(self) -> &'static str {
+        match self {
+            Then::CloseTab | Then::CloseOthers(_) => "closing the tab",
+            Then::Quit => "exit",
+            Then::SaveAll => "saving the next tab",
+            Then::Revert => "reading the file again",
+        }
+    }
+}
+
 /// A question on screen: which tab, and what follows the answer.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Asking {
@@ -156,7 +169,7 @@ impl PrintCadApp {
                 }
                 match self.file_to_save_in_place() {
                     Some(path) => match self.save_document_at(&path) {
-                        Ok(()) => self.save_landed(),
+                        Ok(()) => self.save_landed(asking.then),
                         Err(err) => {
                             app_log::error(format!("Save failed: {err:#}"));
                             false
@@ -320,7 +333,7 @@ impl PrintCadApp {
         }
         self.switch_tab(index);
         // A save on its way is written before the file is read again.
-        self.wait_for_document_saves();
+        self.wait_for_document_saves(Then::Revert.after_save());
         self.close_tab_now(index);
         self.files.closed_files.retain(|f| f != &path);
         self.open_document_at(path);
@@ -328,11 +341,12 @@ impl PrintCadApp {
         self.move_tab(opened, index);
     }
 
-    /// Whether the save the active tab just started is written: it is
-    /// waited for, its answer taken in (the file, the recent list), and
-    /// the document is clean. Said in the log when it is not.
-    pub(crate) fn save_landed(&mut self) -> bool {
-        self.wait_for_document_saves();
+    /// Whether the save the active tab just started for `then` is
+    /// written: it is waited for, its answer taken in (the file, the
+    /// recent list), and the document is clean. Said in the log when it
+    /// is not.
+    pub(crate) fn save_landed(&mut self, then: Then) -> bool {
+        self.wait_for_document_saves(then.after_save());
         self.drain_server_messages();
         let saved = !self.session.document.metadata().dirty();
         if !saved {

@@ -161,11 +161,15 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
 }
 
 /// A menu's rows, scrolling when they would run past the bottom of the
-/// window. Wraps what a menu or context menu shows.
+/// window. Wraps what a menu or context menu shows. A popup measures
+/// itself in a box of egui's default area size, so the room down to the
+/// window's bottom is given to the rows here, or every menu would stop at
+/// that box's height.
 pub fn fitted_menu<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let room = ui.ctx().content_rect().bottom() - ui.cursor().top() - SPACE_3;
+    let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - SPACE_3).max(MENU_BAR * 3.0);
+    ui.set_max_height(room);
     egui::ScrollArea::vertical()
-        .max_height(room.max(MENU_BAR * 3.0))
+        .max_height(room)
         .show(ui, add)
         .inner
 }
@@ -3011,5 +3015,53 @@ mod tab_reorder_tests {
         assert_eq!(landing(5, 0), 0);
         assert_eq!(landing(2, 2), 2, "its own left gap leaves it where it is");
         assert_eq!(landing(2, 3), 2, "and so does its right");
+    }
+}
+
+#[cfg(test)]
+mod fitted_menu_tests {
+    /// How tall a menu of fifty 20 px rows opening near the top of a
+    /// window `window` px tall comes out, after the frames a popup takes
+    /// to size itself.
+    fn menu_height(window: f32) -> f32 {
+        let ctx = egui::Context::default();
+        let mut height = 0.0;
+        for time in 0..4 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, window),
+                )),
+                time: Some(f64::from(time)),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                height = egui::Area::new(egui::Id::new("menu"))
+                    .fixed_pos(egui::pos2(0.0, 20.0))
+                    .show(ui.ctx(), |ui| {
+                        super::fitted_menu(ui, |ui| {
+                            for _ in 0..50 {
+                                ui.allocate_exact_size(
+                                    egui::vec2(100.0, 20.0),
+                                    egui::Sense::hover(),
+                                );
+                            }
+                        })
+                    })
+                    .response
+                    .rect
+                    .height();
+            });
+            out.textures_delta.clear();
+        }
+        height
+    }
+
+    #[test]
+    fn a_menu_scrolls_only_past_the_bottom_of_the_window() {
+        let tall = menu_height(1900.0);
+        assert!(tall >= 1000.0, "a 1000 px menu in a tall window: {tall}");
+        let short = menu_height(600.0);
+        assert!(short <= 600.0, "a 1000 px menu in a short window: {short}");
     }
 }
