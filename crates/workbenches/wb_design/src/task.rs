@@ -138,6 +138,7 @@ impl DesignWorkbench {
             .pending_task_from_tool
             .take()
             .filter(|made| made.feature == id);
+        self.tab.edited = None;
         self.tab.task = Some(TaskState {
             feature: id,
             kind,
@@ -298,6 +299,7 @@ impl DesignWorkbench {
         ) {
             let key = editors::hole_field_key(event.id()).to_string();
             self.tab.task_focus = Some((id, key));
+            self.tab.edited = f.edited.map(|key| (id, key));
         }
     }
 
@@ -1415,6 +1417,53 @@ mod tests {
             let length = length(&ctx);
             assert!((length - left).abs() < 0.051, "{name}: {length}");
         }
+    }
+
+    /// The handle being edited is lit: the one held, the one whose value
+    /// is typed past its release, or the one whose field the panel edited.
+    #[test]
+    fn the_handle_being_edited_is_lit() {
+        use core_document::{KeyCode, Workbench, WorkbenchInputEvent as E};
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        let mut wb = DesignWorkbench::default();
+        open(&mut wb, &panel(), &mut doc, id);
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [60.0, -60.0, 30.0], [5.0; 3], (0, 0, 800, 600));
+        let handles = wb.handles(&ctx);
+        let length = handles.iter().find(|h| h.label == "Length").unwrap();
+        let lit = |wb: &DesignWorkbench| -> Vec<String> {
+            let lit = handles.iter().filter(|h| wb.is_lit(h));
+            lit.map(|h| h.label.clone()).collect()
+        };
+        // Typed for the held handle, it stays lit past the release.
+        wb.tab.held = Some(length.clone());
+        wb.on_input(&E::Text { text: "1".into() }, None, &mut ctx);
+        wb.tab.held = None;
+        assert_eq!(lit(&wb), ["Length"]);
+        let escape = E::KeyPress {
+            key: KeyCode::Escape,
+        };
+        wb.on_input(&escape, None, &mut ctx);
+        assert!(lit(&wb).is_empty());
+        // Its field edited in the panel lights it too.
+        let widgets = wb.task_widgets(&mut ctx, id);
+        let field = bench_api::walk_widgets(&widgets)
+            .into_iter()
+            .find_map(|w| match w {
+                Widget::Quantity(q) if q.bind.as_ref().is_some_and(|b| b.key == length.pointer) => {
+                    Some(q.id.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let typed = PanelEvent::Number {
+            id: field,
+            value: 12.0,
+        };
+        wb.task_event(&mut ctx, id, &typed);
+        assert_eq!(lit(&wb), ["Length"]);
     }
 
     /// Digits typed while the pad's handle is held set its length on

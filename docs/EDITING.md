@@ -311,7 +311,9 @@ a formula sets has no dot. A pad's or pocket's length snaps to a flat face
 square to its way, of any body shown, when its dot comes within a few
 pixels of that face's plane; the face lights while it holds, and Alt
 drags past it. While a dot is held, typing a number opens a field beside it;
-Enter sets it, and text that is no number sets the number's formula. A
+Enter sets it, and text that is no number sets the number's formula. The
+dot being edited is drawn lit: the one held, the one whose typed value
+is still open, or the one whose field the task panel last changed. A
 fillet's or chamfer's dot stands on its edges whether they were picked one
 by one, taken with their faces or all taken.
 

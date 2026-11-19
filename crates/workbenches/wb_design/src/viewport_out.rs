@@ -94,7 +94,7 @@ impl DesignWorkbench {
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         let mut lines = self.centre_overlays(ctx);
         for handle in self.handles(ctx) {
-            lines.extend(handles::overlays(ctx, &handle, self.is_held(&handle)));
+            lines.extend(handles::overlays(ctx, &handle, self.is_lit(&handle)));
         }
         lines.extend(self.failing_edge_overlays(ctx, active_feature));
         lines
@@ -107,7 +107,7 @@ impl DesignWorkbench {
     ) -> Vec<core_document::ScreenSpaceMark> {
         let mut marks = self.centre_marks(ctx);
         for handle in self.handles(ctx) {
-            marks.extend(handles::marks(ctx, &handle, self.is_held(&handle)));
+            marks.extend(handles::marks(ctx, &handle, self.is_lit(&handle)));
         }
         marks.extend(instances::marks(
             ctx,
@@ -117,13 +117,23 @@ impl DesignWorkbench {
         marks
     }
 
-    /// Whether `handle` is the one a press holds: the same number of the
-    /// same feature, whatever it has been dragged to.
-    fn is_held(&self, handle: &handles::Handle) -> bool {
-        self.tab
+    /// Whether `handle` is the one being edited: held, its value typed
+    /// beside it past the release, or its field the one the panel last
+    /// edited. The same number of the same feature, whatever it has been
+    /// dragged to.
+    pub(crate) fn is_lit(&self, handle: &handles::Handle) -> bool {
+        let same = |feature: FeatureId, pointer: &str| {
+            feature == handle.feature && pointer == handle.pointer
+        };
+        let held = self
+            .tab
             .held
             .as_ref()
-            .is_some_and(|held| held.feature == handle.feature && held.pointer == handle.pointer)
+            .or(self.tab.typed.as_ref().map(|t| &t.0));
+        match held {
+            Some(held) => same(held.feature, &held.pointer),
+            None => (self.tab.edited.as_ref()).is_some_and(|(f, p)| same(*f, p)),
+        }
     }
 
     pub(crate) fn status_items(
