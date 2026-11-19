@@ -268,9 +268,9 @@ fn a_rectangle_on_another_s_wall_drops_the_constraint_it_repeats() {
 
 /// With Reuse existing lines on, a shape drawn against the first
 /// rectangle's right wall uses that line: one line there, its vertical
-/// once, one point at its end. Off, the shape adds its own line on top.
-/// Either way the recording replays to the same sketch and one undo
-/// takes the second shape back whole.
+/// once. Off, the shape adds its own line on top. Either way the corners
+/// it puts on the wall's ends are the points there, the recording replays
+/// to the same sketch and one undo takes the second shape back whole.
 #[test]
 fn a_shape_against_an_existing_line_reuses_it_when_asked() {
     let cases: [(&str, [(f64, f64); 2]); 3] = [
@@ -309,7 +309,7 @@ fn a_shape_against_an_existing_line_reuses_it_when_asked() {
             let corners = sketch
                 .geometry
                 .iter()
-                .filter(|g| matches!(g, GeometryElement::Point(p) if near(p.position, 23.0, 16.0)))
+                .filter(|g| matches!(g, GeometryElement::Point(p) if near(p.position, 23.0, 16.0) || near(p.position, 23.0, -16.0)))
                 .count();
             let verticals = sketch
                 .constraints
@@ -318,9 +318,15 @@ fn a_shape_against_an_existing_line_reuses_it_when_asked() {
                 .count();
             let n = if reuse { 1 } else { 2 };
             assert_eq!(walls.len(), n, "{tool} reuse {reuse}");
-            assert!(
-                corners == 1 || !reuse,
-                "{tool}: one point at the wall's end"
+            // A slot's rail ends, worked out from its width, are made new.
+            let ends = if tool == "sketch.slot" && !reuse {
+                4
+            } else {
+                2
+            };
+            assert_eq!(
+                corners, ends,
+                "{tool} reuse {reuse}: one point at each of the wall's ends"
             );
             if tool == "sketch.rect" {
                 assert_eq!(verticals, n, "{tool} reuse {reuse}");
