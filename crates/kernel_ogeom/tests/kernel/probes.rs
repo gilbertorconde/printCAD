@@ -80,6 +80,38 @@ fn a_face_probe_finds_the_tangent_point_and_the_cylinder() {
     assert!(parallel(axis.map(f64::from), [0.0, 0.0, 1.0]));
 }
 
+/// An unnamed pick on a cylinder's side, asked of the cylinder grown so an
+/// end cap is now nearer the pick than the side, finds the side: the face
+/// turned the pick's way, not the nearest. With no normal it takes the
+/// nearest.
+#[test]
+fn a_face_probe_finds_the_face_turned_its_way_over_a_nearer_one() {
+    let side = |normal: [f64; 3]| ChainProbe {
+        after_op: 1,
+        probe: ShapeProbe::Face {
+            name: 0,
+            point: [0.0, -10.0, 10.0],
+            normal,
+        },
+    };
+    let answers = probing(
+        &[cylinder(30.0, 20.0, BooleanOp::NewSolid)],
+        &[side([0.0, -1.0, 0.0]), side([0.0; 3])],
+    );
+    let Ok(ProbeAnswer::Face { point, surface, .. }) = answers[0] else {
+        panic!("{:?}", answers[0]);
+    };
+    assert!(close(point, [0.0, -30.0, 10.0], 1e-6), "{point:?}");
+    assert!(
+        matches!(surface, FaceSurface::Cylinder { .. }),
+        "{surface:?}"
+    );
+    let Ok(ProbeAnswer::Face { surface, .. }) = answers[1] else {
+        panic!("{:?}", answers[1]);
+    };
+    assert!(matches!(surface, FaceSurface::Plane { .. }), "{surface:?}");
+}
+
 #[test]
 fn an_edge_probe_finds_a_rim_circle_and_a_straight_edge_s_ends() {
     let answers = probing(

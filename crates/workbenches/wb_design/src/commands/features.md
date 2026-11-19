@@ -866,7 +866,10 @@ assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.01 * added, volume)
 frame, and are required. The text stands in a sketch of its own, hidden under
 the feature, 2 mm off the face and facing out, its middle where the face was
 named: up along a cylinder's or cone's axis, else as near the body's +Z as the
-face allows.
+face allows. A face named this way carries no name of its own, so a rebuild
+finds it again by the point: the nearest face turned the way `face_normal`
+points, so text on a cylinder's side stays on the side when the cylinder grows
+and an end cap comes nearer.
 
 `text` ("Text"; a `{formula}` shows its value), `font`, `size` (5 mm),
 `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set

@@ -260,11 +260,18 @@ pub(crate) fn lost_too_far(what: &str, point: Point, distance: f64, limit: f64) 
     )
 }
 
+/// Least cosine between a probe's normal and a face's outward normal for
+/// the face to face the probe's way.
+const FACES_ALONG: f64 = 0.5;
+
 /// The face of `root` a probe names and how far its point is from it: the
 /// face its name finds (at no distance), else the nearest within `reach`,
 /// and among faces as near (a point on the edge between them) the one
-/// whose outward normal agrees best with the probe's. None when no face
-/// lies within reach.
+/// whose outward normal agrees best with the probe's. A probe with a
+/// normal takes the nearest face within reach that faces its way over a
+/// nearer one turned another way, so a pick on a cylinder's side finds
+/// the side after the cylinder grew past it, not an end cap that came
+/// nearer. None when no face lies within reach.
 pub(crate) fn face_within(
     model: &mut Model,
     root: &Shape,
@@ -280,33 +287,47 @@ pub(crate) fn face_within(
     let Some(&(best, _)) = near.first() else {
         return Ok(None);
     };
-    if best > position_reach(model, root, reach, lost) {
+    let limit = position_reach(model, root, reach, lost);
+    if best > limit {
         return Ok(None);
     }
-    let normal = vector(probe.normal);
-    let agreement = |model: &Model, face: &Shape| {
-        crate::ops::sweep::face_plane(model, face).map_or(0.0, |(_, n)| {
-            let outward = if face.orientation() == Orientation::Reversed {
-                -n.vector()
-            } else {
-                n.vector()
-            };
-            outward.dot(normal)
+    let facing = vector(probe.normal).magnitude() > 1e-12;
+    let normal = unit(vector(probe.normal));
+    let agreement = |model: &mut Model, face: &Shape| {
+        outward_at(model, face, point).map_or(0.0, |(_, n)| {
+            let n = unit(n);
+            (0..3).map(|i| n[i] * normal[i]).sum::<f64>()
         })
     };
     // Among equals the first stays, so a probe with no normal takes the
     // nearest.
+    let mut within = near.into_iter().take_while(|(d, _)| *d <= limit);
     let mut chosen: Option<(f64, f64, Shape)> = None;
-    for (d, face) in near.into_iter().take_while(|(d, _)| *d <= best + 1e-6) {
-        let agrees = agreement(model, &face);
+    let mut further = None;
+    for (d, face) in within.by_ref() {
+        if d > best + 1e-6 {
+            further = Some((d, face));
+            break;
+        }
+        let agrees = if facing { agreement(model, &face) } else { 0.0 };
         if chosen.as_ref().is_none_or(|(a, _, _)| agrees > *a) {
             chosen = Some((agrees, d, face));
         }
     }
-    if lost {
-        note_found_by_position("face", point, best);
+    if facing && chosen.as_ref().is_some_and(|(a, _, _)| *a < FACES_ALONG) {
+        for (d, face) in further.into_iter().chain(within) {
+            let agrees = agreement(model, &face);
+            if agrees >= FACES_ALONG {
+                chosen = Some((agrees, d, face));
+                break;
+            }
+        }
     }
-    Ok(chosen.map(|(_, d, face)| (face, d)))
+    let chosen = chosen.map(|(_, d, face)| (face, d));
+    if lost && let Some((_, d)) = &chosen {
+        note_found_by_position("face", point, *d);
+    }
+    Ok(chosen)
 }
 
 /// [`face_within`], with no face in reach an error.

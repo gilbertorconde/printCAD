@@ -21,7 +21,11 @@
   anchors, `FaceSupport` of a sketch placed on a face), and a rebuild finds
   a named face or edge by name first (`naming::find_face`/`find_edge`,
   reading the running solid's names the chain sets for the op), falling
-  back to the stored point + normal. A reference whose names are lost is
+  back to the stored point + normal: the nearest face, unless it is
+  turned away from the normal (cosine under a half) and a face within
+  reach faces its way (`probe::face_within`), so an unnamed pick, as
+  scripts make, keeps its cylinder's side when the cylinder grows and
+  an end cap comes nearer. A reference whose names are lost is
   found by position only within a tenth of the solid's diagonal
   (`probe::position_reach`, else a `ChainError` saying it is gone), and
   the op that took it is warned (`SolidBuildResult::warnings`, kept as
