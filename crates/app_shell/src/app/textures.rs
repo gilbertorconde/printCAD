@@ -154,18 +154,12 @@ pub(crate) struct Preview {
 /// the same key, so they are pressed once and drawn from one mesh.
 #[derive(Default)]
 pub(crate) struct PressedMeshes {
-    /// Keys being made on a thread.
-    making: std::collections::HashSet<u64>,
+    /// Keys being made on a thread, with where each one's mesh comes.
+    making: HashMap<u64, Option<std::sync::mpsc::Receiver<Arc<TriMesh>>>>,
     /// Keys made, with their mesh.
     made: HashMap<u64, Arc<TriMesh>>,
-    tx: Option<std::sync::mpsc::Sender<Made>>,
-    rx: Option<std::sync::mpsc::Receiver<Made>>,
-}
-
-/// A preview made on its thread.
-pub(crate) struct Made {
-    key: u64,
-    mesh: Arc<TriMesh>,
+    /// Keys whose thread ended without a mesh: not started again.
+    failed: std::collections::HashSet<u64>,
 }
 
 /// What `body`'s preview is pressed from, with its textures `pressing`:
@@ -194,13 +188,7 @@ impl crate::PrintCadApp {
     /// its shape: take in what the threads made, and start one for each
     /// key wanted that is neither made nor being made.
     pub(crate) fn drive_texture_previews(&mut self) {
-        let pressed = &mut self.session.drawn.texture_meshes;
-        if let Some(rx) = &pressed.rx {
-            while let Ok(made) = rx.try_recv() {
-                pressed.making.remove(&made.key);
-                pressed.made.insert(made.key, made.mesh);
-            }
-        }
+        self.session.drawn.texture_meshes.take_in();
         let document = &self.session.document;
         let bodies: Vec<BodyId> = document
             .bodies()
@@ -232,24 +220,16 @@ impl crate::PrintCadApp {
                 preview.made = Some((key, Arc::clone(mesh)));
                 continue;
             }
-            if pressed.making.contains(&key) {
+            if pressed.making.contains_key(&key) || pressed.failed.contains(&key) {
                 continue;
             }
             let Some((local, _)) = document.local_geometry(body) else {
                 continue;
             };
-            pressed.making.insert(key);
-            let tx = pressed
-                .tx
-                .get_or_insert_with(|| {
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    pressed.rx = Some(rx);
-                    tx
-                })
-                .clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            pressed.making.insert(key, Some(rx));
             let spawned = crate::platform::spawn("printcad-texture", move || {
-                let mesh = Arc::new(pressing.apply(&local, Detail::PREVIEW));
-                let _ = tx.send(Made { key, mesh });
+                let _ = tx.send(Arc::new(pressing.apply(&local, Detail::PREVIEW)));
             });
             if let Err(err) = spawned {
                 crate::log_panel::warn(format!("The texture preview could not start: {err}"));
@@ -264,11 +244,9 @@ impl crate::PrintCadApp {
             .values()
             .map(|p| p.wanted)
             .collect();
-        self.session
-            .drawn
-            .texture_meshes
-            .made
-            .retain(|key, _| kept.contains(key));
+        let pressed = &mut self.session.drawn.texture_meshes;
+        pressed.made.retain(|key, _| kept.contains(key));
+        pressed.failed.retain(|key| kept.contains(key));
     }
 
     /// Whether a texture preview is being made: frames keep coming until
@@ -282,6 +260,25 @@ impl PressedMeshes {
     /// Whether one is being made.
     pub(crate) fn pending(&self) -> bool {
         !self.making.is_empty()
+    }
+
+    /// Take in the meshes the threads made. A thread that ended without
+    /// one (it panicked) is said in the log and its key kept as failed,
+    /// so it neither keeps frames coming nor starts again.
+    fn take_in(&mut self) {
+        for (key, answer) in &mut self.making {
+            match crate::platform::take_answer(answer) {
+                Some(Ok(mesh)) => {
+                    self.made.insert(*key, mesh);
+                }
+                Some(Err(_)) => {
+                    crate::log_panel::warn("A texture preview stopped without a mesh.");
+                    self.failed.insert(*key);
+                }
+                None => {}
+            }
+        }
+        self.making.retain(|_, answer| answer.is_some());
     }
 }
 
@@ -336,6 +333,20 @@ mod tests {
         assert!(textures_of(&doc, mirrored).is_some_and(|(_, mirror)| mirror.is_some()));
         assert_eq!(key(&doc, moved), key(&doc, body));
         assert_ne!(key(&doc, mirrored), key(&doc, body));
+    }
+
+    /// A preview whose thread ends without a mesh is let go and kept as
+    /// failed, so nothing is left pending.
+    #[test]
+    fn a_preview_that_dies_is_let_go() {
+        let mut pressed = PressedMeshes::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        pressed.making.insert(5, Some(rx));
+        pressed.take_in();
+        assert!(pressed.pending());
+        drop(tx);
+        pressed.take_in();
+        assert!(!pressed.pending() && pressed.failed.contains(&5));
     }
 
     /// A copy's own textures decide over its source's.
