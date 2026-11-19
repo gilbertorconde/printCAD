@@ -94,7 +94,7 @@ impl DesignWorkbench {
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         let mut lines = self.centre_overlays(ctx);
         for handle in self.handles(ctx) {
-            lines.extend(handles::overlays(ctx, &handle, self.tab.held.is_some()));
+            lines.extend(handles::overlays(ctx, &handle, self.is_held(&handle)));
         }
         lines.extend(self.failing_edge_overlays(ctx, active_feature));
         lines
@@ -107,7 +107,7 @@ impl DesignWorkbench {
     ) -> Vec<core_document::ScreenSpaceMark> {
         let mut marks = self.centre_marks(ctx);
         for handle in self.handles(ctx) {
-            marks.extend(handles::marks(ctx, &handle, self.tab.held.is_some()));
+            marks.extend(handles::marks(ctx, &handle, self.is_held(&handle)));
         }
         marks.extend(instances::marks(
             ctx,
@@ -115,6 +115,15 @@ impl DesignWorkbench {
             self.tab.hovered_occurrence,
         ));
         marks
+    }
+
+    /// Whether `handle` is the one a press holds: the same number of the
+    /// same feature, whatever it has been dragged to.
+    fn is_held(&self, handle: &handles::Handle) -> bool {
+        self.tab
+            .held
+            .as_ref()
+            .is_some_and(|held| held.feature == handle.feature && held.pointer == handle.pointer)
     }
 
     pub(crate) fn status_items(
