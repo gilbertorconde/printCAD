@@ -297,7 +297,7 @@ impl PrintCadApp {
     }
 
     /// Hand every visible body to the slicer: written to a file of the
-    /// slicer's format in the temporary folder, then opened with the
+    /// slicer's format in this run's private folder, then opened with the
     /// slicer command from Preferences. Laid out for printing when
     /// `laid_out`, or when Preferences say so.
     pub(crate) fn send_to_slicer(&mut self, laid_out: bool) {
@@ -319,11 +319,23 @@ impl PrintCadApp {
             app_log::warn("Nothing to send: no visible body has geometry");
             return;
         }
-        let folder = std::env::temp_dir().join("printcad").join("slicer");
-        if let Err(err) = std::fs::create_dir_all(&folder) {
-            app_log::error(format!("Could not make {}: {err}", folder.display()));
+        if self.files.export_rx.is_some() {
+            app_log::warn("An export is still being written");
             return;
         }
+        let folder = match self.files.slicer_folder.clone().filter(|f| f.is_dir()) {
+            Some(folder) => folder,
+            None => match make_slicer_folder(&slicer_base()) {
+                Ok(folder) => {
+                    self.files.slicer_folder = Some(folder.clone());
+                    folder
+                }
+                Err(err) => {
+                    app_log::error(format!("Could not make a folder for the slicer: {err}"));
+                    return;
+                }
+            },
+        };
         let stem = self
             .session
             .file
@@ -332,7 +344,16 @@ impl PrintCadApp {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| file_stem_of(self.session.document.name()));
-        let path = folder.join(format!("{stem}.{}", draft.format.extension()));
+        let path = match reserve_slicer_file(&folder, &stem, draft.format.extension()) {
+            Ok(path) => path,
+            Err(err) => {
+                app_log::error(format!(
+                    "Could not make a file for the slicer in {}: {err}",
+                    folder.display()
+                ));
+                return;
+            }
+        };
         let command = printing.slicer_command.clone();
         self.write_export(path, draft, Some(command));
     }
@@ -620,6 +641,60 @@ fn lua_table(args: &core_document::CommandArgs) -> String {
         .map(|(k, v)| format!("{k} = {}", lua(v)))
         .collect();
     format!("{{{}}}", fields.join(", "))
+}
+
+/// Where this run's folder for the slicer goes: the user's own runtime
+/// folder, else the temporary folder.
+fn slicer_base() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute() && dir.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// A folder in `base` for the files this run sends to the slicer, made now
+/// under a name no other run or user takes, and open to this user alone.
+fn make_slicer_folder(base: &Path) -> std::io::Result<PathBuf> {
+    loop {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let folder = base.join(format!(
+            "printcad-slicer-{}-{}",
+            std::process::id(),
+            &id[..12]
+        ));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        match builder.create(&folder) {
+            Ok(()) => return Ok(folder),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// A new, empty file in `folder` for one send to the slicer: `stem.ext`,
+/// else `stem-2.ext` and on, each made only where nothing is, so two
+/// documents of one name never write the same file and nothing put there
+/// beforehand is written through.
+fn reserve_slicer_file(folder: &Path, stem: &str, ext: &str) -> std::io::Result<PathBuf> {
+    let mut n = 1;
+    loop {
+        let name = match n {
+            1 => format!("{stem}.{ext}"),
+            n => format!("{stem}-{n}.{ext}"),
+        };
+        let path = folder.join(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => return Ok(path),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 /// A document name as a file name: letters, digits and a few marks kept,
@@ -1281,6 +1356,39 @@ mod tests {
         assert_eq!(args, ["--single", "/tmp/printcad/slicer/part.3mf"]);
         let (_, args) = slicer_invocation("slice --load={file} --go", file);
         assert_eq!(args, ["--load=/tmp/printcad/slicer/part.3mf", "--go"]);
+    }
+
+    /// Each run sends to a folder of its own, open to its user alone; two
+    /// documents of one name get a file each, and a link put where a file
+    /// would go is passed over rather than written through.
+    #[test]
+    fn slicer_files_are_private_and_never_shared() {
+        let base = std::env::temp_dir().join(format!("slicer-base-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&base).unwrap();
+        let folder = make_slicer_folder(&base).unwrap();
+        let other = make_slicer_folder(&base).unwrap();
+        assert_ne!(folder, other, "a folder per run");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        let first = reserve_slicer_file(&folder, "bracket", "3mf").unwrap();
+        let second = reserve_slicer_file(&folder, "bracket", "3mf").unwrap();
+        assert_ne!(first, second);
+        assert!(first.is_file() && second.is_file());
+        #[cfg(unix)]
+        {
+            let target = base.join("target");
+            std::fs::write(&target, b"keep").unwrap();
+            std::os::unix::fs::symlink(&target, other.join("part.stl")).unwrap();
+            let path = reserve_slicer_file(&other, "part", "stl").unwrap();
+            assert_eq!(path, other.join("part-2.stl"));
+            crate::platform::write(&path, b"mesh").unwrap();
+            assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        }
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

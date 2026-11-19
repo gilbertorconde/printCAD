@@ -156,7 +156,10 @@ Export for printing walks it on the pocketed example. With
 `PrintingSettings::apply_compensation`, mesh exports scale each body about
 its middle by `compensation` (`ExportBody::scale`; `app.print_compensation`,
 from `inspect.compensation`). File › Send to
-slicer writes the visible bodies to `$TMPDIR/printcad/slicer/` in the
+slicer writes the visible bodies to a new file (made exclusively, a
+number added on a clash) in this run's own 0700 folder,
+`printcad-slicer-<pid>-<random>` under `$XDG_RUNTIME_DIR` or the
+temporary folder (`FileWork::slicer_folder`), in the
 format of `PrintingSettings::slicer_format` and runs
 `slicer_command` on it (`{file}` places the path, else it goes last;
 empty uses `xdg-open`). File › Print layout (`app/print_layout.rs`, a

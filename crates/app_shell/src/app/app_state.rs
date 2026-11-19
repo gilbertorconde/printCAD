@@ -224,6 +224,9 @@ pub(crate) struct FileWork {
     pub closed_files: Vec<PathBuf>,
     /// A picture of the view that arrived from the renderer, to be saved.
     pub picture: Option<render_wgpu::CapturedImage>,
+    /// This run's own folder for the files sent to the slicer, once one
+    /// has been sent.
+    pub slicer_folder: Option<PathBuf>,
 }
 
 impl FileWork {
@@ -235,6 +238,7 @@ impl FileWork {
             recent,
             closed_files: Vec::new(),
             picture: None,
+            slicer_folder: None,
         }
     }
 }
