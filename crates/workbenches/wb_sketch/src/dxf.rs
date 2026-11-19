@@ -133,16 +133,25 @@ pub(crate) fn add_drawing(sketch: &mut Sketch, drawing: &Drawing2d, scale: f64) 
                 let c = at(*centre);
                 let r = radius * scale;
                 let on = |t: f64| [c[0] + r * t.cos(), c[1] + r * t.sin()];
-                let (start, end) = (
-                    points.at(sketch, on(*start_angle)),
-                    points.at(sketch, on(*end_angle)),
-                );
-                if start != end {
+                // An arc all the way round (0 to 360 degrees) is a circle.
+                if (end_angle - start_angle).abs() >= std::f64::consts::TAU - 1e-9 {
                     let centre = points.at(sketch, c);
-                    made.push(
-                        sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, r))),
+                    made.push(sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, r))));
+                    added.circles += 1;
+                } else {
+                    let (start, end) = (
+                        points.at(sketch, on(*start_angle)),
+                        points.at(sketch, on(*end_angle)),
                     );
-                    added.arcs += 1;
+                    if start != end {
+                        let centre = points.at(sketch, c);
+                        made.push(
+                            sketch.add_geometry(GeometryElement::Arc(Arc::new(
+                                centre, start, end, r,
+                            ))),
+                        );
+                        added.arcs += 1;
+                    }
                 }
             }
             DrawingShape::Circle { centre, radius } => {
@@ -370,6 +379,30 @@ mod tests {
 
     /// Circles, arcs and ellipses come in as the sketch's own; a spline as
     /// the lines through its points.
+    /// An arc that goes all the way round is a circle, not two ends on one
+    /// point and nothing between them.
+    #[test]
+    fn a_full_turn_arc_is_a_circle() {
+        let mut sketch = Sketch::new("s");
+        let arc = DrawingShape::Arc {
+            centre: [5.0, 0.0],
+            radius: 2.0,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::TAU,
+        };
+        let added = add_drawing(
+            &mut sketch,
+            &drawing(vec![DrawingCurve {
+                hidden: false,
+                shape: arc,
+                layer: String::new(),
+            }]),
+            1.0,
+        );
+        assert_eq!((added.circles, added.arcs), (1, 0));
+        assert_eq!(points_of(&sketch), 1, "the centre alone");
+    }
+
     #[test]
     fn circles_arcs_ellipses_and_splines_come_in() {
         let mut sketch = Sketch::new("s");
