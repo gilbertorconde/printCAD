@@ -1,17 +1,18 @@
 //! Shapes drawn through clicks a snap put on a curve or a point stay
 //! through them, and centred on one there: moving what was snapped to
-//! carries the shape along.
+//! carries the shape along. The holds say nothing twice.
 
 use super::Harness;
-use wb_sketch::sketch::{ConstraintKind, GeometryElement, Line, Point, Vec2D};
+use wb_sketch::sketch::{ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
 use wb_sketch::snap::distance_to_element;
 
 /// Each tool's clicks on a sketch holding a level line along y = 10, an
 /// upright one along x = 20 and a point at (0, -6); the clicks on them
-/// are held there and the shape through them, until those three move.
+/// are held there and the shape through them, until those three move,
+/// with nothing redundant or conflicting.
 #[test]
 fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
-    let cases: [(&str, &[(f64, f64)]); 7] = [
+    let cases: [(&str, &[(f64, f64)]); 10] = [
         ("sketch.circle", &[(-3.0, 2.0), (1.0, 10.0)]),
         ("sketch.circle3", &[(-8.0, 10.0), (20.0, 3.0), (0.0, -6.0)]),
         ("sketch.arc3", &[(-8.0, 10.0), (20.0, 3.0), (0.0, -6.0)]),
@@ -22,6 +23,18 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
         ),
         ("sketch.ellipse", &[(-6.0, 10.0), (4.0, 4.0), (-3.0, 13.0)]),
         ("sketch.slot", &[(-6.0, 10.0), (-6.0, -2.0)]),
+        (
+            "sketch.ellipse_arc",
+            &[(-6.0, 10.0), (4.0, 4.0), (-3.0, 13.0), (-14.0, 12.0)],
+        ),
+        (
+            "sketch.parabola",
+            &[(-6.0, 10.0), (-6.0, 4.0), (-16.0, 3.0), (4.0, 3.0)],
+        ),
+        (
+            "sketch.arc_slot",
+            &[(-6.0, 10.0), (20.0, 3.0), (-6.0, 40.0)],
+        ),
     ];
     for (tool, clicks) in cases {
         let mut h = Harness::sketching();
@@ -81,7 +94,9 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
             .find(|g| {
                 !before.contains(&g.id())
                     && match g {
-                        GeometryElement::Circle(_) | GeometryElement::Ellipse(_) => true,
+                        GeometryElement::Circle(_)
+                        | GeometryElement::Ellipse(_)
+                        | GeometryElement::Conic(_) => true,
                         GeometryElement::Arc(a) => {
                             tool != "sketch.slot" || held.contains(&a.center)
                         }
@@ -91,9 +106,26 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
             .map(GeometryElement::id)
             .unwrap_or_else(|| panic!("{case}: no shape"));
 
-        // Each held point not the shape's own is on it once: none was
-        // dropped as saying again what the others do.
-        let own = wb_sketch::sketch::Sketch::curve_point_ids(sketch.get_geometry(curve).unwrap());
+        // The new curves' own points, and their centres.
+        let new = || sketch.geometry.iter().filter(|g| !before.contains(&g.id()));
+        let own: Vec<_> = new().flat_map(Sketch::curve_point_ids).collect();
+        let centres: Vec<_> = new()
+            .filter(|g| !matches!(g, GeometryElement::Line(_) | GeometryElement::BSpline(_)))
+            .filter_map(|g| Sketch::curve_point_ids(g).first().copied())
+            .collect();
+        let status = core_document::testing::call_checked(
+            &mut wb_sketch::SketchWorkbench::default(),
+            &mut h.doc,
+            "sketch.status",
+            serde_json::json!({ "sketch": h.active_object.unwrap().0.to_string() }),
+        )
+        .unwrap();
+        for list in ["redundant", "conflicting"] {
+            assert_eq!(status[list], serde_json::json!([]), "{case}: {list}");
+        }
+
+        // Each held point no new curve's own is on the shape once: none
+        // was dropped as saying again what the others do.
         for &id in held.iter().filter(|id| !own.contains(id)) {
             let holds = sketch
                 .constraints
@@ -141,12 +173,7 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
                 near_line < 1e-6 || id == mark,
                 "{case}: off its line by {near_line}"
             );
-            let centre = match sketch.get_geometry(curve) {
-                Some(GeometryElement::Arc(a)) => a.center == id,
-                Some(GeometryElement::Ellipse(e)) => e.center == id,
-                _ => false,
-            };
-            if !centre {
+            if !centres.contains(&id) {
                 let off = on(id, curve);
                 assert!(off < 1e-6, "{case}: the shape left a held point by {off}");
             }

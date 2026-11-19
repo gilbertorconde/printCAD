@@ -448,7 +448,7 @@ pub(super) fn ellipse_arc(
                 let a = major.to_glam();
                 Vec2D::from_glam(c.to_glam() + a * cos + a.perp() * ratio * sin)
             };
-            let center_id = materialize(sketch, center);
+            let center_id = materialize_on_curve(sketch, center, snap_tol);
             let start_id = sketch.add_geometry(GeometryElement::Point(Point::new(on_rim(start_t))));
             let end_id = sketch.add_geometry(GeometryElement::Point(Point::new(on_rim(end_t))));
             let ellipse = sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new_arc(
@@ -724,7 +724,7 @@ pub(super) fn conic(
             if (t1 - t0).abs() < 1e-4 {
                 return ToolEffect::none();
             }
-            let center_id = materialize(sketch, center);
+            let center_id = materialize_on_curve(sketch, center, snap_tol);
             let start_id = sketch.add_geometry(GeometryElement::Point(Point::new(start)));
             let end_id = sketch.add_geometry(GeometryElement::Point(Point::new(end)));
             sketch.add_geometry(GeometryElement::Conic(Conic::new(
@@ -1124,8 +1124,9 @@ pub(super) fn arc_slot(
             if joins_itself([center, start].iter().chain(&derived)) {
                 return ToolEffect::log("The slot would join a point to itself");
             }
-            let center_id = materialize(sketch, center);
-            let cap_a_id = materialize(sketch, start);
+            // Both clicks stay where a snap put them.
+            let center_id = materialize_on_curve(sketch, center, snap_tol);
+            let cap_a_id = materialize_on_curve(sketch, start, snap_tol);
             let [cap_b_id, outer_a, outer_b, inner_a, inner_b] =
                 derived.map(|t| materialize(sketch, t));
 

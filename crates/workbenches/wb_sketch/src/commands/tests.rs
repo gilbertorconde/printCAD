@@ -303,7 +303,7 @@ fn shapes_with_rounded_ends_hold_together_when_dragged() {
         ),
         (
             "arc_slot",
-            json!([[0, 0], [20, 0], [0, 20]]),
+            json!([[1, 1], [21, 1], [1, 21]]),
             json!({"slot_width": 4}),
             6,
         ),
