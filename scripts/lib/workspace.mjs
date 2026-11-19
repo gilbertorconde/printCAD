@@ -64,3 +64,13 @@ export function workspaceAt(directory, run = execFileSync, exists = existsSync) 
 }
 
 export const { members, ownerOf, changedSince } = workspaceAt(root);
+
+// The cargo feature that compiles a package's heavy tests: the slow and
+// big-model integration tests, in modules named `heavy` under
+// `#[cfg(feature = "heavy-tests")]`, which the default test build leaves out.
+export const HEAVY_FEATURE = "heavy-tests";
+
+// The workspace packages that declare the heavy-test feature, by name.
+export function heavyPackages() {
+  return members().filter(p => Object.hasOwn(p.features ?? {}, HEAVY_FEATURE)).map(p => p.name);
+}

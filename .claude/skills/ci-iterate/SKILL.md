@@ -87,7 +87,9 @@ remain (the owner pushes, tags and approves).
    ceiling, the seam grep), `test` (Linux: the tests within their budget,
    on a pull request only the crates it reaches) and `platforms` (Windows
    and macOS: clippy, and the tests on master or when the change can
-   differ by platform). A pull request that skipped the platform tests
+   differ by platform) and `heavy` (Linux: the heavy tests, on master,
+   nightly, on request, or with the `heavy-tests` label;
+   `node scripts/gates.mjs --only heavy --all` locally). A pull request that skipped the platform tests
    can still go red on master; the `platforms` label runs them early. `release.yml` runs on a `v*` tag; a run that
    stopped part-way is finished by dispatching it with the tag, which the
    owner does.

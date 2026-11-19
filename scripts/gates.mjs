@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // The gate list shared by local runs and CI. --only selects a group or a
 // named gate; arguments after -- go to the budgeted workspace tests.
+// --heavy adds the heavy tests (scripts/test-budget.mjs --heavy) after the
+// default ones; `--only heavy` runs them alone.
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { root } from "./lib/workspace.mjs";
+import { HEAVY_FEATURE, heavyPackages, root } from "./lib/workspace.mjs";
 
 const HEADLESS = [
   "core_document", "wb_sketch", "wb_design", "wb_surface", "wb_assembly", "wb_mesh", "wb_inspect",
@@ -13,6 +15,7 @@ const HEADLESS = [
 ];
 
 export function gateList({ all = false, testArgs } = {}) {
+  const heavy = heavyPackages();
   return [
     ["format", "lint", "cargo", ["fmt", "--all", "--check"]],
     ["tooling", "lint", "node", ["--test", "scripts/workspace.test.mjs"]],
@@ -39,9 +42,18 @@ export function gateList({ all = false, testArgs } = {}) {
       `${name} without egui`, "lint", "cargo",
       ["clippy", "-p", name, "--lib", "--no-default-features", "--", "-D", "warnings"],
     ]),
+    // The heavy tests build only with their feature: checked on every
+    // change, so one that stops compiling is caught before master runs it.
+    ...(heavy.length ? [[
+      "clippy heavy tests", "lint", "cargo",
+      ["clippy", ...heavy.flatMap(p => ["-p", p]), "--all-targets", "--features",
+        heavy.map(p => `${p}/${HEAVY_FEATURE}`).join(","), "--", "-D", "warnings"],
+    ]] : []),
     ["comments", "lint", "node", ["scripts/lint-comment-rot.mjs", ...(all ? ["--all"] : [])]],
     ["test lines", "lint", "node", ["scripts/test-lines.mjs"]],
     ["tests", "tests", "node", ["scripts/test-budget.mjs", ...(testArgs ?? (all ? [] : ["--changed"]))]],
+    ["heavy tests", "heavy", "node",
+      ["scripts/test-budget.mjs", "--heavy", ...(testArgs ?? (all ? [] : ["--changed"]))]],
   ];
 }
 
@@ -51,13 +63,16 @@ export function selectedGates(args) {
   const options = separator < 0 ? [...args] : args.slice(0, separator);
   let only;
   let all = false;
+  let heavy = false;
   while (options.length) {
     const option = options.shift();
     if (option === "--all") all = true;
+    else if (option === "--heavy") heavy = true;
     else if (option === "--only" && options.length) only = options.shift();
     else throw new Error(`unknown gate option: ${option}`);
   }
-  const gates = gateList({ all, testArgs }).filter(([name, group]) => !only || only === group || only === name);
+  const gates = gateList({ all, testArgs }).filter(([name, group]) =>
+    only ? only === group || only === name : group !== "heavy" || heavy);
   if (!gates.length) throw new Error(`unknown gate selection: ${only}`);
   return gates;
 }

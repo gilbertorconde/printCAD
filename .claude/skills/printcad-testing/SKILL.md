@@ -21,12 +21,28 @@ The before-committing checks and the comment rule are in `CLAUDE.md`. Pictures f
   "line-tables-only"`, about a fifth off a test build); a debugger session
   sets `CARGO_PROFILE_DEV_DEBUG=full`.
 - The suite has a time budget (`scripts/test-budget.mjs`: 60 s a program,
-  150 s in all, on CI, two programs running at a time); a test that needs
-  a big model is `#[ignore]` with the reason, run on request. While
+  150 s in all, on CI, two programs running at a time). While
   working, test what a change reaches: `node scripts/test-budget.mjs
   --changed` (`scripts/affected-crates.mjs` against the merge base with
   origin/master: changed crates and everything depending on them,
   dev-dependencies included; the changed crates' programs run first).
+- Heavy tests: a test that needs a big model (the real part, the
+  carriage, a package's fixture) or a long build goes into a `mod heavy`
+  at the end of its module file, under `#[cfg(feature = "heavy-tests")]`
+  with `use super::*;`, keeping its name and doc comment; the doc says
+  when it needs a big model. The package declares `heavy-tests = []`
+  (features are per package; `kernel_ogeom` does today). The default
+  build neither compiles nor runs them, and `test-budget.mjs` fails if a
+  default program holds one. Keep a cheap test of the same behaviour in
+  the default suite where the heavy one would be its only cover (a
+  smaller model, fewer cases, through a shared helper). Run them with
+  `node scripts/test-budget.mjs --heavy` (with `--changed` or `-p` too)
+  or `node scripts/gates.mjs --heavy`; they have their own budget (300 s
+  a program, 600 s in all). The lint gates clippy them with the feature
+  on, so a change that breaks their build fails on its pull request. CI's
+  `heavy` job runs them on every push to master, nightly, on
+  `workflow_dispatch`, and on a pull request carrying the `heavy-tests`
+  label.
 - CI (`.github/workflows/ci.yml`): a push to master builds, lints and
   tests everything on Linux, Windows and macOS. A pull request lints
   everything on all three, but tests on Linux only what it reaches

@@ -30,6 +30,8 @@ cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 node scripts/gates.mjs            # every gate above in order, stopping at the first failure (--all for the full suite)
                                   # (it also clippies each bench --lib without egui, the headless build its dependents use)
+node scripts/gates.mjs --heavy    # the same, then the heavy tests (--only heavy for them alone)
+node scripts/test-budget.mjs --heavy     # the heavy tests (big models, long builds) behind each package's heavy-tests feature
 node scripts/check-layers.mjs     # each crate depends only on crates of lower layers (the table in the script)
 cargo test -p <crate>             # one crate while iterating; clippy and fmt take -p too
 ```
