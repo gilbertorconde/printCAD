@@ -736,20 +736,26 @@ pub fn snap_at(
 }
 
 /// Advance the tool state machine with a left click at `cursor` (sketch
-/// coords). `snap_tol` is in sketch units; `params` carries the
-/// panel-editable tool settings; `selected` is the current selection (used
-/// by the offset and transform tools).
+/// coords). `snap_tol` is in sketch units; `snapped` is the snap the
+/// click landed by, when it was found already (the line tools read it
+/// rather than find it again); `params` carries the panel-editable tool
+/// settings; `selected` is the current selection (used by the offset and
+/// transform tools).
+#[allow(clippy::too_many_arguments)]
 pub fn handle_click(
     state: &mut ToolState,
     tool: &str,
     sketch: &mut Sketch,
     cursor: Vec2D,
     snap_tol: f64,
+    snapped: Option<&snap::Snap>,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {
     let before = sketch.constraints.len();
-    let effect = run_click(state, tool, sketch, cursor, snap_tol, params, selected);
+    let effect = run_click(
+        state, tool, sketch, cursor, snap_tol, snapped, params, selected,
+    );
     if !params.auto_constraints {
         drop_extension_holds(sketch, before);
     }
@@ -787,6 +793,7 @@ fn run_click(
     sketch: &mut Sketch,
     cursor: Vec2D,
     snap_tol: f64,
+    snapped: Option<&snap::Snap>,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {
@@ -806,8 +813,12 @@ fn run_click(
     }
     match tool {
         "sketch.point" => draw::point(sketch, cursor, snap_tol),
-        "sketch.line" => crate::chain::click(state, sketch, cursor, snap_tol, params, false),
-        "sketch.polyline" => crate::chain::click(state, sketch, cursor, snap_tol, params, true),
+        "sketch.line" => {
+            crate::chain::click(state, sketch, cursor, snap_tol, snapped, params, false)
+        }
+        "sketch.polyline" => {
+            crate::chain::click(state, sketch, cursor, snap_tol, snapped, params, true)
+        }
         "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
         "sketch.circle3" => draw::circle3(state, sketch, cursor, snap_tol),
         "sketch.arc" => draw::arc(state, sketch, cursor, snap_tol),

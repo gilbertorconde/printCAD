@@ -326,7 +326,7 @@ impl SketchWorkbench {
             return None;
         }
         let sketch = &feature.sketch;
-        let (at, tol) = step::land(&self.tab.tool_state, sketch, tool, cursor, typed, settings);
+        let (at, tol, _) = step::land(&self.tab.tool_state, sketch, tool, cursor, typed, settings);
         crate::rect::propose(
             &self.tab.tool_state,
             sketch,

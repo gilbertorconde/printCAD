@@ -672,6 +672,7 @@ fn draw(
         avoid_redundant: a.opt_bool("avoid_redundant")?.unwrap_or(true),
         remove_redundant: a.opt_bool("remove_redundant")?.unwrap_or(false),
         reuse_lines: a.opt_bool("reuse_lines")?.unwrap_or(false),
+        snapped: None,
     };
     let selected: std::collections::HashSet<Uuid> = match args.get("selection") {
         Some(v) if !v.is_null() => ids(Some(v), "selection", sketch)?.into_iter().collect(),
