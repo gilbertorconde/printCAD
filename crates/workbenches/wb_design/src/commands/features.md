@@ -874,8 +874,8 @@ and an end cap comes nearer.
 
 `text` ("Text"; a `{formula}` shows its value), `font`, `size` (5 mm),
 `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set
-the text, `size`, `spacing` and `angle` taking formulas, and a `size` not
-above zero is an error on the feature; `mode` ("Emboss", "Deboss" or "Split")
+the text, each of these numbers taking formulas, and a `size` not above zero
+is an error on the feature; `mode` ("Emboss", "Deboss" or "Split")
 and `height` (0.6 mm) what it does to the face.
 
 On a curved face the text wraps onto it (`wrap`, set by itself when the face

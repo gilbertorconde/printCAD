@@ -2326,10 +2326,10 @@ pub enum DesignFeature {
         /// Where its middle stands from where the face was picked, mm
         /// across and up the face as the text reads.
         #[serde(default)]
-        #[walk(setting)]
+        #[walk(length("across", "Across"))]
         across: f32,
         #[serde(default)]
-        #[walk(setting)]
+        #[walk(length("up", "Up"))]
         up: f32,
         /// On a cylinder or cone, the text runs along its axis rather than
         /// round it.

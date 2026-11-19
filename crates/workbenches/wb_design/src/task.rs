@@ -451,6 +451,7 @@ impl DesignWorkbench {
                 editors::feature_editor(f, shown, &mut fx, body, feature_id, &mut feature);
             (changed, std::mem::take(&mut fx.edits))
         };
+        let formulas_set = !formula_edits.is_empty();
         for (key, formula) in formula_edits {
             if let Err(why) = ctx.document.set_feature_formula(feature_id, key, formula) {
                 ctx.log_warn(why.to_string());
@@ -458,6 +459,11 @@ impl DesignWorkbench {
         }
         if changed {
             self.apply_part_edit(ctx, feature_id, &deps_before, sketch_before, &feature);
+        } else if formulas_set
+            && matches!(feature, DesignFeature::Text { .. })
+            && let Err(why) = crate::text_feature::sync(ctx.document, feature_id)
+        {
+            ctx.log_warn(why);
         }
 
         // The header's pill says it is rebuilding or previewing; a failure
