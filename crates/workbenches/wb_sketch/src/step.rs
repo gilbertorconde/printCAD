@@ -33,6 +33,10 @@ pub(crate) struct StepSettings {
     /// A line the click lays between two points a line of its kind
     /// already joins is that line ([`crate::reuse`]).
     pub reuse_lines: bool,
+    /// The snap the caller already found at the click's cursor, the
+    /// landing's, which a drawing tool's click takes as found; `None`
+    /// finds it here.
+    pub snapped: Option<crate::snap::Snap>,
 }
 
 /// What a click did.
@@ -60,7 +64,7 @@ pub(crate) fn click(
     selected: &HashSet<Uuid>,
 ) -> StepOutcome {
     capture.sync(state, Some(tool));
-    let (cursor, tol) = land(state, sketch, tool, cursor, typed, settings);
+    let (cursor, tol, snapped) = land(state, sketch, tool, cursor, typed, settings);
     // Which geometry existed, so construction mode flags everything a
     // drawing tool made (an id set: a tool may also remove a point). What
     // an edit makes of existing geometry (a fillet's arc, a trim's halves,
@@ -72,7 +76,16 @@ pub(crate) fn click(
     let state_before = state.clone();
     let constraints_before: HashSet<Uuid> = sketch.constraints.iter().map(|c| c.id).collect();
     let params = ovp::typed_params(&settings.params, state, typed);
-    let effect = tools::handle_click(state, tool, sketch, cursor, tol, &params, selected);
+    let effect = tools::handle_click(
+        state,
+        tool,
+        sketch,
+        cursor,
+        tol,
+        snapped.as_ref(),
+        &params,
+        selected,
+    );
     if let Some(before) = before.as_ref().filter(|_| settings.construction) {
         let made: Vec<Uuid> = sketch
             .geometry
@@ -221,8 +234,9 @@ fn reuse_lines(
 
 /// Where a click of `tool` at `cursor` is taken, and the reach the tool
 /// finds what it lands on within: a plain click where the snap cue said,
-/// typed values where they place it. The click and the line tools'
-/// preview both come through here.
+/// typed values where they place it; and the snap a plain click landed
+/// by (`settings.snapped`, else found here), which the tool reads as it
+/// is. The click and the line tools' preview both come through here.
 pub(crate) fn land(
     state: &ToolState,
     sketch: &Sketch,
@@ -230,17 +244,20 @@ pub(crate) fn land(
     cursor: Vec2D,
     typed: &[(FieldKind, f64)],
     settings: &StepSettings,
-) -> (Vec2D, f64) {
+) -> (Vec2D, f64, Option<crate::snap::Snap>) {
     if !typed.is_empty() {
         return (
             ovp::override_cursor(state, sketch, cursor, typed),
             settings.tol,
+            None,
         );
     }
     if !crate::is_draw_tool(tool) {
-        return (cursor, settings.tol);
+        return (cursor, settings.tol, None);
     }
-    let at = tools::snap_at(state, sketch, cursor, settings.tol, &settings.params).pos;
+    let snap = settings
+        .snapped
+        .unwrap_or_else(|| tools::snap_at(state, sketch, cursor, settings.tol, &settings.params));
     // Once snapped, the tool only finds again what the snap landed on: a
     // wider reach could pull the point on to something else.
     let tol = if settings.tol > 0.0 {
@@ -248,7 +265,7 @@ pub(crate) fn land(
     } else {
         settings.tol
     };
-    (at, tol)
+    (snap.pos, tol, Some(snap))
 }
 
 /// The line tool's arc to `cursor`: tangent to the curve that ends where
@@ -655,6 +672,52 @@ mod tests {
         let back = params_from_json(Some(&Value::Object(named))).unwrap();
         assert_eq!(back, params);
         assert!(params_from_json(Some(&json!({"sides": 3}))).is_err());
+    }
+
+    /// A click handed the snap its landing found lands where that snap
+    /// says, not where resolving again from its cursor would put it (on
+    /// the origin, here).
+    #[test]
+    fn a_click_lands_on_the_snap_it_is_handed() {
+        let mut sketch = Sketch::new("s");
+        let mut state = ToolState::Idle;
+        for at in [Vec2D::new(3.0, 4.0), Vec2D::new(3.0, 9.0)] {
+            let settings = StepSettings {
+                tol: 0.5,
+                params: ToolParams::default(),
+                construction: false,
+                avoid_redundant: false,
+                remove_redundant: false,
+                reuse_lines: false,
+                snapped: Some(crate::snap::Snap {
+                    target: crate::snap::SnapTarget::New(at),
+                    pos: at,
+                    kind: None,
+                    curve: None,
+                    on: None,
+                }),
+            };
+            let (cursor, typed) = (Vec2D::new(0.0, 0.0), &[]);
+            let mut capture = DimCapture::default();
+            let none = HashSet::new();
+            let line = "sketch.line";
+            click(
+                &mut state,
+                &mut capture,
+                line,
+                &mut sketch,
+                cursor,
+                typed,
+                false,
+                &settings,
+                &none,
+            );
+        }
+        let Some(GeometryElement::Line(line)) = sketch.geometry.last() else {
+            panic!("a line");
+        };
+        let ends = [line.start, line.end].map(|p| sketch.point_position(p).unwrap());
+        assert_eq!(ends, [Vec2D::new(3.0, 4.0), Vec2D::new(3.0, 9.0)]);
     }
 
     /// Counts a script names are held to what the tools can build: a

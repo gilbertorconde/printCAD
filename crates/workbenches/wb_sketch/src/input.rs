@@ -378,15 +378,16 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let (cursor, tol) = self.landing(ctx, &feature, tool, cursor);
-        if tool == "sketch.text" {
-            return self.text_click(ctx, &feature, cursor, tol);
-        }
-        let params = self.click_params();
         let chain = matches!(tool, "sketch.line" | "sketch.polyline");
         if chain {
             self.follow_history(ctx, &feature.sketch);
         }
+        // The landing's snap is the click's: the tool takes it as found.
+        let (cursor, tol, snapped) = self.landing_snap(ctx, &feature, tool, cursor);
+        if tool == "sketch.text" {
+            return self.text_click(ctx, &feature, cursor, tol);
+        }
+        let params = self.click_params();
         let tab = &mut *self.tab;
         tab.dim_capture.sync(&tab.tool_state, Some(tool));
         let typed = self.tab.dim_capture.typed(ctx.document);
@@ -394,10 +395,16 @@ impl SketchWorkbench {
             ctx.log_warn(format!("Not used: {why}"));
         }
         // Typed values read the cursor as keeping the way it was going.
+        let landed = cursor;
         let cursor = self
             .tab
             .dim_capture
             .steer(&self.tab.tool_state, &feature.sketch, cursor);
+        // The line tool's arc: let go after a drag from its end, or typed
+        // while the drag is under way.
+        let arc = tool == "sketch.line"
+            && (std::mem::take(&mut self.tab.arc_click)
+                || matches!(self.tab.tool_state, ToolState::PolylineFrom { .. }));
         let settings = step::StepSettings {
             tol,
             params,
@@ -405,12 +412,10 @@ impl SketchWorkbench {
             avoid_redundant: self.options.avoid_redundant_auto,
             remove_redundant: self.options.auto_remove_redundant,
             reuse_lines: self.options.reuse_lines,
+            // An arc snaps as the polyline's arc it becomes, not as the
+            // line the landing saw, and a steered cursor from where it is.
+            snapped: snapped.filter(|_| !arc && cursor == landed),
         };
-        // The line tool's arc: let go after a drag from its end, or typed
-        // while the drag is under way.
-        let arc = tool == "sketch.line"
-            && (std::mem::take(&mut self.tab.arc_click)
-                || matches!(self.tab.tool_state, ToolState::PolylineFrom { .. }));
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
         let card = !arc
             && ((typed.is_empty()
@@ -570,6 +575,7 @@ impl SketchWorkbench {
             avoid_redundant: self.options.avoid_redundant_auto,
             remove_redundant: self.options.auto_remove_redundant,
             reuse_lines: self.options.reuse_lines,
+            snapped: None,
         };
         self.open_text_task(ctx, feature, at, &settings);
         InputResult::consumed()

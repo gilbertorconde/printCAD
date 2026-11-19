@@ -3,7 +3,7 @@
 use crate::compile::compile_system;
 use crate::freedom::estimate;
 use crate::problem::{ConstraintId, Geometry, Length, Problem, Vector};
-use crate::solve::{SolveOutcome, iterate, jacobian, jacobian_rank};
+use crate::solve::{SolveOutcome, iterate, jacobian_rank, rank_jacobian};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -96,7 +96,7 @@ pub fn diagnose_at(problem: &Problem, outcome: SolveOutcome, solved: &Problem) -
             let full = compile_system(solved, None, false);
             if !full.specs.is_empty() && !full.vars.is_empty() {
                 let full_rank =
-                    jacobian_rank(jacobian(&full, &full.vars), problem.settings.rank_tolerance);
+                    jacobian_rank(rank_jacobian(&full), problem.settings.rank_tolerance);
                 // Fewer rows than a rank as large as the row count cannot
                 // keep that rank: no rank to work out for those.
                 let row_rank = full_rank == full.residual_len;
@@ -107,10 +107,8 @@ pub fn diagnose_at(problem: &Problem, outcome: SolveOutcome, solved: &Problem) -
                     {
                         continue;
                     }
-                    if jacobian_rank(
-                        jacobian(&system, &system.vars),
-                        problem.settings.rank_tolerance,
-                    ) == full_rank
+                    if jacobian_rank(rank_jacobian(&system), problem.settings.rank_tolerance)
+                        == full_rank
                     {
                         diagnosis.redundant.push(c.id);
                     }

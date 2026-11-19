@@ -2064,13 +2064,13 @@ impl SketchWorkbench {
         if !chain && rect.is_none() || self.tab.box_select.is_some() {
             return None;
         }
-        let (cursor, tol) = self.landing(ctx, feature, tool, self.tab.cursor?);
+        let (landed, tol, snapped) = self.landing_snap(ctx, feature, tool, self.tab.cursor?);
         let typed = self.tab.dim_capture.typed(ctx.document);
         let sketch = &feature.sketch;
         let cursor = self
             .tab
             .dim_capture
-            .steer(&self.tab.tool_state, sketch, cursor);
+            .steer(&self.tab.tool_state, sketch, landed);
         let settings = step::StepSettings {
             tol,
             params: ovp::typed_params(&self.click_params(), &self.tab.tool_state, &typed),
@@ -2078,8 +2078,9 @@ impl SketchWorkbench {
             avoid_redundant: false,
             remove_redundant: false,
             reuse_lines: false,
+            snapped: snapped.filter(|_| cursor == landed),
         };
-        let (at, tol) = step::land(
+        let (at, tol, snapped) = step::land(
             &self.tab.tool_state,
             sketch,
             tool,
@@ -2101,9 +2102,14 @@ impl SketchWorkbench {
                 Err(_) => None,
             };
         }
-        let chain::Resolved::End(end) =
-            chain::resolve(&self.tab.tool_state, sketch, at, tol, params)
-        else {
+        let chain::Resolved::End(end) = chain::resolve(
+            &self.tab.tool_state,
+            sketch,
+            at,
+            tol,
+            snapped.as_ref(),
+            params,
+        ) else {
             return None;
         };
         let proposal = chain::propose(&self.tab.tool_state, sketch, &end, params).ok()?;

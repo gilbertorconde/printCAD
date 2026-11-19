@@ -48,6 +48,7 @@ type Placed = (Uuid, [f64; 2]);
 #[derive(Default)]
 struct Points {
     cells: HashMap<(i64, i64), Vec<Placed>>,
+    made: Vec<Uuid>,
 }
 
 impl Points {
@@ -74,12 +75,33 @@ impl Points {
         }
         let id = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1]))));
         self.cells.entry((cx, cy)).or_default().push((id, p));
+        self.made.push(id);
         id
+    }
+
+    /// Take away the points made that no curve uses: the ends of what drew
+    /// nothing (an arc whose ends merged, a segment of no length), unless
+    /// a later curve met them.
+    fn drop_unused(self, sketch: &mut Sketch) {
+        let used: std::collections::HashSet<Uuid> = sketch
+            .geometry
+            .iter()
+            .flat_map(Sketch::curve_point_ids)
+            .collect();
+        let unused: Vec<Uuid> = self
+            .made
+            .into_iter()
+            .filter(|id| !used.contains(id))
+            .collect();
+        if !unused.is_empty() {
+            sketch.remove_geometry_cascade(&unused);
+        }
     }
 }
 
 /// Add `drawing`'s curves to `sketch`, scaled by `scale` (millimetres per
-/// drawing unit). Segments too short to have two ends are left out.
+/// drawing unit). Segments and arcs too short to have two ends are left
+/// out, and no point is left that nothing uses.
 pub(crate) fn add_drawing(sketch: &mut Sketch, drawing: &Drawing2d, scale: f64) -> Added {
     let mut points = Points::default();
     let mut added = Added::default();
@@ -189,6 +211,9 @@ pub(crate) fn add_drawing(sketch: &mut Sketch, drawing: &Drawing2d, scale: f64) 
                     };
                     let start = points.at(sketch, on(*start_param));
                     let end = points.at(sketch, on(*end_param));
+                    if start == end {
+                        continue;
+                    }
                     let ellipse = sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new_arc(
                         centre_id, major_v, *ratio, start, end,
                     )));
@@ -207,6 +232,7 @@ pub(crate) fn add_drawing(sketch: &mut Sketch, drawing: &Drawing2d, scale: f64) 
             added.construction += made.len();
         }
     }
+    points.drop_unused(sketch);
     added
 }
 
@@ -377,8 +403,36 @@ mod tests {
         assert_eq!(wires.len(), 1);
     }
 
-    /// Circles, arcs and ellipses come in as the sketch's own; a spline as
-    /// the lines through its points.
+    /// What draws nothing (an arc whose ends are one point, a polyline
+    /// segment of no length) leaves no point behind.
+    #[test]
+    fn what_draws_nothing_leaves_no_point() {
+        let mut sketch = Sketch::new("s");
+        let sliver = DrawingShape::Arc {
+            centre: [0.0, 0.0],
+            radius: 2.0,
+            start_angle: 0.0,
+            end_angle: MERGE_MM / 10.0,
+        };
+        let elliptic = DrawingShape::Ellipse {
+            centre: [9.0, 0.0],
+            major: [2.0, 0.0],
+            ratio: 0.5,
+            start_param: 0.0,
+            end_param: MERGE_MM / 10.0,
+        };
+        let mut curves: Vec<DrawingCurve> = [sliver, elliptic]
+            .map(|shape| DrawingCurve {
+                hidden: false,
+                shape,
+                layer: String::new(),
+            })
+            .into();
+        curves.push(open(vec![[5.0, 5.0], [5.0, 5.0]], false));
+        let added = add_drawing(&mut sketch, &drawing(curves), 1.0);
+        assert_eq!((added.curves(), points_of(&sketch)), (0, 0));
+    }
+
     /// An arc that goes all the way round is a circle, not two ends on one
     /// point and nothing between them.
     #[test]
@@ -403,6 +457,8 @@ mod tests {
         assert_eq!(points_of(&sketch), 1, "the centre alone");
     }
 
+    /// Circles, arcs and ellipses come in as the sketch's own; a spline as
+    /// the lines through its points.
     #[test]
     fn circles_arcs_ellipses_and_splines_come_in() {
         let mut sketch = Sketch::new("s");

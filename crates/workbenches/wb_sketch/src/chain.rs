@@ -157,12 +157,14 @@ pub(crate) fn is_chain(state: &ToolState) -> bool {
 }
 
 /// Where a click at `cursor` lands in `state`, `tol` the reach it snaps
-/// within: what the click applies and the preview shows.
+/// within, `snapped` the snap it landed by when that was found already:
+/// what the click applies and the preview shows.
 pub(crate) fn resolve(
     state: &ToolState,
     sketch: &Sketch,
     cursor: Vec2D,
     tol: f64,
+    snapped: Option<&Snap>,
     params: &ToolParams,
 ) -> Resolved {
     let (from, arc) = match *state {
@@ -173,7 +175,9 @@ pub(crate) fn resolve(
     let Some(from_pos) = from.position(sketch) else {
         return Resolved::StartGone;
     };
-    let snapped = tools::snap_at(state, sketch, cursor, tol, params);
+    let snapped = snapped
+        .copied()
+        .unwrap_or_else(|| tools::snap_at(state, sketch, cursor, tol, params));
     let (axis_pos, axis) = if arc {
         (cursor, None)
     } else {
@@ -442,10 +446,11 @@ pub(crate) fn click(
     sketch: &mut Sketch,
     cursor: Vec2D,
     tol: f64,
+    snapped: Option<&Snap>,
     params: &ToolParams,
     polyline: bool,
 ) -> tools::ToolEffect {
-    let end = match resolve(state, sketch, cursor, tol, params) {
+    let end = match resolve(state, sketch, cursor, tol, snapped, params) {
         Resolved::Start(from) => {
             *state = if polyline {
                 ToolState::PolylineFrom {

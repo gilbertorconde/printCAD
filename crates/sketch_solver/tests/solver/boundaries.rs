@@ -801,3 +801,66 @@ fn a_distance_separates_points_that_start_together() {
     );
     assert_eq!(solve(&input).unwrap().values, answer.values);
 }
+
+/// A point held on a circle but starting on its centre moves out to the
+/// rim, radius held or free, rather than stalling or shrinking the circle
+/// to nothing, the same way on every run.
+#[test]
+fn a_point_on_its_circles_centre_moves_out_to_the_rim() {
+    let circle = Geometry::Circle(Circle {
+        id: CurveId(3),
+        center: PointId(1).into(),
+        radius: Length(5.0),
+    });
+    let on = constraint(
+        1,
+        Relation::PointOnCircle {
+            point: PointId(2).into(),
+            circle: CurveId(3).into(),
+        },
+    );
+    let radius = Relation::Radius {
+        circle: CurveId(3).into(),
+        radius: Length(5.0),
+    };
+    for constraints in [vec![on.clone(), constraint(2, radius)], vec![on]] {
+        let input = Problem {
+            geometry: vec![point(1, 0.0, 0.0), point(2, 0.0, 0.0), circle.clone()],
+            constraints,
+            ..Problem::default()
+        };
+        let answer = solve(&input).unwrap();
+        assert!(
+            matches!(answer.outcome, SolveOutcome::Converged { .. }),
+            "{:?}",
+            answer.outcome
+        );
+        let v = &answer.values;
+        let off = (v[2] - v[0]).hypot(v[3] - v[1]);
+        assert!(off > 1.0 && (off - v[4]).abs() < 1e-8, "{v:?}");
+        assert_eq!(solve(&input).unwrap().values, answer.values);
+    }
+}
+
+/// Two points on one spot held apart by a distance count it: three
+/// degrees of freedom left, nothing redundant and nothing locked.
+#[test]
+fn stacked_points_under_a_distance_count_it() {
+    let input = Problem {
+        geometry: vec![point(1, 0.0, 0.0), point(2, 0.0, 0.0)],
+        constraints: vec![constraint(
+            1,
+            Relation::Distance {
+                point1: PointId(1).into(),
+                point2: PointId(2).into(),
+                distance: Length(5.0),
+            },
+        )],
+        ..Problem::default()
+    };
+    assert_eq!(sketch_solver::freedom::analyze(&input).unwrap().degrees, 3);
+    let diagnosis = sketch_solver::diagnosis::analyze(&input).unwrap();
+    assert_eq!((diagnosis.dof, diagnosis.redundant.len()), (3, 0));
+    let locked = sketch_solver::freedom::locked(&input);
+    assert!(locked.points.is_empty(), "{locked:?}");
+}

@@ -2,7 +2,7 @@
 
 use crate::compile::compile_system;
 use crate::problem::{ConicKind, Geometry, Problem};
-use crate::solve::{jacobian, jacobian_rank};
+use crate::solve::{jacobian_rank, rank_jacobian};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -40,7 +40,7 @@ pub fn estimate(problem: &Problem) -> Freedom {
     let rank = if sys.specs.is_empty() || sys.free.is_empty() {
         0
     } else {
-        jacobian_rank(jacobian(&sys, &sys.vars), problem.settings.rank_tolerance)
+        jacobian_rank(rank_jacobian(&sys), problem.settings.rank_tolerance)
     };
     Freedom {
         free_variables,
@@ -70,8 +70,7 @@ pub fn locked(problem: &Problem) -> Locked {
         var_locked[j] = false;
     }
     if !sys.free.is_empty() && !sys.specs.is_empty() {
-        let columns =
-            determined_columns(jacobian(&sys, &sys.vars), problem.settings.rank_tolerance);
+        let columns = determined_columns(rank_jacobian(&sys), problem.settings.rank_tolerance);
         for (&j, held) in sys.free.iter().zip(columns) {
             var_locked[j] = held;
         }

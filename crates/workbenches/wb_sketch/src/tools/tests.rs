@@ -69,6 +69,7 @@ impl With {
             sketch,
             at,
             self.tol,
+            None,
             &self.params,
             &self.selected,
         )
