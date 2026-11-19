@@ -221,10 +221,10 @@ fn text_round_a_whole_cylinder_is_sunk_into_it() {
 }
 
 /// Text spread round a whole cylinder goes round the cylinder as it is
-/// built, not as it was when the text went on: made smaller, the letters
-/// close up evenly as they would on a cylinder of that size from the
-/// start, rather than run past the seam into the first. Text longer than
-/// the turn says it does not fit.
+/// built, not as it was when the text went on: made smaller, even past
+/// where its face was picked, the letters sit as they would on a cylinder
+/// of that size from the start. Text longer than the turn says it does
+/// not fit.
 #[test]
 fn text_round_a_whole_cylinder_follows_its_radius() {
     let script = |radius: f64| {
@@ -255,30 +255,38 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
     let measure = |document: &Document, body: BodyId| {
         measured(&document.imported_brep_blob_arc(body).expect("a solid"))
     };
-    let (mut host, body) = run(10.0);
-    let primitive = wb_design::design_features_of_body(&host.document, body)
-        .into_iter()
-        .find(|(_, f)| matches!(f, wb_design::DesignFeature::Primitive { .. }))
-        .expect("the cylinder")
-        .0;
-    let mut data = host.document.get_feature_data(primitive).unwrap().clone();
-    *data
-        .pointer_mut("/Primitive/kind/Cylinder/radius")
-        .expect("a cylinder's radius") = serde_json::json!(8.0);
-    host.document.update_feature_data(primitive, data).unwrap();
-    host.document.mark_feature_dirty(primitive);
-    settle_as_host(&host.registry, &mut host.document);
-    let got = measure(&host.document, body);
-    let (fresh, fresh_body) = run(8.0);
-    let want = measure(&fresh.document, fresh_body);
-    let (v, w) = (got.volume_mm3.unwrap(), want.volume_mm3.unwrap());
-    assert!((v - w).abs() < 1e-3 * w, "{v} against {w}");
-    assert!(
-        (0..3).all(|i| (got.centre_mm[i] - want.centre_mm[i]).abs() < 1e-3),
-        "{:?} against {:?}",
-        got.centre_mm,
-        want.centre_mm
-    );
+    let mut failures = Vec::new();
+    for now in [8.0, 5.0] {
+        let (mut host, body) = run(10.0);
+        let primitive = wb_design::design_features_of_body(&host.document, body)
+            .into_iter()
+            .find(|(_, f)| matches!(f, wb_design::DesignFeature::Primitive { .. }))
+            .expect("the cylinder")
+            .0;
+        let mut data = host.document.get_feature_data(primitive).unwrap().clone();
+        *data
+            .pointer_mut("/Primitive/kind/Cylinder/radius")
+            .expect("a cylinder's radius") = serde_json::json!(now);
+        host.document.update_feature_data(primitive, data).unwrap();
+        host.document.mark_feature_dirty(primitive);
+        settle_as_host(&host.registry, &mut host.document);
+        let errors: Vec<String> = wb_design::design_features_of_body(&host.document, body)
+            .into_iter()
+            .filter_map(|(id, _)| host.document.get_feature_meta(id)?.error.clone())
+            .collect();
+        let got = measure(&host.document, body);
+        let (fresh, fresh_body) = run(now);
+        let want = measure(&fresh.document, fresh_body);
+        let (v, w) = (got.volume_mm3.unwrap(), want.volume_mm3.unwrap());
+        let centred = (0..3).all(|i| (got.centre_mm[i] - want.centre_mm[i]).abs() < 1e-3);
+        if !errors.is_empty() || (v - w).abs() >= 1e-3 * w || !centred {
+            failures.push(format!(
+                "radius {now}: {errors:?} {v} against {w}, {:?} against {:?}",
+                got.centre_mm, want.centre_mm
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 
     let long = built(&script(1.5)).expect_err("six letters do not fit round 3 mm");
     assert!(long.contains("does not fit"), "{long}");

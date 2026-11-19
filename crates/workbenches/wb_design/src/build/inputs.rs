@@ -159,8 +159,8 @@ fn read_datums_asking(
                     .probes(),
                 // A primitive attached by a mode asks what the attachment
                 // asks; a feature placed by faces of the solid asks where
-                // they are, and text round a whole turn the cylinder's
-                // radius.
+                // they are (and so text round a whole turn the cylinder's
+                // radius).
                 crate::KIND => match DesignFeature::from_json(&n.data).ok()? {
                     DesignFeature::Primitive {
                         attached: Some(attached),
@@ -169,7 +169,6 @@ fn read_datums_asking(
                     feature => feature
                         .placing_faces()
                         .into_iter()
-                        .chain(feature.turn_face())
                         .map(|face| face.probe())
                         .collect(),
                 },
