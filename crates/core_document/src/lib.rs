@@ -879,8 +879,9 @@ impl Document {
         tip.is_none_or(|tip| node.seq <= tip.seq)
     }
 
-    /// The features whose values formulas moved since this was last
-    /// asked, for `Workbench::values_moved`.
+    /// The features whose values formulas moved, or whose formulas were
+    /// set or taken away, since this was last asked, for
+    /// `Workbench::values_moved`.
     pub fn take_moved_values(&mut self) -> Vec<FeatureId> {
         std::mem::take(&mut self.evaluated.moved)
     }
@@ -971,6 +972,9 @@ impl Document {
                 key,
                 formula,
             });
+            // What a bench keeps in step with the feature's formulas
+            // follows, whether or not the value moves.
+            self.note_value_moved(feature_id);
         }
         Ok(())
     }

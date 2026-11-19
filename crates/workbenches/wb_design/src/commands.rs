@@ -757,11 +757,21 @@ mod tests {
         registry.evaluate(&mut s.doc);
         let (plain, plain_body, _) = text_at(3.0);
         assert_eq!(profile(&s, body), profile(&plain, plain_body));
+        // The formula, set from outside the task, reaches the hidden
+        // sketch as the host settles the formulas.
+        let sketch = s.doc.get_feature_data(id).unwrap()["Text"]["sketch"].clone();
+        let sketch = FeatureId(sketch.as_str().unwrap().parse().unwrap());
+        let moved = s.doc.take_moved_values();
+        let mut ctx = core_document::testing::ctx(&mut s.doc);
+        core_document::Workbench::values_moved(&mut s.bench, &mut ctx, &moved);
+        let formulas = &s.doc.get_feature_meta(sketch).unwrap().formulas;
+        assert!(
+            formulas.values().any(|f| f.ends_with(".size")),
+            "{formulas:?}"
+        );
 
         // Across takes a formula too; the hidden sketch shows the size the
         // formula gives while it has one, and its own once it has none.
-        let sketch = s.doc.get_feature_data(id).unwrap()["Text"]["sketch"].clone();
-        let sketch = FeatureId(sketch.as_str().unwrap().parse().unwrap());
         s.doc
             .set_feature_formula(id, "/Text/across", Some("1 mm + 1 mm".into()))
             .unwrap();
