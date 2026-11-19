@@ -2667,6 +2667,24 @@ fn arc_typed_radius_defers_constraint_until_arc_commits() {
     assert!(holds(&sketch, "Radius", Some(5.0)));
 }
 
+/// An arc's end snapped onto the point its start reused makes no arc:
+/// the click is refused and the tool waits for another end.
+#[test]
+fn an_arc_end_snapped_onto_its_start_is_refused() {
+    let mut h = Harness::sketching();
+    h.click(10.0, 0.0, "sketch.point");
+    h.key(KeyCode::Escape, Some("sketch.point"));
+    let before = h.counts();
+    h.click(0.0, 0.0, "sketch.arc");
+    h.click(10.0, 0.0, "sketch.arc");
+    h.click(10.0, 0.05, "sketch.arc");
+    assert_eq!(h.counts(), before, "no arc of one point");
+    h.click(0.0, 10.0, "sketch.arc");
+    let arc = arc_of(&h.sketch());
+    assert_ne!(arc.start, arc.end);
+    assert_eq!(h.counts().0, before.0 + 2, "a centre and a new end");
+}
+
 #[test]
 fn polygon_typed_radius_creates_construction_circumcircle() {
     let mut h = Harness::sketching();

@@ -157,6 +157,14 @@ pub(super) fn arc(
             }
             let end_pos = Vec2D::from_glam(center_pos.to_glam() + dir.normalize() * radius);
             let end_snap = snap::snap_to_point(sketch, end_pos, snap_tol, &[]);
+            // An end snapped onto the start would close the arc on one
+            // point, no sweep the solver can hold: wait for another end.
+            if end_snap
+                .position(sketch)
+                .is_none_or(|e| (e - start_pos).to_glam().length() < 1e-6)
+            {
+                return ToolEffect::none();
+            }
 
             let center_id = materialize_on_curve(sketch, center, snap_tol);
             let start_id = materialize_on_curve(sketch, start, snap_tol);
