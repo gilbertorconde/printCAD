@@ -375,27 +375,45 @@ pub enum DocumentOp {
     },
 }
 
-/// The document's outbox of captured-but-undrained ops.
+/// An op this replica applied and the server has not yet placed in the
+/// document's order, with the op that undoes it here (`None` when it has
+/// none).
+#[derive(Debug)]
+pub(crate) struct Unconfirmed {
+    pub(crate) op: DocumentOp,
+    pub(crate) inverse: Option<DocumentOp>,
+}
+
+/// The document's outbox of captured-but-undrained ops, and the batches
+/// drained to the server that it has not yet confirmed.
 ///
 /// `#[serde(skip)]` on the document field keeps it out of persistence, and
 /// the manual [`Clone`] **returns an empty buffer**: undo baselines and save
 /// snapshots are copies of *state*, not of the outbox; restoring an old
 /// snapshot must not resurrect ops that were already drained to the server.
+///
+/// Each op keeps its inverse so an edit from another client that the server
+/// ordered before these can be applied beneath them
+/// ([`Document::apply_server_ops`](crate::Document::apply_server_ops)).
 #[derive(Debug, Default)]
-pub struct OpBuffer(Vec<DocumentOp>);
+pub struct OpBuffer {
+    pending: Vec<Unconfirmed>,
+    in_flight: std::collections::VecDeque<Vec<Unconfirmed>>,
+}
 
 impl Clone for OpBuffer {
     fn clone(&self) -> Self {
-        Self(Vec::new())
+        Self::default()
     }
 }
 
 impl OpBuffer {
     /// Append an op, coalescing consecutive whole-payload writes to the same
-    /// feature: a drag's per-frame updates collapse to the latest payload.
-    pub fn record(&mut self, op: DocumentOp) {
+    /// feature: a drag's per-frame updates collapse to the latest payload,
+    /// which keeps the first one's inverse.
+    pub fn record(&mut self, op: DocumentOp, inverse: Option<DocumentOp>) {
         // A colour picker drag is one look per frame; the last is the op.
-        let same_target = match (&op, self.0.last()) {
+        let same_target = match (&op, self.pending.last().map(|u| &u.op)) {
             (
                 DocumentOp::UpdateFeatureData { id, .. },
                 Some(DocumentOp::UpdateFeatureData { id: tail, .. }),
@@ -407,23 +425,59 @@ impl OpBuffer {
             _ => false,
         };
         if same_target {
-            *self.0.last_mut().expect("tail exists") = op;
+            self.pending.last_mut().expect("tail exists").op = op;
             return;
         }
-        self.0.push(op);
+        self.pending.push(Unconfirmed { op, inverse });
     }
 
-    /// Drain everything recorded since the last take.
+    /// Drain everything recorded since the last take, as one batch for the
+    /// server; the batch waits for [`Self::confirm`].
     pub fn take(&mut self) -> Vec<DocumentOp> {
-        std::mem::take(&mut self.0)
+        let batch = std::mem::take(&mut self.pending);
+        let ops = batch.iter().map(|u| u.op.clone()).collect();
+        if !batch.is_empty() {
+            self.in_flight.push_back(batch);
+        }
+        ops
+    }
+
+    /// The server placed the oldest batch taken in the document's order.
+    pub fn confirm(&mut self) {
+        self.in_flight.pop_front();
+    }
+
+    /// Drop the batches no server will confirm: the connection they went
+    /// out on is gone.
+    pub fn forget_in_flight(&mut self) {
+        self.in_flight.clear();
+    }
+
+    /// Batches taken and not yet confirmed.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.len()
+    }
+
+    /// Every op not yet confirmed, oldest first: the batches in flight,
+    /// then the outbox. Taken out; [`Self::restore`] puts them back.
+    pub(crate) fn take_unconfirmed(&mut self) -> (Vec<Vec<Unconfirmed>>, Vec<Unconfirmed>) {
+        (
+            std::mem::take(&mut self.in_flight).into(),
+            std::mem::take(&mut self.pending),
+        )
+    }
+
+    pub(crate) fn restore(&mut self, in_flight: Vec<Vec<Unconfirmed>>, pending: Vec<Unconfirmed>) {
+        self.in_flight = in_flight.into();
+        self.pending = pending;
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.pending.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.pending.is_empty()
     }
 }
 
@@ -490,10 +544,10 @@ mod tests {
         let id = FeatureId::new();
         let other = FeatureId::new();
         let mut buffer = OpBuffer::default();
-        buffer.record(update(id, 1));
-        buffer.record(update(id, 2));
-        buffer.record(update(other, 3));
-        buffer.record(update(id, 4));
+        buffer.record(update(id, 1), None);
+        buffer.record(update(id, 2), None);
+        buffer.record(update(other, 3), None);
+        buffer.record(update(id, 4), None);
 
         let ops = buffer.take();
         assert_eq!(ops.len(), 3, "the first two collapse; the rest interleave");
@@ -506,7 +560,7 @@ mod tests {
     #[test]
     fn cloning_the_buffer_yields_an_empty_one() {
         let mut buffer = OpBuffer::default();
-        buffer.record(update(FeatureId::new(), 1));
+        buffer.record(update(FeatureId::new(), 1), None);
         let copy = buffer.clone();
         assert!(copy.is_empty(), "snapshots carry state, never the outbox");
         assert_eq!(buffer.len(), 1, "the original keeps its pending ops");

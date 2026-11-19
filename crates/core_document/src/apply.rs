@@ -9,12 +9,12 @@ impl Document {
     /// op is ABOUT to change, so per-user undo can restore it later without
     /// ever snapshotting the document.
     pub(crate) fn record_and_apply(&mut self, operation: op::DocumentOp) {
+        let inverse = self.invert_op(&operation);
         if !self.history_suppressed {
-            let inverse = self.invert_op(&operation);
-            self.journal_pending.record(&operation, inverse);
+            self.journal_pending.record(&operation, inverse.clone());
         }
         self.apply_op(&operation);
-        self.pending_ops.record(operation);
+        self.pending_ops.record(operation, inverse);
     }
 
     /// Apply an op produced by history traversal (undo/redo): the effect,
@@ -22,8 +22,9 @@ impl Document {
     /// hear an undo as ordinary ops), but never the journal, which is being
     /// walked, not written.
     pub(crate) fn apply_history_op(&mut self, operation: &op::DocumentOp) {
+        let inverse = self.invert_op(operation);
         self.apply_remote_op(operation);
-        self.pending_ops.record(operation.clone());
+        self.pending_ops.record(operation.clone(), inverse);
     }
 
     /// The op that would restore the state `operation` is about to change.
@@ -228,9 +229,67 @@ impl Document {
     }
 
     /// Ops captured since the last take. Drained once per frame by the host
-    /// and handed to the document server.
+    /// and handed to the document server as one batch, which stays
+    /// unconfirmed until [`Self::confirm_sent_ops`].
     pub fn take_pending_ops(&mut self) -> Vec<op::DocumentOp> {
         self.pending_ops.take()
+    }
+
+    /// The server placed the oldest batch [`Self::take_pending_ops`] gave
+    /// in the document's order.
+    pub fn confirm_sent_ops(&mut self) {
+        self.pending_ops.confirm();
+    }
+
+    /// Forget the batches sent on a connection that is gone: no server
+    /// will order them now.
+    pub fn forget_sent_ops(&mut self) {
+        self.pending_ops.forget_in_flight();
+    }
+
+    /// Batches sent and not yet confirmed.
+    pub fn sent_ops_unconfirmed(&self) -> usize {
+        self.pending_ops.in_flight()
+    }
+
+    /// Apply another editor's ops, which the server ordered before every op
+    /// of this replica it has not confirmed (the batches in flight and the
+    /// outbox): those are rolled back by their inverses, the server's ops
+    /// applied, and they are applied again on top, each with its inverse
+    /// worked out anew. Every replica then holds the state the server's
+    /// order gives: of two writes to one field, the later in that order
+    /// wins on all of them.
+    ///
+    /// Returns false when an unconfirmed op has no inverse (an import, a
+    /// body removed with what was on it): the server's ops are then applied
+    /// over the local ones, which agrees with the server's order unless both
+    /// touched the same thing.
+    pub fn apply_server_ops(&mut self, operations: &[op::DocumentOp]) -> bool {
+        let (mut in_flight, mut pending) = self.pending_ops.take_unconfirmed();
+        let exact = in_flight
+            .iter()
+            .flatten()
+            .chain(&pending)
+            .all(|u| u.inverse.is_some());
+        let local = !pending.is_empty() || !in_flight.is_empty();
+        if exact && local {
+            for unconfirmed in in_flight.iter().flatten().chain(&pending).rev() {
+                if let Some(inverse) = &unconfirmed.inverse {
+                    self.apply_remote_op(inverse);
+                }
+            }
+        }
+        for operation in operations {
+            self.apply_remote_op(operation);
+        }
+        if exact && local {
+            for unconfirmed in in_flight.iter_mut().flatten().chain(pending.iter_mut()) {
+                unconfirmed.inverse = self.invert_op(&unconfirmed.op);
+                self.apply_remote_op(&unconfirmed.op);
+            }
+        }
+        self.pending_ops.restore(in_flight, pending);
+        exact
     }
 
     /// Journal material since the last boundary: (op, inverse) pairs and
