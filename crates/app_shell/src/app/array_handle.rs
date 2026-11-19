@@ -10,7 +10,7 @@ use core_document::{
 use glam::{Vec2, Vec3};
 
 use super::gesture::HandleTarget;
-use super::scalar_arrow::{ARROW_PX, HandleEvent, Held, ScalarArrow, ScalarDrag};
+use super::scalar_arrow::{ARROW_PT, HandleEvent, Held, ScalarArrow, ScalarDrag};
 use crate::PrintCadApp;
 use crate::camera::CameraController;
 
@@ -28,6 +28,8 @@ pub(crate) struct Handle {
     /// Screen pixels the first copy moves for each millimetre of spacing.
     pub pixels_per_mm: Vec2,
     pub spacing: f32,
+    /// The view's pixels per point, which the arrow's sizes scale by.
+    pub scale: f32,
 }
 
 impl Handle {
@@ -70,13 +72,15 @@ pub(crate) fn handle(
     // The first copy stands `index` spacings from the source, so it moves
     // that many millimetres for each one the spacing grows.
     let pixels_per_mm = per_mm * first.index as f32;
-    let tip = base + per_mm.normalize() * ARROW_PX;
+    let scale = camera.pixels_per_point().max(0.5);
+    let tip = base + per_mm.normalize() * ARROW_PT * scale;
     Some(Handle {
         array,
         base,
         tip,
         pixels_per_mm,
         spacing,
+        scale,
     })
 }
 
@@ -114,6 +118,7 @@ impl Handle {
         ScalarArrow {
             base: self.base,
             tip: self.tip,
+            scale: self.scale,
         }
     }
 }
@@ -183,6 +188,7 @@ mod tests {
             tip: Vec2::new(56.0, 0.0),
             pixels_per_mm: Vec2::new(2.0, 0.0),
             spacing: 10.0,
+            scale: 1.0,
         };
         assert!(handle.is_under(Vec2::new(60.0, 4.0)));
         assert!(handle.is_under(Vec2::new(30.0, 2.0)));
@@ -191,5 +197,14 @@ mod tests {
             "the copy itself stays pickable"
         );
         assert!(!handle.is_under(Vec2::new(30.0, 20.0)));
+        // Its reach is in points, as its arrow's sizes are.
+        assert!(!handle.is_under(Vec2::new(56.0, 20.0)));
+        assert!(
+            Handle {
+                scale: 2.0,
+                ..handle
+            }
+            .is_under(Vec2::new(56.0, 20.0))
+        );
     }
 }

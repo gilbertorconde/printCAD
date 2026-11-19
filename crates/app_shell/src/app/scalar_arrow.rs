@@ -3,9 +3,10 @@
 use core_document::{ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay};
 use glam::Vec2;
 
-/// Arrow length in physical pixels.
-pub(super) const ARROW_PX: f32 = 56.0;
-const REACH_PX: f32 = 12.0;
+/// Arrow length in points, which the view's pixels per point scale as they
+/// do a bench handle's arrow.
+pub(super) const ARROW_PT: f32 = 56.0;
+const REACH_PT: f32 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ScalarDrag {
@@ -99,16 +100,19 @@ pub(super) fn handle_event<K: Clone>(
 pub(super) struct ScalarArrow {
     pub base: Vec2,
     pub tip: Vec2,
+    /// The view's pixels per point.
+    pub scale: f32,
 }
 
 impl ScalarArrow {
     pub fn is_under(&self, at: Vec2) -> bool {
-        if at.distance(self.tip) <= REACH_PX {
+        let reach = REACH_PT * self.scale;
+        if at.distance(self.tip) <= reach {
             return true;
         }
         let shaft = self.tip - self.base;
         let t = ((at - self.base).dot(shaft) / shaft.length_squared()).clamp(0.3, 1.0);
-        at.distance(self.base + shaft * t) <= REACH_PX * 0.5
+        at.distance(self.base + shaft * t) <= reach * 0.5
     }
 
     pub fn drawn(
@@ -122,14 +126,13 @@ impl ScalarArrow {
     ) {
         let way = (self.tip - self.base).normalize_or_zero();
         let side = Vec2::new(-way.y, way.x);
-        // Its sizes are in pixels, as the arrow's length is.
         let (lines, marks) = core_document::handle_arrow(
             &[self.base.to_array(), self.tip.to_array()],
             way.to_array(),
             color,
-            1.0,
+            self.scale,
         );
-        let at = self.tip + way * 14.0 + side * 10.0;
+        let at = self.tip + (way * 14.0 + side * 10.0) * self.scale;
         let label = ScreenSpaceLabel::new(at.to_array(), text, color, 12.0).pill();
         (lines, marks, label)
     }
