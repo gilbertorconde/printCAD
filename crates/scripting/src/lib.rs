@@ -349,10 +349,7 @@ mod tests {
     fn a_table_raised_as_an_error_is_told_as_json() {
         for mut engine in [ScriptEngine::new(), ScriptEngine::sandboxed()] {
             let mut host = Recorder::default();
-            let mut error = |source: &str| {
-                let out = engine.run_script(source, "t", &mut host).error;
-                out.map(|e| e.trim_start_matches("runtime error: ").to_string())
-            };
+            let mut error = |source: &str| engine.run_script(source, "t", &mut host).error;
             let told = error("error({field = 'angle_deg', sizes = {1, 2}})").unwrap();
             assert_eq!(
                 serde_json::from_str::<serde_json::Value>(&told).expect(&told),
@@ -367,6 +364,8 @@ mod tests {
             let caught = error("local ok, e = pcall(error, {n = 1}); error(e.n + 1, 0)");
             assert_eq!(caught.as_deref(), Some("2"));
             assert_eq!(error("assert(1 < 2, 'fine')"), None);
+            let line = engine.eval_line("error('x')", &mut host).error;
+            assert_eq!(line.as_deref(), Some(r#"[string "console"]:1: x"#));
         }
     }
 

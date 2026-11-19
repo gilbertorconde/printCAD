@@ -52,12 +52,20 @@ fn describe_made(id: &str) -> Option<String> {
         .filter(|(name, value)| other.get(name.as_str()) != Some(value))
         .map(|(name, _)| name.clone())
         .collect();
-    Some(format!(
-        "{}\n{}",
-        describe::READING,
-        describe::render(&fields, Some(given), &from_call)
-    ))
+    let lines = describe::render(&fields, Some(given), &from_call)
+        .lines()
+        .map(|line| match line.strip_prefix("refine: bool = ") {
+            Some(_) => REFINE_LINE,
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(format!("{}\n{lines}", describe::READING))
 }
+
+/// How `refine` reads: a command takes it from the Design preference
+/// (`DesignOptions::refine_result`), not from the scratch feature.
+const REFINE_LINE: &str = "refine: bool = your Refine result preference (on unless turned off)";
 
 /// The feature command `id` makes alone in a scratch document of
 /// `size`, as JSON.
@@ -126,5 +134,10 @@ mod tests {
         for (id, _) in super::FEATURES {
             assert!(super::fields_of(id).is_some(), "{id} makes nothing");
         }
+        let pad = super::fields_of("design.pad").unwrap();
+        assert!(
+            pad.contains("\nrefine: bool = your Refine result preference"),
+            "{pad}"
+        );
     }
 }
