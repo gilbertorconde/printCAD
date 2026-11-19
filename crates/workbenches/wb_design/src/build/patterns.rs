@@ -149,6 +149,48 @@ fn uneven_offsets(count: u32, even: f64, gaps: &[f32]) -> Vec<f64> {
         .collect()
 }
 
+/// The offsets of `count` copies whose gaps together span `total`: the
+/// gaps `gaps` lists in turn, the rest sharing what those leave of it.
+/// `closing` counts one more unlisted gap, from the last copy back round
+/// to the original. Every gap listed and no room left, they must add up
+/// to `total` exactly. The refusals name the gaps `what`, their `unit`
+/// and the switch that makes them steps instead.
+fn span_offsets(
+    count: u32,
+    total: f64,
+    gaps: &[f32],
+    closing: bool,
+    (what, unit, step): (&str, &str, &str),
+) -> Result<Vec<f64>, String> {
+    let listed = &gaps[..gaps.len().min(count as usize)];
+    let sum: f64 = listed.iter().map(|gap| f64::from(*gap)).sum();
+    let unlisted = count as usize + usize::from(closing) - listed.len();
+    let left = total - sum;
+    let tolerance = 1e-4 * total.abs().max(1.0);
+    let fmt = |v: f64| format!("{}", (v * 1e3).round() / 1e3);
+    if unlisted == 0 {
+        if left.abs() > tolerance {
+            return Err(format!(
+                "the {what} add up to {}{unit}, not the {}{unit} the pattern spans: change \
+                 one so they add up, or turn on {step}",
+                fmt(sum),
+                fmt(total)
+            ));
+        }
+        return Ok(uneven_offsets(count, 0.0, gaps));
+    }
+    let share = left / unlisted as f64;
+    if share * total.signum() < tolerance {
+        return Err(format!(
+            "the {what} given already take {}{unit} of the {}{unit} the pattern spans, \
+             leaving nothing for the rest",
+            fmt(sum),
+            fmt(total)
+        ));
+    }
+    Ok(uneven_offsets(count, share, gaps))
+}
+
 fn linear_transforms(
     (_, dir): ([f64; 3], [f64; 3]),
     length: f32,
@@ -177,7 +219,13 @@ fn linear_transforms(
     if let Some(i) = spacings[..gaps].iter().position(|gap| gap.abs() < 1e-6) {
         return Err(format!("spacing {} of the pattern is zero", i + 1));
     }
-    Ok(uneven_offsets(occurrences - 1, spacing, spacings)
+    let offsets = if spacing_mode {
+        uneven_offsets(occurrences - 1, spacing, spacings)
+    } else {
+        let what = ("spacings", " mm", "Length is spacing");
+        span_offsets(occurrences - 1, f64::from(length), spacings, false, what)?
+    };
+    Ok(offsets
         .into_iter()
         .map(|offset| {
             let d = offset * sign;
@@ -282,7 +330,18 @@ pub(super) fn polar_transforms(
     if let Some(i) = angles[..gaps].iter().position(|gap| gap.abs() < 1e-6) {
         return Err(format!("step angle {} of the pattern is zero", i + 1));
     }
-    let offsets = uneven_offsets(occurrences - 1, step, angles);
+    let offsets = if step_mode {
+        uneven_offsets(occurrences - 1, step, angles)
+    } else {
+        let what = ("steps", "°", "Angle is the step");
+        span_offsets(
+            occurrences - 1,
+            f64::from(angle_deg),
+            angles,
+            full_circle,
+            what,
+        )?
+    };
     // Stepped round, the last copy and one more step back to the original
     // must stay within a turn, or copies land on the first ones.
     let turn = offsets.last().map_or(0.0, |a| a.abs()) + step.abs();
@@ -691,10 +750,30 @@ mod tests {
         let at: Vec<f64> = transforms.iter().map(|t| t[0][3]).collect();
         // 5, then 15 more, then the even 10 more.
         assert_eq!(at, vec![5.0, 20.0, 30.0]);
-        let reversed = linear_transforms(x, 30.0, 3, false, true, &[5.0, 15.0]).unwrap();
+        let reversed = linear_transforms(x, 20.0, 3, false, true, &[5.0, 15.0]).unwrap();
         assert_eq!(reversed[1][0][3], -20.0);
-        let err = linear_transforms(x, 30.0, 3, false, false, &[5.0, 0.0]).unwrap_err();
+        let err = linear_transforms(x, 30.0, 3, true, false, &[5.0, 0.0]).unwrap_err();
         assert!(err.contains("spacing 2"), "{err}");
+    }
+
+    #[test]
+    fn uneven_gaps_over_an_overall_span_keep_its_total_or_are_refused() {
+        let (x, z) = (([0.0; 3], [1.0, 0.0, 0.0]), ([0.0; 3], [0.0, 0.0, 1.0]));
+        // The gaps left unlisted share what the listed leave of the 30 mm.
+        let along = linear_transforms(x, 30.0, 4, false, false, &[5.0]).unwrap();
+        let at: Vec<f64> = along.iter().map(|t| t[0][3]).collect();
+        assert_eq!(at, vec![5.0, 17.5, 30.0]);
+        let short = linear_transforms(x, 30.0, 3, false, false, &[5.0, 15.0]).unwrap_err();
+        assert!(
+            short.contains("20 mm") && short.contains("30 mm"),
+            "{short}"
+        );
+        let over = polar_transforms(z, 90.0, 3, false, false, &[30.0, 30.0]).unwrap_err();
+        assert!(over.contains("60°") && over.contains("90°"), "{over}");
+        // Round a whole turn, the step back to the original is the unlisted one.
+        let round = polar_transforms(z, 360.0, 4, false, false, &[60.0, 60.0, 60.0]).unwrap();
+        assert!((round[2][0][0] + 1.0).abs() < 1e-9, "the last copy at 180°");
+        assert!(polar_transforms(z, 360.0, 3, false, false, &[200.0, 200.0]).is_err());
     }
 
     #[test]

@@ -311,7 +311,9 @@ a formula sets has no dot. A pad's or pocket's length snaps to a flat face
 square to its way, of any body shown, when its dot comes within a few
 pixels of that face's plane; the face lights while it holds, and Alt
 drags past it. While a dot is held, typing a number opens a field beside it;
-Enter sets it, and text that is no number sets the number's formula. A
+Enter sets it, and text that is no number sets the number's formula. The
+dot being edited is drawn lit: the one held, the one whose typed value
+is still open, or the one whose field the task panel last changed. A
 fillet's or chamfer's dot stands on its edges whether they were picked one
 by one, taken with their faces or all taken.
 
@@ -541,7 +543,10 @@ concentric rings (each ring stepped out from the axis by the ring spacing,
 with a count of its own), **Point pattern** at a sketch's points (a copy at
 each point after the first, moved by how far it is from the first, so the
 original belongs on the first point drawn), and **Path pattern** along a
-sketch's chain of curves or an edge of the solid. A path pattern spreads
+sketch's chain of curves or an edge of the solid. Linear and polar
+patterns take **Uneven spacing** or **Uneven steps**, a gap of its own
+from each occurrence to the next; over the overall length or angle the
+gaps must add up to it, or the pattern is refused. A path pattern spreads
 its occurrences over the whole path (evenly round a closed one) or spaces
 them a distance apart along it; the original stands for the path's start,
 or its end with From the path's end, and each copy moves from there to its

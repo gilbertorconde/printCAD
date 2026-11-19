@@ -758,6 +758,36 @@ mod tests {
         let (plain, plain_body, _) = text_at(3.0);
         assert_eq!(profile(&s, body), profile(&plain, plain_body));
 
+        // Across takes a formula too; the hidden sketch shows the size the
+        // formula gives while it has one, and its own once it has none.
+        let sketch = s.doc.get_feature_data(id).unwrap()["Text"]["sketch"].clone();
+        let sketch = FeatureId(sketch.as_str().unwrap().parse().unwrap());
+        s.doc
+            .set_feature_formula(id, "/Text/across", Some("1 mm + 1 mm".into()))
+            .unwrap();
+        let shown = |s: &mut Session, registry: &core_document::DocumentService| {
+            crate::text_feature::sync(&mut s.doc, id).unwrap();
+            registry.evaluate(&mut s.doc);
+            let read = s.doc.read_feature::<wb_sketch::SketchFeature>(sketch);
+            read.unwrap().sketch.texts[0].size
+        };
+        registry
+            .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+            .unwrap();
+        assert_eq!(shown(&mut s, &registry), 3.0);
+        let (mut moved, moved_body, moved_id) = text_at(3.0);
+        let set = json!({"feature": moved_id.0.to_string(), "across": 2.0});
+        moved.run("design.set", set).unwrap();
+        assert_eq!(profile(&s, body), profile(&moved, moved_body));
+        s.doc.set_feature_formula(id, "/Text/size", None).unwrap();
+        assert_eq!(
+            shown(&mut s, &registry),
+            3.0,
+            "the formula's last value kept"
+        );
+        let formulas = &s.doc.get_feature_meta(sketch).unwrap().formulas;
+        assert!(formulas.is_empty(), "{formulas:?}");
+
         let (mut s, body, id) = text_at(8.0);
         s.run(
             "design.set",

@@ -2326,10 +2326,10 @@ pub enum DesignFeature {
         /// Where its middle stands from where the face was picked, mm
         /// across and up the face as the text reads.
         #[serde(default)]
-        #[walk(setting)]
+        #[walk(length("across", "Across"))]
         across: f32,
         #[serde(default)]
-        #[walk(setting)]
+        #[walk(length("up", "Up"))]
         up: f32,
         /// On a cylinder or cone, the text runs along its axis rather than
         /// round it.
@@ -2406,7 +2406,9 @@ pub enum DesignFeature {
         boolean_tolerance: Option<f32>,
         /// Uneven spacing: the gap from each occurrence to the next, first
         /// to last. A gap past the list's end is the even spacing `length`
-        /// gives; an empty list spaces every occurrence evenly.
+        /// gives, or, with `length` the overall span, a share of what the
+        /// listed gaps leave of it; listed in full, they must add up to it.
+        /// An empty list spaces every occurrence evenly.
         #[serde(default)]
         #[walk(lengths("spacing", "Spacing"))]
         spacings: Vec<f32>,
@@ -2442,7 +2444,11 @@ pub enum DesignFeature {
         step_mode: bool,
         /// Uneven steps: the angle from each occurrence to the next, first
         /// to last, degrees. A step past the list's end is the even one
-        /// `angle_deg` gives; an empty list turns every occurrence evenly.
+        /// `angle_deg` gives, or, with `angle_deg` the overall angle, a
+        /// share of what the listed steps leave of it (round a whole turn
+        /// the step back to the original among them); with no such step
+        /// left they must add up to it. An empty list turns every
+        /// occurrence evenly.
         #[serde(default)]
         #[walk(angles("step_angle", "Step angle"))]
         angles: Vec<f32>,

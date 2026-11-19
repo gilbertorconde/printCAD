@@ -113,6 +113,17 @@ impl Clipboard {
             map.push((copied.id.0.to_string(), id.0.to_string()));
             made.push(id);
         }
+        // A copied text's sketch links to the copy's numbers, not the
+        // original's.
+        for id in &made {
+            if document
+                .feature_as::<crate::DesignFeature>(*id)
+                .is_some_and(|f| matches!(f, crate::DesignFeature::Text { .. }))
+                && let Err(why) = crate::text_feature::sync(document, *id)
+            {
+                tracing::warn!("a pasted text's sketch was not brought in step: {why}");
+            }
+        }
         crate::invalidate_body(document, body);
         made
     }

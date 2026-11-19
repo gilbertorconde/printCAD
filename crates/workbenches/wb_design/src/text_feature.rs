@@ -169,10 +169,10 @@ pub(crate) fn lay_round(sketch: &mut Sketch, radius: f32) -> Result<(), String> 
 }
 
 /// Write into the first text block of `sketch`, as a build loads it, the
-/// size, spacing and turn of `feature` (its values as formulas leave them)
-/// where they differ from `stored`, the numbers [`sync`] wrote in: a
-/// formula on the feature sets them without an edit to sync, while a
-/// formula set in the sketch itself is left to stand.
+/// size, spacing, turn and place of `feature` (its values as formulas
+/// leave them) where they differ from `stored`, the numbers [`sync`] wrote
+/// in: a formula on the feature sets them without an edit to sync, while
+/// a formula set in the sketch itself is left to stand.
 pub(crate) fn take_formulas(
     sketch: &mut Sketch,
     feature: &DesignFeature,
@@ -183,13 +183,15 @@ pub(crate) fn take_formulas(
             size,
             spacing,
             angle,
+            across,
+            up,
             along,
             wrap,
             ..
-        } => Some((*size, *spacing, *angle, *along && *wrap)),
+        } => Some((*size, *spacing, *angle, *along && *wrap, (*across, *up))),
         _ => None,
     };
-    let Some((size, spacing, angle, upright)) = numbers(feature) else {
+    let Some((size, spacing, angle, upright, at)) = numbers(feature) else {
         return Ok(());
     };
     let was = stored.and_then(numbers);
@@ -210,16 +212,55 @@ pub(crate) fn take_formulas(
         spec.angle = f64::from(angle) + if upright { 90.0 } else { 0.0 };
         moved = true;
     }
+    let (id, anchor) = (block.id, block.anchor);
+    if was.is_none_or(|w| w.4 != at)
+        && let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(anchor)
+    {
+        p.position = Vec2D::new(f64::from(at.0), f64::from(at.1));
+        moved = true;
+    }
     if !moved {
         return Ok(());
     }
-    let id = block.id;
     text::change(sketch, id, &spec)
+}
+
+/// Link the size, spacing and turn of the first text block of `sketch`
+/// to those of Text feature `id` that a formula sets, so the sketch shows
+/// what the text builds at; a link the feature has no formula for any
+/// more is taken away, a formula of the sketch's own left to stand.
+fn link_formulas(
+    document: &mut Document,
+    (id, sketch, block): (FeatureId, FeatureId, uuid::Uuid),
+    upright: bool,
+) -> Result<(), String> {
+    let Some(name) = document.get_feature_meta(id).map(|n| n.name.clone()) else {
+        return Ok(());
+    };
+    let name = core_document::expr::quote_name(&name);
+    for field in ["size", "spacing", "angle"] {
+        let key = format!("{block}/{field}");
+        let link = format!("{name}.{field}");
+        let turned = (field == "angle" && upright).then_some(" + 90 deg");
+        let wanted = document
+            .feature_formula(id, &format!("/Text/{field}"))
+            .map(|_| format!("{link}{}", turned.unwrap_or_default()));
+        let now = document.feature_formula(sketch, &key);
+        let linked = now.is_some_and(|f| f == link || f.starts_with(&format!("{link} ")));
+        if now == wanted.as_deref() || (wanted.is_none() && !linked) {
+            continue;
+        }
+        document
+            .set_feature_formula(sketch, key, wanted)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Bring the hidden sketch of Text feature `id` in step with its fields:
 /// what it says, its font, size and spacing (a whole turn's spacing worked
-/// out from its letters), its turn, and where its middle stands.
+/// out from its letters), its turn, and where its middle stands; the
+/// size, spacing and turn a formula sets linked to the feature's.
 pub(crate) fn sync(document: &mut Document, id: FeatureId) -> Result<(), String> {
     let Some(DesignFeature::Text {
         sketch,
@@ -281,6 +322,7 @@ pub(crate) fn sync(document: &mut Document, id: FeatureId) -> Result<(), String>
         .update_feature_data(sketch, feature.to_json())
         .map_err(|e| e.to_string())?;
     text::keep_formulas(document, sketch, block_id, &says)?;
+    link_formulas(document, (id, sketch, block_id), along && wrap)?;
     document.mark_feature_dirty(sketch);
     document.mark_feature_dirty(id);
     Ok(())

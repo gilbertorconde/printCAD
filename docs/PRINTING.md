@@ -59,13 +59,17 @@ it round the axis, up it, or spread evenly round the whole cylinder, the
 gap across the back as wide as the rest; the lit one clicked again lays
 it flat, carried straight along the face's normal, which suits a flat
 face. A `{formula}` in the text shows its value, so a serial or revision
-number follows its variable, and **Size**, **Spacing** and **Angle** take
-formulas as any feature's numbers do. A size of zero or less is an error
-on the feature.
+number follows its variable, and **Size**, **Spacing**, **Angle**,
+**Across** and **Up** take formulas as any feature's numbers do. A size
+of zero or less is an error on the feature.
 
 The text is written in a sketch of its own, hidden under the feature and
 standing 2 mm off the face: open it from the tree to lay the text out in
-a frame or along curves. Deleting the feature takes its sketch with it.
+a frame or along curves. A size, spacing or angle a formula sets on the
+feature sets the sketch's too, so the sketch shows the text as it builds;
+the sketch keeps the Across and Up typed in the task, and the build moves
+the text to where their formulas put it. Deleting the feature takes its
+sketch with it.
 
 Text laid flat on a curved face has nowhere to land past the part's
 outline as seen from the front.

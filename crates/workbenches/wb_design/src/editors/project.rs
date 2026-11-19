@@ -7,8 +7,8 @@ use crate::feature::DesignFeature;
 use crate::form::Form;
 
 use super::{
-    CHOICE_WIDTH, Formulas, Kind, choice, deg_drag, face_list_editor, mm_drag, number, pick,
-    set_f32, signed_mm, taper_note,
+    CHOICE_WIDTH, Formulas, choice, deg_drag, face_list_editor, mm_drag, pick, signed_mm,
+    taper_note,
 };
 
 /// The Project and Text editors; `true` when it changed the feature. Any
@@ -100,10 +100,8 @@ pub(super) fn project_editor(
             }
             changed |= mm_drag(f, fx, size, ("Size", "size"));
             changed |= signed_mm(f, fx, spacing, "Spacing", "spacing");
-            for (value, label) in [(&mut *across, "Across"), (&mut *up, "Up")] {
-                let set = number(f, label, f64::from(*value), Kind::Offset, 0.1);
-                changed |= set_f32(value, set);
-            }
+            changed |= signed_mm(f, fx, across, "Across", "across");
+            changed |= signed_mm(f, fx, up, "Up", "up");
             changed |= deg_drag(f, fx, angle, ("Angle", "angle"), -360.0..=360.0);
             let modes = [
                 (
@@ -170,7 +168,9 @@ pub(super) fn project_editor(
                 f,
                 "The text is written in a sketch of its own, hidden under this feature: open \
                  it to lay the text out in a frame or along curves. A {formula} in the text \
-                 shows its value.",
+                 shows its value. The sketch takes a formula's Size, Spacing and Angle; it \
+                 keeps the Across and Up typed here, and the text builds where their formulas \
+                 put it.",
             );
         }
         _ => {}
