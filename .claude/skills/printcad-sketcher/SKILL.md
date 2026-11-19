@@ -23,12 +23,12 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
   looked up once per query into a `Scene`, the kinds in a fixed order,
   ties settled by `Rank` from what the candidates are, never by ids,
-  which a replay draws anew; `examples/snap_bench.rs` times it on a large
+  which a replay draws anew; `examples/snap_bench.rs` times it, an edit and a label drag on a large
   sketch), `solver.rs` (sketch_solver adapter, storage write-back and
   application diagnostics; `locked_elements`, through
   `sketch_solver::freedom::locked`, the elements nothing left free can
   move, drawn in `SketchPalette::locked` until the whole sketch is fully
-  constrained, cached per document edit),
+  constrained, cached by the sketch it was worked out on),
   the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
   the line and polyline runtime (`chain.rs`: a click resolved once,

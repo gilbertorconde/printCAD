@@ -97,9 +97,14 @@ pub fn diagnose_at(problem: &Problem, outcome: SolveOutcome, solved: &Problem) -
             if !full.specs.is_empty() && !full.vars.is_empty() {
                 let full_rank =
                     jacobian_rank(jacobian(&full, &full.vars), problem.settings.rank_tolerance);
+                // Fewer rows than a rank as large as the row count cannot
+                // keep that rank: no rank to work out for those.
+                let row_rank = full_rank == full.residual_len;
                 for c in &problem.constraints {
                     let system = compile_system(solved, Some(c.id), false);
-                    if system.residual_len == full.residual_len {
+                    if system.residual_len == full.residual_len
+                        || (row_rank && system.residual_len < full.residual_len)
+                    {
                         continue;
                     }
                     if jacobian_rank(

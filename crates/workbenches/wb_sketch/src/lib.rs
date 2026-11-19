@@ -101,9 +101,9 @@ use uuid::Uuid;
 /// per frame from the current zoom.
 const SNAP_TOLERANCE_PX: f64 = 8.0;
 
-/// The open sketch's locked elements with the sketch and the document
-/// edit they were worked out at.
-type LockedAt = ((FeatureId, u64), std::sync::Arc<HashSet<Uuid>>);
+/// The open sketch's locked elements with the sketch they were worked
+/// out on.
+type LockedAt = (Sketch, std::sync::Arc<HashSet<Uuid>>);
 
 /// Elements-panel filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -558,8 +558,8 @@ struct Tab {
     /// Where the scans cross the open sketch's plane, by what they were cut
     /// from.
     scan_guides: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<scan::Chain2>>)>>,
-    /// The elements of the open sketch nothing left free can move, by the
-    /// sketch and the document edit they were worked out at.
+    /// The elements of the open sketch nothing left free can move, with
+    /// the sketch they were worked out on.
     locked: std::cell::RefCell<Option<LockedAt>>,
     /// The freedom the verdict reports while no diagnosis is cached, with
     /// the sketch it was worked out on.
@@ -876,7 +876,11 @@ impl SketchWorkbench {
 
     /// Run the solver whatever the auto-update switch says.
     fn solve_now(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
-        let outcome = solver::solve(&mut feature.sketch);
+        let (outcome, dof) = solver::solve_measured(&mut feature.sketch);
+        if let Some(dof) = dof {
+            // The verdict reads the sketch as stored, which this is.
+            *self.tab.freedom.borrow_mut() = Some((feature.sketch.clone(), dof));
+        }
         self.tab.unsolved_edits = false;
         self.tab.last_solve = Some(outcome);
         self.tab.last_diagnosis = None; // recomputed lazily by the panel

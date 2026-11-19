@@ -581,7 +581,7 @@ impl SketchWorkbench {
         let diag = match &self.tab.last_diagnosis {
             Some(d) => d.clone(),
             None => {
-                let d = solver::diagnose(&feature.sketch);
+                let d = self.diagnose(&feature.sketch);
                 self.tab.last_diagnosis = Some(d.clone());
                 d
             }

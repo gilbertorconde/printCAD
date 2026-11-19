@@ -440,6 +440,65 @@ impl ExternalSource {
 }
 
 impl Sketch {
+    /// Whether `self` and `other` differ at most in where their
+    /// dimensions' labels sit, which nothing the solver works out reads.
+    pub(crate) fn eq_but_labels(&self, other: &Sketch) -> bool {
+        let Sketch {
+            id,
+            name,
+            plane,
+            geometry,
+            constraints,
+            is_fully_constrained,
+            unsolved,
+            construction,
+            external,
+            soft,
+            solver,
+            texts,
+            images,
+            derived,
+            index: _,
+        } = self;
+        let same_constraint = |a: &Constraint, b: &Constraint| {
+            let Constraint {
+                id,
+                kind,
+                driving,
+                active,
+                name,
+                label_offset: _,
+                parked,
+            } = a;
+            (id, kind, driving, active, name, parked)
+                == (&b.id, &b.kind, &b.driving, &b.active, &b.name, &b.parked)
+        };
+        (id, name, plane, geometry, is_fully_constrained, unsolved)
+            == (
+                &other.id,
+                &other.name,
+                &other.plane,
+                &other.geometry,
+                &other.is_fully_constrained,
+                &other.unsolved,
+            )
+            && (construction, external, soft, solver, texts, images, derived)
+                == (
+                    &other.construction,
+                    &other.external,
+                    &other.soft,
+                    &other.solver,
+                    &other.texts,
+                    &other.images,
+                    &other.derived,
+                )
+            && constraints.len() == other.constraints.len()
+            && constraints
+                .iter()
+                .zip(&other.constraints)
+                .all(|(a, b)| same_constraint(a, b))
+    }
+
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             id: Uuid::new_v4(),
