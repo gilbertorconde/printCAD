@@ -221,10 +221,10 @@ fn text_round_a_whole_cylinder_is_sunk_into_it() {
 }
 
 /// Text spread round a whole cylinder goes round the cylinder as it is
-/// built, not as it was when the text went on: made smaller, even past
-/// where its face was picked, the letters sit as they would on a cylinder
-/// of that size from the start. Text longer than the turn says it does
-/// not fit.
+/// built, not as it was when the text went on: made smaller (even past
+/// where its face was picked) or larger (past where its sketch stood),
+/// the letters sit as they would on a cylinder of that size from the
+/// start. Text longer than the turn says it does not fit.
 #[test]
 fn text_round_a_whole_cylinder_follows_its_radius() {
     let script = |radius: f64| {
@@ -256,7 +256,7 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
         measured(&document.imported_brep_blob_arc(body).expect("a solid"))
     };
     let mut failures = Vec::new();
-    for now in [8.0, 5.0] {
+    for now in [8.0, 5.0, 15.0] {
         let (mut host, body) = run(10.0);
         let primitive = wb_design::design_features_of_body(&host.document, body)
             .into_iter()
