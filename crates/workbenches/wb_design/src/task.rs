@@ -1845,4 +1845,45 @@ mod tests {
         let hint = faceted_hint(&doc, body, second).expect("a hint");
         assert!(hint.contains("delete them"), "{hint}");
     }
+
+    /// Which of `named` the panel of `id`, opened afresh, declares.
+    fn rows_shown<const N: usize>(
+        doc: &mut Document,
+        id: FeatureId,
+        named: [&str; N],
+    ) -> [bool; N] {
+        let mut wb = DesignWorkbench::default();
+        open(&mut wb, &panel(), doc, id);
+        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        let widgets = wb.task_widgets(&mut ctx, id);
+        named.map(|row| widget_id(&widgets, row).is_some())
+    }
+
+    /// Symmetric shows with every end it acts on, through all as well as
+    /// a single dimension, and hides the second side there; an end it
+    /// does not act on shows the second side instead.
+    #[test]
+    fn symmetric_shows_with_every_end_it_acts_on() {
+        use crate::feature::ExtrudeMode;
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        for (end, want) in [
+            (ExtrudeMode::Dimension, [true, false]),
+            (ExtrudeMode::ThroughAll, [true, false]),
+            (ExtrudeMode::ToLast, [false, true]),
+        ] {
+            let mut pad = DesignFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+            if let DesignFeature::Pad {
+                mode, symmetric, ..
+            } = &mut pad
+            {
+                (*mode, *symmetric) = (end, true);
+            }
+            doc.update_feature_data(id, pad.to_json()).unwrap();
+            let shown = rows_shown(&mut doc, id, ["Symmetric to plane", "Second side"]);
+            assert_eq!(shown, want, "{end:?}");
+        }
+    }
 }

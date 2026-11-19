@@ -202,13 +202,14 @@ pub(super) fn extrude_op(
         DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => extras.clone(),
         _ => Default::default(),
     };
+    let symmetric = symmetric && mode.takes_symmetric(mode2);
     let (first_mode, second_mode) = mode.sides(mode2);
     let mut termination = side_termination(document, first_mode, &first)?;
     let mut second_side = second_mode
         .map(|mode| side_termination(document, mode, &second))
         .transpose()?;
     // Through all, centred: through all both ways.
-    if symmetric && first_mode == ExtrudeMode::ThroughAll && second_side.is_none() {
+    if symmetric && first_mode == ExtrudeMode::ThroughAll {
         second_side = Some(ExtrudeTermination::ThroughAll);
     }
 
@@ -259,8 +260,7 @@ pub(super) fn extrude_op(
     let kind = SweepKind::Extrude {
         termination,
         second_side,
-        // Centred only in the one mode that offers it.
-        symmetric: symmetric && first_mode == ExtrudeMode::Dimension && second_mode.is_none(),
+        symmetric: symmetric && first_mode == ExtrudeMode::Dimension,
         // A pocket along the normal cuts against it: a sketch on a solid's
         // face has its normal pointing out of the material, so the default
         // digs in. A direction set is the way the cut runs.

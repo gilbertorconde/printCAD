@@ -66,10 +66,11 @@ pub(super) fn extrude_editor(
                 up_to_shape,
                 (body, &mut extras.up_to_shape_borrowed),
             );
-            if *mode == ExtrudeMode::Dimension && mode2.is_none() {
+            let centred = mode.takes_symmetric(*mode2);
+            if centred {
                 changed |= f.check(symmetric, "Symmetric to plane", "");
             }
-            if !(*mode == ExtrudeMode::Dimension && *symmetric) {
+            if !(centred && *symmetric) {
                 changed |= second_side_combo(f, *mode, mode2, first_feature, &borrowed);
                 if let (_, Some(second)) = mode.sides(*mode2) {
                     changed |= extrude_side_rows(
@@ -142,10 +143,11 @@ pub(super) fn extrude_editor(
                 up_to_shape,
                 (body, &mut extras.up_to_shape_borrowed),
             );
-            if *mode == ExtrudeMode::Dimension && mode2.is_none() {
+            let centred = mode.takes_symmetric(*mode2);
+            if centred {
                 changed |= f.check(symmetric, "Symmetric to plane", "");
             }
-            if !(*mode == ExtrudeMode::Dimension && *symmetric) {
+            if !(centred && *symmetric) {
                 changed |= second_side_combo(f, *mode, mode2, first_feature, &borrowed);
                 if let (_, Some(second)) = mode.sides(*mode2) {
                     changed |= extrude_side_rows(

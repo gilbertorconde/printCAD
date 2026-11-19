@@ -435,6 +435,13 @@ impl ExtrudeMode {
         )
     }
 
+    /// Whether Symmetric acts with this end condition and `mode2`: a
+    /// single dimension, centred on the profile, or through all, which
+    /// it runs both ways. Everywhere else it is neither shown nor read.
+    pub fn takes_symmetric(self, mode2: Option<ExtrudeMode>) -> bool {
+        mode2.is_none() && matches!(self, ExtrudeMode::Dimension | ExtrudeMode::ThroughAll)
+    }
+
     /// The end condition of each side: the first, and the second when the
     /// extrusion runs both ways. Two lengths is a dimension each way, the
     /// second side ending as `mode2` says when it is set.
