@@ -59,8 +59,8 @@ struct FrameIntents {
     quit: bool,
     /// The answer to the unsaved-edits question.
     unsaved_answer: Option<crate::app::unsaved::Unsaved>,
-    /// A close or quit to go on with, its save over a file from another
-    /// version written.
+    /// A close or quit to go on with, the save it waited on written (over
+    /// a file from another version, or under a name just picked).
     after_save_over: Option<(uuid::Uuid, crate::app::unsaved::Then)>,
     request_workbench: Option<ActiveWorkbench>,
     undo: bool,

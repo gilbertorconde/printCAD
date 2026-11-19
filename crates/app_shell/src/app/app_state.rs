@@ -323,6 +323,14 @@ pub(crate) struct Questions {
     pub quit_answered: HashSet<Uuid>,
 }
 
+impl Questions {
+    /// A run of questions stops (cancelled, or a save that failed): the
+    /// next quit asks about every tab again.
+    pub fn stop_waiting(&mut self) {
+        self.quit_answered.clear();
+    }
+}
+
 /// What the last run left and what this one keeps for the next.
 pub(crate) struct KeptRun {
     /// What the last run left: its open documents, window and panels.

@@ -2,12 +2,15 @@
 //! save, Cancel; `ui/unsaved_modal.rs`) and the close waits for the
 //! answer. Quitting asks for each tab with edits in turn, then exits.
 //! Save goes on only once the file is written: a save that fails keeps
-//! the tab open, with its recovery copy, and stops the quit.
+//! the tab open, with its recovery copy, and stops the quit. A document
+//! with no file of its own asks for a name in the file dialog, on its
+//! thread, and the close goes on once the save under it lands.
 
 use uuid::Uuid;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::PrintCadApp;
+use crate::app::doc_io::FileDialogKind;
 use crate::log_panel as app_log;
 
 /// What the user chose about unsaved edits.
@@ -94,7 +97,7 @@ impl PrintCadApp {
                     return;
                 }
                 // Every tab saved or let go: no copy to come back from.
-                self.questions.quit_answered.clear();
+                self.questions.stop_waiting();
                 self.forget_recovery_copies(|_| true);
                 self.keep_session_for_next_run();
                 self.remove_private_folders();
@@ -136,11 +139,32 @@ impl PrintCadApp {
                     // the close, and goes on with it once saved.
                     return;
                 }
-                self.save_document_interactive() && self.save_landed()
+                match self.file_to_save_in_place() {
+                    Some(path) => match self.save_document_at(&path) {
+                        Ok(()) => self.save_landed(),
+                        Err(err) => {
+                            app_log::error(format!("Save failed: {err:#}"));
+                            false
+                        }
+                    },
+                    // The name is asked on the dialog's thread, the window
+                    // drawing meanwhile; the close goes on once the
+                    // document is saved under it.
+                    None => {
+                        // Refused while another dialog is open: the close
+                        // stops there.
+                        let refused = self.files.dialog_rx.is_some();
+                        self.start_file_dialog(FileDialogKind::SaveThen(asking.then));
+                        if refused {
+                            self.questions.stop_waiting();
+                        }
+                        return;
+                    }
+                }
             }
         };
         if !go_on {
-            self.questions.quit_answered.clear();
+            self.questions.stop_waiting();
             return;
         }
         self.go_on_after_answer(asking.tab, asking.then, event_loop);

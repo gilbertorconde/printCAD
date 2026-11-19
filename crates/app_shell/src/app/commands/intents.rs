@@ -365,7 +365,9 @@ impl PrintCadApp {
             self.start_file_dialog(kind);
         }
 
-        self.poll_file_dialog();
+        if let Some(go_on) = self.poll_file_dialog() {
+            intents.after_save_over = Some(go_on);
+        }
         self.drain_package_news();
         for path in std::mem::take(&mut self.scripting.to_run) {
             self.run_script_file(&path);
