@@ -233,10 +233,10 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
             r#"
             local b = "BODY"
             pc.design.primitive{{body = b,
-              kind = {{Cylinder = {{radius = {radius}, height = 20, angle_deg = 360}}}}}}
+              kind = {{Cylinder = {{radius = {radius}, height = 8, angle_deg = 360}}}}}}
             pc.design.text{{body = b, text = "{text}", size = 4, mode = "Deboss",
               height = 0.5, wrap = true, radius = {radius}, full_turn = true,
-              face_point = {{0, -{radius}, 10}}, face_normal = {{0, -1, 0}}}}
+              face_point = {{0, -{radius}, 4}}, face_normal = {{0, -1, 0}}}}
             "#
         )
     };
@@ -245,7 +245,7 @@ fn text_round_a_whole_cylinder_follows_its_radius() {
         let body: BodyId = document.create_body(None);
         let mut host = benches(document);
         let out = ScriptEngine::new().run_script(
-            &script(radius, "LLL").replace("BODY", &body.0.to_string()),
+            &script(radius, "LL").replace("BODY", &body.0.to_string()),
             "part.lua",
             &mut host,
         );
