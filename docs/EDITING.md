@@ -383,9 +383,10 @@ features after it build again on the new shape, finding their faces by
 name. On a body without features it simply replaces the shape. It clears
 the undo history, as an import does.
 
-**Fillet and chamfer** work on the picked edges, or with Follow tangent
-edges on every edge that runs on smoothly from them (the round of a
-filleted corner and the sides past it). A chamfer by two distances, or by
+**Fillet and chamfer** work on the picked edges, or every edge of a
+picked face, and with nothing picked ask for a pick first. With Follow
+tangent edges on they take every edge that runs on smoothly from them
+too (the round of a filleted corner and the sides past it). A chamfer by two distances, or by
 a distance and an angle, measures its first distance on one face of the
 edge (Flip direction takes the other) and keeps it on that side all along
 a tangent chain, even where the faces change from a flat side to a round

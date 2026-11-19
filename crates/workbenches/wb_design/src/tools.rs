@@ -346,7 +346,7 @@ impl DesignWorkbench {
             }
             "design.fillet" => {
                 need_material(has_solid)?;
-                let edges = Self::selected_edges(ctx, body);
+                let edges = Self::selected_edges(ctx, body, given, "round")?;
                 (
                     DesignFeature::Fillet {
                         radius: 1.0,
@@ -366,7 +366,7 @@ impl DesignWorkbench {
             }
             "design.chamfer" => {
                 need_material(has_solid)?;
-                let edges = Self::selected_edges(ctx, body);
+                let edges = Self::selected_edges(ctx, body, given, "bevel")?;
                 (
                     DesignFeature::Chamfer {
                         size: 1.0,
