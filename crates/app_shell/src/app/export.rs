@@ -672,9 +672,14 @@ fn make_slicer_folder(base: &Path) -> std::io::Result<PathBuf> {
             std::process::id(),
             &id[..12]
         ));
-        let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        let builder = {
+            let mut builder = std::fs::DirBuilder::new();
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
         match builder.create(&folder) {
             Ok(()) => return Ok(folder),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
