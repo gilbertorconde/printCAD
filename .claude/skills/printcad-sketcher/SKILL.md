@@ -87,7 +87,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   benches as `ctx.selected_parts`; Design's Pad, Pocket, Revolution and
   Groove start with the picked regions, a revolution or groove about a
   picked straight curve, `region_pick::picked_regions`/`picked_axis`),
-  `profile.rs` (closed-wire extraction), `regions.rs` (the planar arrangement:
+  `profile.rs` (closed-wire extraction; ends tied by a Coincident constraint join as a shared point does), `regions.rs` (the planar arrangement:
   curves split where they cross, touch or branch, every bounded face a
   `Region` named by the elements round it and the side of each it lies on;
   `profile::extract_regions` outlines the ones named, which Design's Pad,
