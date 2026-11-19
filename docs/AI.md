@@ -146,7 +146,8 @@ An agent's script has Lua's base functions and its `table`, `string`,
 `math`, `utf8` and `coroutine` libraries, nothing that reads or writes
 files or starts programs (no `io`, `os`, `require`, `load` or `dofile`),
 so whatever it does to a file goes through a command and is checked like
-one. It runs apart from the console, sharing none of its globals, and
+one. `pc.file.temp_path` gives it a file of its own to write, export to and
+import from, in a folder of this run's that goes when printCAD closes. It runs apart from the console, sharing none of its globals, and
 stops after 30 seconds of running Lua (time spent waiting for commands,
 such as a rebuild, does not count) or at 512 MB of memory.
 

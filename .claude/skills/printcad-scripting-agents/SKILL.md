@@ -137,7 +137,11 @@ An agent's `lua` goes in through `ScriptThread::submit_for_agent`: a fresh
 debug), under `AGENT_TIME_LIMIT` (Lua time only: `__pc_call` moves the
 start past each command's wait), so file access goes through commands and
 `agent_check`. Every engine caps its Lua state at `DEFAULT_MEMORY_LIMIT`;
-the user's engine keeps io and os (the command examples use them).
+the user's engine keeps io and os. The command examples and recipes run
+sandboxed too (`headless::run_in_document`), so an agent can copy them:
+a file they need comes from `file.temp_path` (`platform::temp_file`, a
+new file in this run's private `temp` folder, `text` written in it,
+removed with the scratch folder on the way out).
 A change waits in `PrintCadApp.agents.approvals` while its chat asks
 (`asks_before_changes`); `CommandSpec::read_only` (declared by whoever
 registers the command) is what never waits, and `CommandSpec::agent`

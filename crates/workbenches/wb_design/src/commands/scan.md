@@ -32,12 +32,11 @@ pc.design.subtractive_primitive{body = plate, variant = "cylinder",
   kind = {Cylinder = {radius = 3.3, height = 7, angle_deg = 360}},
   placement = {origin = {12, 10, -1}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {plate}, tolerance = 0.002}
 pc.doc.set_visible{id = plate, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local r = pc.design.read_hole{scan = scan, at = {15.3, 10, 2.5}}
@@ -54,12 +53,11 @@ pc.design.primitive{body = block}
 pc.design.fillet{body = block, radius = 2,
   edges = {Edges = {{point = {5, 10, 10}, direction = {1, 0, 0}}}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {block}, tolerance = 0.002}
 pc.doc.set_visible{id = block, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local h = 2 * math.sqrt(0.5)
@@ -94,12 +92,11 @@ local function block(height, radius)
 end
 local printed = block(5.4, 3.2)
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {printed}, tolerance = 0.002}
 pc.doc.set_visible{id = printed, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local model = block(5, 3)
@@ -135,12 +132,11 @@ pc.design.subtractive_primitive{body = block, variant = "cylinder",
   kind = {Cylinder = {radius = 2, height = 7, angle_deg = 360}},
   placement = {origin = {10, 3, 2}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {block}, tolerance = 0.002}
 pc.doc.set_visible{id = block, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local model = pc.doc.new_body{}
@@ -172,9 +168,8 @@ See also: `design.read_hole`, `design.hole`
 ### A scanned M8 thread read back: a synthetic scan of a bolt's thread, 1.25 pitch, right-handed, written as an STL and imported
 
 ```lua
-local path = os.tmpname() .. ".stl"
-local f = io.open(path, "w")
-f:write("solid bolt\n")
+local stl = {"solid bolt\n"}
+local function write(text) stl[#stl + 1] = text end
 local pitch, turns, around, along = 1.25, 5, 48, 120
 local function at(i, j)
   local a = 2 * math.pi * i / around
@@ -184,11 +179,11 @@ local function at(i, j)
   return {r * math.cos(a), r * math.sin(a), t}
 end
 local function facet(p, q, s)
-  f:write("facet normal 0 0 0\nouter loop\n")
+  write("facet normal 0 0 0\nouter loop\n")
   for _, v in ipairs({p, q, s}) do
-    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+    write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
   end
-  f:write("endloop\nendfacet\n")
+  write("endloop\nendfacet\n")
 end
 for j = 0, along - 1 do
   for i = 0, around - 1 do
@@ -198,11 +193,10 @@ for j = 0, along - 1 do
     facet(a, c, d)
   end
 end
-f:write("endsolid bolt\n")
-f:close()
+write("endsolid bolt\n")
+local path = pc.file.temp_path{name = "bolt.stl", text = table.concat(stl)}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local p = at(10, 60)
@@ -229,12 +223,11 @@ See also: `inspect.compare`
 local cube = pc.doc.new_body{}
 pc.design.primitive{body = cube}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {cube}}
 pc.doc.set_visible{id = cube, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local short = pc.doc.new_body{}

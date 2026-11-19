@@ -114,7 +114,9 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 - A script may hold at most 512 MB of memory; one that needs more stops
   with an error saying so.
 - Scripts you run have Lua's standard libraries, `io` and `os` among them.
-  An AI agent's scripts do not (see [AI agents](AI.md)).
+  An AI agent's scripts do not (see [AI agents](AI.md)), so the examples
+  below use neither: `pc.file.temp_path` gives a file to export to and
+  read back.
 
 ## Recording
 
@@ -271,7 +273,7 @@ See also `pc.doc.agent_rules`.
 
 `pc.doc.bodies`: List the bodies.
 
-- Returns a list of {id, name, visible, frozen, scan, selectable, material, array, features}
+- Returns a list of {id, name, visible, frozen, scan, selectable, material, array, features, face_colors}: face_colors a list of {face, color = {r, g, b}}, face as doc.faces numbered it when it was coloured
 
 Notes:
 
@@ -516,11 +518,9 @@ local top
 for _, face in ipairs(pc.doc.faces{body = body}) do
   if face.kind == "plane" and face.normal[3] > 0.99 then top = face.index end
 end
-local path = os.tmpname()
+local path = pc.file.temp_path{name = "ribs.stl"}
 local function triangles()
-  local out = pc.file.export{path = path, format = "stl"}
-  os.remove(out.path)
-  return out.triangles
+  return pc.file.export{path = path, format = "stl"}.triangles
 end
 local plain = triangles()
 pc.doc.set_textures{body = body, textures = {{
@@ -531,7 +531,6 @@ assert(triangles() > 100 * plain, "the ribs are pressed into the exported mesh")
 assert(math.abs(pc.doc.measure{body = body}.volume - 180) < 1e-6, "the solid keeps its shape")
 pc.doc.set_textures{body = body, textures = {}}
 assert(triangles() == plain)
-os.remove(path)
 ```
 
 `pc.doc.set_face_color`: Colour one face of a body, over the body's colour.
@@ -547,7 +546,7 @@ Notes:
 
 See also `pc.doc.faces`, `pc.doc.set_body`.
 
-Example: A pad's top painted red in a picture, then the body's colour again.
+Example: A pad's top painted red, then the body's colour again.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
@@ -559,20 +558,16 @@ local top
 for _, face in ipairs(pc.doc.faces{body = body}) do
   if face.kind == "plane" and face.normal[3] > 0.99 then top = face.index end
 end
-local path = os.tmpname()
-local function picture()
-  pc.doc.picture{path = path, view = "top", size = {64, 64}}
-  local file = io.open(path, "rb")
-  local bytes = file:read("a")
-  file:close()
-  return bytes
+local function colours()
+  for _, b in ipairs(pc.doc.bodies()) do
+    if b.id == body then return b.face_colors end
+  end
 end
-local plain = picture()
 pc.doc.set_face_color{body = body, face = top, color = {r = 1, g = 0, b = 0}}
-local red = picture()
+local red = colours()
+assert(#red == 1 and red[1].face == top and red[1].color.r == 1 and red[1].color.g == 0)
 pc.doc.set_face_color{body = body, face = top}
-assert(red ~= plain and picture() == plain, "red, then the body's colour again")
-os.remove(path)
+assert(#colours() == 0, "the body's colour again")
 ```
 
 `pc.doc.linked_copy`: A linked copy of a body beside it: the same shape, following every change.
@@ -1286,14 +1281,10 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
 local pad = pc.design.pad{sketch = s, length = 5}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname()
+local path = pc.file.temp_path{name = "part.png"}
 local shot = pc.doc.picture{path = path, view = "iso", size = {160, 120}}
 assert(shot.path == path and shot.width == 160 and shot.height == 120)
 assert(shot.renderer == "cpu")
-local file = io.open(path, "rb")
-assert(file:read(4) == "\137PNG")
-file:close()
-os.remove(path)
 ```
 
 `pc.doc.parameters`: A feature's numbers that formulas set and read.
@@ -1445,6 +1436,75 @@ Notes:
 - A name no section has is refused.
 
 See also `pc.doc.sections`.
+
+### file
+
+`pc.file.temp_path`: A new file's path in this run's private folder, for a script's own files.
+
+- `name` (string, optional): Its name, such as "part.stl": the extension is what readers go by; "file" when left out
+- `text` (string, optional): What to write in it; empty when left out
+- Returns the path
+
+Notes:
+
+- The folder is open to this user alone and goes when printCAD closes, or when a `printcad --script` run ends. Each call makes a new file: `name` again gets a number added. It is how a script gets a file to export to and import from, an agent's too, which has no `io` or `os`.
+
+See also `pc.file.export`, `pc.file.import`.
+
+Example: Two files of one name.
+
+```lua
+local a = pc.file.temp_path{name = "part.stl"}
+local b = pc.file.temp_path{name = "part.stl", text = "solid empty\nendsolid empty\n"}
+assert(a ~= b and a:sub(-4) == ".stl" and b:sub(-4) == ".stl")
+```
+
+`pc.file.new`: New.
+
+`pc.file.open`: Open.
+
+- `path` (string, optional): The document to open; the dialog when left out
+- Returns nothing; the document opens in its tab after the script
+
+`pc.file.save`: Save.
+
+`pc.file.save_as`: Save as.
+
+- `path` (string, optional): Where to save; the dialog when left out
+
+`pc.file.save_all`: Save all.
+
+Notes:
+
+- Saves every open document with edits, each in its own file. One with no file yet, or whose file another version of printCAD wrote, asks the user in the window, and the saves after it wait for the answer.
+
+`pc.file.import`: Import.
+
+- `path` (string, optional): The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out
+- `scan` (boolean, optional): true marks the meshes it brings as scans, the measured parts inspection and mesh editing work on
+- `units` (string, optional): mm, cm, m or inch: what an STL file's numbers are in, scaled to millimetres as it comes in; Preferences' STL units when left out. Other files say their own units
+- Returns nothing; pc.doc.rebuild() waits for the import
+
+`pc.file.export`: Export.
+
+- `path` (string, optional): Where to write; the dialog when left out
+- `format` (string, optional): step, step_nurbs (every surface a spline), stl or 3mf; from the path's extension when left out
+- `bodies` (list, optional): The bodies to write; every visible one a bench does not mark as bought when left out
+- `tolerance` (number, optional): The mesh formats' distance to the true surface, mm (0.01)
+- `angle` (number, optional): The mesh formats' largest turn between facets, degrees (5)
+- `textures` (boolean, optional): Whether the mesh formats press the bodies' surface textures in (true)
+- `layout` (boolean, optional): The print layout (doc.print_layout) rather than the bodies where they sit
+- Returns {path, written, skipped, triangles}
+
+Notes:
+
+- STL and 3MF make up for the printer as Preferences › Printing › Shrinkage says while it is on (app.print_compensation): round holes and bosses drawn larger or smaller, each body scaled about its middle. `printcad --script` writes the bodies as drawn.
+
+`pc.file.send_to_slicer`: Send to slicer.
+
+- `layout` (boolean, optional): The print layout rather than the bodies where they sit; Preferences › 3D printing says when left out
+
+`pc.file.print_layout`: Print layout.
 
 ### var
 
@@ -1972,55 +2032,6 @@ See also `pc.doc.save_section`.
 
 `pc.view.fullscreen`: Full screen.
 
-### file
-
-`pc.file.new`: New.
-
-`pc.file.open`: Open.
-
-- `path` (string, optional): The document to open; the dialog when left out
-- Returns nothing; the document opens in its tab after the script
-
-`pc.file.save`: Save.
-
-`pc.file.save_as`: Save as.
-
-- `path` (string, optional): Where to save; the dialog when left out
-
-`pc.file.save_all`: Save all.
-
-Notes:
-
-- Saves every open document with edits, each in its own file. One with no file yet, or whose file another version of printCAD wrote, asks the user in the window, and the saves after it wait for the answer.
-
-`pc.file.import`: Import.
-
-- `path` (string, optional): The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out
-- `scan` (boolean, optional): true marks the meshes it brings as scans, the measured parts inspection and mesh editing work on
-- `units` (string, optional): mm, cm, m or inch: what an STL file's numbers are in, scaled to millimetres as it comes in; Preferences' STL units when left out. Other files say their own units
-- Returns nothing; pc.doc.rebuild() waits for the import
-
-`pc.file.export`: Export.
-
-- `path` (string, optional): Where to write; the dialog when left out
-- `format` (string, optional): step, step_nurbs (every surface a spline), stl or 3mf; from the path's extension when left out
-- `bodies` (list, optional): The bodies to write; every visible one a bench does not mark as bought when left out
-- `tolerance` (number, optional): The mesh formats' distance to the true surface, mm (0.01)
-- `angle` (number, optional): The mesh formats' largest turn between facets, degrees (5)
-- `textures` (boolean, optional): Whether the mesh formats press the bodies' surface textures in (true)
-- `layout` (boolean, optional): The print layout (doc.print_layout) rather than the bodies where they sit
-- Returns {path, written, skipped, triangles}
-
-Notes:
-
-- STL and 3MF make up for the printer as Preferences › Printing › Shrinkage says while it is on (app.print_compensation): round holes and bosses drawn larger or smaller, each body scaled about its middle. `printcad --script` writes the bodies as drawn.
-
-`pc.file.send_to_slicer`: Send to slicer.
-
-- `layout` (boolean, optional): The print layout rather than the bodies where they sit; Preferences › 3D printing says when left out
-
-`pc.file.print_layout`: Print layout.
-
 ### edit
 
 `pc.edit.undo`: Undo.
@@ -2353,15 +2364,18 @@ Example: A circle in inches, read back.
 ```lua
 local s = pc.sketch.new{plane = "XY"}
 pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 25.4}
-local path = os.tmpname()
+local path = pc.file.temp_path{name = "circle.dxf"}
 local out = pc.sketch.export_dxf{sketch = s, path = path, units = "inch"}
 assert(out.curves == 1 and out.notes == 1, out.notes)
-local file = io.open(path, "r")
-local text = file:read("a")
-file:close()
-os.remove(path)
-assert(text:find("$INSUNITS\n70\n1\n", 1, true), "declared in inches")
-assert(text:find("1:1 in inch", 1, true), "the traceability note")
+local function radius(sketch)
+  for _, e in ipairs(pc.sketch.geometry{sketch = sketch}) do
+    if e.kind == "circle" then return e.radius end
+  end
+end
+local inches = pc.sketch.import_dxf{path = path, scale = 1}
+assert(math.abs(radius(inches) - 1) < 1e-9, "written in inches")
+local back = pc.sketch.import_dxf{path = path}
+assert(math.abs(radius(back) - 25.4) < 1e-9, "declared in inches")
 ```
 
 `pc.sketch.export_svg`: Sketch as SVG.
@@ -5063,12 +5077,11 @@ pc.design.subtractive_primitive{body = plate, variant = "cylinder",
   kind = {Cylinder = {radius = 3.3, height = 7, angle_deg = 360}},
   placement = {origin = {12, 10, -1}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {plate}, tolerance = 0.002}
 pc.doc.set_visible{id = plate, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local r = pc.design.read_hole{scan = scan, at = {15.3, 10, 2.5}}
@@ -5106,12 +5119,11 @@ local function block(height, radius)
 end
 local printed = block(5.4, 3.2)
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {printed}, tolerance = 0.002}
 pc.doc.set_visible{id = printed, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local model = block(5, 3)
@@ -5150,12 +5162,11 @@ pc.design.subtractive_primitive{body = block, variant = "cylinder",
   kind = {Cylinder = {radius = 2, height = 7, angle_deg = 360}},
   placement = {origin = {10, 3, 2}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {block}, tolerance = 0.002}
 pc.doc.set_visible{id = block, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local model = pc.doc.new_body{}
@@ -5185,9 +5196,8 @@ See also `pc.design.read_hole`, `pc.design.hole`.
 Example: A scanned M8 thread read back: a synthetic scan of a bolt's thread, 1.25 pitch, right-handed, written as an STL and imported.
 
 ```lua
-local path = os.tmpname() .. ".stl"
-local f = io.open(path, "w")
-f:write("solid bolt\n")
+local stl = {"solid bolt\n"}
+local function write(text) stl[#stl + 1] = text end
 local pitch, turns, around, along = 1.25, 5, 48, 120
 local function at(i, j)
   local a = 2 * math.pi * i / around
@@ -5197,11 +5207,11 @@ local function at(i, j)
   return {r * math.cos(a), r * math.sin(a), t}
 end
 local function facet(p, q, s)
-  f:write("facet normal 0 0 0\nouter loop\n")
+  write("facet normal 0 0 0\nouter loop\n")
   for _, v in ipairs({p, q, s}) do
-    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+    write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
   end
-  f:write("endloop\nendfacet\n")
+  write("endloop\nendfacet\n")
 end
 for j = 0, along - 1 do
   for i = 0, around - 1 do
@@ -5211,11 +5221,10 @@ for j = 0, along - 1 do
     facet(a, c, d)
   end
 end
-f:write("endsolid bolt\n")
-f:close()
+write("endsolid bolt\n")
+local path = pc.file.temp_path{name = "bolt.stl", text = table.concat(stl)}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local p = at(10, 60)
@@ -5243,12 +5252,11 @@ Example: A scan of a 10 mm cube against a body 2 mm short of it.
 local cube = pc.doc.new_body{}
 pc.design.primitive{body = cube}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {cube}}
 pc.doc.set_visible{id = cube, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local short = pc.doc.new_body{}
@@ -6338,12 +6346,11 @@ Example: A scanned box's top and side fitted as planes that cross past the edge.
 local box = pc.doc.new_body{}
 pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {box}}
 pc.doc.set_visible{id = box, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local top = pc.surface.fit_scan{scan = scan, at = {10, 5, 6}}
@@ -6377,12 +6384,11 @@ Example: A scanned box's six sides fitted, trimmed by the scan into the box agai
 local box = pc.doc.new_body{}
 pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {box}}
 pc.doc.set_visible{id = box, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local body
@@ -6418,20 +6424,19 @@ See also `pc.sketch.new`, `pc.surface.fit_scan`, `pc.surface.trim_scan`.
 Example: A wavy sheet, scanned, fitted as one free-form surface.
 
 ```lua
-local path = os.tmpname() .. ".stl"
-local f = io.open(path, "w")
-f:write("solid wave\n")
+local stl = {"solid wave\n"}
+local function write(text) stl[#stl + 1] = text end
 local n = 30
 local function at(i, j)
   local x, y = 20 * i / n, 20 * j / n
   return {x, y, 2 * math.sin(x / 4)}
 end
 local function facet(p, q, s)
-  f:write("facet normal 0 0 0\nouter loop\n")
+  write("facet normal 0 0 0\nouter loop\n")
   for _, v in ipairs({p, q, s}) do
-    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+    write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
   end
-  f:write("endloop\nendfacet\n")
+  write("endloop\nendfacet\n")
 end
 for i = 0, n - 1 do
   for j = 0, n - 1 do
@@ -6439,11 +6444,10 @@ for i = 0, n - 1 do
     facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
   end
 end
-f:write("endsolid wave\n")
-f:close()
+write("endsolid wave\n")
+local path = pc.file.temp_path{name = "wave.stl", text = table.concat(stl)}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local sheet = pc.surface.fit_scan_spline{scan = scan, at = {10, 10, 2 * math.sin(2.5)}}
@@ -6480,9 +6484,8 @@ See also `pc.sketch.new`, `pc.surface.fit_scan_spline`, `pc.surface.check`.
 Example: A wavy scan fitted as three patches meeting tangent at a T-junction.
 
 ```lua
-local path = os.tmpname() .. ".stl"
-local f = io.open(path, "w")
-f:write("solid wave\n")
+local stl = {"solid wave\n"}
+local function write(text) stl[#stl + 1] = text end
 local n = 30
 local function z(x) return 2 * math.sin(x / 4) end
 local function at(i, j)
@@ -6490,11 +6493,11 @@ local function at(i, j)
   return {x, y, z(x)}
 end
 local function facet(p, q, s)
-  f:write("facet normal 0 0 0\nouter loop\n")
+  write("facet normal 0 0 0\nouter loop\n")
   for _, v in ipairs({p, q, s}) do
-    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+    write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
   end
-  f:write("endloop\nendfacet\n")
+  write("endloop\nendfacet\n")
 end
 for i = 0, n - 1 do
   for j = 0, n - 1 do
@@ -6502,11 +6505,10 @@ for i = 0, n - 1 do
     facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
   end
 end
-f:write("endsolid wave\n")
-f:close()
+write("endsolid wave\n")
+local path = pc.file.temp_path{name = "wave.stl", text = table.concat(stl)}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local function line(x1, y1, x2, y2)
@@ -8718,18 +8720,16 @@ local drum = pc.doc.new_body{}
 pc.design.primitive{body = drum, variant = "cylinder",
   kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {drum}}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local cut = pc.inspect.section{scan = scan}
 pc.doc.rename{id = cut.section, name = "Section, centre"}
-local out = os.tmpname() .. ".igs"
+local out = pc.file.temp_path{name = "part.igs"}
 local saved = pc.inspect.export_iges{path = out, scan = scan}
-os.remove(out)
 assert(saved.path == out and saved.items == 1)
 assert(#saved.warnings == 1)
 assert(saved.warnings[1]:find("Section, centre", 1, true))
@@ -8767,12 +8767,11 @@ local model = pc.doc.new_body{}
 pc.design.primitive{body = model, variant = "cylinder",
   kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {model}}
 pc.doc.set_visible{id = model, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local axis = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5,0,5}, method = "circumscribed"}.element
@@ -8832,12 +8831,11 @@ local drum = pc.doc.new_body{}
 pc.design.primitive{body = drum, variant = "cylinder",
   kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {drum}}
 pc.doc.set_visible{id = drum, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local fit = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5, 0, 5}}
@@ -8935,12 +8933,11 @@ pc.design.primitive{body = part, kind = {Box = {length = 20, width = 20, height 
 local short = pc.doc.new_body{}
 pc.design.primitive{body = short, kind = {Box = {length = 20, width = 20, height = 10}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {short}}
 pc.doc.set_visible{id = short, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local c = pc.inspect.compare{scan = scan, reference = part}
@@ -9063,12 +9060,11 @@ local drum = pc.doc.new_body{}
 pc.design.primitive{body = drum, variant = "cylinder",
   kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {drum}}
 pc.doc.set_visible{id = drum, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local mean = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5, 0, 5}}
@@ -9107,10 +9103,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9141,10 +9136,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9176,10 +9170,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9212,10 +9205,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9244,17 +9236,15 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
-    local path = os.tmpname() .. ".ply"
+    local path = pc.file.temp_path{name = "part.ply"}
     local result = pc.mesh.export{scan = scan, path = path}
     pc.file.import{path = path, scan = true}
-    os.remove(path)
     assert(result.triangles == pc.mesh.inspect{scan = scan}.triangles)
 ```
 
@@ -9277,10 +9267,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9318,10 +9307,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9352,10 +9340,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9382,10 +9369,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9413,10 +9399,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
@@ -9444,10 +9429,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
 pc.design.pad{sketch = s, length = 10}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, format = "stl"}
 pc.file.import{path = path, scan = true}
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 

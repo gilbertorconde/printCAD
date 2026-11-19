@@ -14,9 +14,8 @@ headed `## {{name}}`.
 An STL file of a wave sheet begun, `n` steps a side.
 
 ```lua
-local path = os.tmpname() .. ".stl"
-local f = io.open(path, "w")
-f:write("solid wave\n")
+local stl = {"solid wave\n"}
+local function write(text) stl[#stl + 1] = text end
 local n = 30
 ```
 
@@ -27,11 +26,11 @@ its body.
 
 ```lua
 local function facet(p, q, s)
-  f:write("facet normal 0 0 0\nouter loop\n")
+  write("facet normal 0 0 0\nouter loop\n")
   for _, v in ipairs({p, q, s}) do
-    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+    write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
   end
-  f:write("endloop\nendfacet\n")
+  write("endloop\nendfacet\n")
 end
 for i = 0, n - 1 do
   for j = 0, n - 1 do
@@ -39,11 +38,10 @@ for i = 0, n - 1 do
     facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
   end
 end
-f:write("endsolid wave\n")
-f:close()
+write("endsolid wave\n")
+local path = pc.file.temp_path{name = "wave.stl", text = table.concat(stl)}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 ```
@@ -57,12 +55,11 @@ box hidden.
 local box = pc.doc.new_body{}
 pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname() .. ".stl"
+local path = pc.file.temp_path{name = "part.stl"}
 pc.file.export{path = path, bodies = {box}}
 pc.doc.set_visible{id = box, visible = false}
 pc.file.import{path = path, scan = true}
 pc.doc.rebuild()
-os.remove(path)
 local scan
 for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 ```

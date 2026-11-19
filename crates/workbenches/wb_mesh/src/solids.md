@@ -99,9 +99,8 @@ frame and millimetres.
 ```lua
 {{scan}}
 
-    local path = os.tmpname() .. ".ply"
+    local path = pc.file.temp_path{name = "part.ply"}
     local result = pc.mesh.export{scan = scan, path = path}
     pc.file.import{path = path, scan = true}
-    os.remove(path)
     assert(result.triangles == pc.mesh.inspect{scan = scan}.triangles)
 ```

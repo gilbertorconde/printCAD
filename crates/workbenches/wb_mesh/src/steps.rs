@@ -152,10 +152,9 @@ pub(super) const SCAN: &str = r#"
     pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
     pc.design.pad{sketch = s, length = 10}
     assert(#pc.doc.rebuild() == 0)
-    local path = os.tmpname() .. ".stl"
+    local path = pc.file.temp_path{name = "part.stl"}
     pc.file.export{path = path, format = "stl"}
     pc.file.import{path = path, scan = true}
-    os.remove(path)
     local scan
     for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 "#;

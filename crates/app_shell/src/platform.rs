@@ -219,14 +219,30 @@ static SCRATCH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 /// scratch folder, for the kernel to read by path. The folder is made on
 /// first use, and again should it go.
 pub(crate) fn scratch_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
-    scratch_file_in(&SCRATCH, &private_base(), name, bytes)
+    scratch_file_in(&SCRATCH, &private_base(), "scratch", name, bytes)
 }
 
-/// Remove this run's scratch folder with whatever is left in it, on the
-/// way out: its files are the kernel's copies, read by then or no longer
-/// wanted.
+/// This run's folder for scripts' own files, once made.
+static TEMP: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// A new file named after `name` holding `bytes`, in this run's private
+/// folder for scripts' own files (`file.temp_path`), made on first use.
+pub(crate) fn temp_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    scratch_file_in(&TEMP, &private_base(), "temp", name, bytes)
+}
+
+/// Remove this run's scratch folder and its folder for scripts' files
+/// with whatever is left in them, on the way out: the scratch files are
+/// the kernel's copies, read by then or no longer wanted, and a script's
+/// files last for the run.
 pub(crate) fn remove_scratch_folder() {
     remove_kept_folder(&SCRATCH);
+    remove_temp_folder();
+}
+
+/// Remove this run's folder for scripts' files, made again on next use.
+pub(crate) fn remove_temp_folder() {
+    remove_kept_folder(&TEMP);
 }
 
 fn remove_kept_folder(kept: &std::sync::Mutex<Option<PathBuf>>) {
@@ -241,6 +257,7 @@ fn remove_kept_folder(kept: &std::sync::Mutex<Option<PathBuf>>) {
 fn scratch_file_in(
     kept: &std::sync::Mutex<Option<PathBuf>>,
     base: &Path,
+    what: &str,
     name: &str,
     bytes: &[u8],
 ) -> std::io::Result<PathBuf> {
@@ -249,7 +266,7 @@ fn scratch_file_in(
         match kept.clone().filter(|f| f.is_dir()) {
             Some(folder) => folder,
             None => {
-                let folder = make_private_folder(base, "scratch")?;
+                let folder = make_private_folder(base, what)?;
                 *kept = Some(folder.clone());
                 folder
             }
@@ -287,10 +304,10 @@ mod private_tests {
             let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&folder), 0o700);
             let kept = std::sync::Mutex::new(None);
-            let scratch = scratch_file_in(&kept, &base, "part.step", b"solid").unwrap();
+            let scratch = scratch_file_in(&kept, &base, "scratch", "part.step", b"solid").unwrap();
             assert_eq!(mode(scratch.parent().unwrap()), 0o700);
             assert_eq!(std::fs::read(&scratch).unwrap(), b"solid");
-            let again = scratch_file_in(&kept, &base, "part.step", b"x").unwrap();
+            let again = scratch_file_in(&kept, &base, "scratch", "part.step", b"x").unwrap();
             assert_ne!(again, scratch);
             remove_kept_folder(&kept);
             assert!(!scratch.parent().unwrap().exists(), "gone on the way out");

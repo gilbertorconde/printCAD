@@ -269,11 +269,9 @@ local top
 for _, face in ipairs(pc.doc.faces{body = body}) do
   if face.kind == "plane" and face.normal[3] > 0.99 then top = face.index end
 end
-local path = os.tmpname()
+local path = pc.file.temp_path{name = "ribs.stl"}
 local function triangles()
-  local out = pc.file.export{path = path, format = "stl"}
-  os.remove(out.path)
-  return out.triangles
+  return pc.file.export{path = path, format = "stl"}.triangles
 end
 local plain = triangles()
 pc.doc.set_textures{body = body, textures = {{
@@ -284,7 +282,6 @@ assert(triangles() > 100 * plain, "the ribs are pressed into the exported mesh")
 assert(math.abs(pc.doc.measure{body = body}.volume - 180) < 1e-6, "the solid keeps its shape")
 pc.doc.set_textures{body = body, textures = {}}
 assert(triangles() == plain)
-os.remove(path)
 ```
 
 ## doc.set_face_color
@@ -298,7 +295,7 @@ at once.
 
 See also: `doc.faces`, `doc.set_body`
 
-### A pad's top painted red in a picture, then the body's colour again
+### A pad's top painted red, then the body's colour again
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
@@ -310,20 +307,16 @@ local top
 for _, face in ipairs(pc.doc.faces{body = body}) do
   if face.kind == "plane" and face.normal[3] > 0.99 then top = face.index end
 end
-local path = os.tmpname()
-local function picture()
-  pc.doc.picture{path = path, view = "top", size = {64, 64}}
-  local file = io.open(path, "rb")
-  local bytes = file:read("a")
-  file:close()
-  return bytes
+local function colours()
+  for _, b in ipairs(pc.doc.bodies()) do
+    if b.id == body then return b.face_colors end
+  end
 end
-local plain = picture()
 pc.doc.set_face_color{body = body, face = top, color = {r = 1, g = 0, b = 0}}
-local red = picture()
+local red = colours()
+assert(#red == 1 and red[1].face == top and red[1].color.r == 1 and red[1].color.g == 0)
 pc.doc.set_face_color{body = body, face = top}
-assert(red ~= plain and picture() == plain, "red, then the body's colour again")
-os.remove(path)
+assert(#colours() == 0, "the body's colour again")
 ```
 
 ## doc.linked_copy
@@ -1085,14 +1078,27 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
 local pad = pc.design.pad{sketch = s, length = 5}
 assert(#pc.doc.rebuild() == 0)
-local path = os.tmpname()
+local path = pc.file.temp_path{name = "part.png"}
 local shot = pc.doc.picture{path = path, view = "iso", size = {160, 120}}
 assert(shot.path == path and shot.width == 160 and shot.height == 120)
 assert(shot.renderer == "cpu")
-local file = io.open(path, "rb")
-assert(file:read(4) == "\137PNG")
-file:close()
-os.remove(path)
+```
+
+## file.temp_path
+
+The folder is open to this user alone and goes when printCAD closes, or when
+a `printcad --script` run ends. Each call makes a new file: `name` again gets
+a number added. It is how a script gets a file to export to and import from,
+an agent's too, which has no `io` or `os`.
+
+See also: `file.export`, `file.import`
+
+### Two files of one name
+
+```lua
+local a = pc.file.temp_path{name = "part.stl"}
+local b = pc.file.temp_path{name = "part.stl", text = "solid empty\nendsolid empty\n"}
+assert(a ~= b and a:sub(-4) == ".stl" and b:sub(-4) == ".stl")
 ```
 
 ## doc.parameters
