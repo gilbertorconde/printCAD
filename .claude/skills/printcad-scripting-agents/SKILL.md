@@ -79,7 +79,13 @@ bindings (`Target::Script`), the Scripts menu, toolbar button and palette.
 `printcad --script` (`headless.rs`) runs before the event loop, rebuilds
 on the calling thread, logs to stderr. `docs/SCRIPTING.md`'s command
 reference is generated; a test fails when it drifts
-(`PRINTCAD_WRITE_DOCS=1` rewrites it). A `CommandSpec` carries `notes`,
+(`PRINTCAD_WRITE_DOCS=1` rewrites it). `CommandSpec::fields` is the
+field list of what a command makes (Design's feature commands: the
+feature's `Describe`, its defaults what the command makes alone in a
+scratch document, `wb_design/src/commands/described.rs`), which
+`describe` and `help(id)` show and the reference leaves out. A table a
+script raises (`error{...}`, `assert(false, {...})`) is told as JSON
+(the prelude's `__tostring` over `__pc_json`). A `CommandSpec` carries `notes`,
 `examples` (Lua ending in `assert`s) and `see_also` (`.note`, `.example`,
 `.see_also`; a package's `bench_api::Command` the same), which the
 reference prints. Every built-in family writes them as markdown, one

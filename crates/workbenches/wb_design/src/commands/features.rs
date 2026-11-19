@@ -409,10 +409,18 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
                 "box (the default), cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube",
             );
         }
+        if let Some(fields) = super::described::fields_of(id) {
+            spec = spec.fields(fields);
+        }
+        let extra = format!(
+            "Any field of the feature, such as length = 20 or reversed = true; the agents' \
+             `describe` and the console's `help(\"{id}\")` list every one, with its kind, \
+             default and forms"
+        );
         t.add_on_by_id(
             explained(
                 id,
-                spec.extra_args("Any field of the feature, such as length = 20 or reversed = true")
+                spec.extra_args(&extra)
                     .returns("the feature's id")
                     .note(
                         "It makes the feature and builds nothing: a feature that cannot build \

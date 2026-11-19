@@ -53,6 +53,9 @@ pub struct Entry {
     /// The arguments a command takes beyond `params`, in words; empty
     /// when none.
     pub other_args: String,
+    /// The fields of what a command makes, a line each; empty when it
+    /// makes nothing described. Shown, never searched.
+    pub fields: String,
     /// What a command answers, in words; empty when nothing.
     pub returns: String,
     pub notes: Vec<String>,
@@ -78,6 +81,7 @@ impl Entry {
             summary: summary.into(),
             params: Vec::new(),
             other_args: String::new(),
+            fields: String::new(),
             returns: String::new(),
             notes: Vec::new(),
             examples: Vec::new(),
@@ -127,6 +131,9 @@ impl Entry {
         }
         if !self.other_args.is_empty() {
             let _ = writeln!(out, "\nOther arguments: {}", self.other_args);
+        }
+        if !self.fields.is_empty() {
+            let _ = writeln!(out, "\n{}", self.fields);
         }
         if !self.details.is_empty() {
             out.push('\n');

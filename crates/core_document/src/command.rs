@@ -86,6 +86,10 @@ pub struct CommandSpec {
     /// It takes named arguments beyond `params` (such as any field of a
     /// feature), described here.
     pub extra_args: Option<String>,
+    /// The fields of what it makes, a line each, as
+    /// `describe::render` writes them: what `describe` and `help` list
+    /// beside the extra arguments.
+    pub fields: Option<String>,
     /// It only reads: it changes neither the document nor the files, so an
     /// agent may run it without asking.
     pub read_only: bool,
@@ -150,6 +154,7 @@ impl CommandSpec {
             params: Vec::new(),
             returns: "nothing".to_string(),
             extra_args: None,
+            fields: None,
             read_only: false,
             agent: AgentAccess::AsAllowed,
             notes: Vec::new(),
@@ -232,6 +237,12 @@ impl CommandSpec {
         self
     }
 
+    /// The fields of what it makes, described.
+    pub fn fields(mut self, text: String) -> Self {
+        self.fields = Some(text);
+        self
+    }
+
     /// Check `args` against the declared arguments: every required one
     /// present, each of the right kind, and no unknown names unless the
     /// command takes extra ones.
@@ -303,6 +314,9 @@ impl CommandSpec {
         }
         if let Some(extra) = &self.extra_args {
             out["extra_args"] = Value::String(extra.clone());
+        }
+        if let Some(fields) = &self.fields {
+            out["fields"] = Value::String(fields.clone());
         }
         if !self.notes.is_empty() {
             out["notes"] = serde_json::json!(self.notes);

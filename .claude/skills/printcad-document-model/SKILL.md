@@ -34,6 +34,13 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   `flatten` and `rename`); a `FeatureId` is a feature read. Design's
   `DesignFeature` derives it: its `parameters` and `dependencies` are
   the walk's (`Walker::of`), and a field with no role fails to compile.
+  The derive also implements `core_document::describe::Describe` (each
+  field's name, kind from its role, default from serde's attributes; an
+  enum's forms with their fields), which `#[derive(Describe)]` gives a
+  type of settings alone and `describe::by_serde` a type from a crate
+  below; every field type of a described type must be described.
+  `describe::render` writes it a line per field: what `describe` and
+  `help` list for each Design feature command (`commands/described.rs`).
 - `core_document::renamed`: ids that were renamed (`wb.part` is
   `wb.design`, `part.*` commands and tools are `design.*`). `WorkbenchId`
   deserializes old ids as new, so documents and op logs read either;

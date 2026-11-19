@@ -64,7 +64,8 @@ function show(value, indent)
 end
 
 -- help() lists every command, help("sketch") those whose id starts so,
--- and any other word the commands that match it best.
+-- and any other word the commands that match it best; a command named
+-- whole (or the only one found) lists the fields of what it makes.
 function help(prefix)
   local listed = call("app.commands", { prefix = prefix })
   if #listed == 0 and prefix then
@@ -78,5 +79,6 @@ function help(prefix)
     end
     if c.extra_args then names[#names + 1] = "..." end
     print(string.format("pc.%s{%s}  %s", c.id, table.concat(names, ", "), c.summary))
+    if c.fields and (#listed == 1 or c.id == prefix) then print(c.fields) end
   end
 end

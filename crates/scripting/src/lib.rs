@@ -103,6 +103,9 @@ pub fn command_entry(spec: &CommandSpec) -> agents::discovery::Entry {
     if let Some(extra) = &spec.extra_args {
         entry.other_args = extra.clone();
     }
+    if let Some(fields) = &spec.fields {
+        entry.fields = fields.clone();
+    }
     if spec.read_only {
         entry
             .details
