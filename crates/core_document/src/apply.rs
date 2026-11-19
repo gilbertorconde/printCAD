@@ -203,6 +203,9 @@ impl Document {
                     formulas: node.formulas.clone(),
                     made_by: node.made_by.clone(),
                     package_source: node.package_source.clone(),
+                    dependents: self.feature_tree.dependent_slots(*id),
+                    hidden: !node.visible,
+                    suppressed: node.suppressed,
                 }
             }
             Op::SetImportedObjectVisibility { id, .. } => Op::SetImportedObjectVisibility {
@@ -496,14 +499,17 @@ impl Document {
                 formulas,
                 made_by,
                 package_source,
+                dependents,
+                hidden,
+                suppressed,
             } => {
                 self.feature_tree.add_node(FeatureNode {
                     id: *id,
                     workbench_id: workbench_id.clone(),
                     name: name.clone(),
                     body: *body,
-                    visible: true,
-                    suppressed: false,
+                    visible: !*hidden,
+                    suppressed: *suppressed,
                     dirty: false,
                     created_at: *created_at,
                     seq: *seq,
@@ -518,6 +524,9 @@ impl Document {
                 });
                 for dep in deps {
                     self.feature_tree.add_dependency(*id, *dep);
+                }
+                for (dependent, at) in dependents {
+                    self.feature_tree.insert_dependency(*dependent, *id, *at);
                 }
             }
             Op::UpdateFeatureData { id, data } => {
