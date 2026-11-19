@@ -814,8 +814,9 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
 /// between the 2.5 mm tap drill and the 3 mm major diameter.
 #[test]
 fn a_through_hole_threads_only_the_plate_it_passes_through() {
+    const T: f64 = 2.0;
     let built = |modeled: bool| {
-        drilled_block(30.0, 5.0, |s| {
+        drilled_block(10.0, T as f32, |s| {
             with(
                 tapped_hole(s, 1.0, iso("M3"), modeled.then_some(0.0)),
                 serde_json::json!({"through_all": true, "thread_length": "HoleDepth"}),
@@ -823,14 +824,14 @@ fn a_through_hole_threads_only_the_plate_it_passes_through() {
         })
         .unwrap_or_else(|e| panic!("builds: {e}"))
     };
-    let plate = 30.0 * 30.0 * 5.0;
+    let plate = 10.0 * 10.0 * T;
     let tapped = built(false);
     assert!(
-        (tapped - (plate - PI * 1.25 * 1.25 * 5.0)).abs() < 0.01,
+        (tapped - (plate - PI * 1.25 * 1.25 * T)).abs() < 0.01,
         "{tapped}"
     );
     let threaded = built(true);
-    let shell = PI * (1.5 * 1.5 - 1.25 * 1.25) * 5.0;
+    let shell = PI * (1.5 * 1.5 - 1.25 * 1.25) * T;
     assert!(
         threaded < tapped - 0.2 * shell && threaded > tapped - 0.8 * shell,
         "the groove takes part of the wall: {threaded} (tapped {tapped})"
