@@ -290,7 +290,9 @@ impl Reach {
             }
             calls::RENAME_FEATURE => {
                 let id = owned(document, &package, str_arg(&args, "id")?)?;
-                document.rename_feature(id, str_arg(&args, "name")?);
+                document
+                    .rename_feature(id, str_arg(&args, "name")?)
+                    .map_err(|e| e.to_string())?;
                 Ok(Value::Null)
             }
             calls::SET_FEATURE_VISIBLE => {

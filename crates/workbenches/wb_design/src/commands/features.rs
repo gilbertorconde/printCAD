@@ -683,6 +683,10 @@ fn make(
     {
         list.insert(0, json!(sketch.0.to_string()));
     }
+    let name = a.opt_string("name")?;
+    if let Some(why) = name.and_then(|name| ctx.document.name_refusal(None, name)) {
+        return Err(CommandError::bad("name", why));
+    }
     let made = bench
         .create_feature(
             ctx,
@@ -695,8 +699,10 @@ fn make(
             |feature| apply_fields(feature, &fields),
         )
         .map_err(CommandError::failed)?;
-    if let Some(name) = a.opt_string("name")? {
-        ctx.document.rename_feature(made.id, name);
+    if let Some(name) = name {
+        ctx.document
+            .rename_feature(made.id, name)
+            .map_err(|e| CommandError::failed(e.to_string()))?;
     }
     ctx.active_document_object = Some(made.id);
     Ok(json!(made.id.0.to_string()))

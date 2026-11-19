@@ -484,7 +484,9 @@ pub(crate) fn document_command(
             user_note_guard(document, item, &a, "reword")?;
             match item {
                 TreeItemId::Body(body) => document.rename_body(body, name),
-                TreeItemId::Feature(feature) => document.rename_feature(feature, name),
+                TreeItemId::Feature(feature) => document
+                    .rename_feature(feature, name)
+                    .map_err(|e| CommandError::failed(e.to_string()))?,
                 TreeItemId::Component(id) => {
                     if let Some(mut component) = document.component(id).cloned() {
                         component.name = name;

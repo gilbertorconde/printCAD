@@ -981,21 +981,34 @@ impl Document {
             .map(String::as_str)
     }
 
-    /// Rename a feature (user-facing name in the tree and panels).
-    pub fn rename_feature(&mut self, feature_id: FeatureId, name: impl Into<String>) {
+    /// Rename a feature (user-facing name in the tree and panels). A name
+    /// that would leave formulas unable to tell two objects apart is
+    /// refused ([`Self::name_refusal`]); an empty name, or the one it has,
+    /// changes nothing.
+    pub fn rename_feature(
+        &mut self,
+        feature_id: FeatureId,
+        name: impl Into<String>,
+    ) -> DocumentResult<()> {
         let name = name.into();
-        if let Some(node) = self.feature_tree.get_node(feature_id)
-            && node.name != name
-            && !name.trim().is_empty()
-        {
-            let old = node.name.clone();
-            self.record_and_apply(op::DocumentOp::RenameFeature {
-                id: feature_id,
-                name: name.clone(),
-            });
-            // Formulas that named it name it still.
-            self.rewrite_formulas(|text| expr::rename_object(text, &old, &name));
+        let node = self
+            .feature_tree
+            .get_node(feature_id)
+            .ok_or(DocumentError::FeatureNotFound(feature_id))?;
+        if node.name == name || name.trim().is_empty() {
+            return Ok(());
         }
+        if let Some(why) = self.name_refusal(Some(feature_id), &name) {
+            return Err(DocumentError::Refused(why));
+        }
+        let old = node.name.clone();
+        self.record_and_apply(op::DocumentOp::RenameFeature {
+            id: feature_id,
+            name: name.clone(),
+        });
+        // Formulas that named it name it still.
+        self.rewrite_formulas(|text| expr::rename_object(text, &old, &name));
+        Ok(())
     }
 
     pub fn rename_body(&mut self, body: BodyId, name: impl Into<String>) {

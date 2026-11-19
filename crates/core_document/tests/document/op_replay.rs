@@ -40,7 +40,7 @@ fn scripted_session(doc: &mut Document) {
         doc.update_feature_data(d2, serde_json::json!({"drag": i}))
             .expect("update");
     }
-    doc.rename_feature(d2, "Datum 2 (moved)");
+    doc.rename_feature(d2, "Datum 2 (moved)").unwrap();
     doc.set_feature_suppressed(d3, true);
     doc.set_feature_visible(d1, false);
     doc.set_feature_dependencies(d3, vec![d1]);
