@@ -543,7 +543,9 @@ impl Hold {
 /// What holds a new point at `pos` where a snap put it: the origin; else
 /// a line's middle or each curve it lies on (two at a crossing); else, on
 /// none, a line's extension or an arc's circle, found again within
-/// `curve_attach_eps`. Empty when it lies on nothing.
+/// `curve_attach_eps`. Empty when it lies on nothing. A text's outlines
+/// hold nothing: they are made again from the text on every read, which
+/// drops any constraint on them.
 fn holds_at(sketch: &Sketch, pos: Vec2D, snap_tol: f64) -> Vec<Hold> {
     let eps = curve_attach_eps(snap_tol);
     if pos.to_glam().length() <= eps {
@@ -558,10 +560,13 @@ fn holds_at(sketch: &Sketch, pos: Vec2D, snap_tol: f64) -> Vec<Hold> {
             on.push(Hold::OnLine(axis));
         }
     }
-    for geom in &sketch.geometry {
-        if matches!(geom, GeometryElement::Point(_))
-            || !snap::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps)
-        {
+    let curves = || {
+        sketch.geometry.iter().filter(|g| {
+            !matches!(g, GeometryElement::Point(_)) && !sketch.derived.contains(&g.id())
+        })
+    };
+    for geom in curves() {
+        if !snap::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps) {
             continue;
         }
         on.push(match geom {
@@ -578,19 +583,12 @@ fn holds_at(sketch: &Sketch, pos: Vec2D, snap_tol: f64) -> Vec<Hold> {
             }
             GeometryElement::Circle(_) | GeometryElement::Arc(_) => Hold::OnCircle(geom.id()),
             GeometryElement::Ellipse(_) => Hold::OnEllipse(geom.id()),
-            // A text's outlines are the text's alone.
-            GeometryElement::Conic(_) | GeometryElement::BSpline(_)
-                if !sketch.derived.contains(&geom.id()) =>
-            {
-                Hold::OnCurve(geom.id())
-            }
+            GeometryElement::Conic(_) | GeometryElement::BSpline(_) => Hold::OnCurve(geom.id()),
             _ => continue,
         });
     }
     if on.is_empty()
-        && let Some(geom) = sketch
-            .geometry
-            .iter()
+        && let Some(geom) = curves()
             .filter_map(|g| Some((g, snap::extension_foot(sketch, g, pos)?.1)))
             .filter(|(_, d)| *d <= eps)
             .min_by(|a, b| a.1.total_cmp(&b.1))
