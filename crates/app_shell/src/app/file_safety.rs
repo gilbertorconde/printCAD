@@ -204,7 +204,7 @@ impl PrintCadApp {
             return None;
         }
         let saved = match self.save_document_at(&path) {
-            Ok(()) => then.is_none() || self.save_landed(),
+            Ok(()) => then.is_none_or(|then| self.save_landed(then)),
             Err(err) => {
                 app_log::error(format!("Failed to save document: {err:#}"));
                 false
@@ -281,7 +281,7 @@ impl PrintCadApp {
         match answer {
             SaveOverAnswer::Save { quiet } => {
                 match self.save_document_at(&asking.path) {
-                    Ok(()) => saved = asking.then.is_none() || self.save_landed(),
+                    Ok(()) => saved = asking.then.is_none_or(|then| self.save_landed(then)),
                     Err(err) => app_log::error(format!("Failed to save document: {err:#}")),
                 }
                 if quiet && self.user_settings.files.ask_before_saving_older {

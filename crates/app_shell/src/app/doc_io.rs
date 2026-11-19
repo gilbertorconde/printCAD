@@ -900,7 +900,7 @@ impl PrintCadApp {
     /// edits; and the recovery copies being written.
     pub(crate) fn wait_for_all_document_saves(&mut self) {
         self.for_each_tab(|app| {
-            app.wait_for_document_saves();
+            app.wait_for_document_saves("exit");
             app.drain_server_messages();
         });
         for job in self.autosave.jobs.drain(..) {
@@ -1070,21 +1070,24 @@ impl PrintCadApp {
         self.autosave.recoverable.retain(|r| r.copy != copy);
     }
 
-    /// Block until the server has durably handled every queued write.
+    /// Block until the server has durably handled every queued write;
+    /// `before` names what waits on it, for the log.
     ///
-    /// Only worth doing on the way out: the process exiting would abandon a
-    /// write in flight and could leave a truncated document behind. Every
-    /// exit path must call this (CLAUDE.md invariant).
-    pub(crate) fn wait_for_document_saves(&mut self) {
+    /// Worth doing on the way out, where the process exiting would abandon
+    /// a write in flight and could leave a truncated document behind (every
+    /// exit path must call this, CLAUDE.md invariant), and before what
+    /// needs the file written: a tab's close, Save all's next tab, a
+    /// revert.
+    pub(crate) fn wait_for_document_saves(&mut self, before: &str) {
         // A gesture's held ops leave with the rest.
         self.session.send_outbox();
         // A packing worker has bytes nobody has sent yet; abandoning it would
         // lose the save outright.
         if !self.session.file.saves.is_empty() {
-            app_log::info("Finishing document save before exit…");
+            app_log::info(format!("Finishing document save before {before}…"));
             self.send_every_save_packing();
         } else if self.session.connection.server.status().busy() {
-            app_log::info("Finishing document save before exit…");
+            app_log::info(format!("Finishing document save before {before}…"));
         }
         self.session.connection.server.flush();
     }
