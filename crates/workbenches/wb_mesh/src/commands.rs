@@ -109,12 +109,7 @@ fn clean_up(t: &mut CommandTable<MeshWorkbench>) {
     );
     on_scan(
         t,
-        scan(CommandSpec::new(CUT, "Cut by a plane"))
-            .optional("plane", ParamKind::String, "xy, xz or yz, in the body's frame; xy")
-            .optional("at", ParamKind::Number, "Where along the plane's normal, mm; the mesh's middle")
-            .optional("keep", ParamKind::String, "below or above the plane; below")
-            .optional("close", ParamKind::Bool, "Cap every loop of the cut flat; true")
-            .optional("bridge", ParamKind::Number, "Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal")
+        solids::cut_params(scan(CommandSpec::new(CUT, "Cut by a plane")))
             .returns("{feature, name}"),
         cut,
     );

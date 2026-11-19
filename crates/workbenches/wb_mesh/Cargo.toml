@@ -21,4 +21,5 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+core_document = { path = "../../core_document", features = ["test-support"] }
 ui_kit = { path = "../../ui_kit" }

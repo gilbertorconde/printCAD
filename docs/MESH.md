@@ -134,6 +134,7 @@ are, in the scan's frame.
 ```lua
 pc.mesh.islands{scan = s, smaller_than = 2}
 pc.mesh.cut{scan = s, plane = "xy", at = 20, keep = "below"}
+pc.mesh.cut{scan = s, normal = {1, 0, 1}, origin = {0, 0, 20}, keep = "below"}
 pc.mesh.delete{scan = s, ball = {centre = {10, 0, 7.5}, radius = 3}}
 pc.mesh.flip{scan = s}
 pc.mesh.fill{scan = s, holes_up_to = 5, fairing = "flat"}
