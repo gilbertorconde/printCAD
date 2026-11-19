@@ -195,8 +195,9 @@ pub(super) fn arc(
                 return ToolEffect::none();
             };
             let radius = (start_pos - center_pos).to_glam().length();
-            // Project the clicked end point onto the arc's radius so the
-            // stored end point actually lies on the arc.
+            // The end lies on the arc's circle: a landed click is already
+            // there, on what it snapped to, where the end is held
+            // (`snap_context`'s guide); a typed one is projected onto it.
             let dir = (cursor - center_pos).to_glam();
             if dir.length() < 1e-6 {
                 return ToolEffect::none();

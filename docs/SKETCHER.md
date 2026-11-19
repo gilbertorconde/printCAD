@@ -161,6 +161,12 @@ the one further left and lower. Points lying on one spot go by which was
 drawn first. A curve whose points are missing, or a circle of negative
 radius, takes no snap.
 
+A centre-point arc's end always lies on the arc's circle, so its click
+takes only snaps on that circle: a point standing on it, or where the
+circle crosses a line, circle, arc or axis near the cursor (held there).
+Anywhere else the end lands on the circle in line with the cursor and
+the cue names no snap.
+
 Hold **Shift** while drawing a line and it leaves its start in whole steps
 of the angle snap step (15° to start with; 1°, 5°, 10°, 30°, 45° and 90°
 are offered), as far as the cursor reaches that way.

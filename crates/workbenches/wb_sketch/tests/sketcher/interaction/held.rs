@@ -180,3 +180,42 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
         }
     }
 }
+
+/// The centre-point arc's end clicked on a line near where the arc's
+/// circle crosses it lands on the crossing, named by the cue, and is held
+/// on the line. Clicked on the line away from the circle, the cue names no
+/// snap and the end lands on the circle, free of the line.
+#[test]
+fn an_arc_s_end_lands_where_its_circle_meets_what_it_snapped_to() {
+    let (centre, crossing) = (Vec2D::new(5.0, -3.0), Vec2D::new(5.0 + 56f64.sqrt(), 10.0));
+    for (x, held) in [(crossing.x + 0.2, true), (20.0, false)] {
+        let mut h = Harness::sketching();
+        h.line((-30.0, 10.0), (30.0, 10.0));
+        h.click(centre.x, centre.y, "sketch.arc");
+        h.click(20.0, -3.0, "sketch.arc");
+        h.mouse_move(x, 10.0, "sketch.arc");
+        let names = ["Endpoint", "Intersection", "On curve", "Midpoint"];
+        let cue = h
+            .labels()
+            .into_iter()
+            .find(|l| names.contains(&l.text.as_str()));
+        h.click(x, 10.0, "sketch.arc");
+        let sketch = h.sketch();
+        let (arc, line) = (crate::arc_of(&sketch), crate::line_of(&sketch).id);
+        let end = sketch.point_position(arc.end).unwrap();
+        let on_line = sketch.constraints.iter().any(|c| {
+            matches!(c.kind, ConstraintKind::PointOnLine { point, line: l }
+                if point == arc.end && l == line)
+        });
+        let case = format!("end at x = {x}");
+        assert_eq!(
+            cue.map(|l| l.text),
+            held.then(|| "Intersection".into()),
+            "{case}"
+        );
+        assert_eq!(on_line, held, "{case}");
+        assert_eq!((end - crossing).to_glam().length() < 1e-3, held, "{case}");
+        let off = ((end - centre).to_glam().length() - 15.0).abs();
+        assert!(off < 1e-3, "{case}: off the circle by {off}");
+    }
+}

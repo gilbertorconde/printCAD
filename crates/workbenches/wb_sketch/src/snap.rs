@@ -115,13 +115,17 @@ pub struct Snap {
 
 /// What a snap knows of the drawing in progress: the point a segment is
 /// drawn from (for horizontal and vertical alignment), points it must
-/// not land on (that same point), and whether arcs' circles past their
-/// ends take a point.
+/// not land on (that same point), whether arcs' circles past their
+/// ends take a point, and the circle the click must land on.
 #[derive(Debug, Clone, Default)]
 pub struct SnapContext {
     pub from: Option<Vec2D>,
     pub exclude: Vec<Uuid>,
     pub arcs: bool,
+    /// A circle, its centre and radius, that the point lands on whatever
+    /// the snap (an arc's end on the arc's circle): only snaps on it are
+    /// taken ([`resolve`]).
+    pub guide: Option<(Vec2D, f64)>,
 }
 
 /// Where `cursor` snaps, within `tol` (sketch units). The kinds are tried
@@ -146,6 +150,8 @@ pub struct SnapContext {
 /// the elements are looked at in. Elements whose points are missing or whose numbers are not
 /// finite take no snap. The one function every drawing click and the cue
 /// before it go through, so what is shown is where the click lands.
+///
+/// With `cx.guide`, the snap is on that circle ([`on_guide`]).
 pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Snap {
     let bare = Snap {
         target: SnapTarget::New(cursor),
@@ -157,6 +163,9 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
     let c = cursor.to_glam();
     if tol.is_nan() || tol <= 0.0 || !c.is_finite() {
         return bare;
+    }
+    if let Some(guide) = cx.guide {
+        return on_guide(sketch, cursor, tol, cx, guide);
     }
     let at = |target: SnapTarget, pos: Vec2D, kind: SnapKind| Snap {
         target,
@@ -265,6 +274,68 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         };
     }
     bare
+}
+
+/// Where `cursor` snaps on the circle `guide` (centre, radius): the plain
+/// snap where it lies on the circle (a point at the radius); else the
+/// circle's nearest crossing within `tol` with a line, a circle, an arc
+/// or an axis; else
+/// the cursor's foot on the circle, taking a point standing there but no
+/// other snap, so the cue never names one the click would leave behind.
+fn on_guide(
+    sketch: &Sketch,
+    cursor: Vec2D,
+    tol: f64,
+    cx: &SnapContext,
+    (centre, r): (Vec2D, f64),
+) -> Snap {
+    let (c, o) = (cursor.to_glam(), centre.to_glam());
+    let free = SnapContext {
+        guide: None,
+        ..cx.clone()
+    };
+    let Some(dir) = (c - o).try_normalize().filter(|_| r.is_finite() && r > 0.0) else {
+        return resolve(sketch, cursor, tol, &free);
+    };
+    let on = |s: &Snap| ((s.pos.to_glam() - o).length() - r).abs() <= 1e-9 * r.max(1.0);
+    let plain = resolve(sketch, cursor, tol, &free);
+    if plain.kind.is_some() && on(&plain) {
+        return plain;
+    }
+    let circle = Prim::Circle { c: o, r };
+    let mut best = Best::new();
+    for prim in prims_near(&Scene::of(sketch).near(c, tol), c, tol) {
+        for p in raw_hits(&circle, &prim) {
+            let d = (p - c).length();
+            if d <= tol && within(&prim, p) {
+                best.offer(Rank::new(d, 0, p), p);
+            }
+        }
+    }
+    if let Some(p) = best.get() {
+        let p = Vec2D::from_glam(p);
+        return Snap {
+            target: SnapTarget::New(p),
+            pos: p,
+            kind: Some(SnapKind::Intersection),
+            curve: None,
+            on: None,
+        };
+    }
+    let foot = Vec2D::from_glam(o + dir * r);
+    match resolve(sketch, foot, tol, &free) {
+        at @ Snap {
+            target: SnapTarget::Existing(_),
+            ..
+        } if on(&at) => at,
+        _ => Snap {
+            target: SnapTarget::New(foot),
+            pos: foot,
+            kind: None,
+            curve: None,
+            on: None,
+        },
+    }
 }
 
 /// A candidate's standing among others of one kind, compared field by
@@ -854,6 +925,24 @@ const AXIS_REACH: f64 = 1.0e6;
 /// The crossing of two curves (the sketch's axes among them) nearest
 /// `cursor`, within `tol`, among the elements `near` it.
 fn crossing_near(near: &[(&Item, f64)], c: DVec2, tol: f64) -> Option<DVec2> {
+    let prims = prims_near(near, c, tol);
+    let mut best = Best::new();
+    for i in 0..prims.len() {
+        for j in i + 1..prims.len() {
+            for p in raw_hits(&prims[i], &prims[j]) {
+                let d = (p - c).length();
+                if d <= tol && within(&prims[i], p) && within(&prims[j], p) {
+                    best.offer(Rank::new(d, 0, p), p);
+                }
+            }
+        }
+    }
+    best.get()
+}
+
+/// The lines, circles and arcs among `near`, and each axis within `tol`
+/// of `c`.
+fn prims_near(near: &[(&Item, f64)], c: DVec2, tol: f64) -> Vec<Prim> {
     let mut prims: Vec<Prim> = near
         .iter()
         .filter_map(|(item, _)| match item.shape {
@@ -873,18 +962,7 @@ fn crossing_near(near: &[(&Item, f64)], c: DVec2, tol: f64) -> Option<DVec2> {
             b: DVec2::new(0.0, AXIS_REACH),
         });
     }
-    let mut best = Best::new();
-    for i in 0..prims.len() {
-        for j in i + 1..prims.len() {
-            for p in raw_hits(&prims[i], &prims[j]) {
-                let d = (p - c).length();
-                if d <= tol && within(&prims[i], p) && within(&prims[j], p) {
-                    best.offer(Rank::new(d, 0, p), p);
-                }
-            }
-        }
-    }
-    best.get()
+    prims
 }
 
 /// Axis alignment detected while drawing a line segment.
