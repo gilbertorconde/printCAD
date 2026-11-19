@@ -317,6 +317,9 @@ impl PrintCadApp {
         match crate::app::server::connect(&socket) {
             Ok(server) => {
                 self.session.send_outbox();
+                // A save still packing names the old file: it goes to the
+                // server that owns that file, not the new one.
+                self.send_every_save_packing();
                 self.session.connection.server.flush();
                 self.session.connection.server = server;
                 self.session.connection.socket = socket;
@@ -857,8 +860,7 @@ impl PrintCadApp {
         match spawned {
             Ok(_) => {
                 app_log::info(format!("Saving `{}`…", self.session.document.name()));
-                self.session.file.save_rx = Some(rx);
-                self.session.file.save_progress = Some(progress);
+                self.session.file.saves.push(rx, progress);
             }
             Err(err) => app_log::error(format!("Failed to start the save: {err}")),
         }
@@ -877,27 +879,27 @@ impl PrintCadApp {
             .collect()
     }
 
-    /// Take the packed archive once the worker has it.
+    /// Send the packed archives on, in the order their saves started, as
+    /// the workers have them.
     pub(crate) fn drain_document_saves(&mut self) {
-        let Some(rx) = self.session.file.save_rx.as_ref() else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(job) => {
-                self.session.file.save_rx = None;
-                self.session.file.save_progress = None;
-                self.send_packed_document(job);
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.session.file.save_rx = None;
-                self.session.file.save_progress = None;
-                app_log::error("The save worker stopped without packing the document");
-            }
+        for packed in self.session.file.saves.take_packed() {
+            self.send_packed_document(packed);
         }
     }
 
-    fn send_packed_document(&mut self, job: SaveJob) {
+    /// Every save still packing, waited for and sent on in the order
+    /// started.
+    fn send_every_save_packing(&mut self) {
+        for packed in self.session.file.saves.wait_all() {
+            self.send_packed_document(packed);
+        }
+    }
+
+    fn send_packed_document(&mut self, packed: Result<SaveJob, std::sync::mpsc::RecvError>) {
+        let Ok(job) = packed else {
+            app_log::error("The save worker stopped without packing the document");
+            return;
+        };
         match job.result {
             Ok(bytes) => self.session.connection.server.send(
                 core_document::server::ClientMessage::SaveDocument {
@@ -1095,12 +1097,9 @@ impl PrintCadApp {
         self.session.send_outbox();
         // A packing worker has bytes nobody has sent yet; abandoning it would
         // lose the save outright.
-        if let Some(rx) = self.session.file.save_rx.take() {
+        if !self.session.file.saves.is_empty() {
             app_log::info("Finishing document save before exit…");
-            self.session.file.save_progress = None;
-            if let Ok(job) = rx.recv() {
-                self.send_packed_document(job);
-            }
+            self.send_every_save_packing();
         } else if self.session.connection.server.status().busy() {
             app_log::info("Finishing document save before exit…");
         }

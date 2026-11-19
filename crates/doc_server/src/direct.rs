@@ -15,6 +15,10 @@ pub struct DirectFiles {
     tx: Sender<ServerMessage>,
     rx: Receiver<ServerMessage>,
     workers: Vec<std::thread::JoinHandle<()>>,
+    /// The latest save's writer. Each save's thread waits for the one
+    /// before it, so saves are written and answered in the order sent and
+    /// the file ends up holding the last.
+    last_save: Option<std::thread::JoinHandle<()>>,
     /// Replies `flush` took in, handed out by the next `poll`.
     held: Vec<ServerMessage>,
     opens_in_flight: u32,
@@ -35,6 +39,7 @@ impl DirectFiles {
             tx,
             rx,
             workers: Vec::new(),
+            last_save: None,
             held: Vec::new(),
             opens_in_flight: 0,
             saves_in_flight: 0,
@@ -67,7 +72,11 @@ impl DocumentServer for DirectFiles {
             } => {
                 self.saves_in_flight = self.saves_in_flight.saturating_add(1);
                 let tx = self.tx.clone();
+                let before = self.last_save.take();
                 let handle = std::thread::spawn(move || {
+                    if let Some(before) = before {
+                        let _ = before.join();
+                    }
                     let reply = match write_atomically(&path, &bytes) {
                         Ok(()) => ServerMessage::SaveCompleted { path, at_seq },
                         Err(err) => ServerMessage::SaveFailed {
@@ -77,7 +86,7 @@ impl DocumentServer for DirectFiles {
                     };
                     let _ = tx.send(reply);
                 });
-                self.workers.push(handle);
+                self.last_save = Some(handle);
             }
             ClientMessage::OpenDocument { path, token } => {
                 self.opens_in_flight = self.opens_in_flight.saturating_add(1);
@@ -126,7 +135,13 @@ impl DocumentServer for DirectFiles {
     }
 
     fn flush(&mut self) {
-        for handle in self.workers.drain(..) {
+        // The latest save waits for every save before it.
+        for handle in self
+            .last_save
+            .take()
+            .into_iter()
+            .chain(self.workers.drain(..))
+        {
             let _ = handle.join();
         }
         // The replies settle the in-flight counters now and wait for the

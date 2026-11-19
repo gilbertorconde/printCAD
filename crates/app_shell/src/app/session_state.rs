@@ -142,13 +142,12 @@ pub(crate) struct FileState {
     pub path: Option<PathBuf>,
     /// What wrote the tab's file and whether it can be written in place.
     pub safety: crate::app::file_safety::FileSafety,
-    /// The worker packing a `.prtcad` archive, and how far it has got.
+    /// The workers packing `.prtcad` archives, and how far each has got.
     /// Packing carries every blob in the document, so it happens off the
     /// UI thread and the window keeps drawing while it runs.
-    pub save_rx: Option<std::sync::mpsc::Receiver<SaveJob>>,
+    pub saves: SaveQueue,
     /// The worker parsing an opened document, for the same reason.
     pub open_rx: Option<std::sync::mpsc::Receiver<OpenJob>>,
-    pub save_progress: Option<std::sync::Arc<SaveProgress>>,
     /// The export dialog's draft, while it is open.
     pub export_pending: Option<crate::app::export::ExportDraft>,
     /// The exporting walkthrough is waiting on a solid to open the export
@@ -162,6 +161,71 @@ pub(crate) struct FileState {
     /// Files picked or dropped together, waiting in order while the
     /// import dialog or the units question is open for the one before.
     pub imports_waiting: std::collections::VecDeque<PathBuf>,
+}
+
+/// A tab's saves being packed, the oldest first. Each goes to the server
+/// once packed and only after every save started before it, so a save
+/// started while another packs never takes the earlier one's place, and
+/// the server writes and answers them in the order they were asked for.
+pub(crate) struct SaveQueue<T = SaveJob> {
+    packing: std::collections::VecDeque<Packing<T>>,
+}
+
+/// One save's worker: its answer and how far it has got.
+struct Packing<T> {
+    rx: std::sync::mpsc::Receiver<T>,
+    progress: std::sync::Arc<SaveProgress>,
+}
+
+impl<T> Default for SaveQueue<T> {
+    fn default() -> Self {
+        Self {
+            packing: Default::default(),
+        }
+    }
+}
+
+impl<T> SaveQueue<T> {
+    /// A save whose worker answers on `rx`, behind those started before.
+    pub fn push(
+        &mut self,
+        rx: std::sync::mpsc::Receiver<T>,
+        progress: std::sync::Arc<SaveProgress>,
+    ) {
+        self.packing.push_back(Packing { rx, progress });
+    }
+
+    /// No save is being packed.
+    pub fn is_empty(&self) -> bool {
+        self.packing.is_empty()
+    }
+
+    /// How far the oldest save has got.
+    pub fn progress(&self) -> Option<&SaveProgress> {
+        self.packing.front().map(|p| p.progress.as_ref())
+    }
+
+    /// The saves packed, in the order they were started, up to the first
+    /// still packing; `Err` for one whose worker ended without packing.
+    pub fn take_packed(&mut self) -> Vec<Result<T, std::sync::mpsc::RecvError>> {
+        use std::sync::mpsc::{RecvError, TryRecvError};
+        let mut out = Vec::new();
+        while let Some(front) = self.packing.front() {
+            let answer = match front.rx.try_recv() {
+                Ok(job) => Ok(job),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => Err(RecvError),
+            };
+            self.packing.pop_front();
+            out.push(answer);
+        }
+        out
+    }
+
+    /// Every save, each waited for in the order they were started.
+    pub fn wait_all(&mut self) -> Vec<Result<T, std::sync::mpsc::RecvError>> {
+        self.packing.drain(..).map(|p| p.rx.recv()).collect()
+    }
 }
 
 /// The tab's document server connection and what crosses it.
@@ -602,7 +666,7 @@ impl FileState {
     /// an answer.
     pub fn idle(&self) -> bool {
         self.open_rx.is_none()
-            && self.save_rx.is_none()
+            && self.saves.is_empty()
             && !self.asking()
             && self.imports_waiting.is_empty()
     }
@@ -675,5 +739,50 @@ mod tests {
         assert_eq!(file.next_waiting_import(), Some(b));
         assert_eq!(file.next_waiting_import(), Some(c));
         assert!(file.idle());
+    }
+
+    /// A save started while another packs waits behind it: nothing comes
+    /// out until the first is packed, then both in the order started; a
+    /// worker that died is reported in its place and does not hold the
+    /// rest back.
+    #[test]
+    fn saves_started_together_are_all_sent_in_the_order_started() {
+        let mut saves = SaveQueue::<&str>::default();
+        let started = || {
+            let (tx, rx) = std::sync::mpsc::channel();
+            (tx, rx, std::sync::Arc::new(SaveProgress::default()))
+        };
+        let (first, rx, progress) = started();
+        saves.push(rx, progress);
+        let (second, rx, progress) = started();
+        saves.push(rx, progress);
+        second.send("second").unwrap();
+        assert!(saves.take_packed().is_empty(), "the first still packs");
+        assert!(!saves.is_empty());
+        first.send("first").unwrap();
+        let sent: Vec<_> = saves.take_packed().into_iter().flatten().collect();
+        assert_eq!(sent, ["first", "second"]);
+        assert!(saves.is_empty());
+
+        let (dead, rx, progress) = started();
+        saves.push(rx, progress);
+        let (third, rx, progress) = started();
+        saves.push(rx, progress);
+        drop(dead);
+        third.send("third").unwrap();
+        let answers = saves.take_packed();
+        assert!(answers[0].is_err());
+        assert_eq!(answers[1], Ok("third"));
+
+        let (fourth, rx, progress) = started();
+        saves.push(rx, progress);
+        let (fifth, rx, progress) = started();
+        saves.push(rx, progress);
+        std::thread::spawn(move || {
+            fifth.send("fifth").unwrap();
+            fourth.send("fourth").unwrap();
+        });
+        let waited: Vec<_> = saves.wait_all().into_iter().flatten().collect();
+        assert_eq!(waited, ["fourth", "fifth"]);
     }
 }
