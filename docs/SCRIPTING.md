@@ -4568,7 +4568,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `face_point` and `face_normal` name the face to write on, in the body's own frame, and are required. The text stands in a sketch of its own, hidden under the feature, 2 mm off the face and facing out, its middle where the face was named: up along a cylinder's or cone's axis, else as near the body's +Z as the face allows.
 - `text` ("Text"; a `{formula}` shows its value), `font`, `size` (5 mm), `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set the text; `mode` ("Emboss", "Deboss" or "Split") and `height` (0.6 mm) what it does to the face.
-- On a curved face the text wraps onto it (`wrap`, set by itself when the face is curved): round a cylinder or cone, or with `along = true` along its axis; `full_turn = true` spreads the letters evenly round a whole cylinder (`radius` says how far round that is). The face's kind is read from the body's mesh, so on a body not built yet give `wrap = true` and `radius` yourself.
+- On a curved face the text wraps onto it (`wrap`, set by itself when the face is curved): round a cylinder or cone, or with `along = true` along its axis; `full_turn = true` spreads the letters evenly round a whole cylinder (`radius` says how far round that is, until a build reads the cylinder's own; letters longer than the turn do not fit, and the build says so). The face's kind is read from the body's mesh, so on a body not built yet give `wrap = true` and `radius` yourself.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.project`, `pc.sketch.text`.
 

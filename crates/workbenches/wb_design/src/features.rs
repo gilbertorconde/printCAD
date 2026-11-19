@@ -184,10 +184,31 @@ impl DesignWorkbench {
         let Ok(mut feature) = DesignFeature::from_json(values) else {
             return false;
         };
+        let Ok(made) = DesignFeature::from_json(&node.data) else {
+            return false;
+        };
+        // Text round a whole turn takes the cylinder's radius as it is now.
+        if let Some(asked) = made.turn_face().map(|face| face.probe()) {
+            let Some(Ok(kernel_api::ProbeAnswer::Face {
+                surface: kernel_api::FaceSurface::Cylinder { radius: now, .. },
+                ..
+            })) = probed.answers.first()
+            else {
+                return false;
+            };
+            let DesignFeature::Text { radius, .. } = &mut feature else {
+                return false;
+            };
+            if probed.probes != [asked] || *radius == *now {
+                return false;
+            }
+            *radius = *now;
+            *values = feature.to_json();
+            return true;
+        }
         // A feature placed by faces of the solid takes where they are now.
-        let asked: Vec<kernel_api::ShapeProbe> = DesignFeature::from_json(&node.data)
-            .map(|made| made.placing_faces().iter().map(|f| f.probe()).collect())
-            .unwrap_or_default();
+        let asked: Vec<kernel_api::ShapeProbe> =
+            made.placing_faces().iter().map(|f| f.probe()).collect();
         if !asked.is_empty() {
             let mut faces = feature.placing_faces_mut();
             if probed.probes != asked || faces.len() != asked.len() {

@@ -119,6 +119,42 @@ pub(crate) fn make_sketch(
     Ok((id, curved, radius))
 }
 
+/// Spread the first text block of `sketch` round a whole turn of a
+/// cylinder `radius` across: what the letters leave of the circumference
+/// shared between them, the gap across the seam as wide as the rest. An
+/// error, the sketch left as it was, when the letters alone are longer
+/// than the turn or the radius is none.
+pub(crate) fn lay_round(sketch: &mut Sketch, radius: f32) -> Result<(), String> {
+    if radius <= 0.0 {
+        return Err("a whole turn goes round a cylinder, and this face is none".to_string());
+    }
+    let Some(block) = sketch.texts.first() else {
+        return Err("the text's sketch holds no text".to_string());
+    };
+    let mut spec = TextSpec::of(block);
+    let scale = spec.size / block.glyphs.em.max(1e-9);
+    let advances: Vec<f64> = block
+        .shown()
+        .chars()
+        .filter_map(|c| block.glyphs.get(c))
+        .map(|g| g.advance * scale)
+        .collect();
+    if advances.is_empty() {
+        return Ok(());
+    }
+    let turn = std::f64::consts::TAU * f64::from(radius);
+    let letters: f64 = advances.iter().sum();
+    if letters > turn {
+        return Err(format!(
+            "the text does not fit round the cylinder: its letters run {letters:.2} mm, \
+             the turn {turn:.2} mm; make it smaller or shorter, or let it run its own length"
+        ));
+    }
+    spec.spacing = (turn - letters) / advances.len() as f64;
+    let id = block.id;
+    text::change(sketch, id, &spec)
+}
+
 /// Bring the hidden sketch of Text feature `id` in step with its fields:
 /// what it says, its font, size and spacing (a whole turn's spacing worked
 /// out from its letters), its turn, and where its middle stands.
@@ -171,22 +207,10 @@ pub(crate) fn sync(document: &mut Document, id: FeatureId) -> Result<(), String>
         p.position = Vec2D::new(f64::from(across), f64::from(up));
     }
     text::change(&mut feature.sketch, block_id, &spec)?;
-    // Round the whole turn: what the letters leave of the circumference,
-    // shared between them, the gap across the seam as wide as the rest.
-    if full_turn && wrap && !along && radius > 0.0 {
-        let block = &feature.sketch.texts[0];
-        let shown = block.shown();
-        let scale = spec.size / block.glyphs.em.max(1e-9);
-        let advances: Vec<f64> = shown
-            .chars()
-            .filter_map(|c| block.glyphs.get(c))
-            .map(|g| g.advance * scale)
-            .collect();
-        if !advances.is_empty() {
-            let turn = std::f64::consts::TAU * f64::from(radius);
-            spec.spacing = (turn - advances.iter().sum::<f64>()) / advances.len() as f64;
-            text::change(&mut feature.sketch, block_id, &spec)?;
-        }
+    // Text too long for the turn keeps its own spacing; the build says it
+    // does not fit.
+    if full_turn && wrap && !along {
+        let _ = lay_round(&mut feature.sketch, radius);
     }
     document
         .update_feature_data(sketch, feature.to_json())

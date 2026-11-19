@@ -2295,8 +2295,9 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         full_turn: bool,
-        /// The cylinder's radius where the text was put on one, which a
-        /// whole turn goes round; zero on any other face.
+        /// The radius of the cylinder a whole turn goes round: where the
+        /// text was put on one, then as each build finds the face; zero on
+        /// any other face.
         #[serde(default)]
         #[walk(setting)]
         radius: f32,
@@ -2987,6 +2988,21 @@ impl DesignFeature {
                 ..
             } => vec![neutral],
             other => other.start_face().into_iter().collect(),
+        }
+    }
+
+    /// The cylinder face text spread round a whole turn goes round, whose
+    /// radius a build asks of the solid before it.
+    pub fn turn_face(&self) -> Option<&FacePick> {
+        match self {
+            DesignFeature::Text {
+                faces,
+                wrap: true,
+                along: false,
+                full_turn: true,
+                ..
+            } => faces.first(),
+            _ => None,
         }
     }
 

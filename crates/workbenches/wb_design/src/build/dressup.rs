@@ -2,8 +2,8 @@
 //! deleted and opened faces, scaling, and sketches projected onto faces.
 
 use super::{
-    datum_direction, face_pick_plane, face_probe, mat_mul, mat_rotation, mat_translation,
-    sketch_profile, target_plane,
+    datum_direction, face_pick_plane, face_probe, load_sketch, mat_mul, mat_rotation,
+    mat_translation, profile_of, sketch_profile, target_plane,
 };
 use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature};
 use kernel_api::{EdgeSelection, SolidOp};
@@ -326,7 +326,21 @@ pub(super) fn plan_dressup(
                     "select at least one face to project the sketch onto".into(),
                 ));
             }
-            let profile = sketch_profile(document, *sketch, &[]).map_err(&fail)?;
+            let profile = match feature {
+                // Spread round the cylinder as the build finds it.
+                DesignFeature::Text {
+                    wrap: true,
+                    along: false,
+                    full_turn: true,
+                    radius,
+                    ..
+                } => {
+                    let mut laid = load_sketch(document, *sketch).map_err(&fail)?;
+                    crate::text_feature::lay_round(&mut laid.sketch, *radius).map_err(&fail)?;
+                    profile_of(&laid, &[]).map_err(&fail)?
+                }
+                _ => sketch_profile(document, *sketch, &[]).map_err(&fail)?,
+            };
             let faces = faces.iter().map(face_probe).collect();
             let (mode, height) = (*mode, f64::from(*height));
             plan.ops.push(if *wrap {
