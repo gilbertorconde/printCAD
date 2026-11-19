@@ -47,6 +47,12 @@ pub struct MenuBarInputs<'a> {
     pub active_tab_blank: bool,
     /// The tab on screen, for Close tab.
     pub active_tab: Option<uuid::Uuid>,
+    /// The tab on screen has a file, which Revert to saved reads again.
+    pub active_has_file: bool,
+    /// Another tab is open beside the one on screen.
+    pub other_tabs: bool,
+    /// Some tab has unsaved edits, which Save all saves.
+    pub any_edits: bool,
     /// The scripts folder's scripts.
     pub scripts: &'a [crate::script_library::ScriptEntry],
     /// A recording is on.
@@ -109,13 +115,30 @@ fn item_needing_document(
     shortcut: Option<String>,
     have_document: bool,
 ) -> bool {
+    item_when(
+        ui,
+        label,
+        shortcut,
+        have_document,
+        "open or create a document first",
+    )
+}
+
+/// A row enabled when `enabled`, saying `waiting` for what otherwise.
+fn item_when(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: Option<String>,
+    enabled: bool,
+    waiting: &str,
+) -> bool {
     let mut button = egui::Button::new(RichText::new(label).font(sans(FONT_SM)));
     if let Some(sc) = shortcut {
         button = button.shortcut_text(sc);
     }
     let response = ui
-        .add_enabled(have_document, button)
-        .on_disabled_hover_text(format!("{label}: open or create a document first"));
+        .add_enabled(enabled, button)
+        .on_disabled_hover_text(format!("{label}: {waiting}"));
     let clicked = response.clicked();
     if clicked {
         ui.close();
@@ -360,6 +383,26 @@ pub fn draw_menu_bar(
                             ) {
                                 commands.push(UiCommand::File(FileCommand::SaveAs));
                             }
+                            if item_when(
+                                ui,
+                                "Save all",
+                                key("file.save_all"),
+                                inputs.any_edits,
+                                "no document has unsaved edits",
+                            ) {
+                                commands.push(UiCommand::SaveAll);
+                            }
+                            if let Some(active) = inputs.active_tab
+                                && item_when(
+                                    ui,
+                                    "Revert to saved",
+                                    key("file.revert"),
+                                    have_document && inputs.active_has_file,
+                                    "the document has no saved file",
+                                )
+                            {
+                                commands.push(UiCommand::RevertTab(active));
+                            }
                             ui.separator();
                             if item_needing_document(
                                 ui,
@@ -406,6 +449,17 @@ pub fn draw_menu_bar(
                                 && item(ui, "Close tab", key("tab.close"))
                             {
                                 commands.push(UiCommand::CloseTab(active));
+                            }
+                            if let Some(active) = inputs.active_tab
+                                && item_when(
+                                    ui,
+                                    "Close other tabs",
+                                    key("tab.close_others"),
+                                    inputs.other_tabs,
+                                    "no other tab is open",
+                                )
+                            {
+                                commands.push(UiCommand::CloseOtherTabs(active));
                             }
                             if item(ui, "Reopen closed tab", key("tab.reopen")) {
                                 commands.push(UiCommand::ReopenTab);

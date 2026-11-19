@@ -95,7 +95,18 @@ impl<Id: Copy + Eq + Hash + Send + 'static, V: Clone + Send + 'static> Keyed<Id,
         let spawned = std::thread::Builder::new()
             .name("printcad-keyed".into())
             .spawn(move || {
-                let answer = job();
+                // A run that panics fails like one that answers an error,
+                // so its entry never stays running.
+                let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job))
+                    .unwrap_or_else(|panic| {
+                        let why = panic
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).into()))
+                            .unwrap_or_else(|| "unknown".into());
+                        tracing::error!(target: "printcad.jobs", "background work panicked: {why}");
+                        Err(format!("the work stopped: {why}"))
+                    });
                 let Ok(mut state) = shared.lock() else {
                     return;
                 };
@@ -331,6 +342,11 @@ mod tests {
         assert_eq!(keyed.failure(0, 3).as_deref(), Some("no"));
         assert_eq!(keyed.ensure(0, 3, || Ok(3)), None);
         assert!(!keyed.busy());
+
+        // A run that panics is a failure too, so the loop may sleep again.
+        keyed.ensure(0, 4, || panic!("boom"));
+        settle(&keyed);
+        assert!(keyed.failure(0, 4).is_some_and(|why| why.contains("boom")));
     }
 
     /// A ticket's answer lands only while its inputs hold; a dropped job

@@ -19,6 +19,13 @@ How documents, bodies, sketches and features behave in the app.
 - At start it reopens the documents that were open when it closed, on
   the tab that was active. Preferences › General › Session › Reopen
   documents at start turns this off, starting on the start page instead.
+- File › Save all saves every tab with unsaved edits: those with a file
+  in place, then each untitled one through its own Save As, one at a time.
+  File › Revert to saved reads the tab's file again, asking first when it
+  has edits. File › Close other tabs closes every tab but the one on
+  screen, asking about each with edits in turn, as quitting does. A right
+  click on a tab offers Close tab, Close other tabs and Revert to saved.
+  None has a key until one is given in Preferences › Keyboard.
 - A saved file records the printCAD version that wrote it. A file from a
   newer version opens with a card saying so, and its **Save As…** keeps
   the file as it is. Saving over a file another version wrote asks first:

@@ -186,25 +186,43 @@ impl PrintCadApp {
     }
 
     /// Save to `path`, picked by Save or Save As: over the tab's own file
-    /// from another version, once the user says so.
-    pub(crate) fn save_document_asking(&mut self, path: PathBuf) {
+    /// from another version, once the user says so. With `then`, what
+    /// waits on the save, it is waited for, and what goes on once it is
+    /// written is given back; a save that fails stops it.
+    pub(crate) fn save_document_asking(
+        &mut self,
+        path: PathBuf,
+        then: Option<Then>,
+    ) -> Option<(Uuid, Then)> {
         if self.asks_before_saving_at(&path) {
             self.questions.save_over = Some(SaveOver {
                 tab: self.session.tab,
                 path,
-                then: None,
+                then,
             });
             self.redraw_needed = true;
-            return;
+            return None;
         }
-        if let Err(err) = self.save_document_at(&path) {
-            app_log::error(format!("Failed to save document: {err:#}"));
+        let saved = match self.save_document_at(&path) {
+            Ok(()) => then.is_none() || self.save_landed(),
+            Err(err) => {
+                app_log::error(format!("Failed to save document: {err:#}"));
+                false
+            }
+        };
+        match then {
+            Some(then) if saved => Some((self.session.tab, then)),
+            Some(_) => {
+                self.questions.stop_waiting();
+                None
+            }
+            None => None,
         }
     }
 
     /// Whether saving the active tab to `path` asks first: it is the tab's
     /// own file, from another version.
-    fn asks_before_saving_at(&self, path: &Path) -> bool {
+    pub(crate) fn asks_before_saving_at(&self, path: &Path) -> bool {
         self.session.file.path.as_deref() == Some(path)
             && self
                 .session
@@ -280,7 +298,7 @@ impl PrintCadApp {
             if saved {
                 outcome.go_on = Some((asking.tab, then));
             } else {
-                self.questions.quit_answered.clear();
+                self.questions.stop_waiting();
             }
         }
         outcome

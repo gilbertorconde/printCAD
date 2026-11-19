@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use rfd::FileDialog;
 
 use crate::app::view_fit::{aabb_fit_center_radius, document_imported_aabb};
 use crate::log_panel as app_log;
@@ -84,6 +83,9 @@ pub(crate) enum FileDialogKind {
     Open,
     Save,
     SaveAs,
+    /// A name for the tab's document, asked by a close, quit or Save all
+    /// that goes on once the document is saved under it.
+    SaveThen(crate::app::unsaved::Then),
     ImportStep,
     Export(kernel_ogeom::export::ExportFormat),
     RunScript,
@@ -148,6 +150,7 @@ impl FileDialogKind {
         match self {
             FileDialogKind::Save
             | FileDialogKind::SaveAs
+            | FileDialogKind::SaveThen(_)
             | FileDialogKind::ImportStep
             | FileDialogKind::Export(_)
             | FileDialogKind::BenchOpen(_)
@@ -169,33 +172,13 @@ impl PrintCadApp {
         self.session.document.assets().next().is_some()
     }
 
-    /// Save to the tab's file or prompt for a path. Returns false if cancelled or save fails.
-    pub(crate) fn save_document_interactive(&mut self) -> bool {
-        // A read-only file is not written in place: it asks for a name.
-        let in_place = if self.current_file_read_only() {
-            None
-        } else {
-            self.session.file.path.clone()
-        };
-        let path = if let Some(p) = in_place {
-            p
-        } else {
-            let mut dialog = FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
-            if let Some(recent_dir) = self.files.recent.last_dir.clone() {
-                dialog = dialog.set_directory(recent_dir);
-            }
-            match dialog.set_file_name("untitled.prtcad").save_file() {
-                Some(p) => p,
-                None => return false,
-            }
-        };
-        match self.save_document_at(&path) {
-            Ok(()) => true,
-            Err(err) => {
-                app_log::error(format!("Save failed: {err:#}"));
-                false
-            }
+    /// The tab's file when the document saves to it without a name being
+    /// asked: it has one, and it can be written in place.
+    pub(crate) fn file_to_save_in_place(&self) -> Option<PathBuf> {
+        if self.current_file_read_only() {
+            return None;
         }
+        self.session.file.path.clone()
     }
 
     /// A blank document on screen: the active tab when nothing has
@@ -1109,14 +1092,17 @@ impl PrintCadApp {
     /// Drain a finished file-dialog thread's result, if any. An answer for
     /// a document goes to the tab it was asked from, brought on screen,
     /// whichever tab is on screen now; it is let go when that tab closed.
-    pub(crate) fn poll_file_dialog(&mut self) {
+    /// A name picked for a close, quit or Save all that waits on the save
+    /// gives back what goes on once it is written.
+    pub(crate) fn poll_file_dialog(&mut self) -> Option<(uuid::Uuid, crate::app::unsaved::Then)> {
         let result = match crate::platform::take_answer(&mut self.files.dialog_rx) {
             Some(Ok(result)) => result,
             Some(Err(_)) => {
                 app_log::error("The file dialog closed without an answer: nothing done");
-                return;
+                self.questions.stop_waiting();
+                return None;
             }
-            None => return,
+            None => return None,
         };
         let path = result.paths.first().cloned();
         // A bench hears of a cancelled pick too, in its own tab.
@@ -1125,7 +1111,8 @@ impl PrintCadApp {
         if result.kind.belongs_to_tab() && answered {
             let Some(index) = self.tab_index_of(result.tab) else {
                 app_log::warn("The tab the file was picked for is closed: nothing done with it");
-                return;
+                self.questions.stop_waiting();
+                return None;
             };
             self.switch_tab(index);
         }
@@ -1137,9 +1124,14 @@ impl PrintCadApp {
             }
             FileDialogKind::Save | FileDialogKind::SaveAs => {
                 if let Some(path) = path {
-                    self.save_document_asking(path);
+                    self.save_document_asking(path, None);
                 }
             }
+            FileDialogKind::SaveThen(then) => match path {
+                Some(path) => return self.save_document_asking(path, Some(then)),
+                // No name, no save: what waited on it stops.
+                None => self.questions.stop_waiting(),
+            },
             FileDialogKind::ImportStep => {
                 // A mesh file has no shapes to mesh, and a file a workbench
                 // imports is the workbench's to read, so the meshing options
@@ -1206,8 +1198,11 @@ impl PrintCadApp {
                 }
             }
         }
+        None
     }
 
+    /// Open the file dialog `kind` on a thread; its answer comes through
+    /// [`Self::poll_file_dialog`].
     pub(crate) fn start_file_dialog(&mut self, kind: FileDialogKind) {
         use std::sync::mpsc;
         // One dialog at a time: a second request is refused aloud.
@@ -1363,6 +1358,9 @@ impl PrintCadApp {
                         }
                     }
                     FileDialogKind::SaveAs => dialog.set_file_name("untitled.prtcad").save_file(),
+                    FileDialogKind::SaveThen(_) => {
+                        dialog.set_file_name(format!("{stem}.prtcad")).save_file()
+                    }
                     FileDialogKind::Export(_)
                     | FileDialogKind::SaveFile(_)
                     | FileDialogKind::SaveAnimation(_) => dialog.save_file(),

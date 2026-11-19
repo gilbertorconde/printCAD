@@ -21,6 +21,8 @@ pub enum HostAction {
     Open,
     Save,
     SaveAs,
+    SaveAll,
+    Revert,
     Import,
     Export,
     SavePicture,
@@ -30,6 +32,7 @@ pub enum HostAction {
     NewTab,
     ReopenTab,
     CloseTab,
+    CloseOtherTabs,
     NextTab,
     PreviousTab,
     Palette,
@@ -128,6 +131,8 @@ const HOST: &[HostSpec] = {
         anywhere(spec(Open, "file.open", "Open", "File", &["Ctrl+O"])),
         spec(Save, "file.save", "Save", "File", &["Ctrl+S"]),
         spec(SaveAs, "file.save_as", "Save as", "File", &["Ctrl+Shift+S"]),
+        anywhere(spec(SaveAll, "file.save_all", "Save all", "File", &[])),
+        spec(Revert, "file.revert", "Revert to saved", "File", &[]),
         spec(Import, "file.import", "Import", "File", &["Ctrl+I"]),
         spec(Export, "file.export", "Export", "File", &["Ctrl+E"]),
         spec(
@@ -326,6 +331,13 @@ const HOST: &[HostSpec] = {
             "Close tab",
             "Tabs",
             &["Ctrl+W"],
+        )),
+        anywhere(spec(
+            CloseOtherTabs,
+            "tab.close_others",
+            "Close other tabs",
+            "Tabs",
+            &[],
         )),
         anywhere(spec(
             ReopenTab,
@@ -840,6 +852,11 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Open => C(UiCommand::File(FileCommand::Open)),
         Save => C(UiCommand::File(FileCommand::Save)),
         SaveAs => C(UiCommand::File(FileCommand::SaveAs)),
+        SaveAll => C(UiCommand::SaveAll),
+        Revert => match active_tab {
+            Some(tab) => C(UiCommand::RevertTab(tab)),
+            None => HostOutcome::Nothing,
+        },
         Import => C(UiCommand::File(FileCommand::ImportStep)),
         Export => C(UiCommand::File(FileCommand::Export)),
         SavePicture => C(UiCommand::File(FileCommand::SavePicture)),
@@ -850,6 +867,10 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         ReopenTab => C(UiCommand::ReopenTab),
         CloseTab => match active_tab {
             Some(tab) => C(UiCommand::CloseTab(tab)),
+            None => HostOutcome::Nothing,
+        },
+        CloseOtherTabs => match active_tab {
+            Some(tab) => C(UiCommand::CloseOtherTabs(tab)),
             None => HostOutcome::Nothing,
         },
         NextTab => C(UiCommand::CycleTab(1)),

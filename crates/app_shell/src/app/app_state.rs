@@ -321,6 +321,17 @@ pub(crate) struct Questions {
     pub save_over: Option<crate::app::file_safety::SaveOver>,
     /// Tabs whose edits the user answered for while quitting.
     pub quit_answered: HashSet<Uuid>,
+    /// Tabs Save all saved or asked about in its run.
+    pub saved_all: HashSet<Uuid>,
+}
+
+impl Questions {
+    /// A run of questions stops (cancelled, or a save that failed): the
+    /// next quit or Save all starts over with every tab.
+    pub fn stop_waiting(&mut self) {
+        self.quit_answered.clear();
+        self.saved_all.clear();
+    }
 }
 
 /// What the last run left and what this one keeps for the next.

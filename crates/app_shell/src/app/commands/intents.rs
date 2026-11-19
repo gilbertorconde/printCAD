@@ -365,7 +365,9 @@ impl PrintCadApp {
             self.start_file_dialog(kind);
         }
 
-        self.poll_file_dialog();
+        if let Some(go_on) = self.poll_file_dialog() {
+            intents.after_save_over = Some(go_on);
+        }
         self.drain_package_news();
         for path in std::mem::take(&mut self.scripting.to_run) {
             self.run_script_file(&path);
@@ -406,6 +408,15 @@ impl PrintCadApp {
             && let Some(index) = self.tab_index_of(tab)
         {
             self.close_tab_interactive(index);
+        }
+        if let Some(keep) = intents.close_others {
+            self.close_other_tabs(keep);
+        }
+        if let Some(tab) = intents.revert_tab {
+            self.revert_tab(tab);
+        }
+        if intents.save_all {
+            self.save_all();
         }
 
         // File > Quit / Ctrl+Q. Applied here so the rest of the frame

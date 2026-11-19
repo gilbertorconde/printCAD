@@ -56,6 +56,7 @@ impl PrintCadApp {
                 active: session.tab == self.session.tab,
                 blank: self.tab_is_blank(session),
                 read_only: session.file.safety.read_only,
+                has_file: session.file.path.is_some(),
             })
             .collect()
     }

@@ -57,10 +57,13 @@ struct FrameIntents {
     orient_to_plane: Option<core_document::CameraOrientRequest>,
     finish_sketch: bool,
     quit: bool,
+    close_others: Option<uuid::Uuid>,
+    save_all: bool,
+    revert_tab: Option<uuid::Uuid>,
     /// The answer to the unsaved-edits question.
     unsaved_answer: Option<crate::app::unsaved::Unsaved>,
-    /// A close or quit to go on with, its save over a file from another
-    /// version written.
+    /// A close or quit to go on with, the save it waited on written (over
+    /// a file from another version, or under a name just picked).
     after_save_over: Option<(uuid::Uuid, crate::app::unsaved::Then)>,
     request_workbench: Option<ActiveWorkbench>,
     undo: bool,
@@ -386,6 +389,9 @@ impl PrintCadApp {
             UiCommand::RecoverDocument(copy) => self.recover_document(copy),
             UiCommand::DiscardRecovery(copy) => self.discard_recovery(copy),
             UiCommand::CloseTab(tab) => intents.close_tab = Some(tab),
+            UiCommand::CloseOtherTabs(tab) => intents.close_others = Some(tab),
+            UiCommand::SaveAll => intents.save_all = true,
+            UiCommand::RevertTab(tab) => intents.revert_tab = Some(tab),
             UiCommand::SelectTab(tab) => intents.select_tab = Some(tab),
             UiCommand::MoveTab { tab, to } => self.move_tab(tab, to),
             UiCommand::CycleTab(delta) => intents.cycle_tab = Some(delta),

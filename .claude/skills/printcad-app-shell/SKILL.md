@@ -109,7 +109,11 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   which edits through the same document mutators and `UiCommand`s.
   Closing a tab, the window or the app with unsaved edits asks in the
   window (`app/unsaved.rs`, `ui/unsaved_modal.rs`) and the close waits for
-  the answer; quitting asks for each tab with edits in turn.
+  the answer; quitting asks for each tab with edits in turn. Close other
+  tabs, Save all and Revert to saved run through the same questions
+  (`unsaved::Then` names what goes on after each answer); a document with
+  no file of its own asks its name in the threaded file dialog
+  (`FileDialogKind::SaveThen`) and goes on once that save lands.
 
 ## Application features
 

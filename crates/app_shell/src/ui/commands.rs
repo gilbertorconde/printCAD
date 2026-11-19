@@ -236,6 +236,13 @@ pub enum UiCommand {
     /// Put away the card saying a newer printCAD wrote the file.
     DismissFileNotice,
     CloseTab(uuid::Uuid),
+    /// Close every tab but this one, each with edits asked about in turn.
+    CloseOtherTabs(uuid::Uuid),
+    /// Save every tab with edits: in place where it can be, the others one
+    /// at a time through their questions.
+    SaveAll,
+    /// Read the tab's file again, its edits let go once the user says so.
+    RevertTab(uuid::Uuid),
     SelectTab(uuid::Uuid),
     /// A document's tab dragged to another place in the strip, `to` its
     /// index there.
