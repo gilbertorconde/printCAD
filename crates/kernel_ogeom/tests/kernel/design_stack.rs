@@ -2212,6 +2212,7 @@ fn an_uneven_linear_pattern_spaces_each_occurrence_its_own_way() {
             boss,
             serde_json::json!({
                 "axis": serde_json::to_value(normal).unwrap(),
+                "length": 20.0,
                 "spacings": [6.0, 14.0]
             }),
         ),

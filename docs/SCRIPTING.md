@@ -4639,7 +4639,7 @@ Notes:
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
-- `axis` is X when left out (Y, Z, or `{Custom = {origin = {x, y, z}, dir = {x, y, z}}}`); `occurrences` (3) counts the original; `length` (30 mm) runs from the first to the last, or is the gap between them with `spacing_mode = true`.
+- `axis` is X when left out (Y, Z, or `{Custom = {origin = {x, y, z}, dir = {x, y, z}}}`); `occurrences` (3) counts the original; `length` (30 mm) runs from the first to the last, or is the gap between them with `spacing_mode = true`. `spacings` sets the gaps one by one; over the overall span, gaps left unlisted share what the listed ones leave, and a full list that does not add up to `length` is refused.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.polar_pattern`.
 
@@ -4687,7 +4687,7 @@ Notes:
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
-- `axis` is Z through the body's origin when left out; `occurrences` (4) counts the original. `angle_deg` of 360 (the default) spreads them evenly round the turn; less puts the first and the last at its two ends. With `step_mode = true` it is the angle from one occurrence to the next, and occurrences whose steps run past a whole turn are refused rather than laid over the first.
+- `axis` is Z through the body's origin when left out; `occurrences` (4) counts the original. `angle_deg` of 360 (the default) spreads them evenly round the turn; less puts the first and the last at its two ends. With `step_mode = true` it is the angle from one occurrence to the next, and occurrences whose steps run past a whole turn are refused rather than laid over the first. `angles` sets the steps one by one; over the overall angle, steps left unlisted (round a whole turn, the one back to the original among them) share what the listed ones leave, and a full list that does not add up to `angle_deg` is refused.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
 

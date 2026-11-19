@@ -78,6 +78,7 @@ pub(super) fn transform_editor(
                     name: "spacing",
                     label: "Spacing",
                     degrees: false,
+                    span: !*spacing_mode,
                 },
             );
             changed |= f.check(reversed, "Reversed", "");
@@ -122,6 +123,7 @@ pub(super) fn transform_editor(
                     name: "step_angle",
                     label: "Step angle",
                     degrees: true,
+                    span: !*step_mode,
                 },
             );
             changed |= f.check(reversed, "Reversed", "");
@@ -550,17 +552,21 @@ pub(super) fn pattern_axis_editor(
 }
 
 /// How an uneven pattern's gaps show: the switch that turns them on, the
-/// formula name and label of each (numbered from 1), and their unit.
+/// formula name and label of each (numbered from 1), their unit, and
+/// whether together they span the pattern's overall length or angle.
 struct Gaps {
     toggle: &'static str,
     name: &'static str,
     label: &'static str,
     degrees: bool,
+    span: bool,
 }
 
 /// An uneven pattern's gaps, one per step from an occurrence to the next.
 /// Turned on, the list starts at the even gap and follows the occurrence
-/// count; turned off, it empties and the pattern spaces evenly.
+/// count, starting again at the even gap when the count changes over a
+/// span the old gaps could no longer fill; turned off, it empties and the
+/// pattern spaces evenly.
 fn gaps_editor(
     f: &mut Form,
     fx: &mut Formulas,
@@ -570,11 +576,13 @@ fn gaps_editor(
 ) -> bool {
     let mut changed = false;
     let mut uneven = !gaps.is_empty();
-    if f.check(
-        &mut uneven,
-        how.toggle,
-        "Set the gap from each occurrence to the next on its own",
-    ) {
+    let hint = if how.span {
+        "Set the gap from each occurrence to the next on its own; together \
+         they must add up to the overall span"
+    } else {
+        "Set the gap from each occurrence to the next on its own"
+    };
+    if f.check(&mut uneven, how.toggle, hint) {
         gaps.clear();
         changed = true;
     }
@@ -583,6 +591,9 @@ fn gaps_editor(
     }
     let wanted = occurrences.saturating_sub(1).max(1) as usize;
     if gaps.len() != wanted {
+        if how.span {
+            gaps.clear();
+        }
         gaps.resize(wanted, even);
         changed = true;
     }
