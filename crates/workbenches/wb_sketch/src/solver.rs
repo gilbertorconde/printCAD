@@ -500,12 +500,19 @@ pub fn locked_elements(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
     use sketch_solver::problem::{CurveReference, PointReference};
     // Solved without its texts' letters, which the solver leaves out and
     // which would only be made again after it.
+    // Too large is known before the solve, which would be wasted on it.
     let mut solved = sketch.clone();
     crate::text::strip(&mut solved);
+    let too_large = |problem: &sketch_solver::problem::Problem| {
+        problem.constraints.len() > problem.settings.diagnosis_limit
+    };
+    if too_large(&adapter::prepare(&solved, &[])) {
+        return Default::default();
+    }
     let sys = build_system(&solved);
     solve_system(&mut solved, sys);
     let problem = adapter::prepare(&solved, &[]);
-    if problem.constraints.len() > problem.settings.diagnosis_limit {
+    if too_large(&problem) {
         return Default::default();
     }
     let locked = sketch_solver::freedom::locked(&problem);
