@@ -109,6 +109,15 @@ impl ActiveKey {
             label,
         }
     }
+
+    /// The key with no label held: what nothing of a label's place
+    /// depends on.
+    pub(crate) fn without_label(self) -> Self {
+        Self {
+            label: None,
+            ..self
+        }
+    }
 }
 
 /// What the overlays and glyphs depend on beyond the sketch: the settings

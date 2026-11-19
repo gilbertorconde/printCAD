@@ -1123,7 +1123,7 @@ impl SketchWorkbench {
         let locked = self.locked_elements(sketch);
         let text = self
             .frame
-            .row_text(self.active_key(ctx), || RowText::of(sketch));
+            .row_text(self.active_key(ctx).without_label(), || RowText::of(sketch));
         let by_id: std::collections::HashMap<Uuid, &Constraint> =
             sketch.constraints.iter().map(|c| (c.id, c)).collect();
         for geom in &sketch.geometry {
@@ -1218,7 +1218,7 @@ impl SketchWorkbench {
         let listed: std::collections::HashSet<&Uuid> = shown.iter().collect();
         let text = self
             .frame
-            .row_text(self.active_key(ctx), || RowText::of(sketch));
+            .row_text(self.active_key(ctx).without_label(), || RowText::of(sketch));
         let mut items = Vec::new();
         for constraint in &sketch.constraints {
             if !listed.contains(&constraint.id) {
