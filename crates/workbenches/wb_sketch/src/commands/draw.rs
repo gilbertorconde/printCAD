@@ -326,18 +326,28 @@ fn array(
         .collect();
     let count = |name: &str| -> Result<u32, CommandError> {
         let n = a.number(name)?;
-        if n >= 1.0 {
+        if (1.0..=f64::from(crate::step::MAX_COPIES)).contains(&n) {
             Ok(n as u32)
         } else {
-            Err(CommandError::bad(name, "must be at least 1"))
+            Err(CommandError::bad(
+                name,
+                format!("must be from 1 to {}", crate::step::MAX_COPIES),
+            ))
         }
     };
+    let (rows, cols) = (count("rows")?, count("cols")?);
+    if rows * cols > crate::step::MAX_COPIES + 1 {
+        return Err(CommandError::bad(
+            "rows",
+            format!("an array makes at most {} copies", crate::step::MAX_COPIES),
+        ));
+    }
     let before = ids_of(sketch);
     let effect = crate::tools::array(
         sketch,
         &items,
-        count("rows")?,
-        count("cols")?,
+        rows,
+        cols,
         a.number("dx")?,
         a.number("dy")?,
         a.opt_bool("linked")?.unwrap_or(false),

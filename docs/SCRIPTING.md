@@ -2645,7 +2645,7 @@ Notes:
 
 - Each click is in the sketch's millimetres and snaps as a click in the view does: one on the origin is held there and one on an axis is held on it, the constraints coming with what is made.
 - A tool takes the clicks its shape needs: line, circle (centre, then a point on it) and slot (the ends of its centre line) two; rect_center its centre, then a corner; ellipse its centre, an end of the major axis, then a point on it. Clicks short of a shape make nothing, without an error.
-- Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, `fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer takes one click on the corner. A bspline ends with the word "finish" in `points`, and so does an open path; a path's click on its first node closes it, and a click with `drag = {x, y}` places a smooth node whose handle the drag pulled there.
+- Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, `fillet_radius` and `chamfer_length` 2 mm when not given. `polygon_sides` takes 3 to 1000 and `copies` 0 to 10000; a count outside is refused. A fillet or chamfer takes one click on the corner. A bspline ends with the word "finish" in `points`, and so does an open path; a path's click on its first node closes it, and a click with `drag = {x, y}` places a smooth node whose handle the drag pulled there.
 - A value typed at a click (`typed = {length = 20}`) sets the shape's size; with `constrain = true` it is kept as a dimension. The names are length, angle, width, height, diameter, radius, major_radius, minor_radius, sweep (an arc's turn, degrees counter-clockwise) and x and y (a shape's first point).
 - It returns every element made, end points and centres included, and every constraint made with them.
 
@@ -2911,7 +2911,7 @@ assert(math.abs(m.max[2] - 10) < 1e-6 and math.abs(m.max[3] - 4) < 1e-6, "sketch
 Notes:
 
 - The items are the first copy: `rows = 2, cols = 3` makes five more. Columns step along the sketch's x by `dx`, rows along its y by `dy`.
-- `rows` and `cols` must be at least 1, and one of them more than 1 ("an array needs elements and at least two rows or columns").
+- `rows` and `cols` must be at least 1, and one of them more than 1 ("an array needs elements and at least two rows or columns"); an array makes at most 10000 copies.
 - Without `linked` the copies are free geometry; with it, constraints keep them the originals' size and on the pitch.
 - It returns {elements, constraints}: the copies, their points and centres included.
 

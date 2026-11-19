@@ -771,3 +771,33 @@ fn a_far_dimension_change_keeps_every_corner_on_its_side() {
             < 1e-6
     );
 }
+
+/// A distance between two points that start on one spot still pulls them
+/// apart to it, the same way on every run.
+#[test]
+fn a_distance_separates_points_that_start_together() {
+    let input = Problem {
+        geometry: vec![point(1, 0.0, 0.0), point(2, 0.0, 0.0)],
+        constraints: vec![constraint(
+            1,
+            Relation::Distance {
+                point1: PointId(1).into(),
+                point2: PointId(2).into(),
+                distance: Length(5.0),
+            },
+        )],
+        ..Problem::default()
+    };
+    let answer = solve(&input).unwrap();
+    assert!(
+        matches!(answer.outcome, SolveOutcome::Converged { .. }),
+        "{:?}",
+        answer.outcome
+    );
+    let v = &answer.values;
+    assert!(
+        ((v[2] - v[0]).hypot(v[3] - v[1]) - 5.0).abs() < 1e-8,
+        "{v:?}"
+    );
+    assert_eq!(solve(&input).unwrap().values, answer.values);
+}

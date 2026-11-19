@@ -566,6 +566,11 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
     out
 }
 
+/// The most sides a script's polygon takes.
+pub(crate) const MAX_POLYGON_SIDES: u32 = 1000;
+/// The most copies a script's transform or array makes.
+pub(crate) const MAX_COPIES: u32 = 10_000;
+
 /// Tool settings from `value`, a table of names, the rest the defaults.
 pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, String> {
     let mut p = ToolParams::default();
@@ -585,8 +590,16 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             v.as_bool()
                 .ok_or(format!("params.{name} must be a boolean"))
         };
+        let count = |low: u32, high: u32| -> Result<u32, String> {
+            let n = number()?;
+            if (f64::from(low)..=f64::from(high)).contains(&n) {
+                Ok(n as u32)
+            } else {
+                Err(format!("params.{name} must be from {low} to {high}"))
+            }
+        };
         match name.as_str() {
-            "polygon_sides" => p.polygon_sides = number()? as u32,
+            "polygon_sides" => p.polygon_sides = count(3, MAX_POLYGON_SIDES)?,
             "slot_width" => p.slot_width = number()?,
             "fillet_radius" => p.fillet_radius = number()?,
             "chamfer_length" => p.chamfer_length = number()?,
@@ -600,7 +613,7 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             "copies_total" => p.copies_total = flag()?,
             "copies_symmetric" => p.copies_symmetric = flag()?,
             "rotate_full_turn" => p.rotate_full_turn = flag()?,
-            "copies" => p.copies = number()? as u32,
+            "copies" => p.copies = count(0, MAX_COPIES)?,
             "bspline_periodic" => p.bspline_periodic = flag()?,
             "bspline_degree" => {
                 p.bspline_degree = (number()? as u32).clamp(1, crate::spline::MAX_DEGREE)
@@ -642,5 +655,22 @@ mod tests {
         let back = params_from_json(Some(&Value::Object(named))).unwrap();
         assert_eq!(back, params);
         assert!(params_from_json(Some(&json!({"sides": 3}))).is_err());
+    }
+
+    /// Counts a script names are held to what the tools can build: a
+    /// polygon of a billion sides or as many copies is refused, not tried.
+    #[test]
+    fn counts_out_of_range_are_refused() {
+        for bad in [
+            json!({"polygon_sides": 1e9}),
+            json!({"polygon_sides": 2}),
+            json!({"copies": 1e9}),
+            json!({"copies": -1}),
+        ] {
+            let err = params_from_json(Some(&bad)).expect_err("refused");
+            assert!(err.contains("from"), "{err}");
+        }
+        let edge = params_from_json(Some(&json!({"polygon_sides": 1000, "copies": 10000})));
+        assert_eq!(edge.map(|p| (p.polygon_sides, p.copies)), Ok((1000, 10000)));
     }
 }

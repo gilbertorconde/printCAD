@@ -4,6 +4,7 @@
 //! Curves are stitched into loops through their *shared point ids*: the
 //! sketcher's endpoint snapping reuses point elements, so a visually closed
 //! profile is topologically closed here with no coincidence tolerance.
+//! Points tied by a Coincident constraint count as one shared point.
 //! Curves that cross, touch away from their ends or branch go through the
 //! arrangement of [`crate::regions`] instead, which finds every region they
 //! close and lets a feature choose among them.
@@ -125,7 +126,8 @@ pub fn closed_profile(
 
 /// Extract every closed wire from the sketch. Standalone points are
 /// ignored; circles are closed wires by themselves; lines/arcs must form
-/// closed loops via shared endpoints, and those that do not are left out.
+/// closed loops via shared endpoints (or ends tied by a Coincident
+/// constraint), and those that do not are left out.
 /// Curves that cross or branch give the outline of the regions they close,
 /// nested ones alternating between material and hole.
 pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> {
@@ -507,38 +509,59 @@ fn curves(sketch: &Sketch) -> Result<(Vec<ProfileWire>, Vec<EdgeCurve>), Profile
         return Err(ProfileError::Empty);
     }
 
-    // Projected curves each bring their own end points: where two meet at
-    // one spot they join there, as drawn curves sharing a point do.
-    let mut same: Vec<(Uuid, [f64; 2])> = Vec::new();
-    let mut joined: HashMap<Uuid, Uuid> = HashMap::new();
-    for edge in &edges {
-        for end in [edge.ends.0, edge.ends.1] {
-            if !sketch.is_external(end) || joined.contains_key(&end) {
-                continue;
-            }
-            let Some(at) = sketch.point_position(end).map(v2) else {
-                continue;
-            };
-            let found = same
-                .iter()
-                .find(|(_, p)| (p[0] - at[0]).hypot(p[1] - at[1]) < PROJECTED_JOIN)
-                .map(|(id, _)| *id);
-            match found {
-                Some(first) => {
-                    joined.insert(end, first);
-                }
-                None => {
-                    same.push((end, at));
-                    joined.insert(end, end);
-                }
-            }
-        }
-    }
+    let joined = joined_ends(sketch, edges.iter().flat_map(|e| [e.ends.0, e.ends.1]));
     for edge in &mut edges {
         let canon = |id: Uuid| joined.get(&id).copied().unwrap_or(id);
         edge.ends = (canon(edge.ends.0), canon(edge.ends.1));
     }
     Ok((wires, edges))
+}
+
+/// The point each of `ends` joins the curves at: points tied by an active
+/// Coincident constraint are one point, as drawn curves sharing a point
+/// are, and projected ends at one spot are one point, as each projected
+/// curve brings its own. Ends that join nothing map to themselves.
+fn joined_ends(sketch: &Sketch, ends: impl IntoIterator<Item = Uuid>) -> HashMap<Uuid, Uuid> {
+    fn root(parent: &HashMap<Uuid, Uuid>, mut id: Uuid) -> Uuid {
+        while let Some(&up) = parent.get(&id).filter(|&&up| up != id) {
+            id = up;
+        }
+        id
+    }
+    fn join(parent: &mut HashMap<Uuid, Uuid>, a: Uuid, b: Uuid) {
+        let (a, b) = (root(parent, a), root(parent, b));
+        // The smaller id stands for both, so the choice never depends on
+        // the order the joins come in.
+        let (low, high) = if a < b { (a, b) } else { (b, a) };
+        parent.insert(high, low);
+        parent.entry(low).or_insert(low);
+    }
+    let ends: Vec<Uuid> = ends.into_iter().collect();
+    let mut parent: HashMap<Uuid, Uuid> = ends.iter().map(|&id| (id, id)).collect();
+    for constraint in sketch.constraints.iter().filter(|c| c.active) {
+        if let crate::sketch::ConstraintKind::Coincident { point1, point2 } = constraint.kind
+            && (parent.contains_key(&point1) || parent.contains_key(&point2))
+        {
+            join(&mut parent, point1, point2);
+        }
+    }
+    let mut spots: Vec<(Uuid, [f64; 2])> = Vec::new();
+    for &end in &ends {
+        if !sketch.is_external(end) {
+            continue;
+        }
+        let Some(at) = sketch.point_position(end).map(v2) else {
+            continue;
+        };
+        match spots
+            .iter()
+            .find(|(_, p)| (p[0] - at[0]).hypot(p[1] - at[1]) < PROJECTED_JOIN)
+        {
+            Some(&(first, _)) => join(&mut parent, end, first),
+            None => spots.push((end, at)),
+        }
+    }
+    ends.into_iter().map(|id| (id, root(&parent, id))).collect()
 }
 
 /// Point id -> indices of the curves ending there.
@@ -572,7 +595,7 @@ fn encloses_nothing(segments: &[ProfileSegment]) -> bool {
 /// The loose ends of the curves that count in the profile: points only one
 /// of them reaches, which the profile leaves out with their curves.
 pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
-    let mut reach: HashMap<Uuid, usize> = HashMap::new();
+    let mut ends = Vec::new();
     for geom in &sketch.geometry {
         let guide = sketch
             .external
@@ -581,29 +604,14 @@ pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
         if sketch.is_construction(geom.id()) || guide {
             continue;
         }
-        let Some(ends) = Sketch::curve_ends(geom) else {
-            continue;
-        };
-        for end in ends {
-            // Projected ends at one spot are one end, as the profile joins
-            // them.
-            let end = if sketch.is_external(end) {
-                let at = sketch.point_position(end).map(v2);
-                reach
-                    .keys()
-                    .copied()
-                    .find(|other| {
-                        sketch.is_external(*other)
-                            && at.zip(sketch.point_position(*other).map(v2)).is_some_and(
-                                |(a, b)| (a[0] - b[0]).hypot(a[1] - b[1]) < PROJECTED_JOIN,
-                            )
-                    })
-                    .unwrap_or(end)
-            } else {
-                end
-            };
-            *reach.entry(end).or_default() += 1;
-        }
+        ends.extend(Sketch::curve_ends(geom).into_iter().flatten());
+    }
+    // Ends the profile joins (a Coincident pair, projected ends at one
+    // spot) are one end.
+    let joined = joined_ends(sketch, ends.iter().copied());
+    let mut reach: HashMap<Uuid, usize> = HashMap::new();
+    for end in ends {
+        *reach.entry(joined[&end]).or_default() += 1;
     }
     reach
         .into_iter()
@@ -829,6 +837,35 @@ mod tests {
         let mut sides: Vec<usize> = wires.iter().map(|w| w.segments.len()).collect();
         sides.sort_unstable();
         assert_eq!(sides, vec![3, 4]);
+    }
+
+    /// A loop closed by a Coincident constraint rather than a shared point
+    /// closes as one through a shared point does, for the profile, its
+    /// loose ends and its regions alike.
+    #[test]
+    fn a_coincident_constraint_closes_a_loop() {
+        let mut sketch = Sketch::new("t");
+        rectangle(&mut sketch);
+        let a = pt(&mut sketch, -1.0, 0.0);
+        let e = pt(&mut sketch, -5.0, -5.0);
+        let e2 = pt(&mut sketch, -5.0, 5.0);
+        let a2 = pt(&mut sketch, -1.0, 0.0);
+        line(&mut sketch, a, e);
+        line(&mut sketch, e, e2);
+        line(&mut sketch, e2, a2);
+        sketch.add_constraint(crate::sketch::ConstraintKind::Coincident {
+            point1: a2,
+            point2: a,
+        });
+        let mut sides: Vec<usize> = extract_wires(&sketch)
+            .expect("both loops close")
+            .iter()
+            .map(|w| w.segments.len())
+            .collect();
+        sides.sort_unstable();
+        assert_eq!(sides, vec![3, 4]);
+        assert!(loose_ends(&sketch).is_empty());
+        assert_eq!(regions(&sketch).unwrap().len(), 2);
     }
 
     /// A loop with loose curves around it is still a profile: the spur
