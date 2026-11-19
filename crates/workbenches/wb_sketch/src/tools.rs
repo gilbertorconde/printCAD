@@ -513,6 +513,91 @@ pub(crate) fn curve_attach_eps(snap_tol: f64) -> f64 {
     (snap_tol * 0.05).max(1e-5)
 }
 
+/// What holds a point at a snapped position where the snap put it.
+#[derive(Debug, Clone, Copy)]
+enum Hold {
+    Origin,
+    OnLine(Uuid),
+    Middle(Uuid),
+    OnCircle(Uuid),
+    OnEllipse(Uuid),
+}
+
+impl Hold {
+    fn on(self, point: Uuid) -> ConstraintKind {
+        match self {
+            Hold::Origin => ConstraintKind::Coincident {
+                point1: point,
+                point2: crate::sketch::ORIGIN_ID,
+            },
+            Hold::OnLine(line) => ConstraintKind::PointOnLine { point, line },
+            Hold::Middle(line) => ConstraintKind::Midpoint { point, line },
+            Hold::OnCircle(circle) => ConstraintKind::PointOnCircle { point, circle },
+            Hold::OnEllipse(ellipse) => ConstraintKind::PointOnEllipse { point, ellipse },
+        }
+    }
+}
+
+/// What holds a new point at `pos` where a snap put it: the origin; else
+/// a line's middle or each curve it lies on (two at a crossing); else, on
+/// none, a line's extension or an arc's circle, found again within
+/// `curve_attach_eps`. Empty when it lies on nothing.
+fn holds_at(sketch: &Sketch, pos: Vec2D, snap_tol: f64) -> Vec<Hold> {
+    let eps = curve_attach_eps(snap_tol);
+    if pos.to_glam().length() <= eps {
+        return vec![Hold::Origin];
+    }
+    let mut on: Vec<Hold> = Vec::new();
+    for (axis, off) in [
+        (crate::sketch::X_AXIS_ID, pos.y),
+        (crate::sketch::Y_AXIS_ID, pos.x),
+    ] {
+        if off.abs() <= eps {
+            on.push(Hold::OnLine(axis));
+        }
+    }
+    for geom in &sketch.geometry {
+        if matches!(geom, GeometryElement::Point(_))
+            || !snap::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps)
+        {
+            continue;
+        }
+        on.push(match geom {
+            GeometryElement::Line(l) => {
+                let middle = sketch
+                    .point_position(l.start)
+                    .zip(sketch.point_position(l.end))
+                    .map(|(a, b)| Vec2D::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5));
+                if middle.is_some_and(|m| (m - pos).to_glam().length() <= eps) {
+                    Hold::Middle(l.id)
+                } else {
+                    Hold::OnLine(l.id)
+                }
+            }
+            GeometryElement::Circle(_) | GeometryElement::Arc(_) => Hold::OnCircle(geom.id()),
+            GeometryElement::Ellipse(_) => Hold::OnEllipse(geom.id()),
+            _ => continue,
+        });
+    }
+    if on.is_empty()
+        && let Some(geom) = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| Some((g, snap::extension_foot(sketch, g, pos)?.1)))
+            .filter(|(_, d)| *d <= eps)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(g, _)| g)
+    {
+        on.push(match geom {
+            GeometryElement::Arc(arc) => Hold::OnCircle(arc.id),
+            _ => Hold::OnLine(geom.id()),
+        });
+    }
+    // Two are a crossing; a third would only over-constrain the point.
+    on.truncate(2);
+    on
+}
+
 /// Like `materialize`, but a NEW point placed where a snap put it stays
 /// there: at a line's middle by a midpoint constraint, on the origin by a
 /// coincidence, on each curve it lies on (two at a crossing) by an on-curve
@@ -524,80 +609,24 @@ pub(crate) fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap
     let SnapTarget::New(pos) = target else {
         return materialize(sketch, target);
     };
-    let eps = curve_attach_eps(snap_tol);
+    let holds = holds_at(sketch, pos, snap_tol);
     let point = sketch.add_geometry(GeometryElement::Point(Point::new(pos)));
-    if pos.to_glam().length() <= eps {
-        sketch.add_constraint(ConstraintKind::Coincident {
-            point1: point,
-            point2: crate::sketch::ORIGIN_ID,
-        });
-        return point;
-    }
-    let mut on: Vec<ConstraintKind> = Vec::new();
-    for (axis, off) in [
-        (crate::sketch::X_AXIS_ID, pos.y),
-        (crate::sketch::Y_AXIS_ID, pos.x),
-    ] {
-        if off.abs() <= eps {
-            on.push(ConstraintKind::PointOnLine { point, line: axis });
-        }
-    }
-    for geom in &sketch.geometry {
-        if geom.id() == point
-            || matches!(geom, GeometryElement::Point(_))
-            || !snap::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps)
-        {
-            continue;
-        }
-        let kind = match geom {
-            GeometryElement::Line(l) => {
-                let middle = sketch
-                    .point_position(l.start)
-                    .zip(sketch.point_position(l.end))
-                    .map(|(a, b)| Vec2D::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5));
-                if middle.is_some_and(|m| (m - pos).to_glam().length() <= eps) {
-                    ConstraintKind::Midpoint { point, line: l.id }
-                } else {
-                    ConstraintKind::PointOnLine { point, line: l.id }
-                }
-            }
-            GeometryElement::Circle(_) | GeometryElement::Arc(_) => ConstraintKind::PointOnCircle {
-                point,
-                circle: geom.id(),
-            },
-            GeometryElement::Ellipse(_) => ConstraintKind::PointOnEllipse {
-                point,
-                ellipse: geom.id(),
-            },
-            _ => continue,
-        };
-        on.push(kind);
-    }
-    if on.is_empty()
-        && let Some(geom) = sketch
-            .geometry
-            .iter()
-            .filter_map(|g| Some((g, snap::extension_foot(sketch, g, pos)?.1)))
-            .filter(|(g, d)| g.id() != point && *d <= eps)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(g, _)| g)
-    {
-        on.push(match geom {
-            GeometryElement::Arc(arc) => ConstraintKind::PointOnCircle {
-                point,
-                circle: arc.id,
-            },
-            _ => ConstraintKind::PointOnLine {
-                point,
-                line: geom.id(),
-            },
-        });
-    }
-    // Two are a crossing; a third would only over-constrain the point.
-    for kind in on.into_iter().take(2) {
-        sketch.add_constraint(kind);
+    for hold in holds {
+        sketch.add_constraint(hold.on(point));
     }
     point
+}
+
+/// The point a click a snap put on something stands for, held there as
+/// [`materialize_on_curve`] holds it: the existing point it landed on, or
+/// a new one on the curves it lies on. `None` when it lies on nothing, so
+/// a shape through it has no point to keep there.
+pub(crate) fn held_point(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) -> Option<Uuid> {
+    match target {
+        SnapTarget::Existing(id) => Some(id),
+        SnapTarget::New(pos) if holds_at(sketch, pos, snap_tol).is_empty() => None,
+        SnapTarget::New(_) => Some(materialize_on_curve(sketch, target, snap_tol)),
+    }
 }
 
 /// What a snap made in tool `state` knows of the drawing in

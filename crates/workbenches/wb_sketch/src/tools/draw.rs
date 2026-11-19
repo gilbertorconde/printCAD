@@ -4,7 +4,7 @@
 use uuid::Uuid;
 
 use super::ToolParams;
-use super::{ToolEffect, ToolState, materialize, materialize_on_curve, short};
+use super::{ToolEffect, ToolState, held_point, materialize, materialize_on_curve, short};
 use crate::geom2d;
 use crate::sketch::{
     Arc, BSpline, Circle, Conic, ConicKind, ConstraintKind, Ellipse, GeometryElement, Line, Point,
@@ -68,7 +68,12 @@ pub(super) fn circle(
                 return ToolEffect::none();
             }
             let center_id = materialize_on_curve(sketch, center, snap_tol);
-            sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
+            // The rim click, where a snap put it, stays on the circle.
+            let rim = snap_point_or_curve(sketch, cursor, super::curve_attach_eps(snap_tol));
+            let rim = held_point(sketch, rim, snap_tol);
+            let circle =
+                sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
+            hold_on(sketch, rim, circle);
             *state = ToolState::Idle;
             ToolEffect::changed(format!(
                 "Circle r={radius:.2} at ({:.2}, {:.2})",
@@ -81,6 +86,41 @@ pub(super) fn circle(
             ToolEffect::none()
         }
     }
+}
+
+/// The points the clicks at `at` stand for where a snap put them on a
+/// point or a curve, each held there ([`held_point`]); `None` for a click
+/// on nothing. Taken before the shape through them is added, so none is
+/// found on the shape itself.
+fn held_clicks<const N: usize>(
+    sketch: &mut Sketch,
+    at: [Vec2D; N],
+    snap_tol: f64,
+) -> [Option<Uuid>; N] {
+    let eps = super::curve_attach_eps(snap_tol);
+    at.map(|p| {
+        let target = snap_point_or_curve(sketch, p, eps);
+        held_point(sketch, target, snap_tol)
+    })
+}
+
+/// Keep `point`, when there is one, on `curve`: a circle's or an arc's
+/// circle, or an ellipse.
+fn hold_on(sketch: &mut Sketch, point: Option<Uuid>, curve: Uuid) {
+    let Some(point) = point else {
+        return;
+    };
+    let kind = match sketch.get_geometry(curve) {
+        Some(GeometryElement::Ellipse(_)) => ConstraintKind::PointOnEllipse {
+            point,
+            ellipse: curve,
+        },
+        _ => ConstraintKind::PointOnCircle {
+            point,
+            circle: curve,
+        },
+    };
+    sketch.add_constraint(kind);
 }
 
 /// Cursor snapped to an existing point's *position* (nothing materialized).
@@ -110,9 +150,14 @@ pub(super) fn circle3(
                 return ToolEffect::none(); // collinear rim points
             };
             let radius = (a.to_glam() - c).length();
+            let rim = held_clicks(sketch, [a, b, pos], snap_tol);
             let center_id =
                 sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(c))));
-            sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
+            let circle =
+                sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
+            for point in rim {
+                hold_on(sketch, point, circle);
+            }
             *state = ToolState::Idle;
             ToolEffect::changed(format!("Circle r={radius:.2} through 3 points"))
         }
@@ -169,7 +214,7 @@ pub(super) fn arc(
 
             let center_id = materialize_on_curve(sketch, center, snap_tol);
             let start_id = materialize_on_curve(sketch, start, snap_tol);
-            let end_id = materialize(sketch, end_snap);
+            let end_id = materialize_on_curve(sketch, end_snap, snap_tol);
             sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 center_id, start_id, end_id, radius,
             )));
@@ -221,11 +266,13 @@ pub(super) fn arc3(
             };
             let center_id =
                 sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(c))));
-            let start_id = materialize(sketch, a);
-            let end_id = materialize(sketch, b);
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(
+            let start_id = materialize_on_curve(sketch, a, snap_tol);
+            let end_id = materialize_on_curve(sketch, b, snap_tol);
+            let [rim] = held_clicks(sketch, [cursor], snap_tol);
+            let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 center_id, start_id, end_id, radius,
             )));
+            hold_on(sketch, rim, arc);
             *state = ToolState::Idle;
             ToolEffect::changed(format!("Arc r={radius:.2} through 3 points"))
         }
@@ -274,7 +321,7 @@ pub(super) fn ellipse(
             // A second radius longer than the first makes it the major.
             let (major, ratio) = crate::geom2d::ellipse_axes(major, minor);
             let major_len = major.length();
-            let center_id = materialize(sketch, center);
+            let center_id = materialize_on_curve(sketch, center, snap_tol);
             sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
                 center_id,
                 Vec2D::from_glam(major),
@@ -317,10 +364,14 @@ pub(super) fn ellipse3(
             let Some((major, ratio)) = geom2d::ellipse_through(center, b, pos) else {
                 return ToolEffect::none(); // the rim point is on the axis line
             };
+            let rim = held_clicks(sketch, [a, b, pos], snap_tol);
             let center_id = sketch.add_geometry(GeometryElement::Point(Point::new(center)));
-            sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
+            let ellipse = sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
                 center_id, major, ratio,
             )));
+            for point in rim {
+                hold_on(sketch, point, ellipse);
+            }
             *state = ToolState::Idle;
             let len = major.to_glam().length();
             ToolEffect::changed(format!(
@@ -929,7 +980,7 @@ pub(super) fn slot(
                 return ToolEffect::none(); // degenerate centerline/width
             };
             let half = width * 0.5;
-            // The far end is held where a snap put it; each rail end is the
+            // Both ends are held where a snap put them; each rail end is the
             // point exactly where it falls, else a new one.
             let eps = super::curve_attach_eps(snap_tol);
             let to = snap_point_or_curve(sketch, b, eps);
@@ -938,7 +989,7 @@ pub(super) fn slot(
                 return ToolEffect::log("The slot would join a point to itself");
             }
 
-            let center_a = materialize(sketch, from);
+            let center_a = materialize_on_curve(sketch, from, snap_tol);
             let center_b = materialize_on_curve(sketch, to, snap_tol);
             let [i1, i2, i3, i4] = ends.map(|t| materialize(sketch, t));
 

@@ -607,7 +607,7 @@ fn a_dimension_held_already_is_refused_in_any_form() {
     s.full_click(8.0, 9.0, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
     s.full_click(-10.0, 0.0, "sketch.circle");
-    s.full_click(-7.0, 0.0, "sketch.circle");
+    s.full_click(-10.0, 3.0, "sketch.circle");
 
     let calls = |s: &Harness| {
         s.recorded

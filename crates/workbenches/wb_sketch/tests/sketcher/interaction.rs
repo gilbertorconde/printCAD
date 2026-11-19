@@ -16,6 +16,7 @@ use wb_sketch::{SketchFeature, SketchWorkbench};
 
 mod chain;
 mod constraints;
+mod held;
 mod nodes;
 mod panel;
 mod rect;
