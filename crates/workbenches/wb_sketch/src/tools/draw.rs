@@ -388,9 +388,10 @@ pub(super) fn ellipse3(
 }
 
 /// Arc of an ellipse: its center, a major-axis vertex, the start on the rim
-/// (which sets the minor radius), then the end, counter-clockwise. The
-/// arc's endpoints are points held on the ellipse, so it closes profiles
-/// with the curves it meets there.
+/// (which sets the minor radius), then the end, counter-clockwise, which
+/// lands on the ellipse (`snap_context`'s guide). The arc's endpoints are
+/// points held on the ellipse, so it closes profiles with the curves it
+/// meets there, and on what their clicks snapped to.
 pub(super) fn ellipse_arc(
     state: &mut ToolState,
     sketch: &mut Sketch,
@@ -438,20 +439,23 @@ pub(super) fn ellipse_arc(
                 *state = ToolState::Idle;
                 return ToolEffect::none();
             };
+            let guide = snap::Guide::Ellipse {
+                centre: c,
+                major,
+                ratio,
+            };
+            let (Some(start), Some(end)) = (guide.foot(start), guide.foot(cursor)) else {
+                return ToolEffect::none();
+            };
             let probe = Ellipse::new(Uuid::nil(), major, ratio);
-            let end_t = probe.param_at(c, cursor);
-            let start_t = probe.param_at(c, start);
-            if (end_t - start_t).abs() < 1e-4 {
+            if (probe.param_at(c, end) - probe.param_at(c, start)).abs() < 1e-4 {
                 return ToolEffect::none();
             }
-            let on_rim = |t: f64| {
-                let (sin, cos) = t.sin_cos();
-                let a = major.to_glam();
-                Vec2D::from_glam(c.to_glam() + a * cos + a.perp() * ratio * sin)
+            let Some([start_id, end_id]) = guided_ends(sketch, &guide, [start, end], snap_tol, &[])
+            else {
+                return ToolEffect::none();
             };
             let center_id = materialize_on_curve(sketch, center, snap_tol);
-            let start_id = sketch.add_geometry(GeometryElement::Point(Point::new(on_rim(start_t))));
-            let end_id = sketch.add_geometry(GeometryElement::Point(Point::new(on_rim(end_t))));
             let ellipse = sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new_arc(
                 center_id, major, ratio, start_id, end_id,
             )));
@@ -653,7 +657,9 @@ pub(super) fn path_finish(state: &mut ToolState, sketch: &mut Sketch, closed: bo
 /// Arc of a parabola or a hyperbola: the vertex (parabola) or centre
 /// (hyperbola), then the focus or the branch's vertex, which set the axis;
 /// then the arc's start, which on a hyperbola also sets how wide it opens,
-/// and its end. The end points are points held on the curve.
+/// and its end, each landing on the curve (`snap_context`'s guide). The
+/// end points are held on the curve by the conic itself, and on what
+/// their clicks snapped to.
 pub(super) fn conic(
     state: &mut ToolState,
     sketch: &mut Sketch,
@@ -725,9 +731,18 @@ pub(super) fn conic(
             if (t1 - t0).abs() < 1e-4 {
                 return ToolEffect::none();
             }
+            let guide = snap::Guide::Conic(shape);
+            // A parabola's vertex lies on it but makes no end.
+            let vertex = match center {
+                SnapTarget::Existing(id) => vec![id],
+                SnapTarget::New(_) => Vec::new(),
+            };
+            let Some([start_id, end_id]) =
+                guided_ends(sketch, &guide, [start, end], snap_tol, &vertex)
+            else {
+                return ToolEffect::none();
+            };
             let center_id = materialize_on_curve(sketch, center, snap_tol);
-            let start_id = sketch.add_geometry(GeometryElement::Point(Point::new(start)));
-            let end_id = sketch.add_geometry(GeometryElement::Point(Point::new(end)));
             sketch.add_geometry(GeometryElement::Conic(Conic::new(
                 kind, center_id, axis, minor, start_id, end_id,
             )));
@@ -749,6 +764,35 @@ pub(super) fn conic(
             ToolEffect::none()
         }
     }
+}
+
+/// The points an arc's ends at `at`, on `guide`, stand for: an existing
+/// point on the guide a click landed on, reused, or a new one held on
+/// what it lies on, as a snapped click is held; points in `exclude` are
+/// never reused. `None` when both landed on one point.
+fn guided_ends(
+    sketch: &mut Sketch,
+    guide: &snap::Guide,
+    at: [Vec2D; 2],
+    snap_tol: f64,
+    exclude: &[Uuid],
+) -> Option<[Uuid; 2]> {
+    let reused = at.map(
+        |p| match snap::snap_to_point(sketch, p, snap_tol, exclude) {
+            SnapTarget::Existing(id) => sketch
+                .point_position(id)
+                .filter(|q| guide.holds(*q))
+                .map(|_| id),
+            SnapTarget::New(_) => None,
+        },
+    );
+    if reused[0].is_some() && reused[0] == reused[1] {
+        return None;
+    }
+    let mut held = |p: Vec2D, id: Option<Uuid>| {
+        id.unwrap_or_else(|| materialize_on_curve(sketch, SnapTarget::New(p), snap_tol))
+    };
+    Some([held(at[0], reused[0]), held(at[1], reused[1])])
 }
 
 /// The spline the tool's clicks so far make with `params`: over them as

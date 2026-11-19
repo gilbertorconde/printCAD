@@ -62,6 +62,66 @@ impl Curve {
         }
     }
 
+    /// The whole circle about `c` of radius `r`.
+    pub fn circle(c: DVec2, r: f64) -> Self {
+        let tau = std::f64::consts::TAU;
+        Self {
+            carrier: Carrier::Circle { c, r },
+            span: (0.0, tau),
+            period: tau,
+            closed: true,
+        }
+    }
+
+    /// The arc about `c` from `s` to `e`, counter-clockwise.
+    pub fn arc(c: DVec2, s: DVec2, e: DVec2) -> Self {
+        let tau = std::f64::consts::TAU;
+        let (s, e) = (s - c, e - c);
+        let start = s.y.atan2(s.x);
+        let mut end = e.y.atan2(e.x);
+        while end <= start + 1e-12 {
+            end += tau;
+        }
+        Self {
+            span: (start, end),
+            closed: false,
+            ..Self::circle(c, s.length())
+        }
+    }
+
+    /// The whole ellipse about `c` with semi-major axis `major` and the
+    /// minor axis `ratio` of it, a quarter turn counter-clockwise.
+    pub fn ellipse(c: DVec2, major: DVec2, ratio: f64) -> Self {
+        Self {
+            carrier: Carrier::Ellipse {
+                c,
+                major,
+                minor: major.perp() * ratio,
+            },
+            ..Self::circle(c, 0.0)
+        }
+    }
+
+    /// The parabola or hyperbola branch `shape` over the parameters `span`.
+    pub fn conic(shape: Shape, span: (f64, f64)) -> Self {
+        Self {
+            carrier: Carrier::Conic(shape),
+            span,
+            period: 0.0,
+            closed: false,
+        }
+    }
+
+    /// The line, circle or arc `prim`.
+    pub(crate) fn of_prim(prim: &crate::geom2d::Prim) -> Self {
+        use crate::geom2d::Prim;
+        match *prim {
+            Prim::Seg { a, b } => Self::segment(a, b),
+            Prim::Circle { c, r } => Self::circle(c, r),
+            Prim::Arc { c, s, e, .. } => Self::arc(c, s, e),
+        }
+    }
+
     /// The curve of `geom`; `None` for a point or a degenerate curve.
     pub fn of(sketch: &Sketch, geom: &GeometryElement) -> Option<Self> {
         Self::of_with(&|id| sketch.point_position(id), geom)
@@ -95,21 +155,7 @@ impl Curve {
                 period: tau,
                 closed: true,
             },
-            GeometryElement::Arc(a) => {
-                let c = pos(a.center)?;
-                let (s, e) = (pos(a.start)? - c, pos(a.end)? - c);
-                let start = s.y.atan2(s.x);
-                let mut end = e.y.atan2(e.x);
-                while end <= start + 1e-12 {
-                    end += tau;
-                }
-                Self {
-                    carrier: Carrier::Circle { c, r: s.length() },
-                    span: (start, end),
-                    period: tau,
-                    closed: false,
-                }
-            }
+            GeometryElement::Arc(a) => Self::arc(pos(a.center)?, pos(a.start)?, pos(a.end)?),
             GeometryElement::Ellipse(e) => {
                 let major = dv(e.major);
                 let (t0, t1) = e.param_span_with(point)?;
@@ -388,19 +434,45 @@ pub(crate) fn refine(a: &impl Path, b: &impl Path, mut ta: f64, mut tb: f64) -> 
 /// Where `a` over `sa` crosses `b` over `sb`: the parameters on each, a
 /// crossing up to [`END_SLACK`] past an end of either span counting.
 pub fn crossings(a: &Curve, sa: (f64, f64), b: &Curve, sb: (f64, f64)) -> Vec<(f64, f64)> {
-    let pa = a.samples(sa);
-    let pb = b.samples(sb);
-    let bounds = |w: &[(f64, DVec2)]| {
-        w.iter().fold(
-            (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN)),
-            |(lo, hi), (_, p)| (lo.min(*p), hi.max(*p)),
-        )
+    crossings_in(a, sa, b, sb, None)
+}
+
+/// [`crossings`], looking only along the pieces of each curve within
+/// twice `reach` of `p`: those within `reach` of it, and maybe some more.
+pub fn crossings_near(
+    a: &Curve,
+    sa: (f64, f64),
+    b: &Curve,
+    sb: (f64, f64),
+    p: DVec2,
+    reach: f64,
+) -> Vec<(f64, f64)> {
+    crossings_in(a, sa, b, sb, Some((p, 2.0 * reach)))
+}
+
+fn crossings_in(
+    a: &Curve,
+    sa: (f64, f64),
+    b: &Curve,
+    sb: (f64, f64),
+    near: Option<(DVec2, f64)>,
+) -> Vec<(f64, f64)> {
+    // Each sample piece with its bounds, those clear of `near` left out.
+    type Piece = ([(f64, DVec2); 2], DVec2, DVec2);
+    let pieces = |samples: Vec<(f64, DVec2)>| -> Vec<Piece> {
+        samples
+            .windows(2)
+            .map(|w| ([w[0], w[1]], w[0].1.min(w[1].1), w[0].1.max(w[1].1)))
+            .filter(|(_, lo, hi)| {
+                near.is_none_or(|(p, reach)| (p.clamp(*lo, *hi) - p).length() <= reach)
+            })
+            .collect()
     };
+    let pa = pieces(a.samples(sa));
+    let pb = pieces(b.samples(sb));
     let mut out: Vec<(f64, f64)> = Vec::new();
-    for wa in pa.windows(2) {
-        let (alo, ahi) = bounds(wa);
-        for wb in pb.windows(2) {
-            let (blo, bhi) = bounds(wb);
+    for &(wa, alo, ahi) in &pa {
+        for &(wb, blo, bhi) in &pb {
             let tol = END_SLACK;
             if alo.x > bhi.x + tol
                 || blo.x > ahi.x + tol
