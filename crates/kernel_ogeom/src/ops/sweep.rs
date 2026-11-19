@@ -70,8 +70,23 @@ pub fn build_tool(
             reversed,
             turns,
             growth,
+            through_all,
         } => {
-            let extent = HelixExtent::of(*pitch, *height, *turns, *cone_angle_deg, *growth)?;
+            let height = if *through_all {
+                let base = base.ok_or_else(|| {
+                    "a through-all helix needs existing material to run through".to_string()
+                })?;
+                let axis = sketch_plane_axis(&prof.plane, *axis_origin, *axis_dir)?;
+                let dir = if *reversed {
+                    axis.direction.reversed()
+                } else {
+                    axis.direction
+                };
+                height + reach_along(model, base, axis.location, dir)?
+            } else {
+                *height
+            };
+            let extent = HelixExtent::of(*pitch, height, *turns, *cone_angle_deg, *growth)?;
             helix(
                 model,
                 prof,
@@ -809,6 +824,25 @@ fn through_all_length(
     }
     let diag = (hi - lo).magnitude();
     Ok(furthest.max(0.0) + diag * 0.1 + 1.0)
+}
+
+/// How far `base` reaches along `dir` from `from`: the furthest corner
+/// of its bounds, measured along `dir`, and never less than nothing.
+fn reach_along(model: &Model, base: &Shape, from: Point, dir: Direction) -> Result<f64, String> {
+    let (lo, hi) = ogeom::algo::tight_bounds(model, base, tess::tolerances())
+        .ok()
+        .and_then(|b| Some((b.low()?, b.high()?)))
+        .or_else(|| tess::robust_bounds(model, base))
+        .ok_or_else(|| "the base solid has no bounds".to_string())?;
+    let mut furthest = 0.0f64;
+    for &x in &[lo.x, hi.x] {
+        for &y in &[lo.y, hi.y] {
+            for &z in &[lo.z, hi.z] {
+                furthest = furthest.max((Point::new(x, y, z) - from).dot(dir.vector()));
+            }
+        }
+    }
+    Ok(furthest)
 }
 
 fn profile_diagonal(model: &Model, built: &BuiltProfile) -> f64 {

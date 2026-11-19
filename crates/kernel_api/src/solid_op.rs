@@ -300,6 +300,12 @@ pub enum SweepKind {
         /// given, in place of `cone_angle_deg`.
         #[serde(default)]
         growth: Option<f64>,
+        /// When set, the helix climbs as far as the solid it cuts or joins
+        /// reaches along its axis from `axis_origin`, and `height` beyond
+        /// that: a thread down a through hole runs only as far as the
+        /// material.
+        #[serde(default)]
+        through_all: bool,
     },
     /// Sweep the profile along a helix whose axis runs square to the sketch
     /// plane through `axis_origin` (sketch 2D coordinates): every point of

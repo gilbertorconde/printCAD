@@ -43,8 +43,9 @@ into the wall, for printing it rather than tapping it: the standard's
 flank angle, out to its major diameter, along a cone for a taper thread.
 **Thread length** is **Depth given** (the **Thread depth** row), the
 **Whole hole**, or the hole **Less the run-out** of three pitches a tap
-leaves at the bottom. A through hole's thread needs the solid built
-first, to know how far it runs.
+leaves at the bottom. A through hole threaded its whole length (or less
+the run-out, which a through hole has none of) runs as far as the solid
+reaches along the hole's axis, out past the far side.
 
 **Cosmetic thread** (on a threaded hole that is not modeled) keeps the
 bore at its tap drill and shows the thread instead: a helix of the

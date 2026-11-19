@@ -789,6 +789,7 @@ pub(super) fn plan_sweep(
                     reversed: *reversed,
                     turns: extent.turns,
                     growth: extent.growth,
+                    through_all: false,
                 }
             };
             plan.ops.push(SolidOp::Sweep {

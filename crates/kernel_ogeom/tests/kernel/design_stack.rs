@@ -809,6 +809,34 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
     );
 }
 
+/// An M3 through a 5 mm plate threaded its whole length builds from
+/// nothing built before, and its groove takes only part of the wall
+/// between the 2.5 mm tap drill and the 3 mm major diameter.
+#[test]
+fn a_through_hole_threads_only_the_plate_it_passes_through() {
+    let built = |modeled: bool| {
+        drilled_block(30.0, 5.0, |s| {
+            with(
+                tapped_hole(s, 1.0, iso("M3"), modeled.then_some(0.0)),
+                serde_json::json!({"through_all": true, "thread_length": "HoleDepth"}),
+            )
+        })
+        .unwrap_or_else(|e| panic!("builds: {e}"))
+    };
+    let plate = 30.0 * 30.0 * 5.0;
+    let tapped = built(false);
+    assert!(
+        (tapped - (plate - PI * 1.25 * 1.25 * 5.0)).abs() < 0.01,
+        "{tapped}"
+    );
+    let threaded = built(true);
+    let shell = PI * (1.5 * 1.5 - 1.25 * 1.25) * 5.0;
+    assert!(
+        threaded < tapped - 0.2 * shell && threaded > tapped - 0.8 * shell,
+        "the groove takes part of the wall: {threaded} (tapped {tapped})"
+    );
+}
+
 /// `original` mirrored across `plane`.
 fn mirrored(original: FeatureId, plane: wb_design::MirrorPlane) -> DesignFeature {
     DesignFeature::Mirrored {
@@ -1690,7 +1718,7 @@ fn block() -> (Document, BodyId) {
     (doc, body)
 }
 
-/// Set fields of a pad or pocket the way `design.set` does.
+/// Set fields of a feature the way `design.set` does.
 fn with(mut feature: DesignFeature, fields: serde_json::Value) -> DesignFeature {
     use core_document::WorkbenchFeature;
     let mut value = feature.to_json();
