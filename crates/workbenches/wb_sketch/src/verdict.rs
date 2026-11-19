@@ -68,11 +68,12 @@ impl SketchWorkbench {
     /// [`solver::dof_estimate`] of `sketch`, worked out again only when
     /// `sketch` differs from the one the kept estimate was worked out on:
     /// every reader of a frame, and every frame the sketch stays, share
-    /// one estimate, while any change to it (an edit, an undo, a peer's
-    /// op, a formula's new value, a card's draft) is a different sketch.
+    /// one estimate, as does a label's drag, while any other change to it
+    /// (an edit, an undo, a peer's op, a formula's new value, a card's
+    /// draft) is a different sketch.
     fn freedom(&self, sketch: &Sketch) -> i32 {
         if let Some((at, dof)) = self.tab.freedom.borrow().as_ref()
-            && at == sketch
+            && at.eq_but_labels(sketch)
         {
             return *dof;
         }
@@ -200,7 +201,8 @@ mod tests {
         let mut sketch = Sketch::new("s");
         let [a, b] = [0.0, 5.0]
             .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
-        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
         let mut doc = Document::new("t");
         let feature = SketchFeature::new(sketch, SketchPlane::xy());
         let id = doc.add_feature(feature, "s".into()).unwrap();
@@ -223,6 +225,10 @@ mod tests {
         wb.tab.freedom.borrow_mut().as_mut().unwrap().1 = -7;
         assert_eq!(frame(&mut doc, &mut wb, 420.0), -7);
         assert_eq!(frame(&mut doc, &mut wb, 440.0), -7);
+        // A label held elsewhere, as its drag holds it, is the same sketch.
+        let mut held = stored_sketch(&doc, id).unwrap().sketch;
+        held.constraints[0].label_offset = Some(Vec2D::new(3.0, 4.0));
+        assert_eq!(wb.solver_verdict(&held).dof, -7);
         let mut edited = stored_sketch(&doc, id).unwrap();
         let free = Point::new(Vec2D::new(2.0, 3.0));
         edited.sketch.add_geometry(GeometryElement::Point(free));
