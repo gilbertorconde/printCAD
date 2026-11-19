@@ -519,10 +519,36 @@ impl PrintCadApp {
             self.clear_view_selection();
         }
         let old = self.session.active_workbench.0.clone();
+        self.keep_or_return_view(&old, &target);
         self.call_workbench_deactivate(&old);
         self.session.active_workbench = ActiveWorkbench(target.clone());
         self.session.active_tool = Default::default();
         self.call_workbench_activate(&target);
+    }
+
+    /// An edit session's view: kept as the view stands when a bench of edit
+    /// sessions takes over from one that is not (before the session turns
+    /// the view onto what it edits), and gone back to when one that is not
+    /// takes over again.
+    pub(crate) fn keep_or_return_view(
+        &mut self,
+        from: &crate::WorkbenchId,
+        to: &crate::WorkbenchId,
+    ) {
+        match (self.registry.is_modal(from), self.registry.is_modal(to)) {
+            (false, true) => {
+                self.session.view.before_edit = Some(self.session.view.camera.kept_view());
+            }
+            (true, false) => {
+                if let Some(view) = self.session.view.before_edit.take() {
+                    self.session
+                        .view
+                        .camera
+                        .return_to_view(&view, &self.user_settings.camera);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// View › Link split cameras: unlinked, the side pane starts where the
@@ -1132,6 +1158,7 @@ impl PrintCadApp {
             self.call_workbench_activate(&part.0);
         }
         self.session.return_workbench = None;
+        self.session.view.before_edit = None;
         if kind == StartKind::Coupon {
             match bench_fixtures::coupon(
                 &mut self.session.document,

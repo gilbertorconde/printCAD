@@ -378,6 +378,7 @@ impl PrintCadApp {
         if let Some((old_wb, new_wb)) = intents.workbench_switch.take() {
             // A deliberate user switch cancels any pending return-to-bench.
             self.session.return_workbench = None;
+            self.keep_or_return_view(&old_wb.0, &new_wb.0);
             self.session.active_workbench = new_wb.clone();
             self.call_workbench_deactivate(&old_wb.0);
             self.call_workbench_activate(&new_wb.0);

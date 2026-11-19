@@ -851,3 +851,39 @@ fn a_kept_view_that_does_not_fit_is_refused() {
     assert!(!cam.restore_view(&broken, &settings));
     assert_eq!(cam.kept_view(), before);
 }
+
+/// Turned onto a plane and moved about there, the view goes back to where
+/// it was kept over a transition, not at once.
+#[test]
+fn a_view_returned_to_moves_back_where_it_was_kept() {
+    let settings = CameraSettings::default();
+    let mut cam = camera(800, 600);
+    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+    for _ in 0..5 {
+        ops::orbit_pixels(&mut cam.state, &cam.axes, Vec2::new(17.0, 6.0), &settings);
+    }
+    let kept = cam.kept_view();
+    let (eye, target) = (
+        Vec3::from_array(cam.position()),
+        Vec3::from_array(cam.target()),
+    );
+
+    cam.orient_to_plane(Vec3::ZERO, Vec3::X, Vec3::Z, Some(Vec3::ZERO), &settings);
+    for _ in 0..600 {
+        cam.update(0.016, &settings);
+    }
+    cam.state.focal_distance *= 0.5;
+    assert!((Vec3::from_array(cam.position()) - eye).length() > 1.0);
+
+    assert!(cam.return_to_view(&kept, &settings));
+    cam.update(0.0, &settings);
+    assert!(
+        (Vec3::from_array(cam.position()) - eye).length() > 1.0,
+        "the return is a transition"
+    );
+    for _ in 0..600 {
+        cam.update(0.016, &settings);
+    }
+    assert!((Vec3::from_array(cam.position()) - eye).length() < 1e-2);
+    assert!((Vec3::from_array(cam.target()) - target).length() < 1e-2);
+}

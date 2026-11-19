@@ -37,6 +37,9 @@ pub(crate) struct ViewState {
     pub fit_on_layout: bool,
     /// What a click in the view picks.
     pub pick_filter: crate::ui::PickFilter,
+    /// Where the view stood when an edit session began, to go back to
+    /// when it ends.
+    pub before_edit: Option<crate::camera::KeptView>,
 }
 
 /// What lies under the pointer, in the view and in the tree.
@@ -346,6 +349,7 @@ impl ViewState {
             grid_plane: Default::default(),
             fit_on_layout: false,
             pick_filter: Default::default(),
+            before_edit: None,
         }
     }
 }

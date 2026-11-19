@@ -1078,6 +1078,30 @@ impl CameraController {
     /// or one whose numbers do not make a view, is refused: `false`, and
     /// the camera is left as it was.
     pub fn restore_view(&mut self, view: &KeptView, settings: &CameraSettings) -> bool {
+        let Some(state) = self.state_at(view, settings) else {
+            return false;
+        };
+        self.forget_released([false; 3]);
+        self.cancel_animation();
+        self.state = state;
+        true
+    }
+
+    /// Move to where `view` was kept as a view change does, over the
+    /// transition time; refused as [`Self::restore_view`] refuses.
+    pub fn return_to_view(&mut self, view: &KeptView, settings: &CameraSettings) -> bool {
+        let Some(target) = self.state_at(view, settings) else {
+            return false;
+        };
+        self.forget_released([false; 3]);
+        self.cancel_animation();
+        self.tween = CameraTween::toward(&self.state, &self.axes, &target, settings);
+        true
+    }
+
+    /// The camera state standing where `view` was kept, or `None` for a
+    /// view of another axis preset or numbers that make no view.
+    fn state_at(&self, view: &KeptView, settings: &CameraSettings) -> Option<CadCameraState> {
         let orientation = Quat::from_array(view.orientation);
         let usable = view.axis_preset == self.axis_preset
             && view.target.iter().all(|v| v.is_finite())
@@ -1089,23 +1113,21 @@ impl CameraController {
             && view.ortho_height > 0.0
             && view.field_of_view_deg.is_finite();
         if !usable {
-            return false;
+            return None;
         }
-        self.forget_released([false; 3]);
-        self.cancel_animation();
-        self.state.orientation = orientation.normalize();
+        let mut state = self.state.clone();
+        state.orientation = orientation.normalize();
         // As a fit does: a large model's view is kept however far it stands.
-        self.state.focal_distance = view.distance.max(f64::from(settings.min_focal_distance));
-        self.state.projection = view.projection;
-        self.state.height_angle_rad = view
+        state.focal_distance = view.distance.max(f64::from(settings.min_focal_distance));
+        state.projection = view.projection;
+        state.height_angle_rad = view
             .field_of_view_deg
             .clamp(f64::from(FOV_RANGE_DEG.0), f64::from(FOV_RANGE_DEG.1))
             .to_radians();
-        self.state.ortho_height = view.ortho_height;
-        self.state
-            .rederive_eye_from_focal(DVec3::from_array(view.target), &self.axes);
-        self.state.clip_dirty = true;
-        true
+        state.ortho_height = view.ortho_height;
+        state.rederive_eye_from_focal(DVec3::from_array(view.target), &self.axes);
+        state.clip_dirty = true;
+        Some(state)
     }
 }
 
