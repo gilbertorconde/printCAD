@@ -889,8 +889,7 @@ pub(super) fn bspline_finish(
 }
 
 /// Vertex positions of a regular N-gon inscribed in the circle through
-/// `vertex` around `center` (first vertex exactly at `vertex`). Also used
-/// by the overlay preview so the preview matches the committed shape.
+/// `vertex` around `center` (first vertex exactly at `vertex`).
 pub fn polygon_vertices(center: Vec2D, vertex: Vec2D, sides: u32) -> Vec<Vec2D> {
     let c = center.to_glam();
     let v = vertex.to_glam() - c;
@@ -904,13 +903,28 @@ pub fn polygon_vertices(center: Vec2D, vertex: Vec2D, sides: u32) -> Vec<Vec2D> 
         .collect()
 }
 
+/// The corners of the regular polygon about `center` that `click` sizes:
+/// one corner at it, or with `flats` the middle of a side at it, the
+/// polygon sized across its flats. The overlay's preview draws these too,
+/// so it matches the committed shape.
+pub fn polygon_corners(center: Vec2D, click: Vec2D, sides: u32, flats: bool) -> Vec<Vec2D> {
+    if !flats {
+        return polygon_vertices(center, click, sides);
+    }
+    let half = std::f64::consts::PI / f64::from(sides.max(3));
+    let (c, m) = (center.to_glam(), click.to_glam() - center.to_glam());
+    let corner = glam::DMat2::from_angle(-half) * m / half.cos();
+    polygon_vertices(center, Vec2D::from_glam(c + corner), sides)
+}
+
 pub(super) fn polygon(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
     snap_tol: f64,
-    sides: u32,
+    params: &ToolParams,
 ) -> ToolEffect {
+    let (sides, flats) = (params.polygon_sides, params.polygon_flats);
     match *state {
         ToolState::PolygonCenter { center } => {
             let Some(c) = center.position(sketch) else {
@@ -919,21 +933,25 @@ pub(super) fn polygon(
             };
             // Every vertex is the point exactly where it falls, else a new
             // one; the clicked vertex, where a snap put it, is held there.
+            // Across flats the click is the middle of a side, which no
+            // point marks.
             let eps = super::curve_attach_eps(snap_tol);
             let lookup = snap::Lookup::of(sketch);
             let first = lookup.point_or_curve(cursor, eps);
             let Some(v) = first.position(sketch) else {
                 return ToolEffect::none();
             };
-            let radius = (v - c).to_glam().length();
-            if radius < 1e-6 {
+            let size = (v - c).to_glam().length();
+            if size < 1e-6 {
                 return ToolEffect::none(); // vertex on center: degenerate
             }
-            let corners: Vec<SnapTarget> = polygon_vertices(c, v, sides)
+            let at = polygon_corners(c, v, sides, flats);
+            let radius = (at[0] - c).to_glam().length();
+            let corners: Vec<SnapTarget> = at
                 .into_iter()
                 .enumerate()
                 .map(|(i, p)| match i {
-                    0 => first,
+                    0 if !flats => first,
                     _ => lookup.point(p, eps, &[]),
                 })
                 .collect();
@@ -977,9 +995,26 @@ pub(super) fn polygon(
                     line2: *side,
                 });
             }
+            // Across flats, a second construction circle about the same
+            // centre touches the sides: the size the click gave, which a
+            // dimension on it holds.
+            if flats {
+                let inscribed =
+                    sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, size)));
+                sketch.set_construction(inscribed, true);
+                sketch.add_constraint(ConstraintKind::Tangent {
+                    line_or_circle1: sides[0],
+                    item2: inscribed,
+                });
+            }
             *state = ToolState::Idle;
+            let sized = if flats {
+                format!("{:.2} across flats", 2.0 * size)
+            } else {
+                format!("r={radius:.2}")
+            };
             ToolEffect::changed(format!(
-                "Regular {n}-gon r={radius:.2} at ({:.2}, {:.2})",
+                "Regular {n}-gon {sized} at ({:.2}, {:.2})",
                 c.x, c.y
             ))
         }

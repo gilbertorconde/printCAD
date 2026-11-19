@@ -49,6 +49,13 @@ polygon's sides, a slot's width, a rounded rectangle's radius, a frame's
 wall, a B-spline's degree, whether it is closed and whether its clicks are
 points it passes through.
 
+A polygon's second click is a corner. With **Across flats** on in its
+Tool section, the click is the middle of a side instead: the polygon is
+sized by the circle inside it, the width across its flats (a hex nut
+trap's), and a second construction circle on the same centre touches the
+sides, so a diameter on it holds that width. A typed radius is then that
+circle's.
+
 A rectangle's preview is the rectangle the click makes. A rounded
 rectangle whose corners do not fit its radius, or a frame with no room
 for its wall, draws dashed, and the click adds nothing.

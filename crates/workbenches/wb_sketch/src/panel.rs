@@ -537,13 +537,17 @@ impl SketchWorkbench {
         let tool = self.tab.last_tool.as_deref();
         let p = &self.tab.tool_params;
         let fields: Vec<Widget> = match tool {
-            Some("sketch.polygon") => vec![count(
-                "tool.polygon_sides",
-                "Sides",
-                p.polygon_sides,
-                3.0,
-                12.0,
-            )],
+            Some("sketch.polygon") => vec![
+                count("tool.polygon_sides", "Sides", p.polygon_sides, 3.0, 12.0),
+                check(
+                    "tool.polygon_flats",
+                    "Size",
+                    "Across flats",
+                    p.polygon_flats,
+                    true,
+                    "The click is the middle of a side, the size the inscribed circle's",
+                ),
+            ],
             Some("sketch.text") => {
                 let mut fields = text_fields(
                     "text_draft",
@@ -2114,6 +2118,7 @@ impl SketchWorkbench {
         let o = &mut self.options;
         let flag: Option<&mut bool> = match id {
             "tool.corner_keep" => Some(&mut p.corner_keep),
+            "tool.polygon_flats" => Some(&mut p.polygon_flats),
             "tool.offset_round" => Some(&mut p.offset_round),
             "tool.offset_both" => Some(&mut p.offset_both),
             "tool.offset_delete" => Some(&mut p.offset_delete),

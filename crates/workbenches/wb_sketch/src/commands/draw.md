@@ -169,7 +169,9 @@ corner; ellipse its centre, an end of the major axis, then a point on it.
 Clicks short of a shape make nothing, without an error.
 
 Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6,
-`fillet_radius` and `chamfer_length` 2 mm when not given. `polygon_sides`
+`fillet_radius` and `chamfer_length` 2 mm when not given. A polygon's second
+click is a corner, or with `polygon_flats = true` the middle of a side, sizing
+it across its flats (a nut trap's width). `polygon_sides`
 takes 3 to 1000 and `copies` 0 to 10000; a count outside is refused. A fillet or chamfer
 takes one click on the corner. A bspline ends with the word "finish" in
 `points`, and so does an open path; a path's click on its first node closes
@@ -196,6 +198,18 @@ local pad = pc.design.pad{sketch = s, length = 1}
 assert(#pc.doc.rebuild() == 0)
 local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - (20 * 6 + math.pi * 3 ^ 2)) < 1e-3, m.volume)
+```
+
+### A hex nut trap sized across its flats
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.draw{sketch = s, tool = "polygon", points = {{0, 0}, {0, 5.5}},
+  params = {polygon_sides = 6, polygon_flats = true}}
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+assert(math.abs(m.volume - 2 * math.sqrt(3) * 5.5 ^ 2) < 1e-3, "11 across flats: " .. m.volume)
 ```
 
 ### A closed path padded

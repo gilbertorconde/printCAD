@@ -15,7 +15,7 @@ use crate::geom2d;
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
 use crate::snap::{SnapTarget, arc_angles};
 use crate::tools::{
-    self, Similarity, ToolParams, ToolState, arc_slot_shape, polygon_vertices, slot_corners,
+    self, Similarity, ToolParams, ToolState, arc_slot_shape, polygon_corners, slot_corners,
 };
 
 pub(crate) const CIRCLE_SEGMENTS: usize = 48;
@@ -1072,7 +1072,8 @@ fn push_preview(
                 if (cursor - c).to_glam().length() > 1e-6 {
                     // The polygon rotates with the cursor: the first vertex
                     // follows it exactly, like the committed shape will.
-                    let verts = polygon_vertices(c, cursor, params.polygon_sides);
+                    let verts =
+                        polygon_corners(c, cursor, params.polygon_sides, params.polygon_flats);
                     let closed = verts.iter().copied().chain(verts.first().copied());
                     push_polyline(&mut out.lines, proj, closed, pal.preview, 1.5, false);
                 }

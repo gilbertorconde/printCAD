@@ -120,7 +120,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
         .optional(
             "params",
             ParamKind::Any,
-            "Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, \
+            "Tool settings: polygon_sides, polygon_flats, slot_width, fillet_radius, chamfer_length, corner_keep, \
              offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, \
              copies_linked, copies_total, copies_symmetric, rotate_full_turn, \
              bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, \
