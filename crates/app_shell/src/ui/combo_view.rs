@@ -74,6 +74,8 @@ pub struct ComboViewInputs<'a> {
     pub rename_buffer: &'a mut Option<(TreeItemId, String)>,
     /// The measure of the body the property panel shows.
     pub physical: Option<&'a super::Physical>,
+    /// That body's bounds where it sits.
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
     /// What the inertia can be taken about, and the one chosen.
     pub inertia_references: &'a [super::property_panel::InertiaReference],
     pub inertia_about: &'a mut Option<String>,
@@ -109,6 +111,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         property_tab,
         rename_buffer,
         physical,
+        bounds_mm,
         inertia_references,
         inertia_about,
         keymap,
@@ -342,6 +345,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     selected: selected_id,
                     detail: selected_detail.as_deref(),
                     physical,
+                    bounds_mm,
                     inertia_references,
                     inertia_about,
                 },

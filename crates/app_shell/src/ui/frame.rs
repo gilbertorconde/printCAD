@@ -619,6 +619,7 @@ impl UiLayer {
                 variables: &mut self.variables,
                 tree_share: &mut self.tree_share,
                 physical: inputs.physical.as_ref(),
+                bounds_mm: inputs.panel_bounds_mm,
                 inertia_references: &inputs.inertia_references,
                 inertia_about: &mut self.inertia_about,
                 keymap: &f.keymap,

@@ -769,6 +769,8 @@ pub struct PanelSubject<'a> {
     pub selected: TreeItemId,
     pub detail: Option<&'a str>,
     pub physical: Option<&'a super::Physical>,
+    /// That body's bounds where it sits.
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
     /// What the inertia can be taken about, the centre of mass first.
     pub inertia_references: &'a [InertiaReference],
     /// The one chosen, by name.
@@ -790,6 +792,7 @@ pub fn draw_property_panel(
         selected,
         detail,
         physical,
+        bounds_mm,
         inertia_references,
         inertia_about,
     } = subject;
@@ -904,6 +907,7 @@ pub fn draw_property_panel(
                         .and_then(|b| b.material.as_ref());
                     groups.push(physical_group(
                         physical,
+                        bounds_mm,
                         document.display_unit(),
                         material,
                         about,
@@ -953,15 +957,18 @@ pub fn draw_property_panel(
     result
 }
 
-/// Volume, surface area and centre of mass (one row per axis, since a
+/// The overall size from `bounds_mm`, as the status bar gives it, then
+/// volume, surface area and centre of mass (one row per axis, since a
 /// value column holds one length), in the display unit, then the inertia
 /// about `about` (the centre of mass when `None`).
 fn physical_group(
     physical: &super::Physical,
+    bounds_mm: Option<([f32; 3], [f32; 3])>,
     unit: Unit,
     material: Option<&core_document::Material>,
     about: Option<&InertiaReference>,
 ) -> (String, Vec<PropRow>) {
+    let size = bounds_mm.map(|b| PropRow::mono("Size", super::status_bar::size_text(b, unit)));
     let rows = match physical {
         super::Physical::Measuring => vec![PropRow::text("Measure", "Measuring…").dim(true)],
         super::Physical::Failed(why) => {
@@ -1042,7 +1049,10 @@ fn physical_group(
             .collect()
         }
     };
-    ("Physical".to_string(), rows)
+    (
+        "Physical".to_string(),
+        size.into_iter().chain(rows).collect(),
+    )
 }
 
 /// The row naming what the inertia below it is about, drawn as a choice.
@@ -1536,6 +1546,7 @@ mod tests {
         };
         let (title, rows) = physical_group(
             &crate::ui::Physical::Ready(Box::new(props)),
+            None,
             Unit::Cm,
             None,
             None,
@@ -1563,6 +1574,7 @@ mod tests {
         };
         let (_, rows) = physical_group(
             &crate::ui::Physical::Ready(Box::new(props)),
+            None,
             Unit::Cm,
             Some(&pla),
             None,
@@ -1583,11 +1595,13 @@ mod tests {
         };
         let (_, rows) = physical_group(
             &crate::ui::Physical::Ready(Box::new(open)),
+            Some(([0.0, 0.0, 0.0], [20.0, 30.0, 40.0])),
             Unit::Mm,
             None,
             None,
         );
-        assert_eq!(rows[0].value, "encloses none");
+        assert_eq!(rows[0].value, "20.0 × 30.0 × 40.0 mm", "the size first");
+        assert_eq!(rows[1].value, "encloses none");
     }
 
     /// A 20 mm cube centred at (10, 0, 0): about the origin each moment
@@ -1621,7 +1635,7 @@ mod tests {
             name: "Origin".into(),
             at: [0.0; 3],
         };
-        let (_, rows) = physical_group(&physical, Unit::Mm, None, Some(&origin));
+        let (_, rows) = physical_group(&physical, None, Unit::Mm, None, Some(&origin));
         assert_eq!(value(&rows, INERTIA_ABOUT), "Origin");
         assert_eq!(value(&rows, "Ixx"), format!("{} mm⁵", format_figure(cube)));
         assert_eq!(
@@ -1633,7 +1647,7 @@ mod tests {
             point: [0.0; 3],
             direction: [0.0, 0.0, 2.0],
         };
-        let (_, rows) = physical_group(&physical, Unit::Mm, None, Some(&z));
+        let (_, rows) = physical_group(&physical, None, Unit::Mm, None, Some(&z));
         let moment = cube + 8000.0 * 100.0;
         assert_eq!(
             value(&rows, "Moment"),
@@ -1647,7 +1661,7 @@ mod tests {
             rows.iter().all(|r| r.name != "Ixx"),
             "a line has one moment"
         );
-        let (_, rows) = physical_group(&physical, Unit::Mm, None, None);
+        let (_, rows) = physical_group(&physical, None, Unit::Mm, None, None);
         assert_eq!(value(&rows, INERTIA_ABOUT), "Centre of mass");
         assert_eq!(value(&rows, "Iyy"), format!("{} mm⁵", format_figure(cube)));
     }

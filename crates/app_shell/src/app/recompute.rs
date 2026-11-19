@@ -825,7 +825,7 @@ impl PrintCadApp {
 impl PrintCadApp {
     /// The body the property panel is showing: a body row, or an imported
     /// part linked to one.
-    fn panel_body(&self) -> Option<core_document::BodyId> {
+    pub(crate) fn panel_body(&self) -> Option<core_document::BodyId> {
         match self.session.selection.tree? {
             crate::ui::TreeItemId::Body(body) => Some(body),
             crate::ui::TreeItemId::ImportedObject(id) => {
