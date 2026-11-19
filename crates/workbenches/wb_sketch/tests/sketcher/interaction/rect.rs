@@ -318,14 +318,8 @@ fn a_shape_against_an_existing_line_reuses_it_when_asked() {
                 .count();
             let n = if reuse { 1 } else { 2 };
             assert_eq!(walls.len(), n, "{tool} reuse {reuse}");
-            // A slot's rail ends, worked out from its width, are made new.
-            let ends = if tool == "sketch.slot" && !reuse {
-                4
-            } else {
-                2
-            };
             assert_eq!(
-                corners, ends,
+                corners, 2,
                 "{tool} reuse {reuse}: one point at each of the wall's ends"
             );
             if tool == "sketch.rect" {
@@ -338,5 +332,35 @@ fn a_shape_against_an_existing_line_reuses_it_when_asked() {
                 |c| matches!(c.kind, ConstraintKind::Vertical { element } if element == walls[0].id)
             ));
         }
+    }
+}
+
+/// An arc slot whose outer rail ends fall on two existing points uses
+/// them: one point at each, never a coincident second.
+#[test]
+fn an_arc_slot_reuses_the_points_its_rail_ends_fall_on() {
+    let mut h = sketching();
+    h.wb.tool_params_mut().slot_width = 10.0;
+    // On grid points, so a derived end lands exactly on a point.
+    let o = &mut h.wb.options;
+    (o.grid_on, o.grid_snap, o.grid_auto, o.grid_size) = (true, true, false, 1.0);
+    h.edit_sketch(|s| {
+        for y in [16.0, -16.0] {
+            s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(23.0, y))));
+        }
+    });
+    // About (23, 0) through (23, 11), half a turn round to (23, -11): the
+    // outer rail, 16 out, ends on both points.
+    for (x, y) in [(23.0, 0.0), (23.0, 11.0), (23.0, -11.0)] {
+        h.full_click(x, y, "sketch.slot:arc");
+    }
+    let sketch = h.sketch();
+    assert_eq!(crate::all_arcs(&sketch).len(), 4, "the slot is made");
+    for y in [16.0, -16.0] {
+        let at = crate::all_points(&sketch)
+            .iter()
+            .filter(|p| (p.position - Vec2D::new(23.0, y)).to_glam().length() < 1e-6)
+            .count();
+        assert_eq!(at, 1, "one point at (23, {y})");
     }
 }

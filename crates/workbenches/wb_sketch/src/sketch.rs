@@ -562,7 +562,10 @@ impl Sketch {
     /// - removing a curve takes the points it defined, unless a remaining
     ///   curve shares them (a standalone point is never touched: nothing
     ///   referenced it in the first place);
-    /// - constraints referencing any removed element are dropped.
+    /// - a constraint over a list of members (an offset's pairs, a group,
+    ///   a pitch, an angular pitch) keeps the members left
+    ///   (`without_members`); any other referencing a removed element is
+    ///   dropped.
     ///
     /// Returns the ids of every element actually removed.
     pub fn remove_geometry_cascade(&mut self, ids: &[Uuid]) -> Vec<Uuid> {
@@ -636,12 +639,39 @@ impl Sketch {
             .map(|g| g.id())
             .filter(|id| doomed.contains(id))
             .collect();
+        let lone_points: HashSet<Uuid> = self
+            .geometry
+            .iter()
+            .filter(|g| matches!(g, GeometryElement::Point(_)))
+            .map(GeometryElement::id)
+            .collect();
         self.geometry.retain(|g| !doomed.contains(&g.id()));
-        self.constraints.retain(|c| {
-            !constraint_refs(&c.kind)
+        let mut kept = Vec::with_capacity(self.constraints.len());
+        for c in std::mem::take(&mut self.constraints) {
+            if !constraint_refs(&c.kind)
                 .iter()
                 .any(|id| doomed.contains(id))
-        });
+            {
+                kept.push(c);
+                continue;
+            }
+            // The first part keeps the constraint, its name and any formula
+            // set under its id; each further run is a constraint of its own.
+            let parts = without_members(&c.kind, &doomed, &lone_points);
+            for (i, kind) in parts.into_iter().enumerate() {
+                kept.push(match i {
+                    0 => Constraint { kind, ..c.clone() },
+                    _ => Constraint {
+                        id: Uuid::new_v4(),
+                        kind,
+                        name: None,
+                        label_offset: None,
+                        ..c.clone()
+                    },
+                });
+            }
+        }
+        self.constraints = kept;
         self.construction.retain(|id| !doomed.contains(id));
         self.external.retain(|id, _| !doomed.contains(id));
         self.derived.retain(|id| !doomed.contains(id));
@@ -789,6 +819,125 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
             }
             refs
         }
+    }
+}
+
+/// What is left of `kind`, which names an element in `doomed`, once those
+/// are gone: nothing for a constraint of fixed operands; for one over a
+/// list of members, the members left, as one constraint or several, none
+/// when too few are left for it to say anything. An offset keeps its
+/// other pairs. A group keeps its other members and their shape, unless
+/// only one lone point (an id in `lone_points`) is left. A pitch or an
+/// angular pitch keeps each run of members that still step one from the
+/// next as one constraint, so none moves: a row's run, or the first
+/// column's of a row pitch; whole rows of a grid stay one grid. The pivot
+/// of an angular pitch gone takes it.
+fn without_members(
+    kind: &ConstraintKind,
+    doomed: &std::collections::HashSet<Uuid>,
+    lone_points: &std::collections::HashSet<Uuid>,
+) -> Vec<ConstraintKind> {
+    let gone = |id: &Uuid| doomed.contains(id);
+    // The runs of `points` between the gone ones that still step.
+    let runs = |points: &[Uuid]| -> Vec<Vec<Uuid>> {
+        points
+            .split(gone)
+            .filter(|run| run.len() >= 2)
+            .map(<[Uuid]>::to_vec)
+            .collect()
+    };
+    match kind {
+        ConstraintKind::Offset { pairs, distance } => {
+            let pairs: Vec<[Uuid; 2]> = pairs
+                .iter()
+                .filter(|pair| !pair.iter().any(gone))
+                .copied()
+                .collect();
+            if pairs.is_empty() {
+                return Vec::new();
+            }
+            vec![ConstraintKind::Offset {
+                pairs,
+                distance: *distance,
+            }]
+        }
+        ConstraintKind::Group {
+            elements,
+            reference,
+        } => {
+            let elements: Vec<Uuid> = elements.iter().filter(|id| !gone(id)).copied().collect();
+            if elements.is_empty() || matches!(&elements[..], [one] if lone_points.contains(one)) {
+                return Vec::new();
+            }
+            let reference = reference
+                .iter()
+                .filter(|r| !gone(&r.id()))
+                .copied()
+                .collect();
+            vec![ConstraintKind::Group {
+                elements,
+                reference,
+            }]
+        }
+        ConstraintKind::Pitch {
+            points,
+            columns,
+            distance,
+            across,
+            direction,
+        } => {
+            let cols = (*columns).max(1) as usize;
+            let pitch = |points: Vec<Uuid>, columns: usize| ConstraintKind::Pitch {
+                points,
+                columns: columns as u32,
+                distance: *distance,
+                across: *across,
+                direction: *direction,
+            };
+            if *across {
+                // Only the first column steps: it alone, one to a row.
+                let first: Vec<Uuid> = points.iter().step_by(cols).copied().collect();
+                return runs(&first).into_iter().map(|run| pitch(run, 1)).collect();
+            }
+            let mut out: Vec<ConstraintKind> = Vec::new();
+            let mut whole_rows: Option<usize> = None;
+            for run in points.chunks(cols).flat_map(runs) {
+                match whole_rows {
+                    Some(i) if run.len() == cols => {
+                        if let ConstraintKind::Pitch { points, .. } = &mut out[i] {
+                            points.extend(run);
+                        }
+                    }
+                    None if run.len() == cols => {
+                        whole_rows = Some(out.len());
+                        out.push(pitch(run, cols));
+                    }
+                    _ => {
+                        let n = run.len();
+                        out.push(pitch(run, n));
+                    }
+                }
+            }
+            out
+        }
+        ConstraintKind::PolarPitch {
+            center,
+            points,
+            angle_rad,
+        } => {
+            if gone(center) {
+                return Vec::new();
+            }
+            runs(points)
+                .into_iter()
+                .map(|points| ConstraintKind::PolarPitch {
+                    center: *center,
+                    points,
+                    angle_rad: *angle_rad,
+                })
+                .collect()
+        }
+        _ => Vec::new(),
     }
 }
 

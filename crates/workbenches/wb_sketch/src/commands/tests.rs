@@ -265,7 +265,8 @@ fn a_negative_axis_distance_runs_the_other_way() {
     }
 }
 
-/// What is left free: 5 for an arc, however drawn, and for an ellipse.
+/// What is left free: 5 for an arc, however drawn, and for an ellipse,
+/// drawn off the origin and the axes, which would hold the points there.
 #[test]
 fn arcs_and_ellipses_count_five_degrees_of_freedom() {
     let dof = |tool: &str, points: Value| {
@@ -278,8 +279,8 @@ fn arcs_and_ellipses_count_five_degrees_of_freedom() {
         );
         ok(&mut doc, "sketch.status", json!({"sketch": sketch}))["dof"].clone()
     };
-    assert_eq!(dof("arc3", json!([[0, 0], [10, 0], [5, 3]])), json!(5));
-    assert_eq!(dof("ellipse", json!([[0, 0], [10, 0], [0, 4]])), json!(5));
+    assert_eq!(dof("arc3", json!([[1, 1], [11, 1], [6, 4]])), json!(5));
+    assert_eq!(dof("ellipse", json!([[1, 1], [11, 1], [1, 5]])), json!(5));
 }
 
 /// A rounded rectangle, a slot and an arc slot keep their shape when
