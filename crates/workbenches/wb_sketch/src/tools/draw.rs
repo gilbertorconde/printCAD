@@ -157,6 +157,14 @@ pub(super) fn arc(
             }
             let end_pos = Vec2D::from_glam(center_pos.to_glam() + dir.normalize() * radius);
             let end_snap = snap::snap_to_point(sketch, end_pos, snap_tol, &[]);
+            // An end snapped onto the start would close the arc on one
+            // point, no sweep the solver can hold: wait for another end.
+            if end_snap
+                .position(sketch)
+                .is_none_or(|e| (e - start_pos).to_glam().length() < 1e-6)
+            {
+                return ToolEffect::none();
+            }
 
             let center_id = materialize_on_curve(sketch, center, snap_tol);
             let start_id = materialize_on_curve(sketch, start, snap_tol);
@@ -808,21 +816,52 @@ pub(super) fn polygon(
                 *state = ToolState::Idle;
                 return ToolEffect::none();
             };
-            let radius = (cursor - c).to_glam().length();
+            // Every vertex is the point exactly where it falls, else a new
+            // one; the clicked vertex, where a snap put it, is held there.
+            let eps = super::curve_attach_eps(snap_tol);
+            let first = snap_point_or_curve(sketch, cursor, eps);
+            let Some(v) = first.position(sketch) else {
+                return ToolEffect::none();
+            };
+            let radius = (v - c).to_glam().length();
             if radius < 1e-6 {
                 return ToolEffect::none(); // vertex on center: degenerate
+            }
+            let corners: Vec<SnapTarget> = polygon_vertices(c, v, sides)
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| match i {
+                    0 => first,
+                    _ => snap::snap_to_point(sketch, p, eps, &[]),
+                })
+                .collect();
+            let reused: Vec<Uuid> = corners
+                .iter()
+                .chain([&center])
+                .filter_map(|t| match t {
+                    SnapTarget::Existing(id) => Some(*id),
+                    SnapTarget::New(_) => None,
+                })
+                .collect();
+            if (1..reused.len()).any(|i| reused[i..].contains(&reused[i - 1])) {
+                return ToolEffect::log("The polygon would join a point to itself");
             }
             // Held regular: a construction circle through every vertex,
             // and every side as long as the first. Its centre, size and turn
             // are what is left free.
+            // The vertices before the circle, so none is held on it twice.
             let center_id = materialize_on_curve(sketch, center, snap_tol);
+            let vertex_ids: Vec<Uuid> = corners
+                .into_iter()
+                .enumerate()
+                .map(|(i, t)| match i {
+                    0 => materialize_on_curve(sketch, t, snap_tol),
+                    _ => materialize(sketch, t),
+                })
+                .collect();
             let circle =
                 sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
             sketch.set_construction(circle, true);
-            let vertex_ids: Vec<Uuid> = polygon_vertices(c, cursor, sides)
-                .into_iter()
-                .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(p))))
-                .collect();
             for vertex in &vertex_ids {
                 sketch.add_constraint(ConstraintKind::PointOnCircle {
                     point: *vertex,

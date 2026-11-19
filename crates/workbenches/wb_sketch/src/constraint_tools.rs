@@ -35,8 +35,9 @@ impl SketchWorkbench {
         } else {
             Some(which)
         };
-        let mut items: Vec<Uuid> = self.tab.selected.iter().copied().collect();
-        items.sort();
+        // In picked order: a symmetry's centre, its mirror line and an
+        // angle's corner are read from where each item stands.
+        let items = self.tab.selected.in_order().to_vec();
         let own_ends = constrain::joins_own_ends(&feature.sketch, &shape.points_picked());
         let done = resolved.is_some_and(|resolved| {
             self.constrain_items(ctx, feature, resolved, &items, Vec::new())
@@ -82,6 +83,22 @@ impl SketchWorkbench {
                 .unwrap_or_default();
             ctx.log_warn(format!(
                 "The sketch already holds this dimension ({label}); change its value instead"
+            ));
+            self.tab.selected.clear();
+            self.tab.selected_constraints = HashSet::from([held]);
+            return true;
+        }
+        // So is a relation it holds: the one it holds is selected.
+        if let Some(held) = commands::held_relation(&feature.sketch, which, items) {
+            let label = feature
+                .sketch
+                .constraints
+                .iter()
+                .find(|c| c.id == held)
+                .map(|c| sketch::constraint_label(&c.kind))
+                .unwrap_or_default();
+            ctx.log_warn(format!(
+                "The sketch already holds this constraint ({label})"
             ));
             self.tab.selected.clear();
             self.tab.selected_constraints = HashSet::from([held]);

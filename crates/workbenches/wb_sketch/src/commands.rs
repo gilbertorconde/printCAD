@@ -869,6 +869,23 @@ pub(crate) fn held_dimension(sketch: &Sketch, kind: &str, items: &[Uuid]) -> Opt
         .find_map(|k| crate::constrain::dimension_held(sketch, k))
 }
 
+/// The geometric constraint of `sketch` that already holds what `kind`
+/// would make of `items`, when it would make nothing the sketch does not
+/// hold ([`crate::constrain::relation_held`]).
+pub(crate) fn held_relation(sketch: &Sketch, kind: &str, items: &[Uuid]) -> Option<Uuid> {
+    let (_, kinds) = planned(sketch, kind, items).ok()?;
+    all_held(sketch, &kinds)
+}
+
+/// The first of `kinds` the sketch holds, when it holds every one of them.
+fn all_held(sketch: &Sketch, kinds: &[crate::sketch::ConstraintKind]) -> Option<Uuid> {
+    let held: Option<Vec<Uuid>> = kinds
+        .iter()
+        .map(|k| crate::constrain::relation_held(sketch, k))
+        .collect();
+    held?.first().copied()
+}
+
 /// The tool `kind` stands for on `items` and the constraints it makes.
 fn planned<'a>(
     sketch: &Sketch,
@@ -923,6 +940,23 @@ pub(crate) fn constrain(
             "the sketch already holds this dimension ({held}); change its value instead"
         )));
     }
+    // A relation the sketch holds is not made twice: refused when it holds
+    // them all, else the ones it lacks are made.
+    if let Some(held) = all_held(sketch, &kinds) {
+        let label = sketch
+            .constraints
+            .iter()
+            .find(|c| c.id == held)
+            .map(|c| crate::sketch::constraint_label(&c.kind))
+            .unwrap_or_default();
+        return Err(CommandError::failed(format!(
+            "the sketch already holds this constraint ({label})"
+        )));
+    }
+    let kinds: Vec<_> = kinds
+        .into_iter()
+        .filter(|k| crate::constrain::relation_held(sketch, k).is_none())
+        .collect();
     let mut made = Vec::new();
     for mut k in kinds {
         if let Some(value) = value
