@@ -249,6 +249,22 @@ mod tests {
         let dof = frame(&mut doc, &mut wb, 460.0);
         assert_eq!(dof, solver::dof_estimate(&edited.sketch));
         assert!(dof > 0);
+        // A solve's own measure is kept for the sketch it stores.
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        let mut feature = wb.get_active_sketch(&ctx).unwrap();
+        feature
+            .sketch
+            .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(4.0, 3.0))));
+        wb.solve_now(&mut ctx, &mut feature);
+        wb.store_sketch(&mut ctx, feature);
+        let kept = wb.tab.freedom.borrow().clone().unwrap();
+        assert_eq!(
+            kept.1,
+            solver::dof_estimate(&stored_sketch(&doc, id).unwrap().sketch)
+        );
+        wb.tab.freedom.borrow_mut().as_mut().unwrap().1 = -7;
+        assert_eq!(frame(&mut doc, &mut wb, 480.0), -7);
     }
 
     /// A card's draft is a sketch the document does not hold: what it

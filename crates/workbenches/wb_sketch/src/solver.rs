@@ -32,25 +32,36 @@ pub(crate) fn solve_checked(
         ));
     }
     let sys = sketch_solver::compile::compile(&adapter::prepare(sketch, &[]))?;
-    Ok(solve_prepared(sketch, sys))
+    Ok(solve_prepared(sketch, sys).0)
 }
 
 /// Solve the sketch's constraints by adjusting point positions and
 /// circle/arc radii in place. On NotConverged the best-effort geometry is
 /// still written back. Also updates `sketch.is_fully_constrained`.
 pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
+    solve_measured(sketch).0
+}
+
+/// [`solve`], with the freedom it measured on the geometry it leaves:
+/// none when it measured none, or when it laid geometry out after
+/// measuring (a text's outlines, a fitted spline).
+pub fn solve_measured(sketch: &mut Sketch) -> (SolveOutcome, Option<i32>) {
     // Text outlines are made from their blocks after the solve.
     crate::text::strip(sketch);
-    if !sketch.soft.is_empty() {
-        return solve_soft(sketch);
-    }
-    let sys = build_system(sketch);
-    solve_prepared(sketch, sys)
+    let (outcome, dof) = if sketch.soft.is_empty() {
+        let sys = build_system(sketch);
+        solve_prepared(sketch, sys)
+    } else {
+        solve_soft(sketch)
+    };
+    let laid_out = !sketch.texts.is_empty()
+        || (sketch.geometry.iter()).any(|g| matches!(g, GeometryElement::BSpline(_)));
+    (outcome, dof.filter(|_| !laid_out))
 }
 
 /// [`solve`] with the sketch's measured points settling what the
 /// constraints leave free.
-fn solve_soft(sketch: &mut Sketch) -> SolveOutcome {
+fn solve_soft(sketch: &mut Sketch) -> (SolveOutcome, Option<i32>) {
     let soft: Vec<sketch_solver::soft::SoftPoint> = sketch
         .soft
         .iter()
@@ -74,17 +85,17 @@ fn solve_soft(sketch: &mut Sketch) -> SolveOutcome {
         threshold: answer.iteration.threshold,
         values: answer.iteration.values,
     };
-    apply(sketch, &answer.system, &iteration);
+    let dof = apply(sketch, &answer.system, &iteration);
     crate::spline::refit_splines(sketch);
     crate::text::refresh(sketch);
-    iteration.outcome
+    (iteration.outcome, dof)
 }
 
-fn solve_prepared(sketch: &mut Sketch, sys: System) -> SolveOutcome {
-    let outcome = solve_system(sketch, sys);
+fn solve_prepared(sketch: &mut Sketch, sys: System) -> (SolveOutcome, Option<i32>) {
+    let solved = solve_system(sketch, sys);
     crate::spline::refit_splines(sketch);
     crate::text::refresh(sketch);
-    outcome
+    solved
 }
 
 /// [`solve`], with the points `held` staying where they are (points being
@@ -98,7 +109,7 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     crate::text::strip(sketch);
     let before = sketch.geometry.clone();
     let sys = build_system_holding(sketch, None, held);
-    match solve_system(sketch, sys) {
+    match solve_system(sketch, sys).0 {
         SolveOutcome::NotConverged { .. } => {
             sketch.geometry = before;
             solve(sketch)
@@ -111,10 +122,10 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     }
 }
 
-fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
+fn solve_system(sketch: &mut Sketch, sys: System) -> (SolveOutcome, Option<i32>) {
     let iteration = iterate(&sys, sketch.solver);
-    apply(sketch, &sys, &iteration);
-    iteration.outcome
+    let dof = apply(sketch, &sys, &iteration);
+    (iteration.outcome, dof)
 }
 
 /// Numerical output before it is stored and the application updates. Even
@@ -127,24 +138,29 @@ struct Iteration {
     threshold: f64,
 }
 
-/// Store the answer and measure flags on the stored geometry.
-fn apply(sketch: &mut Sketch, sys: &System, iteration: &Iteration) {
+/// Store the answer and measure flags on the stored geometry. Returns
+/// the freedom measured on it, when one was.
+fn apply(sketch: &mut Sketch, sys: &System, iteration: &Iteration) -> Option<i32> {
     if iteration.outcome == SolveOutcome::NothingToSolve {
         // Nothing to solve can still leave nothing free: a line drawn on
         // the ends of projected geometry, which the solver holds, cannot
         // move though no constraint names it.
-        sketch.is_fully_constrained = sketch.geometry.iter().any(|g| !sketch.is_external(g.id()))
-            && dof_estimate(sketch) == 0;
+        let dof = (sketch.geometry.iter())
+            .any(|g| !sketch.is_external(g.id()))
+            .then(|| dof_estimate(sketch));
+        sketch.is_fully_constrained = dof == Some(0);
         sketch.unsolved = false;
-        return;
+        return dof;
     }
     debug_assert!(iteration.residual.is_finite());
     debug_assert!(iteration.threshold.is_finite());
     debug_assert!(iteration.iterations <= sketch.solver.max_iterations.max(1) as usize);
     write_back(sketch, sys, &iteration.values);
-    sketch.is_fully_constrained =
-        matches!(iteration.outcome, SolveOutcome::Converged { .. }) && dof_estimate(sketch) == 0;
+    let dof =
+        matches!(iteration.outcome, SolveOutcome::Converged { .. }).then(|| dof_estimate(sketch));
+    sketch.is_fully_constrained = dof == Some(0);
     sketch.unsolved = matches!(iteration.outcome, SolveOutcome::NotConverged { .. });
+    dof
 }
 
 fn iterate(sys: &System, settings: SolverSettings) -> Iteration {

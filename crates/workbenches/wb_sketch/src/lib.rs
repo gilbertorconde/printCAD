@@ -876,7 +876,11 @@ impl SketchWorkbench {
 
     /// Run the solver whatever the auto-update switch says.
     fn solve_now(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
-        let outcome = solver::solve(&mut feature.sketch);
+        let (outcome, dof) = solver::solve_measured(&mut feature.sketch);
+        if let Some(dof) = dof {
+            // The verdict reads the sketch as stored, which this is.
+            *self.tab.freedom.borrow_mut() = Some((feature.sketch.clone(), dof));
+        }
         self.tab.unsolved_edits = false;
         self.tab.last_solve = Some(outcome);
         self.tab.last_diagnosis = None; // recomputed lazily by the panel
