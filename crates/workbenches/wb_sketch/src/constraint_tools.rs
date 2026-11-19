@@ -88,6 +88,22 @@ impl SketchWorkbench {
             self.tab.selected_constraints = HashSet::from([held]);
             return true;
         }
+        // So is a relation it holds: the one it holds is selected.
+        if let Some(held) = commands::held_relation(&feature.sketch, which, items) {
+            let label = feature
+                .sketch
+                .constraints
+                .iter()
+                .find(|c| c.id == held)
+                .map(|c| sketch::constraint_label(&c.kind))
+                .unwrap_or_default();
+            ctx.log_warn(format!(
+                "The sketch already holds this constraint ({label})"
+            ));
+            self.tab.selected.clear();
+            self.tab.selected_constraints = HashSet::from([held]);
+            return true;
+        }
         let Ok(made) = commands::constrain(&mut feature.sketch, which, items, None) else {
             return false;
         };

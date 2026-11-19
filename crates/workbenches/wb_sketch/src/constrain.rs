@@ -220,6 +220,38 @@ pub fn dimension_held(sketch: &Sketch, kind: &ConstraintKind) -> Option<Uuid> {
         .map(|c| c.id)
 }
 
+/// The geometric constraint of `sketch` that already holds what `kind`
+/// would, or `None` when it holds none or `kind` is a dimension. One holds
+/// the same as another of its kind on the same elements: a symmetry's two
+/// points either way round about the same line or centre, every other
+/// kind's elements in any order, and internal geometry only in the same
+/// role. Every geometric constraint the sketch holds counts, active or not.
+pub fn relation_held(sketch: &Sketch, kind: &ConstraintKind) -> Option<Uuid> {
+    if kind.is_dimensional() {
+        return None;
+    }
+    let identity = |k: &ConstraintKind| {
+        let mut refs = sketch::constraint_refs(k);
+        match k {
+            ConstraintKind::Symmetric { .. } | ConstraintKind::SymmetricAboutPoint { .. } => {
+                refs[..2].sort()
+            }
+            _ => refs.sort(),
+        }
+        let role = match k {
+            ConstraintKind::InternalAlignment { role, .. } => Some(*role),
+            _ => None,
+        };
+        (std::mem::discriminant(k), refs, role)
+    };
+    let wanted = identity(kind);
+    sketch
+        .constraints
+        .iter()
+        .find(|c| !c.kind.is_dimensional() && identity(&c.kind) == wanted)
+        .map(|c| c.id)
+}
+
 /// An end of line `first` and an end of line `second`, the pair that lies
 /// nearest each other; of pairs equally near, the first in the order start
 /// before end, `first`'s end before `second`'s.
