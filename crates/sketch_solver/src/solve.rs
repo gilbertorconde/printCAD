@@ -62,7 +62,8 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
         };
     }
 
-    let direct = descend(sys, sys.vars.clone(), settings, tolerance, None);
+    let start = part_coincident_ends(sys);
+    let direct = descend(sys, start.clone(), settings, tolerance, None);
     if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
@@ -71,7 +72,7 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
     if steps <= 1 {
         return direct;
     }
-    let mut followed = follow(sys, settings, tolerance, steps);
+    let mut followed = follow(sys, start, settings, tolerance, steps);
     if !matches!(followed.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
@@ -137,9 +138,14 @@ fn farthest_move(sys: &System, from: &[f64], to: &[f64]) -> (f64, f64) {
 /// The solve taken in `steps` steps: step k asks the residuals to fall to
 /// `(1 - k / steps)` of what they are at the start (a Newton homotopy), each
 /// step starting where the last ended, the last asking them to vanish.
-fn follow(sys: &System, settings: Settings, tolerance: f64, steps: usize) -> Iteration {
-    let start = eval_residuals(sys, &sys.vars);
-    let mut x = sys.vars.clone();
+fn follow(
+    sys: &System,
+    mut x: Vec<f64>,
+    settings: Settings,
+    tolerance: f64,
+    steps: usize,
+) -> Iteration {
+    let start = eval_residuals(sys, &x);
     let mut iterations = 0;
     let mut offset = vec![0.0; start.len()];
     for k in 1..steps {
@@ -154,6 +160,41 @@ fn follow(sys: &System, settings: Settings, tolerance: f64, steps: usize) -> Ite
     let mut last = descend(sys, x, settings, tolerance, None);
     last.iterations += iterations;
     last
+}
+
+/// The starting values with every pair of points a distance or length
+/// holds apart, but which sit on one spot, moved a little apart: there
+/// `|p2 - p1|` changes the same way whichever way a point moves, so the
+/// solve would see no direction to pull them. The second point moves along
+/// x (its y, then the first point, when that is held), always the same way,
+/// so one input always starts from one place.
+fn part_coincident_ends(sys: &System) -> Vec<f64> {
+    use crate::residual::{ResidualSpec, segment_length};
+    let mut x = sys.vars.clone();
+    let mut free = vec![false; x.len()];
+    for &j in &sys.free {
+        free[j] = true;
+    }
+    for spec in &sys.specs {
+        let (a, b, d) = match *spec {
+            ResidualSpec::Distance { p1, p2, d } => (p1, p2, d),
+            ResidualSpec::Length { s, e, len } => (s, e, len),
+            _ => continue,
+        };
+        // The finite-difference step, so the parted pair is seen apart by
+        // every probe of the Jacobian.
+        let reach = [x[a], x[a + 1], x[b], x[b + 1]]
+            .iter()
+            .fold(1.0_f64, |m, v| m.max(v.abs()))
+            * sys.settings.finite_difference_step;
+        if d <= reach || segment_length(&x, a, b) > reach {
+            continue;
+        }
+        if let Some(j) = [b, b + 1, a, a + 1].into_iter().find(|&j| free[j]) {
+            x[j] += if (b..=b + 1).contains(&j) { 2.0 } else { -2.0 } * reach;
+        }
+    }
+    x
 }
 
 /// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
