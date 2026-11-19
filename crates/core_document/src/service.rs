@@ -516,15 +516,22 @@ impl DocumentService {
             .get_feature_meta(feature)
             .cloned()
             .ok_or("no such feature")?;
+        let stored = value * parameter.scale;
+        let whole = if parameter.integer {
+            Some(
+                crate::evaluate::whole_number(stored)
+                    .map_err(|why| format!("{}: {why}", parameter.label))?,
+            )
+        } else {
+            None
+        };
         let mut data = node.data.clone();
         let slot = data
             .pointer_mut(&parameter.pointer)
             .ok_or_else(|| format!("{} has no {} now", node.name, parameter.label))?;
-        let stored = value * parameter.scale;
-        *slot = if parameter.integer {
-            serde_json::json!(stored.round() as i64)
-        } else {
-            serde_json::json!(stored)
+        *slot = match whole {
+            Some(whole) => serde_json::json!(whole),
+            None => serde_json::json!(stored),
         };
         if let Some(owner) = self.owner_of(&node.workbench_id) {
             owner.settle(&node, &mut data);

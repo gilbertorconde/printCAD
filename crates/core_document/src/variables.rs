@@ -193,6 +193,59 @@ impl crate::Document {
         self.feature_tree().all_nodes().any(|(_, n)| n.name == name)
     }
 
+    /// Why `feature` (with `None`, a feature not made yet) may not be called
+    /// `name`, when it may not. Two features may share a name while no
+    /// formula reads it, but formulas find objects by name: a name shared
+    /// with a variable set, or one a formula reads (the new name, or the
+    /// renamed feature's old one, which formulas are rewritten to), would
+    /// leave those formulas unable to tell which object they read.
+    pub fn name_refusal(&self, feature: Option<FeatureId>, name: &str) -> Option<String> {
+        let is_set = |n: &crate::FeatureNode| n.workbench_id.as_str() == VARIABLES_KIND;
+        let renamed = feature.and_then(|id| self.get_feature_meta(id));
+        let others: Vec<&crate::FeatureNode> = self
+            .feature_tree()
+            .all_nodes()
+            .filter(|(id, n)| Some(**id) != feature && n.name == name)
+            .map(|(_, n)| n)
+            .collect();
+        if others.is_empty() {
+            return None;
+        }
+        let old = renamed.map(|n| n.name.as_str());
+        let read = self.any_formula(|text| {
+            crate::expr::references(text).is_ok_and(|refs| {
+                refs.iter()
+                    .any(|r| r.object == name || Some(r.object.as_str()) == old)
+            })
+        });
+        let set = renamed.is_some_and(is_set) || others.iter().any(|n| is_set(n));
+        (set || read).then(|| {
+            format!(
+                "something is already called {name}, and formulas find objects by \
+                 name: give it a name of its own"
+            )
+        })
+    }
+
+    /// Whether `test` holds for any formula in the document: a variable's,
+    /// a feature's or a configurations table cell.
+    fn any_formula(&self, test: impl Fn(&str) -> bool) -> bool {
+        let in_features = self.feature_tree().all_nodes().any(|(_, node)| {
+            node.formulas.values().any(|text| test(text))
+                || (node.workbench_id.as_str() == VARIABLES_KIND
+                    && VariableSet::from_json(&node.data)
+                        .is_ok_and(|set| set.variables.iter().any(|v| test(&v.formula))))
+        });
+        in_features
+            || self.configurations().is_some_and(|(_, table)| {
+                table
+                    .columns
+                    .iter()
+                    .chain(table.rows.iter().flat_map(|r| r.values.iter()))
+                    .any(|text| test(text))
+            })
+    }
+
     /// Make an empty variable set called `name`.
     pub fn add_variable_set(&mut self, name: &str) -> Result<FeatureId, String> {
         check_name(name)?;
@@ -439,6 +492,60 @@ mod tests {
         assert_eq!(doc.new_object_name("Fit", Counted), "Fit 3");
     }
 
+    /// Formulas find an object by its name, so a rename that would share a
+    /// name with a variable set, or one a formula reads, is refused.
+    #[test]
+    fn a_rename_formulas_could_not_tell_apart_is_refused() {
+        let mut doc = Document::new("t");
+        let printer = doc.add_variable_set("Printer").unwrap();
+        doc.set_variable(printer, "nozzle", "0.4 mm", None).unwrap();
+        let part = doc.add_variable_set("Part").unwrap();
+        doc.set_variable(part, "rib", "Printer.nozzle * 2", None)
+            .unwrap();
+        let ops = doc.mutation_seq();
+
+        let why = doc.rename_feature(part, "Printer").unwrap_err().to_string();
+        assert!(why.contains("already called Printer"), "{why}");
+        let why = doc.rename_feature(printer, "Part").unwrap_err().to_string();
+        assert!(why.contains("already called Part"), "{why}");
+        assert_eq!(doc.mutation_seq(), ops, "a refused rename records nothing");
+        assert_eq!(doc.object_named("Printer"), Some(printer));
+        assert_eq!(
+            doc.variable_sets()[1].2.variables[0].formula,
+            "Printer.nozzle * 2"
+        );
+
+        doc.rename_feature(printer, "Printer").unwrap();
+        assert_eq!(doc.mutation_seq(), ops, "its own name is no change");
+
+        // A feature takes neither a set's name nor gives a set its own.
+        let pad = |doc: &mut Document, name: &str| {
+            doc.add_feature_of_kind(
+                crate::WorkbenchId::from("test.pad"),
+                name.to_string(),
+                None,
+                Vec::new(),
+                serde_json::json!({}),
+                crate::FeatureOrigin::default(),
+            )
+        };
+        let base = pad(&mut doc, "Base");
+        assert!(doc.rename_feature(base, "Printer").is_err());
+        assert!(doc.rename_feature(part, "Base").is_err());
+
+        // Two features no formula reads may share a name; once one is
+        // read, a third may not take it.
+        let other = pad(&mut doc, "Other");
+        doc.rename_feature(other, "Base").unwrap();
+        doc.rename_feature(other, "Lid").unwrap();
+        doc.set_feature_formula(other, "/x", Some("Base.length".into()))
+            .unwrap();
+        let third = pad(&mut doc, "Third");
+        assert!(doc.rename_feature(third, "Base").is_err());
+        assert!(doc.name_refusal(None, "Base").is_some());
+        assert!(doc.name_refusal(None, "Lid").is_none());
+    }
+
     #[test]
     fn renaming_a_variable_or_its_set_rewrites_the_formulas_that_read_it() {
         let mut doc = Document::new("t");
@@ -463,7 +570,7 @@ mod tests {
         assert_eq!(sets[0].2.variables[1].formula, "3 * Printer.bore");
         assert_eq!(sets[1].2.variables[0].formula, "Printer.bore * 2");
 
-        doc.rename_feature(printer, "My printer");
+        doc.rename_feature(printer, "My printer").unwrap();
         let sets = doc.variable_sets();
         assert_eq!(sets[0].2.variables[1].formula, "3 * `My printer`.bore");
         assert_eq!(sets[1].2.variables[0].formula, "`My printer`.bore * 2");

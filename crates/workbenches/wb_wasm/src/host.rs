@@ -290,7 +290,9 @@ impl Reach {
             }
             calls::RENAME_FEATURE => {
                 let id = owned(document, &package, str_arg(&args, "id")?)?;
-                document.rename_feature(id, str_arg(&args, "name")?);
+                document
+                    .rename_feature(id, str_arg(&args, "name")?)
+                    .map_err(|e| e.to_string())?;
                 Ok(Value::Null)
             }
             calls::SET_FEATURE_VISIBLE => {
@@ -307,32 +309,12 @@ impl Reach {
                 Ok(json!(document.create_body(name).0.to_string()))
             }
             calls::REMOVE_BODY => {
-                let text = str_arg(&args, "id")?;
-                let body = body_id(text)?;
-                if document.body(body).is_none() {
-                    return Err(format!("no body {text}"));
-                }
-                let foreign = document
-                    .feature_tree()
-                    .all_nodes()
-                    .find(|(_, n)| n.body == Some(body) && !package.owns(n.workbench_id.as_str()))
-                    .map(|(_, n)| n.workbench_id.as_str().to_string());
-                if let Some(kind) = foreign {
-                    return Err(format!(
-                        "body {text} holds a {kind}, which the package does not own"
-                    ));
-                }
-                if document.body_solid_is_imported(body) {
-                    return Err(format!(
-                        "body {text} takes its shape from an import, a link or a copy, \
-                         which the package does not own"
-                    ));
-                }
+                let body = owned_body(document, &package, str_arg(&args, "id")?)?;
                 document.remove_body(body);
                 Ok(Value::Null)
             }
             calls::SET_PLACEMENT => {
-                let body = body_id(str_arg(&args, "body")?)?;
+                let body = owned_body(document, &package, str_arg(&args, "body")?)?;
                 let rows: Vec<f64> = args
                     .get("matrix")
                     .and_then(Value::as_array)
@@ -574,6 +556,37 @@ fn owned(document: &Document, package: &PackageInfo, text: &str) -> Result<Featu
         ));
     }
     Ok(id)
+}
+
+/// A body the package may remove or move: one that exists, holds only the
+/// package's own features (or none) and takes its shape from no import,
+/// link or copy.
+fn owned_body(
+    document: &Document,
+    package: &PackageInfo,
+    text: &str,
+) -> Result<core_document::BodyId, String> {
+    let body = body_id(text)?;
+    if document.body(body).is_none() {
+        return Err(format!("no body {text}"));
+    }
+    let foreign = document
+        .feature_tree()
+        .all_nodes()
+        .find(|(_, n)| n.body == Some(body) && !package.owns(n.workbench_id.as_str()))
+        .map(|(_, n)| n.workbench_id.as_str().to_string());
+    if let Some(kind) = foreign {
+        return Err(format!(
+            "body {text} holds a {kind}, which the package does not own"
+        ));
+    }
+    if document.body_solid_is_imported(body) {
+        return Err(format!(
+            "body {text} takes its shape from an import, a link or a copy, \
+             which the package does not own"
+        ));
+    }
+    Ok(body)
 }
 
 /// A rigid motion from a row-major 4x4 matrix given as 16 numbers.

@@ -400,6 +400,8 @@ pub struct Parameter {
     /// What the data holds for one millimetre or degree.
     #[serde(default = "unit_scale")]
     pub scale: f64,
+    /// A count: a formula's value is rounded, and one below 0 or past
+    /// `u32::MAX` fails on the field instead of being written.
     #[serde(default)]
     pub integer: bool,
 }
@@ -2867,7 +2869,8 @@ pub mod calls {
     /// import, a link or a copy. An empty body's removal undoes, so the
     /// body a cancelled part made can go without clearing the history.
     pub const REMOVE_BODY: &str = "doc.remove_body";
-    /// `{body, matrix}`: a row-major rigid 4x4.
+    /// `{body, matrix}`: a row-major rigid 4x4. The body is one the package
+    /// may remove (see `REMOVE_BODY`); any other is refused.
     pub const SET_PLACEMENT: &str = "doc.set_placement";
     /// `{entry, input}` → the job's number. The result arrives as
     /// `Event::JobFinished`.

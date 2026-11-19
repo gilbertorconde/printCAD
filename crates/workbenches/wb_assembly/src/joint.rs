@@ -159,32 +159,65 @@ impl Drive {
     /// Its residual, when it holds anything, for a motion at `now`;
     /// `angular` motions are in degrees and wrap round.
     fn residual(&self, now: f64, angular: bool, out: &mut Vec<f64>) {
-        let apart = |target: f32| {
-            let d = now - f64::from(target);
-            if angular {
-                (d + 180.0).rem_euclid(360.0) - 180.0
-            } else {
-                d
-            }
-        };
         let scale = if angular {
             ARM_MM * std::f64::consts::PI / 180.0
         } else {
             1.0
         };
         if let Some(to) = self.to {
-            out.push(apart(to) * scale);
-        } else if let Some([low, high]) = self.limits {
-            let (below, above) = (apart(low), apart(high));
-            out.push(if below < 0.0 {
-                below * scale
-            } else if above > 0.0 {
-                above * scale
-            } else {
-                0.0
-            });
+            let d = now - f64::from(to);
+            out.push(if angular { wrapped(d) } else { d } * scale);
+        } else if self.limits.is_some() {
+            out.push(self.past_limits(now, angular) * scale);
         }
     }
+
+    /// How far `now` is outside the limits: negative below the low end,
+    /// positive past the high one, 0 between them or with no limits. An
+    /// `angular` motion is measured round the circle from the middle of
+    /// the range, so limits up to a whole turn apart keep every angle
+    /// between them, and one outside goes to the nearer end.
+    fn past_limits(&self, now: f64, angular: bool) -> f64 {
+        let Some([low, high]) = self.limits else {
+            return 0.0;
+        };
+        let (low, high) = (f64::from(low), f64::from(high));
+        if !angular {
+            return if now < low {
+                now - low
+            } else if now > high {
+                now - high
+            } else {
+                0.0
+            };
+        }
+        let middle = (low + high) / 2.0;
+        let half = (high - low).abs() / 2.0;
+        let from_middle = wrapped(now - middle);
+        if from_middle > half {
+            from_middle - half
+        } else if from_middle < -half {
+            from_middle + half
+        } else {
+            0.0
+        }
+    }
+
+    /// `now` sits at one of the limits, within `tolerance`, measured as
+    /// [`Self::past_limits`] measures it.
+    pub(crate) fn at_limit(&self, now: f64, angular: bool, tolerance: f64) -> bool {
+        self.limits.is_some_and(|[low, high]| {
+            [low, high].into_iter().any(|end| {
+                let d = now - f64::from(end);
+                (if angular { wrapped(d) } else { d }).abs() <= tolerance
+            })
+        })
+    }
+}
+
+/// An angle in degrees brought into [-180, 180).
+fn wrapped(degrees: f64) -> f64 {
+    (degrees + 180.0).rem_euclid(360.0) - 180.0
 }
 
 fn unturned() -> [f64; 4] {

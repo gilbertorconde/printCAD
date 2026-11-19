@@ -136,6 +136,15 @@ impl SurfaceWorkbench {
             }
             None => None,
         };
+        let name = core_document::command::Args(args)
+            .opt_string("name")?
+            .map(str::to_string);
+        if let Some(why) = name
+            .as_deref()
+            .and_then(|name| ctx.document.name_refusal(None, name))
+        {
+            return Err(CommandError::bad("name", why));
+        }
         let curves = sketch_curves(&feature, args, ctx.document)?;
         let body = match named {
             Some(body) => body,
@@ -163,8 +172,10 @@ impl SurfaceWorkbench {
             return Err(CommandError::failed(format!("it needs {missing}")));
         }
         let made = self.add(ctx, body, feature).map_err(CommandError::failed)?;
-        if let Some(name) = core_document::command::Args(args).opt_string("name")? {
-            ctx.document.rename_feature(made, name);
+        if let Some(name) = name {
+            ctx.document
+                .rename_feature(made, name)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
         }
         Ok(json!(made.0.to_string()))
     }

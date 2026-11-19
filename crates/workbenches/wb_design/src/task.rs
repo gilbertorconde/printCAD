@@ -333,8 +333,9 @@ impl DesignWorkbench {
     fn apply_name_draft(ctx: &mut WorkbenchRuntimeContext, task: &TaskState) {
         if let Some(name) = &task.name_draft
             && !name.trim().is_empty()
+            && let Err(why) = ctx.document.rename_feature(task.feature, name.clone())
         {
-            ctx.document.rename_feature(task.feature, name.clone());
+            ctx.log_warn(format!("The feature keeps its name: {why}"));
         }
     }
 
@@ -409,8 +410,9 @@ impl DesignWorkbench {
                     && !escaped
                     && name != node_name
                     && !name.trim().is_empty()
+                    && let Err(why) = ctx.document.rename_feature(feature_id, name)
                 {
-                    ctx.document.rename_feature(feature_id, name);
+                    ctx.log_warn(format!("The feature keeps its name: {why}"));
                 }
             }
             _ => {}
@@ -1652,7 +1654,7 @@ mod tests {
         let panel = panel();
         open(&mut wb, &panel, &mut doc, id);
         core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
-            doc.rename_feature(id, "Renamed");
+            doc.rename_feature(id, "Renamed").unwrap();
             doc.set_feature_formula(id, "/Pad/length", None).unwrap();
             doc.set_feature_formula(id, "/Pad/taper_deg", Some("2 deg".into()))
                 .unwrap();

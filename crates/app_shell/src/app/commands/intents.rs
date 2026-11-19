@@ -116,7 +116,11 @@ impl PrintCadApp {
 
     fn rename_tree_item(&mut self, item: TreeItemId, name: String) {
         match item {
-            TreeItemId::Feature(id) => self.session.document.rename_feature(id, name),
+            TreeItemId::Feature(id) => {
+                if let Err(err) = self.session.document.rename_feature(id, name) {
+                    app_log::warn(format!("Could not rename the feature: {err}"));
+                }
+            }
             TreeItemId::Body(id) => self.session.document.rename_body(id, name),
             TreeItemId::Component(id) => {
                 if let Some(mut component) = self.session.document.component(id).cloned() {

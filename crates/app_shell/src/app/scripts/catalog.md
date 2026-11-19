@@ -184,7 +184,9 @@ assert(pc.doc.bodies()[1].name == "Lid")
 ## doc.rename
 
 Every formula that reads a renamed feature is rewritten to the new name. Two
-features may share a name; an empty name leaves the name as it was.
+features may share a name while no formula reads it; a name a variable set has,
+or one a formula reads, is refused, since formulas find objects by name. An
+empty name leaves the name as it was.
 
 A variable set is a feature: this renames it too.
 

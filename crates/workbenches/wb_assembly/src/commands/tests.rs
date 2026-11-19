@@ -1177,6 +1177,38 @@ fn a_hinge_is_driven_to_an_angle_and_kept_within_its_limits() {
     assert!(bad.is_err());
 }
 
+/// Limits wider than a half turn keep every angle between them: the
+/// hinge is pulled back only when outside, to the nearer end round the
+/// circle.
+#[test]
+fn a_hinge_s_limits_may_span_more_than_half_a_turn() {
+    let (mut doc, a, b) = two();
+    let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+    let joint = join(&mut doc, "asm.hinge", a, &pin, b, &pin, json!({})).unwrap();
+    let settle = |doc: &mut Document, to: f64, limits: [f64; 2]| {
+        call(doc, "asm.set", json!({"joint": joint, "drive": to})).unwrap();
+        call(
+            doc,
+            "asm.set",
+            json!({"joint": joint, "drive": false, "limits": limits}),
+        )
+        .unwrap();
+        travel(doc, &joint)
+    };
+    let close = |a: f64, b: f64| ((a - b + 180.0).rem_euclid(360.0) - 180.0).abs() < 1e-2;
+    let now = settle(&mut doc, 100.0, [-150.0, 150.0]);
+    assert!(close(now, 100.0), "within the limits it stays: {now}");
+    let now = settle(&mut doc, 170.0, [-150.0, 150.0]);
+    assert!(
+        close(now, 150.0),
+        "past the high end it goes back to it: {now}"
+    );
+    let now = settle(&mut doc, -60.0, [0.0, 270.0]);
+    assert!(close(now, 270.0), "the nearer end round the circle: {now}");
+    let now = settle(&mut doc, 179.0, [-180.0, 180.0]);
+    assert!(close(now, 179.0), "a whole turn holds nothing: {now}");
+}
+
 #[test]
 fn a_slider_is_driven_along_its_axis() {
     let (mut doc, a, b) = two();
