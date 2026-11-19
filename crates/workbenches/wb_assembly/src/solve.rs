@@ -743,28 +743,24 @@ fn limits_reached(
         };
         let axis = j.feature.fixed.placed(fixed).1;
         // A drive held between limits, with where its motion is now.
-        let resting = |drive: crate::joint::Drive, now: f64| {
-            drive.to.is_none()
-                && drive.limits.is_some_and(|[low, high]| {
-                    let near = |end: f32| (now - f64::from(end)).abs() <= AT_LIMIT;
-                    near(low) || near(high)
-                })
+        let resting = |drive: crate::joint::Drive, now: f64, angular: bool| {
+            drive.to.is_none() && drive.at_limit(now, angular, AT_LIMIT)
         };
         match j.feature.kind {
             JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } => {
                 let hinge = matches!(j.feature.kind, JointKind::Hinge { .. });
                 if let Some(now) = j.feature.travel(moving, fixed)
-                    && resting(drive, now)
+                    && resting(drive, now, hinge)
                 {
                     found.push((hinge, axis));
                 }
             }
             JointKind::Align { turn, slide, .. } => {
                 if let Some((turned, slid)) = j.feature.align_travel(moving, fixed) {
-                    if resting(turn, turned) {
+                    if resting(turn, turned, true) {
                         found.push((true, axis));
                     }
-                    if resting(slide, slid) {
+                    if resting(slide, slid, false) {
                         found.push((false, axis));
                     }
                 }
