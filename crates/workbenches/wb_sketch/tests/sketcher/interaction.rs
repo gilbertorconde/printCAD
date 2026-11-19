@@ -15,6 +15,7 @@ use wb_sketch::sketch::{GeometryElement, Sketch};
 use wb_sketch::{SketchFeature, SketchWorkbench};
 
 mod chain;
+mod constraints;
 mod nodes;
 mod panel;
 mod rect;

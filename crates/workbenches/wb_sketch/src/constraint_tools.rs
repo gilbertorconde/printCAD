@@ -35,8 +35,9 @@ impl SketchWorkbench {
         } else {
             Some(which)
         };
-        let mut items: Vec<Uuid> = self.tab.selected.iter().copied().collect();
-        items.sort();
+        // In picked order: a symmetry's centre, its mirror line and an
+        // angle's corner are read from where each item stands.
+        let items = self.tab.selected.in_order().to_vec();
         let own_ends = constrain::joins_own_ends(&feature.sketch, &shape.points_picked());
         let done = resolved.is_some_and(|resolved| {
             self.constrain_items(ctx, feature, resolved, &items, Vec::new())
