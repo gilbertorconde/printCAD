@@ -453,6 +453,7 @@ impl Document {
         self.record_and_apply(op::DocumentOp::SetCopyArray {
             id,
             array: Some(array),
+            restored: Vec::new(),
         });
         Ok(id)
     }
@@ -473,6 +474,7 @@ impl Document {
             self.record_and_apply(op::DocumentOp::SetCopyArray {
                 id,
                 array: Some(array),
+                restored: Vec::new(),
             });
         }
         Ok(())
@@ -483,7 +485,11 @@ impl Document {
         if self.copy_array(id).is_none() {
             return false;
         }
-        self.record_and_apply(op::DocumentOp::SetCopyArray { id, array: None });
+        self.record_and_apply(op::DocumentOp::SetCopyArray {
+            id,
+            array: None,
+            restored: Vec::new(),
+        });
         true
     }
 
@@ -587,8 +593,14 @@ impl Document {
     }
 
     /// Apply `SetCopyArray`: copies the array no longer has go, the ones
-    /// it gains are made, and every one is placed.
-    pub(crate) fn apply_set_copy_array(&mut self, id: ArrayId, array: Option<&CopyArray>) {
+    /// it gains are made (as `restored` holds them, when it does), and
+    /// every one is placed.
+    pub(crate) fn apply_set_copy_array(
+        &mut self,
+        id: ArrayId,
+        array: Option<&CopyArray>,
+        restored: &[Body],
+    ) {
         let at = self.copy_arrays.iter().position(|a| a.id == id);
         let old = at.map(|i| self.copy_arrays.remove(i));
         let kept: Vec<BodyId> = array.map(|a| a.copy_bodies().collect()).unwrap_or_default();
@@ -642,7 +654,11 @@ impl Document {
                 else {
                     continue;
                 };
-                let mut body = Body::new(copy, name.to_string(), array.created_at);
+                let mut body = restored
+                    .iter()
+                    .find(|b| b.id == copy)
+                    .cloned()
+                    .unwrap_or_else(|| Body::new(copy, name.to_string(), array.created_at));
                 body.copy_of = Some(root);
                 body.mirror = mirror;
                 body.component = instance.group;
@@ -651,6 +667,19 @@ impl Document {
             }
         }
         self.place_array(id);
+    }
+
+    /// The copies `array` would take away from array `id` as they are now,
+    /// for the op that brings them back.
+    pub(crate) fn copies_dropped_by(&self, id: ArrayId, array: Option<&CopyArray>) -> Vec<Body> {
+        let Some(old) = self.copy_array(id) else {
+            return Vec::new();
+        };
+        let kept: Vec<BodyId> = array.map(|a| a.copy_bodies().collect()).unwrap_or_default();
+        old.copy_bodies()
+            .filter(|b| !kept.contains(b))
+            .filter_map(|b| self.body(b).cloned())
+            .collect()
     }
 
     /// Every copy of the array placed where its occurrence is, from where

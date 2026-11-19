@@ -132,6 +132,11 @@ pub enum DocumentOp {
     SetCopyArray {
         id: crate::ArrayId,
         array: Option<crate::CopyArray>,
+        /// Copies to make as they were, their own settings with them,
+        /// rather than afresh: what undoing a smaller array or its removal
+        /// brings back.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        restored: Vec<crate::Body>,
     },
     /// A component made, changed, or (for `None`) taken away.
     SetComponent {
