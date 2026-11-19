@@ -7,8 +7,8 @@ use crate::feature::DesignFeature;
 use crate::form::Form;
 
 use super::{
-    CHOICE_WIDTH, Formulas, Kind, choice, face_list_editor, mm_drag, number, pick, set_f32,
-    taper_note,
+    CHOICE_WIDTH, Formulas, Kind, choice, deg_drag, face_list_editor, mm_drag, number, pick,
+    set_f32, signed_mm, taper_note,
 };
 
 /// The Project and Text editors; `true` when it changed the feature. Any
@@ -98,16 +98,13 @@ pub(super) fn project_editor(
                 *font = name.to_string();
                 changed = true;
             }
-            for (value, label, kind) in [
-                (&mut *size, "Size", Kind::Mm),
-                (&mut *spacing, "Spacing", Kind::Offset),
-                (&mut *across, "Across", Kind::Offset),
-                (&mut *up, "Up", Kind::Offset),
-                (&mut *angle, "Angle", Kind::Degrees),
-            ] {
-                let set = number(f, label, f64::from(*value), kind, 0.1);
+            changed |= mm_drag(f, fx, size, ("Size", "size"));
+            changed |= signed_mm(f, fx, spacing, "Spacing", "spacing");
+            for (value, label) in [(&mut *across, "Across"), (&mut *up, "Up")] {
+                let set = number(f, label, f64::from(*value), Kind::Offset, 0.1);
                 changed |= set_f32(value, set);
             }
+            changed |= deg_drag(f, fx, angle, ("Angle", "angle"), -360.0..=360.0);
             let modes = [
                 (
                     kernel_api::ProjectMode::Emboss,
@@ -172,8 +169,8 @@ pub(super) fn project_editor(
             taper_note(
                 f,
                 "The text is written in a sketch of its own, hidden under this feature: open \
-                 it to lay the text out in a frame or along curves, or to set its size by a \
-                 formula. A {formula} in the text shows its value.",
+                 it to lay the text out in a frame or along curves. A {formula} in the text \
+                 shows its value.",
             );
         }
         _ => {}

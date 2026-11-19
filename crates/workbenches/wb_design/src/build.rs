@@ -435,7 +435,7 @@ fn plan_feature(
         | DesignFeature::Scale { .. }
         | DesignFeature::DeleteFaces { .. }
         | DesignFeature::Thickness { .. } => {
-            plan_dressup(document, plan, feature, &fail)?;
+            plan_dressup(document, plan, feature_id, feature, &fail)?;
         }
         DesignFeature::Mirrored { .. }
         | DesignFeature::LinearPattern { .. }

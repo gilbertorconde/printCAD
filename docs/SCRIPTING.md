@@ -4252,7 +4252,7 @@ Notes:
 - Without `edges` it bevels every edge of the solid (`edges = "All"`); `size` is 1 mm when left out. In the app, the edges selected in the view are taken instead, or every edge of a face selected; with nothing selected the tool asks for a pick.
 - `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
 - Edges running on tangentially are taken too (`follow_tangent`, on by default).
-- `mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far as a face too narrow for it goes, edge by edge.
+- `mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far as a face too narrow for it goes, edge by edge. `size` and `size2` must be above zero and `angle_deg` between 0 and 90, or the chamfer does not build.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.fillet`.
 
@@ -4323,7 +4323,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `face_point` and `face_normal` name the face it opens and are required; `faces = {{point = .., normal = ..}, ...}` opens several, replacing that one.
-- `value` is the wall, 1 mm when left out, inside the solid; `inward = false` puts the walls outside it, `both_sides = true` on both.
+- `value` is the wall, 1 mm when left out and above zero, inside the solid; `inward = false` puts the walls outside it, `both_sides = true` on both.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.draft`.
 
@@ -4568,8 +4568,8 @@ assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.1 * added, volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- `face_point` and `face_normal` name the face to write on, in the body's own frame, and are required. The text stands in a sketch of its own, hidden under the feature, 2 mm off the face and facing out, its middle where the face was named: up along a cylinder's or cone's axis, else as near the body's +Z as the face allows.
-- `text` ("Text"; a `{formula}` shows its value), `font`, `size` (5 mm), `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set the text; `mode` ("Emboss", "Deboss" or "Split") and `height` (0.6 mm) what it does to the face.
+- `face_point` and `face_normal` name the face to write on, in the body's own frame, and are required. The text stands in a sketch of its own, hidden under the feature, 2 mm off the face and facing out, its middle where the face was named: up along a cylinder's or cone's axis, else as near the body's +Z as the face allows. A face named this way carries no name of its own, so a rebuild finds it again by the point: the nearest face turned the way `face_normal` points, so text on a cylinder's side stays on the side when the cylinder grows and an end cap comes nearer.
+- `text` ("Text"; a `{formula}` shows its value), `font`, `size` (5 mm), `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set the text, `size`, `spacing` and `angle` taking formulas, and a `size` not above zero is an error on the feature; `mode` ("Emboss", "Deboss" or "Split") and `height` (0.6 mm) what it does to the face.
 - On a curved face the text wraps onto it (`wrap`, set by itself when the face is curved): round a cylinder or cone, or with `along = true` along its axis; `full_turn = true` spreads the letters evenly round a whole cylinder (`radius` says how far round that is, until a build reads the cylinder's own; letters longer than the turn do not fit, and the build says so). The face's kind is read from the body's mesh, so on a body not built yet give `wrap = true` and `radius` yourself.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.project`, `pc.sketch.text`.
@@ -4687,7 +4687,7 @@ Notes:
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
-- `axis` is Z through the body's origin when left out; `occurrences` (4) counts the original. `angle_deg` of 360 (the default) spreads them evenly round the turn; less puts the first and the last at its two ends.
+- `axis` is Z through the body's origin when left out; `occurrences` (4) counts the original. `angle_deg` of 360 (the default) spreads them evenly round the turn; less puts the first and the last at its two ends. With `step_mode = true` it is the angle from one occurrence to the next, and occurrences whose steps run past a whole turn are refused rather than laid over the first.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
 

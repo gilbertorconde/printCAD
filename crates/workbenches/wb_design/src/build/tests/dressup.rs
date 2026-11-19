@@ -79,3 +79,43 @@ fn a_draft_stands_on_a_plane_and_pulls_along_a_datum_line() {
     // The YZ plane's line runs along its x-axis, the world's y.
     assert_eq!(pull_dir.map(|d| d.map(f64::abs)), Some([0.0, 1.0, 0.0]));
 }
+
+/// A chamfer's second size and angle and a thickness's value are checked
+/// when the feature builds, as a script may set them past the panel's
+/// limits.
+#[test]
+fn a_chamfer_s_second_size_and_angle_and_a_thickness_are_checked() {
+    let chamfer = |fields: serde_json::Value| {
+        let mut value = serde_json::json!({"Chamfer": {"size": 1.0}});
+        value["Chamfer"]
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        crate::build::dressup::edge_op(&DesignFeature::from_json(&value).unwrap())
+    };
+    let two = |size2: f32| chamfer(serde_json::json!({"mode": "TwoDistances", "size2": size2}));
+    let angled = |deg: f32| chamfer(serde_json::json!({"mode": "DistanceAngle", "angle_deg": deg}));
+    assert!(two(0.0).unwrap_err().contains("second size"));
+    assert!(two(0.5).is_ok());
+    for deg in [0.0, 90.0, -10.0] {
+        assert!(angled(deg).unwrap_err().contains("angle"), "{deg}");
+    }
+    assert!(angled(45.0).is_ok());
+
+    let (mut doc, body, sketch) = doc_with_body_sketch();
+    add(&mut doc, body, pad(sketch, 5.0), "Pad");
+    let shell = DesignFeature::Thickness {
+        value: 0.0,
+        faces: vec![FacePick {
+            point: [0.0, 0.0, 5.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        }],
+        inward: true,
+        join: Default::default(),
+        both_sides: false,
+    };
+    add(&mut doc, body, shell, "Thickness");
+    let error = body_build_ops(&doc, body).unwrap_err().message;
+    assert!(error.contains("thickness must be positive"), "{error}");
+}

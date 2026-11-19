@@ -188,12 +188,15 @@ impl DesignWorkbench {
             return false;
         };
         // A feature placed by faces of the solid takes where they are now,
-        // text on any face it went on, and text round a whole turn the
-        // cylinder's radius as well.
+        // a projected sketch or text on any face it went on, curved ones
+        // too, and text round a whole turn the cylinder's radius as well.
         let asked: Vec<kernel_api::ShapeProbe> =
             made.placing_faces().iter().map(|f| f.probe()).collect();
         if !asked.is_empty() {
-            let curved = matches!(made, DesignFeature::Text { .. });
+            let curved = matches!(
+                made,
+                DesignFeature::Project { .. } | DesignFeature::Text { .. }
+            );
             let mut faces = feature.placing_faces_mut();
             if probed.probes != asked || faces.len() != asked.len() {
                 return false;

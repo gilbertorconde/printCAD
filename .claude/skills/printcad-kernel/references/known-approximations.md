@@ -21,7 +21,11 @@
   anchors, `FaceSupport` of a sketch placed on a face), and a rebuild finds
   a named face or edge by name first (`naming::find_face`/`find_edge`,
   reading the running solid's names the chain sets for the op), falling
-  back to the stored point + normal. A reference whose names are lost is
+  back to the stored point + normal: the nearest face, unless it is
+  turned away from the normal (cosine under a half) and a face within
+  reach faces its way (`probe::face_within`), so an unnamed pick, as
+  scripts make, keeps its cylinder's side when the cylinder grows and
+  an end cap comes nearer. A reference whose names are lost is
   found by position only within a tenth of the solid's diagonal
   (`probe::position_reach`, else a `ChainError` saying it is gone), and
   the op that took it is warned (`SolidBuildResult::warnings`, kept as
@@ -37,7 +41,7 @@
   plane from the placement it recorded. Design features placed by a face
   follow it the same way (`DesignFeature::placing_faces`: a Pad, Pocket or
   Hole start face, a Mirror, Split or Multi-transform mirror's picked
-  plane, a Draft's neutral face, the faces Text goes on, curved ones
+  plane, a Draft's neutral face, the faces a Project or Text goes on, curved ones
   too, its whole turn taking the cylinder's radius from the answer),
   each asked of the solid before it. One on a face a borrow lends
   (`FaceSupport::lent_by`) is answered from the borrow instead
