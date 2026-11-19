@@ -201,6 +201,15 @@ pub(crate) struct ExportOutcome {
     open_with: Option<String>,
 }
 
+/// An export asked for while the tab's solids were rebuilding: where it
+/// goes, what it writes and what opens it.
+#[derive(Default)]
+pub(crate) struct WaitingExport {
+    path: PathBuf,
+    draft: ExportDraft,
+    open_with: Option<String>,
+}
+
 /// `path` with the format's extension, unless it already names one the
 /// format answers to.
 pub(crate) fn with_extension(path: &Path, format: ExportFormat) -> PathBuf {
@@ -362,12 +371,41 @@ impl PrintCadApp {
     }
 
     /// Write `draft` to `path` on a thread of its own, then open it with
-    /// `open_with` when given.
+    /// `open_with` when given. While the tab's solids rebuild it waits
+    /// for them, so the file holds the shapes the history makes rather
+    /// than the ones from before an edit.
     fn write_export(&mut self, path: PathBuf, draft: ExportDraft, open_with: Option<String>) {
         if self.files.export_rx.is_some() {
             app_log::warn("An export is still being written");
             return;
         }
+        if !self.session.builds.quiet() {
+            app_log::info("Waiting for the rebuild before writing the export");
+            self.session.file.export_waiting = Some(WaitingExport {
+                path,
+                draft,
+                open_with,
+            });
+            return;
+        }
+        self.write_export_now(path, draft, open_with);
+    }
+
+    /// Write the export that waits for the tab's rebuild, once its solids
+    /// are built and no other export is being written.
+    pub(crate) fn drive_waiting_export(&mut self) {
+        if self.session.file.export_waiting.is_none()
+            || !self.session.builds.quiet()
+            || self.files.export_rx.is_some()
+        {
+            return;
+        }
+        if let Some(waiting) = self.session.file.export_waiting.take() {
+            self.write_export_now(waiting.path, waiting.draft, waiting.open_with);
+        }
+    }
+
+    fn write_export_now(&mut self, path: PathBuf, draft: ExportDraft, open_with: Option<String>) {
         let path = with_extension(&path, draft.format);
         let bodies = self.export_bodies(&draft);
         let semantic = export_pmi(

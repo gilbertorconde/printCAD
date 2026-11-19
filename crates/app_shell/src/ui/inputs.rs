@@ -125,6 +125,8 @@ pub struct UiFrameInputs<'a> {
     pub kernel_progress: Option<(u64, u64)>,
     /// A document write is in flight.
     pub document_saving: bool,
+    /// An export waits for the tab's solids to rebuild.
+    pub export_waiting: bool,
     /// Bytes packed into the archive being saved, out of the whole.
     pub save_progress: Option<(u64, u64)>,
     /// The document server serving this session, and how it is doing.

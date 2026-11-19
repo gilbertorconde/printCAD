@@ -161,6 +161,9 @@ pub(crate) struct FileState {
     /// Files picked or dropped together, waiting in order while the
     /// import dialog or the units question is open for the one before.
     pub imports_waiting: std::collections::VecDeque<PathBuf>,
+    /// An export or a send to the slicer asked for while the tab's solids
+    /// were rebuilding, written once they settle.
+    pub export_waiting: Option<crate::app::export::WaitingExport>,
 }
 
 /// A tab's saves being packed, the oldest first. Each goes to the server
@@ -670,6 +673,7 @@ impl FileState {
             && self.saves.is_empty()
             && !self.asking()
             && self.imports_waiting.is_empty()
+            && self.export_waiting.is_none()
     }
 
     /// The import dialog or the units question is open.
@@ -718,6 +722,12 @@ impl Builds {
     pub fn settling(&self) -> bool {
         !self.coarse.is_empty() || !self.preview_rest.is_empty()
     }
+
+    /// No build is out on the kernel thread and none waits to go: the
+    /// solids the tab shows are the ones its history makes.
+    pub fn quiet(&self) -> bool {
+        self.out.is_empty() && !self.settling()
+    }
 }
 
 #[cfg(test)]
@@ -740,6 +750,24 @@ mod tests {
         assert_eq!(file.next_waiting_import(), Some(b));
         assert_eq!(file.next_waiting_import(), Some(c));
         assert!(file.idle());
+    }
+
+    /// An export waits while a build is out, and the tab with it counts
+    /// as busy so frames keep coming until it is written.
+    #[test]
+    fn an_export_waits_for_the_build_out() {
+        let mut builds = Builds::default();
+        assert!(builds.quiet());
+        let body = Uuid::new_v4();
+        builds.out.sent(body, None);
+        assert!(!builds.quiet());
+        builds.out.landed(body);
+        assert!(builds.quiet());
+        let file = FileState {
+            export_waiting: Some(Default::default()),
+            ..Default::default()
+        };
+        assert!(!file.idle());
     }
 
     /// A save started while another packs waits behind it: nothing comes

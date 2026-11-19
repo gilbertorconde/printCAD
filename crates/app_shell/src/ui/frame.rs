@@ -539,6 +539,7 @@ impl UiLayer {
                 kernel_progress: inputs.kernel_progress,
                 server: &inputs.server,
                 document_saving: inputs.document_saving,
+                export_waiting: inputs.export_waiting,
                 save_progress: inputs.save_progress,
                 nav_device: inputs.nav_device.as_deref(),
                 items: inputs.status_items.as_ref(),
