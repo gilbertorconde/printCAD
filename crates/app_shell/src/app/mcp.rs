@@ -350,12 +350,18 @@ pub(crate) fn tools() -> Vec<Tool> {
         Tool {
             name: "lua".into(),
             title: "Run a Lua script".into(),
-            description: "Run a Lua script: pc.<command id>{name = value} calls a command \
-                          and returns its result. Answers {returned, printed} as JSON: what \
-                          the script returns (tables as objects or lists) and its print() \
-                          output; {error, printed} when an error stops it. The whole script \
-                          is one undo step; a script an error stops changes nothing."
-                .into(),
+            description: format!(
+                "Run a Lua script: pc.<command id>{{name = value}} calls a command and \
+                 returns its result. Answers {{returned, printed}} as JSON: what the script \
+                 returns (tables as objects or lists) and its print() output; {{error, \
+                 printed}} when an error stops it. The whole script is one undo step; a \
+                 script an error stops changes nothing. It has Lua's base, table, string, \
+                 math, utf8 and coroutine libraries, not io or os: files are read and \
+                 written by commands. It stops after {} s of running Lua (waiting for \
+                 commands does not count) or {} MB of memory.",
+                scripting::AGENT_TIME_LIMIT.as_secs(),
+                scripting::DEFAULT_MEMORY_LIMIT / (1024 * 1024)
+            ),
             input_schema: with_file(json!({
                 "type": "object",
                 "properties": {

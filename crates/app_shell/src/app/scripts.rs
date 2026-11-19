@@ -143,6 +143,7 @@ impl PrintCadApp {
     /// Run `job` on the document of `tab`, whichever tab is on screen.
     pub(crate) fn submit_script_in(&mut self, job: scripting::Job, kind: RunKind, tab: uuid::Uuid) {
         let commands = command_specs(&self.registry);
+        let agent = matches!(kind, RunKind::Agent { .. });
         self.scripting.runs.push_back(ScriptRun {
             calls: Vec::new(),
             tab,
@@ -154,7 +155,13 @@ impl PrintCadApp {
                 scripting::Job::Batch(calls) => format!("a batch of {} calls", calls.len()),
             },
         });
-        self.scripting.thread.submit(job, commands);
+        if agent {
+            self.scripting
+                .thread
+                .submit_for_agent(job, commands, scripting::AGENT_TIME_LIMIT);
+        } else {
+            self.scripting.thread.submit(job, commands);
+        }
         self.redraw_needed = true;
     }
 

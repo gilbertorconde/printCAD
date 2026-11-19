@@ -125,6 +125,13 @@ one thread per client handing each tool call to the UI thread
 (`drive_agent_tools`); `call` and `lua` run as script-thread jobs
 (`Job::Command`/`Job::Script`, `RunKind::Agent` answering the tool), so
 tab pinning, one undo step per call and Stop come from the script path.
+An agent's `lua` goes in through `ScriptThread::submit_for_agent`: a fresh
+`ScriptEngine::sandboxed()` per job (base without `load`/`loadfile`/
+`dofile`, plus table, string, math, utf8, coroutine; no io, os, package,
+debug), under `AGENT_TIME_LIMIT` (Lua time only: `__pc_call` moves the
+start past each command's wait), so file access goes through commands and
+`agent_check`. Every engine caps its Lua state at `DEFAULT_MEMORY_LIMIT`;
+the user's engine keeps io and os (the command examples use them).
 A change waits in `PrintCadApp.agents.approvals` while its chat asks
 (`asks_before_changes`); `CommandSpec::read_only` (declared by whoever
 registers the command) is what never waits, and `CommandSpec::agent`

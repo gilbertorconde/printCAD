@@ -2,10 +2,13 @@
 //! runs.
 //!
 //! The thread owns the Lua engine, so the console's globals last between
-//! runs. A command a script calls travels to whoever holds the
-//! [`ScriptThread`] as an [`Event::Call`] with a reply channel, and the
-//! script waits for the answer: every command still runs where the
-//! document lives. Printed lines arrive as they are printed.
+//! runs. An agent's script runs in a fresh sandboxed engine of its own
+//! instead ([`ScriptEngine::sandboxed`]), under a time limit: it neither
+//! sees nor leaves the console's globals. A command a script calls
+//! travels to whoever holds the [`ScriptThread`] as an [`Event::Call`]
+//! with a reply channel, and the script waits for the answer: every
+//! command still runs where the document lives. Printed lines arrive as
+//! they are printed.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,9 +19,15 @@ use core_document::{CommandArgs, CommandError, CommandResult, CommandSpec};
 
 use crate::{Event, Host, Job, RunOutput, STOPPED, ScriptEngine};
 
+/// How long an agent's script may run, counting only its own Lua and
+/// not the commands it waits for; the user's runs have Stop instead.
+pub const AGENT_TIME_LIMIT: Duration = Duration::from_secs(30);
+
 struct Submission {
     job: Job,
     commands: Vec<CommandSpec>,
+    /// For an agent's job, the time limit its sandboxed script runs under.
+    agent: Option<Duration>,
 }
 
 /// The holder's end of the script thread.
@@ -54,7 +63,26 @@ impl ScriptThread {
     /// Queue `job`, with the commands it may call (for `help`). Jobs run one
     /// after another.
     pub fn submit(&mut self, job: Job, commands: Vec<CommandSpec>) {
-        if self.jobs.send(Submission { job, commands }).is_ok() {
+        self.send(Submission {
+            job,
+            commands,
+            agent: None,
+        });
+    }
+
+    /// Queue an agent's `job`, in turn with the others: a script runs in
+    /// a fresh sandboxed engine and stops once its Lua has run for
+    /// `time_limit` ([`AGENT_TIME_LIMIT`] in the application).
+    pub fn submit_for_agent(&mut self, job: Job, commands: Vec<CommandSpec>, time_limit: Duration) {
+        self.send(Submission {
+            job,
+            commands,
+            agent: Some(time_limit),
+        });
+    }
+
+    fn send(&mut self, submission: Submission) {
+        if self.jobs.send(submission).is_ok() {
             self.pending += 1;
         }
     }
@@ -90,22 +118,29 @@ fn run_jobs(
     stop: Arc<AtomicBool>,
     wake: Arc<dyn Fn() + Send + Sync>,
 ) {
-    let mut engine = ScriptEngine::new();
-    // The holder can stop a run, so nothing is cut off by time.
-    engine.set_time_limit(Duration::MAX);
-    engine.stop_on(stop.clone());
-    {
+    let prepare = |mut engine: ScriptEngine, time_limit: Duration| {
+        engine.set_time_limit(time_limit);
+        engine.stop_on(stop.clone());
         let (events, wake) = (events.clone(), wake.clone());
         engine.on_print(move |line| {
             let _ = events.send(Event::Printed(line.to_string()));
             wake();
         });
-    }
+        engine
+    };
+    // The holder can stop a run, so nothing the user runs is cut off by
+    // time.
+    let mut engine = prepare(ScriptEngine::new(), Duration::MAX);
     let send = |event: Event| {
         let _ = events.send(event);
         wake();
     };
-    while let Ok(Submission { job, commands }) = jobs.recv() {
+    while let Ok(Submission {
+        job,
+        commands,
+        agent,
+    }) = jobs.recv()
+    {
         stop.store(false, Ordering::Relaxed);
         let label = job.label();
         send(Event::Started {
@@ -116,6 +151,13 @@ fn run_jobs(
             wake: wake.clone(),
             stop: stop.clone(),
             commands,
+        };
+        let mut sandboxed = None;
+        let engine = match (&job, agent) {
+            (Job::Line(_) | Job::Script { .. }, Some(limit)) => {
+                sandboxed.insert(prepare(ScriptEngine::sandboxed(), limit))
+            }
+            _ => &mut engine,
         };
         let output = match &job {
             Job::Line(line) => engine.eval_line(line, &mut host),
@@ -239,6 +281,35 @@ mod tests {
             Vec::new(),
         );
         assert!(serve(&mut thread).1.error.unwrap().contains("no command"));
+    }
+
+    /// An agent's script runs sandboxed in an engine of its own: no `io`,
+    /// none of the console's globals, none left behind for it; and it
+    /// stops at its time limit while the user's runs have none.
+    #[test]
+    fn an_agent_script_is_sandboxed_and_times_out() {
+        let mut thread = ScriptThread::spawn(|| {});
+        thread.submit(Job::Line("x = 41".into()), Vec::new());
+        serve(&mut thread);
+        let agent = |source: &str| Job::Script {
+            source: source.into(),
+            name: "agent.lua".into(),
+        };
+        let limit = Duration::from_millis(50);
+        thread.submit_for_agent(
+            agent("y = 1 return {io == nil, os == nil, x == nil}"),
+            Vec::new(),
+            limit,
+        );
+        assert_eq!(
+            serve(&mut thread).1.returned,
+            Some(json!([true, true, true]))
+        );
+        thread.submit_for_agent(agent("while true do end"), Vec::new(), limit);
+        let timed_out = serve(&mut thread).1.error.unwrap();
+        assert!(timed_out.contains("stopped after 0.05 s"), "{timed_out}");
+        thread.submit(Job::Line("x + 1, y == nil".into()), Vec::new());
+        assert_eq!(serve(&mut thread).1.value.as_deref(), Some("42\ttrue"));
     }
 
     #[test]

@@ -142,6 +142,14 @@ script that computes positions, reads faces and edges (`doc.faces`,
 `doc.edges`) and picks from them, rebuilds and returns what it made, so
 a part takes one step you approve and one undo, not one per command.
 
+An agent's script has Lua's base functions and its `table`, `string`,
+`math`, `utf8` and `coroutine` libraries, nothing that reads or writes
+files or starts programs (no `io`, `os`, `require`, `load` or `dofile`),
+so whatever it does to a file goes through a command and is checked like
+one. It runs apart from the console, sharing none of its globals, and
+stops after 30 seconds of running Lua (time spent waiting for commands,
+such as a rebuild, does not count) or at 512 MB of memory.
+
 For agents that take skills, `docs/skills/printcad-modelling/` is one:
 the modelling loop (orient, find the commands, build in steps, rebuild,
 measure against what the part should be, look) and the conventions that
