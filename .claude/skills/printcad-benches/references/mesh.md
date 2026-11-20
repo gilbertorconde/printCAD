@@ -2,7 +2,7 @@
 
 - `workbenches/wb_mesh`: the Mesh bench (`docs/MESH.md`). A
   `MeshFeature` (kind `wb.mesh`, on the scan's body) holds one
-  `kernel_api::MeshOp`; `Workbench::mesh_plans` lists each body's steps in
+  `kernel_api::MeshOp`; `BenchBuild::mesh_plans` lists each body's steps in
   order up to its tip, and the host's `app/mesh_histories.rs` builds a
   changed plan from the body's mesh start (`Document::mesh_start`, kept by
   the first step's `set_mesh_start`) on a thread through
@@ -31,7 +31,7 @@
   (`MeshOp::Boolean`, its operand a `kernel_api::MeshOperand` snapshot
   taken when the step is made: a body's solid as native text with its
   placement, or the bounded solid a feature's owner offers through
-  `Workbench::feature_solid`, kept per evaluation as
+  `BenchFeatures::feature_solid`, kept per evaluation as
   `Document::feature_solid`; an Inspection element's primitive over its
   drawn extent) and Shell (`MeshOp::Shell`, hollow when closed, thickened
   when open); `mesh.trim_to_scan` cuts a solid body by the scan's break

@@ -37,7 +37,7 @@
   `EdgesOf`) are found by position, `dressup::picked_edges_elsewhere`,
   since the chain's names are its own body's. A sketch placed on its body's face
   follows it: Design's plan asks where the face stands at the
-  sketch's place in history, and `Workbench::derive_on_solid` moves the
+  sketch's place in history, and `BenchBuild::derive_on_solid` moves the
   plane from the placement it recorded. Design features placed by a face
   follow it the same way (`DesignFeature::placing_faces`: a Pad, Pocket or
   Hole start face, a Mirror, Split or Multi-transform mirror's picked
@@ -87,7 +87,7 @@
   (60° or 55°) along a helix out to the major diameter, along a cone for a
   taper (`thread_cut` in `wb_design/src/build/holes.rs`). A cosmetic thread
   (`cosmetic_thread`) draws a helix instead, and its designation reaches
-  the host through `Workbench::cosmetic_threads` (`ThreadCallout`, kept by
+  the host through `BenchOutput::cosmetic_threads` (`ThreadCallout`, kept by
   `DocumentService::evaluate` as derived `Document::cosmetic_threads`),
   which the parts list's Threads column, `app/annotations.rs`'s callouts
   and a STEP export's callouts (`export.rs::body_notes`) read. Drill points and

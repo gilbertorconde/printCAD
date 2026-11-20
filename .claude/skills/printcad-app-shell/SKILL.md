@@ -174,7 +174,7 @@ holds the history after its feature back, the wait is bounded
 names each body that stops at the feature (`Builds::stopped_at_task`).
 A waiting export is written, or logged as not written, when its tab
 closes or the app exits (`settle_waiting_export`). The registry gathers
-`Workbench::semantic_pmi` (`kernel_api::SemanticPmi`, re-exported by
+`BenchOutput::semantic_pmi` (`kernel_api::SemanticPmi`, re-exported by
 `core_document`); `app/export.rs::export_pmi` takes its world probes into
 each body's frame, and `kernel_ogeom::export::export_with_annotations`
 writes AP242 tolerances, datums and dimensions on the probed faces beside
@@ -197,7 +197,7 @@ task, its packing `doc_render::print_layout`) lays each part on its largest face
 modelled; the body menu, the task's rows and `doc.set_body`'s
 `print_on` set it, op `SetBodyPrintRest`), and packs the
 copies on the bed, plate after plate, without moving the bodies; the
-counts come from `Workbench::print_parts` (the Assembly's parts list),
+counts come from `BenchOutput::print_parts` (the Assembly's parts list),
 and export, the slicer and `doc.print_layout` take the layout. The
 parts list's print counts, volume and filament mass are in
 `docs/PRINTING.md`, with the Hole's nut trap. A save carries a

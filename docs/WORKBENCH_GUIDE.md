@@ -5,6 +5,38 @@ application never refers to a workbench by name. Everything a workbench
 shows, draws, picks, rebuilds or asks for goes through this trait and the
 workbench registry (`DocumentService`).
 
+`Workbench` itself holds what a workbench is and its lifecycle
+(`descriptor`, `configure`, activation, frames, the state that moves with
+a tab). The rest is in one supertrait per concern, every method with a
+default:
+
+| Trait | What it covers |
+|---|---|
+| `BenchFeatures` | How owned features show in the tree and the view, picking, deleting, the edit session |
+| `BenchTools` | Tool buttons, input, what the workbench draws in the view while active |
+| `BenchPanels` | The task panel's state, the floating card, menu entries, its settings |
+| `BenchBuild` | Rebuild plans, mesh histories, derived working data |
+| `BenchParameters` | Numbers formulas set, the property panel's hints and swappable inputs |
+| `BenchOutput` | Reports, annotations, threads, bought bodies, print parts |
+| `BenchCommands` | Running the commands it registered |
+
+A workbench implements all of them, writing out only the methods it uses
+and leaving a group it does not need empty:
+
+```rust
+impl Workbench for MyWorkbench { /* descriptor, configure, ... */ }
+impl BenchFeatures for MyWorkbench { /* feature_info, ... */ }
+impl BenchTools for MyWorkbench {}
+impl BenchPanels for MyWorkbench {}
+impl BenchBuild for MyWorkbench {}
+impl BenchParameters for MyWorkbench {}
+impl BenchOutput for MyWorkbench {}
+impl BenchCommands for MyWorkbench {}
+```
+
+The host calls every group through `dyn Workbench`. Code that calls a
+group's method on a concrete workbench type (a test) imports that trait.
+
 Design (`crates/workbenches/wb_design`), the Sketcher
 (`crates/workbenches/wb_sketch`), Surface and Assembly are complete
 examples. This guide is for a built-in workbench; one installed as a
@@ -218,6 +250,7 @@ fn configure(&self, context: &mut WorkbenchContext) {
     commands().register(context);
 }
 
+// In `impl BenchCommands for MyWorkbench`:
 fn run_command(&mut self, id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     commands().run_on(self, id, args, ctx)
 }
@@ -269,7 +302,10 @@ Define a type implementing `WorkbenchFeature` (see
 [Document model](DOCUMENT_MODEL.md)) and add it with
 `ctx.document.add_feature_in_body(feature, name, body)`.
 
-For each kind it owns, the workbench answers these:
+For each kind it owns, the workbench answers these (in `BenchFeatures`,
+except `property_hints`, `references` and `set_reference` in
+`BenchParameters`, and `not_printed`, `print_parts` and
+`cosmetic_threads` in `BenchOutput`):
 
 ```rust
 /// Icon and labels for the tree row.
@@ -346,6 +382,9 @@ setting, for the user to pick one; the plane under the cursor arrives as
 
 ## 7. Take formulas
 
+`parameters` and `values_moved` are in `BenchParameters`; `settle` and
+the `derive` steps in `BenchBuild`.
+
 `parameters` lists an owned feature's numbers that formulas may set and
 read: a `Parameter` with a stable key, the name formulas call it, a JSON
 pointer into the feature's data, a `Dim` (length, angle, number), a scale
@@ -371,7 +410,8 @@ Design's features are written so (`wb_design/src/feature.rs`).
 
 ## 8. Build solids
 
-A workbench whose features make a body's solid implements:
+A workbench whose features make a body's solid implements, in
+`BenchBuild`:
 
 ```rust
 /// Bodies to rebuild now, each with a plan. Called every frame.
@@ -397,6 +437,8 @@ a face a sketch stands on is now); the answers come back through
 feature and builds nothing; an empty plan drops the body's derived solid.
 
 ## 9. Add menu entries
+
+In `BenchPanels`:
 
 ```rust
 fn menu_items(&self, scope: &MenuScope, doc: &Document) -> Vec<MenuItem>;
@@ -469,6 +511,10 @@ those run during a switch. `StartOn` switches workbench and passes `attach`
 to the new one as `ctx.attach_request`.
 
 ## 11. Draw panels
+
+`task`, `floating_card`, `card_event` and the settings methods are in
+`BenchPanels`; `viewport` and `cancel_pointer_gesture` in `BenchTools`;
+`on_frame`, `suspend_session`, `resume_session` and `busy` on `Workbench`.
 
 - `task()` opens the task panel on the right; `ui_task_panel` (on
   `BenchUi`, as are `ui_left_panel` and `ui_settings`) draws it and
