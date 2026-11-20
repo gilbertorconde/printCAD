@@ -1322,22 +1322,28 @@ fn blobs_no_kept_line_names_are_pruned() {
 fn an_untitled_log_goes_with_a_clean_leave() {
     daemon_env();
     let home = TestHome::new("unhomed_gone");
-    let unhomed = doc_server::unhomed_oplog_for(&home.socket());
-    let mut alice = Replica::join(&home, Document::new("Untitled"));
+    let socket = home.dir.join("untitled-gone.sock");
+    let unhomed = doc_server::unhomed_oplog_for(&socket);
+    let mut alice = Replica::join_at(&socket, Document::new("Untitled"));
     alice.doc.create_body(Some("Base".into()));
     alice.send();
     alice.settle();
     assert!(unhomed.is_file(), "the edit is logged");
     drop(alice);
-    wait_for_socket_gone(&home);
+    wait_for_gone(&socket);
     assert!(unhomed.is_file(), "kept after a crash");
 
-    let mut bob = Replica::join(&home, Document::new("Untitled"));
+    let mut bob = Replica::join_at(&socket, Document::new("Untitled"));
     bob.doc.create_body(Some("More".into()));
     bob.send();
     bob.settle();
+    let log = std::fs::read_to_string(&unhomed).expect("the log");
+    assert!(
+        log.contains("Base") && !log.contains("\"unsaved\""),
+        "the crashed client's edit stays with its session, never set aside"
+    );
     bob.leave();
-    wait_for_socket_gone(&home);
+    wait_for_gone(&socket);
     assert!(
         std::fs::symlink_metadata(&unhomed).is_err(),
         "gone on a clean leave"
@@ -1512,8 +1518,14 @@ fn edits_a_first_saves_daemon_left_join_their_untitled_log() {
     alice.send();
     alice.settle();
 
+    // As the app moves the tab for its first save: the file's daemon hears
+    // which untitled log it takes up before anything else, and the save is
+    // still packing when that daemon dies.
     let mut daemon = start_daemon(&home, &[]);
     alice.client = DaemonClient::spawn_or_connect(&home.socket()).expect("file's daemon");
+    alice.client.send(ClientMessage::AdoptLog {
+        socket: untitled.clone(),
+    });
     alice.inbox = Inbox::default();
     alice.sent = 0;
     alice.seen = 0;
@@ -1521,16 +1533,13 @@ fn edits_a_first_saves_daemon_left_join_their_untitled_log() {
     alice.doc.create_body(Some("while it packed".into()));
     alice.send();
     alice.settle();
-    alice.client.send(ClientMessage::AdoptLog {
-        socket: untitled.clone(),
-    });
     let file_unhomed = doc_server::unhomed_oplog_for(&home.socket());
     let deadline = Instant::now() + PATIENCE;
     while !std::fs::read_to_string(&file_unhomed)
         .unwrap_or_default()
-        .contains("\"adopt\"")
+        .contains("while it packed")
     {
-        assert!(Instant::now() < deadline, "the adopt never reached the log");
+        assert!(Instant::now() < deadline, "the edit never reached the log");
         std::thread::sleep(Duration::from_millis(10));
     }
     daemon.kill().expect("the daemon stops");

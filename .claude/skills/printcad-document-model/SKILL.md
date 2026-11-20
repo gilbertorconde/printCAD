@@ -114,10 +114,15 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   another daemon or `untitled_logs`) does not end it. An untitled tab's
   first save moves it to its file's daemon without a `Leave`
   (`DocumentSession::move_to_server`, `Connection::untitled_log`) and
-  sends `AdoptLog { socket }` before each `SaveDocument` until one
-  completes; the file's daemon waits (bounded) for the untitled daemon to
-  exit, then carries its log into the document's ahead of the save's mark
-  (`set_oplog_home(document, earlier)`, `carry_log`). `AdoptLog` also
+  sends `AdoptLog { socket }` at once on the move (and on a Save As or a
+  rejoin while that save is still to write, and again before each
+  `SaveDocument` until one completes; the daemon notes it once,
+  `DocumentSession::adopt_untitled_log`), so a file daemon that dies
+  while the save packs knows whose its edits are; the log is taken up
+  only once the file is written. The file's daemon waits (bounded) for
+  the untitled daemon to exit, then carries its log into the document's
+  ahead of the save's mark (`set_oplog_home(document, earlier)`,
+  `carry_log`). `AdoptLog` also
   writes an `adopt` line naming that socket into the file daemon's
   unhomed log. A file daemon that dies before its first save or open
   leaves its lines there unmarked; the next daemon on that socket sets

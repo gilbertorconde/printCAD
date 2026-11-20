@@ -117,14 +117,21 @@ impl DocumentSession {
 
     /// Move the connection to `server` on `socket`, the old one's queued
     /// writes flushed first. The old server hears `Leave` unless it is the
-    /// tab's untitled daemon handing over to its file's (`first_save`): the
-    /// log it kept stays, for the file's server to take up with the save.
+    /// tab's untitled daemon handing over to its file's for the first save
+    /// (`saving`, with no file yet): the log it kept stays, for the file's
+    /// server to take up once the save writes. A server a save moves to
+    /// hears at once which untitled log that is (`adopt_untitled_log`), so
+    /// should it stop before the save writes, the edits it kept go back to
+    /// that log instead of being set aside.
     pub(crate) fn move_to_server(
         &mut self,
         server: Box<dyn core_document::server::DocumentServer>,
         socket: PathBuf,
-        first_save: bool,
+        saving: bool,
     ) {
+        let first_save = saving
+            && self.file.path.is_none()
+            && doc_server::is_untitled_socket(&self.connection.socket);
         if first_save {
             self.connection.untitled_log = Some(self.connection.socket.clone());
         } else {
@@ -139,6 +146,20 @@ impl DocumentSession {
         // The old connection's peers are not this one's.
         self.connection.peer_presence.clear();
         self.connection.last_sent_presence = None;
+        if saving {
+            self.adopt_untitled_log();
+        }
+    }
+
+    /// Tell the server which untitled log it takes up once the tab's first
+    /// save writes, while that save is still to write. The server notes it
+    /// once and keeps that log's edits apart from the file's.
+    pub(crate) fn adopt_untitled_log(&mut self) {
+        if let Some(socket) = self.connection.untitled_log.clone() {
+            self.connection
+                .server
+                .send(core_document::server::ClientMessage::AdoptLog { socket });
+        }
     }
 
     /// The connection went and `server` takes its place: the same daemon,
@@ -178,6 +199,9 @@ impl DocumentSession {
         self.connection
             .server
             .send(core_document::server::ClientMessage::RestoreUnsaved);
+        // A daemon started where the file's stopped has not heard which
+        // untitled log a first save still to write takes up.
+        self.adopt_untitled_log();
         for (batch, ops) in self.document.sent_batches() {
             self.connection
                 .server
@@ -588,6 +612,7 @@ mod tests {
                 ClientMessage::Ops { batch, .. } => format!("ops {batch}"),
                 ClientMessage::OpenDocument { path, .. } => format!("open {}", path.display()),
                 ClientMessage::Leave => "leave".to_string(),
+                ClientMessage::AdoptLog { socket } => format!("adopt {}", socket.display()),
                 _ => return,
             };
             self.0.lock().unwrap().push(said);
@@ -644,23 +669,50 @@ mod tests {
 
     /// An untitled tab moving to its file's server for its first save
     /// leaves its own daemon without a word, so the log it kept stays for
-    /// the save to take up; any other move says it is done.
+    /// the save to take up, and the file's server hears which log that is
+    /// before anything else, ahead of the save; so does the server a Save
+    /// As moves to while that save is still to write, and a server the
+    /// tab rejoins. Any other move says it is done and names no log.
     #[test]
     fn a_first_save_leaves_the_untitled_daemon_its_log() {
-        let said = std::sync::Arc::<std::sync::Mutex<Vec<String>>>::default();
-        let speaker = || Box::new(Said(std::sync::Arc::clone(&said)));
-        let mut session = session_on(speaker());
+        let heard = || std::sync::Arc::<std::sync::Mutex<Vec<String>>>::default();
+        let take = |said: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| {
+            std::mem::take(&mut *said.lock().unwrap())
+        };
+        let (untitled_said, file_said, again_said, other_said) =
+            (heard(), heard(), heard(), heard());
+        let speaker = |said: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| {
+            Box::new(Said(std::sync::Arc::clone(said)))
+        };
+        let mut session = session_on(speaker(&untitled_said));
         let untitled = crate::app::server::socket_for_untitled(session.tab);
         session.connection.socket = untitled.clone();
         let file = crate::app::server::socket_for(std::path::Path::new("first.prtcad"));
-        session.move_to_server(speaker(), file.clone(), true);
-        assert!(said.lock().unwrap().is_empty(), "no Leave");
-        assert_eq!(session.connection.untitled_log, Some(untitled));
+        session.move_to_server(speaker(&file_said), file.clone(), true);
+        assert!(take(&untitled_said).is_empty(), "no Leave");
+        assert_eq!(session.connection.untitled_log, Some(untitled.clone()));
         assert_eq!(session.connection.socket, file);
+        let adopt = format!("adopt {}", untitled.display());
+        assert_eq!(
+            take(&file_said),
+            std::slice::from_ref(&adopt),
+            "told at once"
+        );
 
+        assert!(session.rejoin(speaker(&again_said)));
+        let rejoined = take(&again_said);
+        assert_eq!(rejoined.first(), Some(&adopt), "{rejoined:?}");
+
+        let save_as = crate::app::server::socket_for(std::path::Path::new("again.prtcad"));
+        session.move_to_server(speaker(&file_said), save_as, true);
+        assert_eq!(take(&again_said), ["leave"]);
+        assert_eq!(take(&file_said), [adopt]);
+
+        session.connection.untitled_log = None;
         let other = crate::app::server::socket_for(std::path::Path::new("other.prtcad"));
-        session.move_to_server(speaker(), other, false);
-        assert_eq!(*said.lock().unwrap(), ["leave"]);
+        session.move_to_server(speaker(&other_said), other, false);
+        assert_eq!(take(&file_said), ["leave"]);
+        assert!(take(&other_said).is_empty());
     }
 
     /// A body that went takes every pick on it along, faces and edges
