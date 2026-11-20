@@ -48,7 +48,7 @@ pub fn draw(ctx: &Context, file: &str, offered: LengthUnit, commands: &mut Vec<U
                 ui,
                 "mesh_units_choice",
                 &mut unit,
-                &crate::app::scans::MESH_UNITS,
+                &crate::scans::MESH_UNITS,
                 200.0,
             );
             check_row(

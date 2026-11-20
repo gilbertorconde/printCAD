@@ -1162,7 +1162,7 @@ impl PrintCadApp {
     fn start_new_document(&mut self, kind: StartKind) {
         let walkthrough = kind == StartKind::ExportWalkthrough;
         let kind = if walkthrough {
-            StartKind::Example(crate::app::examples::Example::DesignWorkflow)
+            StartKind::Example(crate::contract::Example::DesignWorkflow)
         } else {
             kind
         };

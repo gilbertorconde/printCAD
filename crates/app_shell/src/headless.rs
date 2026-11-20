@@ -606,7 +606,7 @@ impl Headless {
             .import_step(path, &detail)
             .map_err(|e| CommandError::failed(e.to_string()))?;
         let unit = unit.unwrap_or(kernel_api::LengthUnit::Millimetre);
-        crate::app::scans::scale_to_millimetres(&mut model, unit);
+        crate::scans::scale_to_millimetres(&mut model, unit);
         let bytes = std::fs::read(path).map_err(|e| CommandError::failed(e.to_string()))?;
         let landed =
             crate::app::step_import::land_import(&mut self.document, path, model, bytes, detail);
@@ -614,7 +614,7 @@ impl Headless {
             return Err(CommandError::failed("the file held no geometry"));
         }
         if scan {
-            crate::app::scans::mark_scans(&mut self.document, &landed.bodies, unit);
+            crate::scans::mark_scans(&mut self.document, &landed.bodies, unit);
         }
         Ok(())
     }

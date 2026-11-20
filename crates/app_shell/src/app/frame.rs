@@ -673,6 +673,7 @@ impl PrintCadApp {
                         store: &self.packages.store,
                         console_attention: std::mem::take(&mut self.scripting.console_attention),
                         command_ids: &self.command_ids,
+                        command_specs: crate::app::scripts::command_specs,
                         script_running: self.scripting.runs.front().map(|r| r.label.as_str()),
                         recording: self.scripting.recording.is_some(),
                         chats: &self.agents.chats,

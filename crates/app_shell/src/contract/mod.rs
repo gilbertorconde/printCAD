@@ -15,9 +15,9 @@ pub use commands::{
 };
 pub use inputs::{FileMarks, HoverCard, Physical, SelectionMass, UiFrameInputs};
 pub use view::{
-    BenchMenu, HostCtxParams, InertiaReference, MeasureBar, MenuLocal, OpenTask, OtherPick,
-    PickFilter, PropertyTab, RadialView, ServerBadge, TabInfo, TreeFeatureCommand, TreeItemId,
-    ViewportMenu,
+    BenchMenu, Example, HostCtxParams, InertiaReference, MarkArm, MarkEdit, MarkTool, MeasureBar,
+    MenuLocal, NoteCardView, OpenTask, OtherPick, PickFilter, PropertyTab, RadialView, ServerBadge,
+    TabInfo, TreeFeatureCommand, TreeItemId, UiHooks, ViewportMenu,
 };
 
 use core_document::{ToolBehavior, ToolDescriptor, WorkbenchId};
@@ -126,5 +126,5 @@ pub struct UiFrameOutput {
     /// The Print layout task is open after this frame.
     pub print_layout_open: bool,
     /// The marking tool in hand, while the Mark surface task is open.
-    pub mark_arm: Option<crate::app::marking::MarkArm>,
+    pub mark_arm: Option<crate::contract::MarkArm>,
 }

@@ -62,7 +62,7 @@ impl PrintCadApp {
         if let Some(unit) = self.imports.units.get(path) {
             args.insert(
                 "units".to_string(),
-                serde_json::json!(crate::app::scans::unit_key(*unit)),
+                serde_json::json!(crate::scans::unit_key(*unit)),
             );
         }
         self.record_calls(vec![core_document::Recorded {
@@ -452,7 +452,7 @@ impl PrintCadApp {
             .units
             .remove(path)
             .unwrap_or(kernel_api::LengthUnit::Millimetre);
-        crate::app::scans::scale_to_millimetres(&mut imported, unit);
+        crate::scans::scale_to_millimetres(&mut imported, unit);
         let landed = land_import(
             &mut self.session.document,
             path,
@@ -461,7 +461,7 @@ impl PrintCadApp {
             detail,
         );
         if self.imports.scans.remove(path) {
-            crate::app::scans::mark_scans(&mut self.session.document, &landed.bodies, unit);
+            crate::scans::mark_scans(&mut self.session.document, &landed.bodies, unit);
         }
 
         // The reader's warnings never reach the terminal one by one: a

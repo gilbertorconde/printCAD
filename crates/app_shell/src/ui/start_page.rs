@@ -9,7 +9,7 @@ use ui_kit::widgets::{Card, overline};
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
 use super::{FileCommand, StartKind, UiCommand};
-use crate::app::examples::Example;
+use crate::contract::Example;
 
 pub struct StartPageInputs<'a> {
     pub recent: &'a [RecentEntry],

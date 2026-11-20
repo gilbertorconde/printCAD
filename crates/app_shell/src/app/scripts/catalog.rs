@@ -821,12 +821,12 @@ pub(crate) fn import_units(
 ) -> Result<Option<kernel_api::LengthUnit>, CommandError> {
     let given = match a.opt_string("units")? {
         Some(key) => Some(
-            crate::app::scans::unit_of_key(key)
+            crate::scans::unit_of_key(key)
                 .ok_or_else(|| CommandError::bad("units", "is mm, cm, m or inch"))?,
         ),
         None => None,
     };
-    if !crate::app::scans::has_no_units(path) {
+    if !crate::scans::has_no_units(path) {
         return Ok(None);
     }
     Ok(Some(given.unwrap_or(default)))

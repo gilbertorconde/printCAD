@@ -391,7 +391,7 @@ impl PrintCadApp {
                     let closed = match self.session.drawn.closed.get(body_id) {
                         Some((at, closed)) if *at == geometry.revision => *closed,
                         _ => {
-                            let closed = crate::app::scans::closes(&geometry.mesh);
+                            let closed = crate::scans::closes(&geometry.mesh);
                             self.session
                                 .drawn
                                 .closed

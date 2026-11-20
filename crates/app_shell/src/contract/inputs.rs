@@ -143,7 +143,7 @@ pub struct UiFrameInputs<'a> {
     /// The note tool is armed.
     pub note_tool: bool,
     /// The note card, while it is open.
-    pub note_card: Option<crate::app::note_tool::NoteCardView>,
+    pub note_card: Option<crate::contract::NoteCardView>,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
     /// The feature that made the face picked in the view: its tree row is
@@ -178,6 +178,9 @@ pub struct UiFrameInputs<'a> {
     pub console_attention: bool,
     /// Every command's id, for the console's completion.
     pub command_ids: &'a [String],
+    /// Every command a call may name, with its arguments: asked only
+    /// while the palette is open.
+    pub command_specs: fn(&core_document::DocumentService) -> Vec<core_document::CommandSpec>,
     /// The script running, by name, while one is.
     pub script_running: Option<&'a str>,
     /// A recording is on.

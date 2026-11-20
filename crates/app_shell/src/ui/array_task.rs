@@ -17,7 +17,7 @@ use super::task_blocks::{
     Form, caption, check, choice, degrees, draw, gap, grid, heading_in, label, note, number,
     offset, quantity, row, secondary, select,
 };
-use crate::app::array_paths;
+use crate::array_paths;
 
 /// Which way a row runs, or the axis a ring turns about.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -362,7 +362,7 @@ impl UiLayer {
         }
         // A capture of a Preferences page: open it once at start.
         if !self.bench_prefs_opened
-            && let Some(page) = &crate::app::bench_hooks::hooks().prefs
+            && let Some(page) = &self.hooks.prefs
         {
             self.bench_prefs_opened = true;
             // `<page>/<tab>` opens on that tab.
@@ -500,7 +500,7 @@ impl UiLayer {
         self.palette.recent.clone_from(&settings.recent_commands);
         // Every command a call typed into the palette may name.
         let specs = if self.palette.open {
-            crate::app::scripts::command_specs(inputs.registry)
+            (inputs.command_specs)(inputs.registry)
         } else {
             Vec::new()
         };
@@ -714,7 +714,7 @@ impl UiLayer {
         let inputs = &f.inputs;
         // A capture of the `@` list: typed once the hook's chat is there.
         if !self.bench_chat_typed
-            && crate::app::bench_hooks::hooks().chat.is_some()
+            && self.hooks.chat
             && let Some(chat) = inputs.chats.last()
         {
             self.bench_chat_typed = true;

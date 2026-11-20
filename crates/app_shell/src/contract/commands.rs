@@ -65,7 +65,7 @@ pub enum StartKind {
     },
     /// One of the examples shipped with the app, opened as an untitled
     /// document.
-    Example(crate::app::examples::Example),
+    Example(crate::contract::Example),
     /// The exporting walkthrough: the pocketed example, and the export
     /// dialog once its solid is built.
     ExportWalkthrough,
@@ -235,7 +235,7 @@ pub enum UiCommand {
     /// asking; `None` cancels its import.
     AnswerMeshUnits(Option<(kernel_api::LengthUnit, bool)>),
     /// Invert or clear the marked surface.
-    MarkEdit(crate::app::marking::MarkEdit),
+    MarkEdit(crate::contract::MarkEdit),
     /// Put away the card saying a newer printCAD wrote the file.
     DismissFileNotice,
     /// Bring back the unsaved edits the document's log holds from a

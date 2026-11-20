@@ -8,7 +8,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, text};
 
 use super::{TreeItemId, UiCommand};
-use crate::app::note_tool::NoteCardView;
+use crate::contract::NoteCardView;
 
 /// What is typed on the card, and the note it is for: its id and whether
 /// it is a new one. UI-local.

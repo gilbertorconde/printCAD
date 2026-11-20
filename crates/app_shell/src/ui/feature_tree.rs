@@ -1212,14 +1212,14 @@ fn feature_tooltip(
 fn scan_tip(document: &Document, body: BodyId) -> String {
     let mut tip = "A scan: the measured part inspection and mesh editing work on".to_string();
     if let Some(mesh) = document.derived().imported_geometry(body).map(|g| &g.mesh) {
-        let facts = crate::app::scans::mesh_facts(mesh);
+        let facts = crate::scans::mesh_facts(mesh);
         tip.push_str(&format!(
             "\n{} triangles, {} points, {:.3} mm between points (median)",
             facts.triangles, facts.points, facts.spacing
         ));
     }
     if let Some(unit) = document.body_scan(body).and_then(|s| s.read_in) {
-        let name = crate::app::scans::unit_name(unit);
+        let name = crate::scans::unit_name(unit);
         tip.push_str(&format!("\nRead in {name}, scaled to millimetres"));
     }
     tip
@@ -2115,22 +2115,13 @@ mod tests {
                 bound,
             ],
         );
-        // Renaming the instance's row renames the body it stands for.
-        for id in [first, bolt_b.0] {
-            let args = core_document::command::object(
-                serde_json::json!({"id": id.to_string(), "name": "Cap screw"}),
-            );
-            crate::app::scripts::document_command(
-                "doc.rename",
-                &args,
-                &mut doc,
-                &core_document::DocumentService::default(),
-                None,
-            )
-            .unwrap()
-            .unwrap();
+        // The instance's row stands for its part's body, which a rename
+        // renames.
+        let body = doc.body_of_imported_object(first);
+        assert_eq!(body, Some(bolt_a));
+        for body in [bolt_a, bolt_b] {
+            doc.rename_body(body, "Cap screw");
         }
-        assert_eq!(doc.body(bolt_a).unwrap().name, "Cap screw");
         let tree = tree(&doc);
         let row = |id| {
             tree.nodes()[0]

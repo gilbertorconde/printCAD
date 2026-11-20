@@ -2,7 +2,9 @@
 //! pick filter and menus, the tabs, the property panel's page, the camera
 //! facts panel hooks see.
 
-use core_document::{BodyId, ComponentId, FeatureId, NoteId};
+use core_document::{
+    BodyId, ComponentId, FeatureId, NoteAuthor, NoteId, RADIAL_SLOTS, ToolDescriptor, WorkbenchId,
+};
 use uuid::Uuid;
 
 /// Identifier for selectable items in the tree panel.
@@ -279,4 +281,112 @@ pub enum OpenTask {
     ComponentArray(core_document::ComponentId),
     /// Marking a scan's surface by hand.
     Mark(BodyId),
+}
+
+/// How a gesture covers the surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MarkTool {
+    #[default]
+    Window,
+    Brush,
+    Lasso,
+}
+
+impl MarkTool {
+    pub const ALL: [MarkTool; 3] = [MarkTool::Window, MarkTool::Brush, MarkTool::Lasso];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MarkTool::Window => "Window",
+            MarkTool::Brush => "Brush",
+            MarkTool::Lasso => "Lasso",
+        }
+    }
+}
+
+/// The marking tool in hand, while the Mark surface task is open.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkArm {
+    pub body: BodyId,
+    pub tool: MarkTool,
+    /// The brush's diameter, in millimetres.
+    pub brush_mm: f32,
+    /// Take faces pointing away from the view too.
+    pub through: bool,
+}
+
+/// A change to the whole marking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkEdit {
+    Invert,
+    Clear,
+}
+
+/// What the UI draws of the note card.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteCardView {
+    pub id: NoteId,
+    /// The note's number, or the one a new note will take.
+    pub number: u32,
+    pub new: bool,
+    /// What the field opens with: the note's text, or the answer to its
+    /// question so far.
+    pub text: String,
+    /// The note is a question still open: the field answers it.
+    pub answering: bool,
+    /// The question, when the field answers one.
+    pub question: String,
+    pub resolved: bool,
+    pub author: NoteAuthor,
+    pub lost: bool,
+    pub from_file: bool,
+    /// Where the note's point is, in viewport pixels; `None` off screen.
+    pub at: Option<[f32; 2]>,
+}
+
+/// One of the examples the start page offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Example {
+    /// A rectangle with a hole, fully dimensioned, opened in the
+    /// sketcher.
+    SketcherBasics,
+    /// The same sketch padded, with a face sketch pocketed into its top.
+    DesignWorkflow,
+}
+
+/// What the bench hooks ask of the UI, read once on the host's side at
+/// start: `PRINTCAD_BENCH_UI`'s pointer steps, `PRINTCAD_BENCH_PREFS`'s
+/// Preferences page and whether `PRINTCAD_BENCH_CHAT` sends a message.
+#[derive(Debug, Clone, Default)]
+pub struct UiHooks {
+    pub steps: Option<String>,
+    pub prefs: Option<String>,
+    pub chat: bool,
+}
+
+impl RadialView {
+    /// The ids the menu offers for `bench`: the user's, the bench's, or its
+    /// tools by how often each was started, then in their own order.
+    pub fn chosen_ids(
+        bench: &WorkbenchId,
+        declared: &[String],
+        tools: &[ToolDescriptor],
+        settings: &settings::UserSettings,
+    ) -> Vec<String> {
+        if let Some(own) = settings.radial.get(bench.as_str()) {
+            return own.iter().take(RADIAL_SLOTS).cloned().collect();
+        }
+        if !declared.is_empty() {
+            return declared.iter().take(RADIAL_SLOTS).cloned().collect();
+        }
+        let mut ranked: Vec<&ToolDescriptor> =
+            tools.iter().filter(|t| t.planned.is_none()).collect();
+        let uses = |t: &ToolDescriptor| settings.tool_uses.get(&t.id).copied().unwrap_or(0);
+        ranked.sort_by_key(|t| std::cmp::Reverse(uses(t)));
+        ranked
+            .into_iter()
+            .take(RADIAL_SLOTS)
+            .map(|t| t.id.clone())
+            .collect()
+    }
 }

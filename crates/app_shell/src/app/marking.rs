@@ -17,45 +17,7 @@ use kernel_api::TriMesh;
 
 use crate::PrintCadApp;
 use crate::app::gesture::HostGesture;
-
-/// How a gesture covers the surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum MarkTool {
-    #[default]
-    Window,
-    Brush,
-    Lasso,
-}
-
-impl MarkTool {
-    pub const ALL: [MarkTool; 3] = [MarkTool::Window, MarkTool::Brush, MarkTool::Lasso];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            MarkTool::Window => "Window",
-            MarkTool::Brush => "Brush",
-            MarkTool::Lasso => "Lasso",
-        }
-    }
-}
-
-/// The marking tool in hand, while the Mark surface task is open.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct MarkArm {
-    pub body: BodyId,
-    pub tool: MarkTool,
-    /// The brush's diameter, in millimetres.
-    pub brush_mm: f32,
-    /// Take faces pointing away from the view too.
-    pub through: bool,
-}
-
-/// A change to the whole marking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MarkEdit {
-    Invert,
-    Clear,
-}
+use crate::contract::{MarkArm, MarkEdit, MarkTool};
 
 /// A drag in progress: whether it rubs out, and the pointer's way.
 #[derive(Debug, Clone, PartialEq)]

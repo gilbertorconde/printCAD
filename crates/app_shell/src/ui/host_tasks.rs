@@ -81,15 +81,15 @@ pub enum HostTask {
 /// frame. The marking itself is the app's, kept when the task closes.
 #[derive(Debug, Clone)]
 pub struct MarkTask {
-    pub arm: crate::app::marking::MarkArm,
+    pub arm: crate::contract::MarkArm,
 }
 
 impl MarkTask {
     pub fn new(body: BodyId) -> Self {
         Self {
-            arm: crate::app::marking::MarkArm {
+            arm: crate::contract::MarkArm {
                 body,
-                tool: crate::app::marking::MarkTool::Window,
+                tool: crate::contract::MarkTool::Window,
                 brush_mm: 5.0,
                 through: false,
             },
@@ -132,7 +132,7 @@ impl MarkTask {
         marking: Option<(usize, usize)>,
         commands: &mut Vec<UiCommand>,
     ) {
-        use crate::app::marking::{MarkEdit, MarkTool};
+        use crate::contract::{MarkEdit, MarkTool};
         let arm = &mut self.arm;
         form.nest(
             |form| {
@@ -2054,7 +2054,7 @@ mod tests {
     /// layout's gap, slicer switch and buttons.
     #[test]
     fn mark_and_print_layout_events_reach_the_app() {
-        use crate::app::marking::{MarkEdit, MarkTool};
+        use crate::contract::{MarkEdit, MarkTool};
         let mut task = MarkTask::new(BodyId(uuid::Uuid::nil()));
         let mut commands = Vec::new();
         assert!(!has(&task.widgets(None), "brush"));

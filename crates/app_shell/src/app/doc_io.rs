@@ -374,7 +374,7 @@ impl PrintCadApp {
         let Some(path) = self.session.file.import_in_turn(path) else {
             return;
         };
-        if crate::app::scans::has_no_units(&path) {
+        if crate::scans::has_no_units(&path) {
             if self.user_settings.files.ask_mesh_units {
                 self.session.file.mesh_units_pending = Some(path);
             } else {

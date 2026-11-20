@@ -3,6 +3,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod array_paths;
 mod camera;
 mod console;
 mod contract;
@@ -12,6 +13,7 @@ mod keymap;
 mod orientation_cube;
 #[cfg(all(feature = "profile", target_os = "linux"))]
 mod profile;
+mod scans;
 mod script_library;
 #[cfg(test)]
 mod test_support;
@@ -554,7 +556,15 @@ impl PrintCadApp {
     /// The window and its renderer are made: the UI on them, and the
     /// camera sized to the window.
     fn finish_gfx(&mut self, renderer: Renderer, window: winit::window::Window) {
-        let mut ui_layer = UiLayer::new(&window);
+        let hooks = app::bench_hooks::hooks();
+        let mut ui_layer = UiLayer::new(
+            &window,
+            contract::UiHooks {
+                steps: hooks.ui.clone(),
+                prefs: hooks.prefs.clone(),
+                chat: hooks.chat.is_some(),
+            },
+        );
         if let Some(panels) = &self.kept.last_session.panels {
             ui_layer.restore_panel_layout(panels);
         }

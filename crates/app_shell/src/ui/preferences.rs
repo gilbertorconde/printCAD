@@ -986,7 +986,7 @@ fn general_page(
                         "STL units",
                         "prefs_mesh_units",
                         &mut draft.files.mesh_units,
-                        &crate::app::scans::MESH_UNITS,
+                        &crate::scans::MESH_UNITS,
                     )
                     .hint("What an STL is read in when nothing asks, and the first answer offered"),
                 ],
@@ -2234,7 +2234,7 @@ fn radial_page(ui: &mut Ui, state: &mut PreferencesState, registry: &DocumentSer
     });
     let (bench, _, declared, tools) = &benches[state.radial_bench];
     let own = state.draft.radial.get(bench.as_str()).cloned();
-    let shown = crate::app::radial::chosen_ids(
+    let shown = crate::contract::RadialView::chosen_ids(
         bench,
         declared,
         &registry

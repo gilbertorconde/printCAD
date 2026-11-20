@@ -5,17 +5,8 @@
 use core_document::{Document, FeatureId};
 
 use crate::PrintCadApp;
+use crate::contract::Example;
 use crate::contract::TreeItemId;
-
-/// One of the examples the start page offers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Example {
-    /// A rectangle with a hole, fully dimensioned, opened in the
-    /// sketcher.
-    SketcherBasics,
-    /// The same sketch padded, with a face sketch pocketed into its top.
-    DesignWorkflow,
-}
 
 impl Example {
     fn bytes(self) -> &'static [u8] {

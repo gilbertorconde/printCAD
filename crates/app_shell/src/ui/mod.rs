@@ -73,6 +73,8 @@ pub struct UiLayer {
     bench_prefs_opened: bool,
     /// `PRINTCAD_BENCH_CHAT`'s chat has had `@` typed into it.
     bench_chat_typed: bool,
+    /// What the bench hooks ask of the UI.
+    hooks: UiHooks,
     /// `PRINTCAD_BENCH_UI`'s pointer steps, played once the scene settles.
     bench_ui: Option<bench_ui::BenchUi>,
     /// The newer release whose notice was put away.
@@ -214,7 +216,7 @@ impl UiLayer {
         }
     }
 
-    pub fn new(window: &Window) -> Self {
+    pub fn new(window: &Window, hooks: UiHooks) -> Self {
         let ctx = Context::default();
         ui_kit::apply_theme(&ctx);
         let state = State::new(
@@ -227,14 +229,16 @@ impl UiLayer {
         );
 
         orientation_cube::warm_face_textures(&ctx);
+        let bench_ui = bench_ui::BenchUi::from_spec(hooks.steps.as_deref());
 
         Self {
             ctx,
             state,
             preferences: preferences::PreferencesState::default(),
             bench_prefs_opened: false,
+            hooks,
             bench_chat_typed: false,
-            bench_ui: bench_ui::BenchUi::from_env(),
+            bench_ui,
             mass_material: 0,
             dismissed_release: None,
             palette: command_palette::PaletteState::default(),

@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use core_document::{CommandArgs, RADIAL_SLOTS, ToolDescriptor, WorkbenchId};
+use core_document::CommandArgs;
 use glam::Vec2;
 use winit::event_loop::ActiveEventLoop;
 
@@ -67,30 +67,6 @@ fn pointed(count: usize, offset: Vec2, scale: f32) -> Option<usize> {
     Some(((turn + share / 2.0) / share) as usize % count)
 }
 
-/// The ids the menu offers for `bench`: the user's, the bench's, or its
-/// tools by how often each was started, then in their own order.
-pub(crate) fn chosen_ids(
-    bench: &WorkbenchId,
-    declared: &[String],
-    tools: &[ToolDescriptor],
-    settings: &settings::UserSettings,
-) -> Vec<String> {
-    if let Some(own) = settings.radial.get(bench.as_str()) {
-        return own.iter().take(RADIAL_SLOTS).cloned().collect();
-    }
-    if !declared.is_empty() {
-        return declared.iter().take(RADIAL_SLOTS).cloned().collect();
-    }
-    let mut ranked: Vec<&ToolDescriptor> = tools.iter().filter(|t| t.planned.is_none()).collect();
-    let uses = |t: &ToolDescriptor| settings.tool_uses.get(&t.id).copied().unwrap_or(0);
-    ranked.sort_by_key(|t| std::cmp::Reverse(uses(t)));
-    ranked
-        .into_iter()
-        .take(RADIAL_SLOTS)
-        .map(|t| t.id.clone())
-        .collect()
-}
-
 impl PrintCadApp {
     /// The slices for the active bench, each named and drawn as its tool
     /// or command is; an id that is neither is left out.
@@ -107,7 +83,7 @@ impl PrintCadApp {
             .map(|d| d.radial.clone())
             .unwrap_or_default();
         let specs = crate::app::scripts::command_specs(&self.registry);
-        chosen_ids(bench, &declared, &tools, &self.user_settings)
+        crate::contract::RadialView::chosen_ids(bench, &declared, &tools, &self.user_settings)
             .into_iter()
             .filter_map(|id| match tools.iter().find(|t| t.id == id) {
                 Some(tool) if tool.planned.is_none() => Some(Slice {
@@ -238,6 +214,7 @@ impl PrintCadApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_document::{ToolDescriptor, WorkbenchId};
 
     /// Slices go clockwise from the top; the middle points at none.
     #[test]
@@ -267,16 +244,19 @@ mod tests {
         settings.tool_uses.insert("b.three".into(), 4);
         settings.tool_uses.insert("b.two".into(), 1);
         assert_eq!(
-            chosen_ids(&bench, &[], &tools, &settings),
+            crate::contract::RadialView::chosen_ids(&bench, &[], &tools, &settings),
             ["b.three", "b.two", "b.one"]
         );
         let declared = vec!["b.one".to_string()];
-        assert_eq!(chosen_ids(&bench, &declared, &tools, &settings), ["b.one"]);
+        assert_eq!(
+            crate::contract::RadialView::chosen_ids(&bench, &declared, &tools, &settings),
+            ["b.one"]
+        );
         settings
             .radial
             .insert("b".into(), vec!["b.two".into(), "file.save".into()]);
         assert_eq!(
-            chosen_ids(&bench, &declared, &tools, &settings),
+            crate::contract::RadialView::chosen_ids(&bench, &declared, &tools, &settings),
             ["b.two", "file.save"]
         );
     }

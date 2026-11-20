@@ -223,7 +223,7 @@ pub(crate) fn document_command(
                         "visible": !b.hidden,
                         "frozen": b.frozen,
                         "scan": b.scan.map(|s| json!({
-                            "units": crate::app::scans::unit_key(
+                            "units": crate::scans::unit_key(
                                 s.read_in.unwrap_or(kernel_api::LengthUnit::Millimetre),
                             ),
                         })),
@@ -1435,7 +1435,7 @@ fn array_pattern(
             };
             let spacing = spacing.or(was.and_then(|w| w.1));
             let align = a.opt_bool("align")?.or(was.map(|w| w.2)).unwrap_or(false);
-            crate::app::array_paths::path_pattern(document, registry, along, count, spacing, align)
+            crate::array_paths::path_pattern(document, registry, along, count, spacing, align)
                 .map_err(|e| CommandError::bad("count", e))?
         }
         "points" => {
@@ -1444,7 +1444,7 @@ fn array_pattern(
                 (None, Some(ArrayPattern::Points { from, .. })) => *from,
                 (None, _) => return Err(CommandError::bad("sketch", "is needed for points")),
             };
-            crate::app::array_paths::points_pattern(document, registry, from)
+            crate::array_paths::points_pattern(document, registry, from)
                 .map_err(|e| CommandError::bad("sketch", e))?
         }
         _ => {

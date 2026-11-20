@@ -334,7 +334,7 @@ pub(crate) struct HostTools {
     pub note_card: Option<crate::app::note_tool::NoteCard>,
     /// The marked surface of a scan, and the marking tool in hand.
     pub marking: Option<crate::app::marking::Marking>,
-    pub mark_arm: Option<crate::app::marking::MarkArm>,
+    pub mark_arm: Option<crate::contract::MarkArm>,
     pub print_layout_shown: bool,
     /// The print layout shown while its task is open.
     pub print_layout: Option<crate::app::print_layout::ShownLayout>,
