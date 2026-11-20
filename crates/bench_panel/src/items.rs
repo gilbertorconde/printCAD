@@ -404,28 +404,30 @@ pub(super) fn item_list(
     }
     let mut pointed: Pointed = (None, None, None);
     let mut clicked = None;
-    for &i in &shown {
-        let item = &list.items[i];
-        // A row out of sight takes its room unbuilt: a long list costs
-        // what shows of it.
-        let row = ui_kit::lazy::row(ui, ("items", &list.id, i), false, |ui| {
-            let mut field = field_drawer(id, document, out);
-            item_row(ui, id.with(("items", &list.id, i)), item, &mut field)
-        });
-        let Some(drawn) = row.inner else {
-            continue;
-        };
-        if ui.rect_contains_pointer(drawn.response.rect) {
-            pointed.0 = Some(i);
+    // A row out of sight takes its room unbuilt: a long list costs what
+    // shows of it.
+    ui_kit::lazy::rows(ui, ("items", &list.id), |ui, rows| {
+        for &i in &shown {
+            let item = &list.items[i];
+            let row = rows.row(ui, i, false, |ui| {
+                let mut field = field_drawer(id, document, out);
+                item_row(ui, id.with(("items", &list.id, i)), item, &mut field)
+            });
+            let Some(drawn) = row.inner else {
+                continue;
+            };
+            if ui.rect_contains_pointer(drawn.response.rect) {
+                pointed.0 = Some(i);
+            }
+            if drawn.over_tag.is_some() || drawn.over_badge.is_some() {
+                pointed = (Some(i), drawn.over_tag, drawn.over_badge);
+            }
+            if drawn.response.clicked() {
+                clicked = Some(i);
+            }
+            item_events(&list.id, i, item, &drawn, out);
         }
-        if drawn.over_tag.is_some() || drawn.over_badge.is_some() {
-            pointed = (Some(i), drawn.over_tag, drawn.over_badge);
-        }
-        if drawn.response.clicked() {
-            clicked = Some(i);
-        }
-        item_events(&list.id, i, item, &drawn, out);
-    }
+    });
     if let Some(i) = clicked {
         if list.multi {
             let adding = ui.input(|input| input.modifiers.command);
