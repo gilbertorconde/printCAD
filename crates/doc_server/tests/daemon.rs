@@ -39,10 +39,25 @@ impl TestHome {
     fn document(&self) -> PathBuf {
         self.dir.join("model.prtcad")
     }
+
+    /// The document's op log, in the log folder these tests use. Asked
+    /// once the document exists, since its key is its canonical path.
+    fn log(&self) -> PathBuf {
+        doc_server::oplog_path_for(&self.document())
+    }
 }
 
 impl Drop for TestHome {
     fn drop(&mut self) {
+        if self.document().is_file() {
+            let log = self.log();
+            let _ = std::fs::remove_dir_all(log.with_extension("blobs"));
+            let _ = std::fs::remove_file(log.with_extension("document"));
+            for generation in 1..=20 {
+                let _ = std::fs::remove_file(log.with_extension(format!("jsonl.{generation}")));
+            }
+            let _ = std::fs::remove_file(log);
+        }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
@@ -61,6 +76,10 @@ fn daemon_env() {
         // the single write; a test-local process could still race a
         // concurrent write, so this is the only writer in the binary.
         unsafe { std::env::set_var("PRINTCAD_SERVERD", &path) };
+        // The daemons these tests start keep their logs out of the user's
+        // data folder.
+        let logs = std::env::temp_dir().join(format!("printcad_oplogs_{}", std::process::id()));
+        unsafe { std::env::set_var("PRINTCAD_OPLOG_DIR", logs) };
     });
 }
 
@@ -150,11 +169,17 @@ fn two_documents_do_not_swap_their_unsaved_history() {
     // homeless at the same time.
     let mut doc_a = Document::new("A");
     doc_a.create_body(Some("only-in-a".into()));
-    a.send(ClientMessage::Ops(doc_a.take_pending_ops()));
+    a.send(ClientMessage::Ops {
+        batch: uuid::Uuid::new_v4(),
+        ops: doc_a.take_pending_ops(),
+    });
 
     let mut doc_b = Document::new("B");
     doc_b.create_body(Some("only-in-b".into()));
-    b.send(ClientMessage::Ops(doc_b.take_pending_ops()));
+    b.send(ClientMessage::Ops {
+        batch: uuid::Uuid::new_v4(),
+        ops: doc_b.take_pending_ops(),
+    });
 
     // Wait until both histories really are homeless together, which is when
     // one could take the other's: the daemons are separate processes, so
@@ -208,7 +233,7 @@ fn two_documents_do_not_swap_their_unsaved_history() {
     }
 
     let read = |home: &TestHome| -> String {
-        let log = home.document().with_extension("oplog.jsonl");
+        let log = home.log();
         let deadline = Instant::now() + PATIENCE;
         loop {
             let text = std::fs::read_to_string(&log).unwrap_or_default();
@@ -254,7 +279,10 @@ fn a_session_round_trips_through_the_daemon() {
     doc.rename_body(body, "Renamed");
     let ops = doc.take_pending_ops();
     assert_eq!(ops.len(), 2);
-    client.send(ClientMessage::Ops(ops));
+    client.send(ClientMessage::Ops {
+        batch: uuid::Uuid::new_v4(),
+        ops,
+    });
 
     let bytes = doc
         .save_to_bytes(core_document::Compression::None)
@@ -276,9 +304,12 @@ fn a_session_round_trips_through_the_daemon() {
 
     // The op log lives beside the document: the save carries the ops sent
     // before it over from the unhomed log, and later ones append to it.
-    let oplog = home.document().with_extension("oplog.jsonl");
+    let oplog = home.log();
     doc.rename_body(body, "Renamed again");
-    client.send(ClientMessage::Ops(doc.take_pending_ops()));
+    client.send(ClientMessage::Ops {
+        batch: uuid::Uuid::new_v4(),
+        ops: doc.take_pending_ops(),
+    });
     let log_deadline = Instant::now() + PATIENCE;
     loop {
         if oplog.is_file() {
@@ -361,7 +392,10 @@ fn a_peers_edits_relay_and_the_replicas_converge() {
     alice_doc.rename_body(body, "Frame (alice)");
     let ops = alice_doc.take_pending_ops();
     let alice_actor = alice.actor();
-    alice.send(ClientMessage::Ops(ops));
+    alice.send(ClientMessage::Ops {
+        batch: uuid::Uuid::new_v4(),
+        ops,
+    });
 
     // Bob hears them (and only them), attributed to Alice.
     let relayed = wait_for(&mut bob, &mut bob_inbox, "relayed ops", |m| match m {
@@ -442,12 +476,15 @@ fn large_blobs_are_extracted_and_deduplicated() {
             ),
             big.clone(),
         );
-        client.send(ClientMessage::Ops(d.take_pending_ops()));
+        client.send(ClientMessage::Ops {
+            batch: uuid::Uuid::new_v4(),
+            ops: d.take_pending_ops(),
+        });
     }
     client.flush();
 
-    let oplog = home.document().with_extension("oplog.jsonl");
-    let blob_dir = home.document().with_extension("oplog.blobs");
+    let oplog = home.log();
+    let blob_dir = home.log().with_extension("blobs");
     let deadline = Instant::now() + PATIENCE;
     loop {
         let log_ok = std::fs::read_to_string(&oplog)
@@ -517,7 +554,10 @@ fn a_late_joiner_catches_up_to_the_unsaved_present() {
     // Alice saves a baseline, then keeps editing without saving.
     let mut alice_doc = Document::new("Late");
     let body = alice_doc.create_body(Some("Base".into()));
-    alice.send(ClientMessage::Ops(alice_doc.take_pending_ops()));
+    alice.send(ClientMessage::Ops {
+        batch: uuid::Uuid::new_v4(),
+        ops: alice_doc.take_pending_ops(),
+    });
     let bytes = alice_doc
         .save_to_bytes(core_document::Compression::None)
         .expect("serialize");
@@ -534,12 +574,15 @@ fn a_late_joiner_catches_up_to_the_unsaved_present() {
         _ => None,
     });
     alice_doc.rename_body(body, "Edited after save");
-    alice.send(ClientMessage::Ops(alice_doc.take_pending_ops()));
+    alice.send(ClientMessage::Ops {
+        batch: uuid::Uuid::new_v4(),
+        ops: alice_doc.take_pending_ops(),
+    });
     alice.flush();
     // Wait until the daemon has processed the rename (observable in the
     // log) so bob's join deterministically exercises the TAIL path rather
     // than the live-relay path.
-    let oplog = home.document().with_extension("oplog.jsonl");
+    let oplog = home.log();
     let seen = Instant::now() + PATIENCE;
     while !std::fs::read_to_string(&oplog)
         .map(|t| t.contains("Edited after save"))
@@ -691,6 +734,8 @@ struct Replica {
     heard: Vec<u64>,
     /// The other editors the server last counted.
     peers: Option<u32>,
+    /// The batches of unsaved edits the last open offered back.
+    offered: u32,
 }
 
 impl Replica {
@@ -703,14 +748,66 @@ impl Replica {
             sent: 0,
             heard: Vec::new(),
             peers: None,
+            offered: 0,
         }
+    }
+
+    /// Rejoin as the app does once its connection went: a new connection
+    /// (starting the daemon again when it is gone), every batch still
+    /// unconfirmed sent again under its id with the outbox after them, then
+    /// the file and the tail, onto which the edits sent after the open are
+    /// carried.
+    fn rejoin(&mut self, home: &TestHome) {
+        self.client = DaemonClient::spawn_or_connect(&home.socket()).expect("reconnect");
+        self.inbox = Inbox::default();
+        self.sent = 0;
+        // The unsaved edits a restarted daemon read back are this session's.
+        self.client.send(ClientMessage::RestoreUnsaved);
+        for (batch, ops) in self.doc.sent_batches() {
+            self.client.send(ClientMessage::Ops { batch, ops });
+            self.sent += 1;
+        }
+        self.send();
+        self.client.send(ClientMessage::OpenDocument {
+            path: home.document(),
+            token: 7,
+        });
+        // Before the file: the answers to what was sent before the open.
+        // Another's batch heard now is in the file or the tail.
+        let deadline = Instant::now() + PATIENCE;
+        let (bytes, seq) = loop {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the rejoin"
+            );
+            match self.inbox.next(&mut self.client) {
+                Some(ServerMessage::Acked { .. }) => self.doc.confirm_sent_ops(),
+                Some(ServerMessage::Opened {
+                    bytes,
+                    seq,
+                    unsaved_lost,
+                    ..
+                }) => {
+                    assert!(!unsaved_lost, "the restarted daemon kept the unsaved edits");
+                    break (bytes, seq);
+                }
+                Some(ServerMessage::OpenFailed { error, .. }) => panic!("open failed: {error}"),
+                Some(_) => {}
+                None => std::thread::sleep(Duration::from_millis(5)),
+            }
+        };
+        let mut next = Document::load_from_bytes(bytes).expect("parse");
+        self.doc.carry_unconfirmed_to(&mut next);
+        self.doc = next;
+        self.seen = 0;
+        self.heard.clear();
+        self.catch_up(seq);
     }
 
     /// Hand the outbox to the server as one batch.
     fn send(&mut self) {
-        let ops = self.doc.take_pending_ops();
-        if !ops.is_empty() {
-            self.client.send(ClientMessage::Ops(ops));
+        if let Some((batch, ops)) = self.doc.take_pending_batch() {
+            self.client.send(ClientMessage::Ops { batch, ops });
             self.sent += 1;
         }
     }
@@ -768,18 +865,26 @@ impl Replica {
             path: path.to_path_buf(),
             token: 9,
         });
-        let bytes = wait_for(
+        let (bytes, offered) = wait_for(
             &mut replica.client,
             &mut replica.inbox,
             "open",
             |m| match m {
-                ServerMessage::Opened { bytes, .. } => Some(bytes.clone()),
+                ServerMessage::Opened {
+                    bytes, recoverable, ..
+                } => Some((bytes.clone(), *recoverable)),
                 ServerMessage::OpenFailed { error, .. } => panic!("open failed: {error}"),
                 _ => None,
             },
         );
         replica.doc = Document::load_from_bytes(bytes).expect("parse");
+        replica.offered = offered;
         replica
+    }
+
+    /// Say this client is done with the document, and go.
+    fn leave(mut self) {
+        self.client.send(ClientMessage::Leave);
     }
 
     /// Save as the app does, saying what the snapshot holds, and wait for
@@ -969,8 +1074,8 @@ fn a_save_keeps_the_edits_its_snapshot_lacks() {
 }
 
 /// A daemon that dies leaves the unsaved edits in its log; the daemon that
-/// takes its place reads them back, so a client joining after the restart
-/// still gets them after the file.
+/// takes its place reads them back and offers them to a client that opens
+/// the document, which gets them after the file once it asks.
 #[test]
 fn a_restarted_daemon_gives_joiners_the_unsaved_tail() {
     let home = TestHome::new("restart_tail");
@@ -990,6 +1095,8 @@ fn a_restarted_daemon_gives_joiners_the_unsaved_tail() {
         "Base",
         "the file is the saved past"
     );
+    assert_eq!(bob.offered, 1, "the unsaved edit is offered back");
+    bob.client.send(ClientMessage::RestoreUnsaved);
     bob.take_until("the unsaved tail", |r| {
         r.doc.bodies()[0].name == "unsaved when it died"
     });
@@ -999,10 +1106,82 @@ fn a_restarted_daemon_gives_joiners_the_unsaved_tail() {
     assert!(bob.settle() > 1);
 }
 
-/// When every client has left, their unsaved edits are gone with them: the
-/// next daemon on the document starts from the file alone.
+/// Unsaved edits that fill several generations of the log still come back
+/// whole after a restart: the log keeps every generation back to the last
+/// save that left nothing unsaved.
 #[test]
-fn a_daemon_everyone_left_starts_again_from_the_file() {
+fn a_restart_restores_unsaved_edits_across_rotations() {
+    let home = TestHome::new("rotated_tail");
+    let mut daemon = start_daemon(&home, &["--log-bytes", "2048"]);
+    let mut alice = Replica::join(&home, Document::new("Rotated"));
+    alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    let padding = "y".repeat(1000);
+    for round in 0..12 {
+        alice.doc.create_body(Some(format!("{round} {padding}")));
+        alice.send();
+    }
+    alice.settle();
+    daemon.kill().expect("the daemon stops");
+    wait_for_exit(&mut daemon, "once killed");
+
+    let mut bob = Replica::open(&home, &home.document());
+    assert_eq!(bob.offered, 12);
+    bob.client.send(ClientMessage::RestoreUnsaved);
+    bob.take_until("every unsaved body", |r| r.doc.bodies().len() == 13);
+    assert_eq!(
+        bob.doc.replicated_projection(),
+        alice.doc.replicated_projection()
+    );
+}
+
+/// A daemon that cannot read back the unsaved edits the one before it
+/// held (here the file changed after the log's mark) says so with the
+/// file, so a client rejoining it keeps its own copy.
+#[test]
+fn a_restart_that_lost_the_unsaved_edits_says_so() {
+    let home = TestHome::new("lost_tail");
+    let mut daemon = start_daemon(&home, &[]);
+    let mut alice = Replica::join(&home, Document::new("Lost"));
+    let body = alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    alice.doc.rename_body(body, "unsaved");
+    alice.send();
+    alice.settle();
+    daemon.kill().expect("the daemon stops");
+    wait_for_exit(&mut daemon, "once killed");
+    let mut file = std::fs::read(home.document()).expect("file");
+    file.extend_from_slice(b"changed");
+    std::fs::write(home.document(), file).expect("file");
+
+    let mut bob = Replica::join(&home, Document::new("opening"));
+    bob.client.send(ClientMessage::OpenDocument {
+        path: home.document(),
+        token: 1,
+    });
+    let lost = wait_for(&mut bob.client, &mut bob.inbox, "open", |m| match m {
+        ServerMessage::Opened { unsaved_lost, .. } => Some(*unsaved_lost),
+        ServerMessage::OpenFailed { error, .. } => panic!("open failed: {error}"),
+        _ => None,
+    });
+    assert!(lost);
+}
+
+/// Wait until the daemon on `home` has exited with its last client.
+fn wait_for_socket_gone(home: &TestHome) {
+    let deadline = Instant::now() + PATIENCE;
+    while home.socket_present() {
+        assert!(Instant::now() < deadline, "the daemon never exited");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// An editor that leaves saying it is done takes its unsaved edits with
+/// it: the next daemon starts from the file alone. One that goes without
+/// a word (it crashed) leaves them in the log, and the next open offers
+/// them back; let go, they are offered no more.
+#[test]
+fn unsaved_edits_go_with_a_clean_leave_and_are_offered_after_a_crash() {
     daemon_env();
     let home = TestHome::new("left_tail");
     let mut alice = Replica::join(&home, Document::new("Left"));
@@ -1011,23 +1190,150 @@ fn a_daemon_everyone_left_starts_again_from_the_file() {
     alice.doc.rename_body(body, "discarded");
     alice.send();
     alice.settle();
-    drop(alice);
-    let deadline = Instant::now() + PATIENCE;
-    while home.socket_present() {
-        assert!(Instant::now() < deadline, "the daemon never exited");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    alice.leave();
+    wait_for_socket_gone(&home);
 
     let mut bob = Replica::open(&home, &home.document());
+    assert_eq!(bob.offered, 0);
     bob.doc.set_name("reopened");
     bob.send();
     assert_eq!(bob.settle(), 1, "nothing was ordered before bob's edit");
     assert_eq!(bob.doc.bodies()[0].name, "Base");
+    drop(bob);
+    wait_for_socket_gone(&home);
+
+    let mut carol = Replica::open(&home, &home.document());
+    assert_eq!(carol.offered, 1, "bob's edit, left by a crash");
+    carol.client.send(ClientMessage::DiscardUnsaved);
+    carol.leave();
+    wait_for_socket_gone(&home);
+    let dave = Replica::open(&home, &home.document());
+    assert_eq!(dave.offered, 0, "let go");
+}
+
+/// A log kept beside its document, as older versions kept it, moves into
+/// the log folder on the first open, and the unsaved edits it holds are
+/// offered back.
+#[test]
+fn a_log_beside_its_document_moves_into_place_and_offers_its_edits() {
+    daemon_env();
+    let home = TestHome::new("legacy_log");
+    let mut doc = Document::new("Legacy");
+    let body = doc.create_body(Some("Base".into()));
+    let _ = doc.take_pending_ops();
+    std::fs::write(
+        home.document(),
+        doc.save_to_bytes(core_document::Compression::None)
+            .expect("serialize"),
+    )
+    .expect("file");
+    doc.rename_body(body, "left in the old log");
+    let line = serde_json::json!({
+        "v": core_document::op::OP_PROTOCOL_VERSION,
+        "actor": uuid::Uuid::new_v4(),
+        "batch": uuid::Uuid::new_v4(),
+        "op": doc.take_pending_ops()[0],
+    });
+    let beside = home.document().with_extension("oplog.jsonl");
+    std::fs::write(&beside, format!("{line}\n")).expect("old log");
+
+    let mut bob = Replica::open(&home, &home.document());
+    assert!(std::fs::symlink_metadata(&beside).is_err(), "moved away");
+    assert!(home.log().is_file(), "into the log folder");
+    assert_eq!(bob.offered, 1);
+    bob.client.send(ClientMessage::RestoreUnsaved);
+    bob.take_until("the old log's edit", |r| {
+        r.doc.bodies()[0].name == "left in the old log"
+    });
+}
+
+/// The bodies named `name`: one when every replica applied its edit
+/// exactly once.
+fn bodies_named(doc: &Document, name: &str) -> usize {
+    doc.bodies().iter().filter(|b| b.name == name).count()
+}
+
+/// A daemon killed mid-session, with one edit it logged but never
+/// answered and one sent after it died: both editors rejoin the daemon
+/// that takes its place, and every edit is there once, on both, and the
+/// user's own edit still undoes.
+#[test]
+fn editors_rejoining_a_restarted_daemon_lose_no_edit() {
+    let home = TestHome::new("rejoin_restart");
+    let mut daemon = start_daemon(&home, &[]);
+    let mut base = Document::new("Rejoined");
+    let body = base.create_body(Some("Base".into()));
+    let _ = base.take_pending_ops();
+    let mut alice = Replica::join(&home, base.clone());
+    let mut bob = Replica::join(&home, base.clone());
+    alice.save(&home.document());
+    let mut journal = core_document::history::OpJournal::new(16);
+
+    alice.doc.create_body(Some("a1".into()));
+    journal.note(&mut alice.doc);
+    alice.send();
+    let a1 = alice.settle();
+    bob.catch_up(a1);
+    bob.doc.rename_body(body, "b1");
+    bob.send();
+    alice.catch_up(bob.settle());
+    // Logged, its answer never taken in.
+    alice.doc.create_body(Some("a2".into()));
+    journal.note(&mut alice.doc);
+    alice.send();
+    let log = home.log();
+    let deadline = Instant::now() + PATIENCE;
+    while !std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("a2")
+    {
+        assert!(Instant::now() < deadline, "a2 never reached the log");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    daemon.kill().expect("the daemon stops");
+    wait_for_exit(&mut daemon, "once killed");
+    // Sent to a daemon already gone.
+    alice.doc.create_body(Some("a3".into()));
+    journal.note(&mut alice.doc);
+    alice.send();
+    bob.doc.rename_body(body, "b2");
+    bob.send();
+
+    alice.rejoin(&home);
+    bob.rejoin(&home);
+    let last = bob.settle().max(alice.settle());
+    alice.catch_up(last);
+    bob.catch_up(last);
+    for replica in [&alice, &bob] {
+        for name in ["Base", "a1", "a2", "a3"] {
+            let expected = usize::from(name != "Base");
+            assert_eq!(bodies_named(&replica.doc, name), expected, "{name}");
+        }
+        assert_eq!(bodies_named(&replica.doc, "b2"), 1);
+    }
+    assert_eq!(
+        alice.doc.replicated_projection(),
+        bob.doc.replicated_projection()
+    );
+
+    assert!(journal.undo(&mut alice.doc).is_some(), "a3 undoes");
+    alice.send();
+    bob.catch_up(alice.settle());
+    assert_eq!(bodies_named(&bob.doc, "a3"), 0);
+    assert_eq!(bodies_named(&bob.doc, "a2"), 1);
+    assert_eq!(
+        alice.doc.replicated_projection(),
+        bob.doc.replicated_projection()
+    );
+    drop(alice);
+    drop(bob);
+    let _ = daemon.wait();
 }
 
 /// A client that stops reading is disconnected once its queue passes the
-/// limit, its peers told; it rejoins by opening the document again and
-/// gets every edit it missed from the file and the tail.
+/// limit, its peers told. It rejoins the way the app does: its edit the
+/// daemon ordered is answered, not ordered twice, its edit sent after the
+/// drop is ordered, and the file and tail give it every edit it missed.
 #[test]
 fn a_client_too_far_behind_is_dropped_and_rejoins() {
     let home = TestHome::new("slow_client");
@@ -1035,6 +1341,8 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     let mut alice = Replica::join(&home, Document::new("Busy"));
     let body = alice.doc.create_body(Some("Base".into()));
     alice.save(&home.document());
+    let mut carol =
+        Document::load_from_bytes(std::fs::read(home.document()).expect("file")).expect("parse");
 
     let mut stalled = local_ipc::Stream::connect(home.socket()).expect("connect");
     // Set before the daemon shuts this socket: some platforms refuse a
@@ -1051,6 +1359,13 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     )
     .expect("hello");
     alice.take_until("a second editor", |r| r.peers == Some(1));
+    carol.create_body(Some("carol, ordered".into()));
+    let (batch, ops) = carol.take_pending_batch().expect("a batch");
+    doc_server::framing::write_frame(&mut stalled, &ClientMessage::Ops { batch, ops })
+        .expect("carol's edit");
+    alice.take_until("carol's edit", |r| {
+        bodies_named(&r.doc, "carol, ordered") == 1
+    });
 
     let rounds = 60;
     let padding = "x".repeat(200_000);
@@ -1083,9 +1398,17 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     // ends at the latest when its peer closes, whatever the platform's
     // shutdown does to a read already waiting.
     drop(stalled);
+    carol.create_body(Some("carol, after the drop".into()));
+    let _ = carol.take_pending_batch();
 
-    let mut again = Replica::open(&home, &home.document());
+    let mut again = Replica::join(&home, carol);
+    again.rejoin(&home);
+    let carols = again.settle();
     again.catch_up(last);
+    alice.catch_up(carols);
+    for name in ["carol, ordered", "carol, after the drop"] {
+        assert_eq!(bodies_named(&again.doc, name), 1, "{name}");
+    }
     assert_eq!(
         again.doc.replicated_projection(),
         alice.doc.replicated_projection(),

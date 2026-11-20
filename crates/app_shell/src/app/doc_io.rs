@@ -312,6 +312,10 @@ impl PrintCadApp {
                 // A save still packing names the old file: it goes to the
                 // server that owns that file, not the new one.
                 self.send_every_save_packing();
+                self.session
+                    .connection
+                    .server
+                    .send(core_document::server::ClientMessage::Leave);
                 self.session.connection.server.flush();
                 self.session.connection.server = server;
                 self.session.connection.socket = socket;
@@ -335,8 +339,10 @@ impl PrintCadApp {
     }
 
     /// Gentle self-healing: when the connection is degraded, retry the
-    /// expected socket every few seconds. Also upgrades a DirectFiles
-    /// fallback to a real daemon once one can be spawned.
+    /// expected socket every few seconds, starting a daemon there when
+    /// none listens, and rejoin it (`DocumentSession::rejoin`): what the
+    /// old connection never answered goes again, and the tab reads its
+    /// file and tail back, so it holds what the server holds.
     pub(crate) fn maybe_reconnect_server(&mut self) {
         if self.session.connection.server.status().connected {
             return;
@@ -354,9 +360,14 @@ impl PrintCadApp {
         self.session.connection.last_reconnect = Some(std::time::Instant::now());
         match crate::app::server::connect(&self.session.connection.socket.clone()) {
             Ok(server) => {
-                self.session.connection.server = server;
-                self.session.connection_replaced();
-                app_log::info("Document server reconnected");
+                if self.session.rejoin(server) {
+                    app_log::info("Document server reconnected");
+                } else {
+                    app_log::warn(
+                        "Document server reconnected, but the file being opened was lost with \
+                         the old connection: open it again",
+                    );
+                }
             }
             Err(err) => {
                 tracing::debug!("server reconnect attempt failed: {err}");
@@ -555,8 +566,14 @@ impl PrintCadApp {
                         )
                     });
                 }
-                ServerMessage::Ops { actor, seq, ops } => {
-                    if self.session.connection.awaiting_open {
+                ServerMessage::Ops { seq, ops, .. } => {
+                    if self.session.connection.awaiting_open
+                        || self
+                            .session
+                            .connection
+                            .skip_through
+                            .is_some_and(|through| seq <= through)
+                    {
                         // The Opened reply's file and the tail after it
                         // already hold every batch heard before it.
                     } else if self.session.file.open_rx.is_some() {
@@ -565,15 +582,22 @@ impl PrintCadApp {
                         self.session
                             .connection
                             .held_remote_ops
-                            .push((actor, seq, ops));
+                            .push(crate::app::session::Heard::Ops { seq, ops });
                     } else {
-                        self.apply_remote_ops(actor, seq, ops);
+                        self.apply_remote_ops(seq, ops);
                     }
                 }
                 ServerMessage::Acked { seq } => {
-                    self.session.document.confirm_sent_ops();
-                    let connection = &mut self.session.connection;
-                    connection.server_seq = connection.server_seq.max(seq);
+                    if self.session.file.open_rx.is_some() {
+                        // An answer to an edit sent after the open: it
+                        // goes to the document being read, with the edit.
+                        self.session
+                            .connection
+                            .held_remote_ops
+                            .push(crate::app::session::Heard::Acked { seq });
+                    } else {
+                        self.confirm_sent(seq);
+                    }
                 }
                 ServerMessage::PresencePeer { actor, state } => {
                     self.session.connection.peer_presence.insert(actor, state);
@@ -581,11 +605,34 @@ impl PrintCadApp {
                 ServerMessage::PresenceGone { actor } => {
                     self.session.connection.peer_presence.remove(&actor);
                 }
-                ServerMessage::Opened { token, path, bytes } => {
+                ServerMessage::Opened {
+                    token,
+                    path,
+                    bytes,
+                    seq,
+                    unsaved_lost,
+                    recoverable,
+                } => {
                     if token != self.session.connection.load_epoch {
                         continue;
                     }
-                    self.session.connection.awaiting_open = false;
+                    if recoverable > 0 && !self.session.connection.rejoining {
+                        self.offer_unsaved_in_log(recoverable);
+                    }
+                    let connection = &mut self.session.connection;
+                    connection.awaiting_open = false;
+                    if connection.rejoining && unsaved_lost {
+                        // Its file and tail lack the unsaved edits this
+                        // tab holds: the tab keeps its own copy.
+                        connection.rejoining = false;
+                        connection.skip_through = Some(seq);
+                        connection.server_seq = connection.server_seq.max(seq);
+                        app_log::warn(
+                            "The document server restarted without the unsaved edits it held; \
+                             this tab keeps its own copy, so save it to keep them",
+                        );
+                        continue;
+                    }
                     self.start_document_parse(token, path, bytes);
                 }
                 ServerMessage::OpenFailed { token, path, error } => {
@@ -594,6 +641,14 @@ impl PrintCadApp {
                         continue;
                     }
                     self.session.connection.awaiting_open = false;
+                    if std::mem::take(&mut self.session.connection.rejoining) {
+                        app_log::warn(format!(
+                            "Could not read {} back from the document server ({error}); this \
+                             tab keeps its own copy",
+                            path.display()
+                        ));
+                        continue;
+                    }
                     app_log::error(format!(
                         "Failed to open document {}: {error}",
                         path.display()
@@ -706,13 +761,7 @@ impl PrintCadApp {
     /// this client's own batches with acks, so everything here is foreign.
     /// Marking dirty is apply-side policy: it is what makes this replica
     /// re-derive the geometry the peer's edit invalidated.
-    fn apply_remote_ops(
-        &mut self,
-        _actor: uuid::Uuid,
-        seq: u64,
-        ops: Vec<core_document::op::DocumentOp>,
-    ) {
-        use core_document::op::DocumentOp as Op;
+    fn apply_remote_ops(&mut self, seq: u64, ops: Vec<core_document::op::DocumentOp>) {
         let connection = &mut self.session.connection;
         connection.server_seq = connection.server_seq.max(seq);
         if ops.is_empty() {
@@ -724,7 +773,80 @@ impl PrintCadApp {
                  rolled back; if both touched the same thing, this copy may differ",
             );
         }
-        for op in &ops {
+        self.derive_imports(&ops);
+        // Per-user undo survives foreign edits: the journal holds only this
+        // user's gestures, and their inverses touch only what those touched.
+        app_log::info(format!("{} remote edit(s) applied", ops.len()));
+    }
+
+    /// The document's log holds `batches` of edits a session left unsaved:
+    /// offered back in a card, or brought back at once when the start
+    /// page's Recover opened the file.
+    fn offer_unsaved_in_log(&mut self, batches: u32) {
+        let file = &mut self.session.file;
+        if std::mem::take(&mut file.restore_unsaved_on_open) {
+            self.answer_unsaved_in_log(true);
+            return;
+        }
+        file.unsaved_in_log = Some(batches);
+        app_log::info(format!(
+            "This document's log holds {batches} unsaved edit(s) from a session that ended \
+             without saving them"
+        ));
+    }
+
+    /// The user's answer to the unsaved edits the document's log offered:
+    /// back into the document through the server, which sends them to
+    /// every copy, or let go.
+    pub(crate) fn answer_unsaved_in_log(&mut self, restore: bool) {
+        use core_document::server::ClientMessage;
+        self.session.file.unsaved_in_log = None;
+        self.session.connection.server.send(if restore {
+            ClientMessage::RestoreUnsaved
+        } else {
+            ClientMessage::DiscardUnsaved
+        });
+    }
+
+    /// Tell every tab's server the tab is done with its document, on the
+    /// way out once every tab's edits were saved or let go.
+    pub(crate) fn leave_servers(&mut self) {
+        self.for_each_tab(|app| app.session.leave_server());
+    }
+
+    /// The server placed this client's oldest unanswered batch at `seq`.
+    fn confirm_sent(&mut self, seq: u64) {
+        self.session.document.confirm_sent_ops();
+        let connection = &mut self.session.connection;
+        connection.server_seq = connection.server_seq.max(seq);
+    }
+
+    /// The tab's file read back on a new connection
+    /// (`DocumentSession::rejoin`) takes the document's place: the edits
+    /// this copy sent after the open, and those not yet sent, are applied
+    /// on top and stay unconfirmed, and the undo history, the view and
+    /// the selection stay as they were.
+    fn apply_rejoined_document(&mut self, document: Document) {
+        let mut next = opened(&self.registry, document);
+        let dirty = self.session.document.metadata().dirty();
+        let carried = self.session.document.carry_unconfirmed_to(&mut next);
+        if dirty {
+            next.mark_dirty();
+        }
+        self.session.document = next;
+        self.derive_imports(&carried);
+        app_log::info(format!(
+            "Read the document back from its server; {} edit(s) of yours still on their way",
+            carried.len()
+        ));
+    }
+
+    /// Imports among ops applied here that this copy did not run: the op
+    /// made the bodies, and their geometry is derived again from the bytes
+    /// it carries.
+    fn derive_imports(&mut self, ops: &[core_document::op::DocumentOp]) {
+        use core_document::op::DocumentOp as Op;
+        for op in ops {
             if let Op::ImportModel {
                 asset,
                 bytes,
@@ -764,9 +886,6 @@ impl PrintCadApp {
                 }
             }
         }
-        // Per-user undo survives foreign edits: the journal holds only this
-        // user's gestures, and their inverses touch only what those touched.
-        app_log::info(format!("{} remote edit(s) applied", ops.len()));
     }
 
     /// Tell the server what this user has selected, only when it changed.
@@ -839,11 +958,18 @@ impl PrintCadApp {
         }
         match job.result {
             Ok(document) => {
-                self.apply_opened_document(job.path, document);
-                for (actor, seq, ops) in
-                    std::mem::take(&mut self.session.connection.held_remote_ops)
-                {
-                    self.apply_remote_ops(actor, seq, ops);
+                if std::mem::take(&mut self.session.connection.rejoining) {
+                    self.apply_rejoined_document(document);
+                } else {
+                    self.apply_opened_document(job.path, document);
+                }
+                for heard in std::mem::take(&mut self.session.connection.held_remote_ops) {
+                    match heard {
+                        crate::app::session::Heard::Ops { seq, ops } => {
+                            self.apply_remote_ops(seq, ops);
+                        }
+                        crate::app::session::Heard::Acked { seq } => self.confirm_sent(seq),
+                    }
                 }
             }
             Err(err) => app_log::error(format!(
@@ -1059,7 +1185,8 @@ impl PrintCadApp {
     }
 
     /// Bring back a copy a crash left, as an untitled document in a tab
-    /// of its own: saving it says where it goes.
+    /// of its own: saving it says where it goes. Edits a document's log
+    /// holds come back by opening the document and restoring them.
     pub(crate) fn recover_document(&mut self, copy: PathBuf) {
         let Some(entry) = self
             .autosave
@@ -1070,6 +1197,12 @@ impl PrintCadApp {
         else {
             return;
         };
+        if entry.from_log {
+            self.autosave.recoverable.retain(|r| r.copy != copy);
+            self.open_document_at(copy);
+            self.session.file.restore_unsaved_on_open = true;
+            return;
+        }
         let document = crate::platform::read(&copy)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| Self::parse_document_bytes(&copy, bytes));
@@ -1113,9 +1246,18 @@ impl PrintCadApp {
         }
     }
 
-    /// Let a copy a crash left go.
+    /// Let a copy a crash left go, or the edits a document's log holds.
     pub(crate) fn discard_recovery(&mut self, copy: PathBuf) {
-        crate::app::recovery::remove(&copy);
+        if self
+            .autosave
+            .recoverable
+            .iter()
+            .any(|r| r.copy == copy && r.from_log)
+        {
+            doc_server::daemon::discard_unsaved_log(&copy);
+        } else {
+            crate::app::recovery::remove(&copy);
+        }
         self.autosave.recoverable.retain(|r| r.copy != copy);
     }
 

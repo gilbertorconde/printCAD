@@ -69,6 +69,25 @@ pub(crate) fn runtime_dir_for_logs() -> PathBuf {
     runtime_dir()
 }
 
+/// Where documents' op logs are kept: `PRINTCAD_OPLOG_DIR` when set, the
+/// application's data folder otherwise, which outlives a restart of the
+/// system, as the runtime folder does not.
+pub fn oplog_dir() -> PathBuf {
+    std::env::var_os("PRINTCAD_OPLOG_DIR")
+        .map(PathBuf::from)
+        .or_else(settings::oplog_dir)
+        .unwrap_or_else(|| runtime_dir().join("oplogs"))
+}
+
+/// The op log of the document at `document`: in [`oplog_dir`], keyed by a
+/// hash of its canonical path, as its socket is.
+pub fn oplog_path_for(document: &std::path::Path) -> PathBuf {
+    let canonical = document
+        .canonicalize()
+        .unwrap_or_else(|_| document.to_path_buf());
+    oplog_dir().join(format!("{:016x}.oplog.jsonl", path_key(&canonical)))
+}
+
 fn runtime_dir() -> PathBuf {
     local_ipc::runtime_dir()
 }

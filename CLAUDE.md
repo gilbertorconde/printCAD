@@ -161,7 +161,9 @@ hacks, no silently degraded feature). Instead:
   `$XDG_RUNTIME_DIR/printcad`, any number of clients, exits when the last
   leaves) plus the
   `DirectFiles` fallback). The daemon stores opaque `.prtcad` bytes and op
-  envelopes (`<file>.oplog.jsonl`), never deserializing a `Document`. Ops
+  envelopes (`doc_server::oplog_path_for`: the data folder's `oplogs/`,
+  keyed by the document's path; `PRINTCAD_OPLOG_DIR` overrides it, as the
+  daemon tests do), never deserializing a `Document`. Ops
   recorded before a document has a file go to `unhomed-<socket hash>.oplog.jsonl`,
   keyed by the socket, and an untitled tab's socket carries the tab's id
   (`socket_path_for_untitled(tab)`), so two unsaved documents never share
@@ -185,7 +187,15 @@ hacks, no silently degraded feature). Instead:
   copy put in a tab sends `Rebase`, which the daemon refuses while other
   clients are on it. A save says which ops its
   snapshot holds (`seen_seq`, `sent_batches`) and the rest stay in the
-  tail. **Every exit path must call
+  tail. A lost connection rejoins (`DocumentSession::rejoin`): the
+  unconfirmed batches go again under their ids (the daemon answers an id
+  it already ordered without ordering it twice), then the tab reads its
+  file and tail back and `Document::carry_unconfirmed_to` puts what it
+  sent meanwhile on top; the undo journal stays. A tab done with its
+  document sends `Leave` (close, quit, server switch); a daemon whose last
+  client went without it keeps the unsaved tail in the log, offered back
+  on the next open (`Opened::recoverable`, `RestoreUnsaved`,
+  `DiscardUnsaved`) and on the start page. **Every exit path must call
   `wait_for_all_document_saves()`** (every tab, each flushing its server)
   or a write in flight is abandoned mid-file.
   `PRINTCAD_SERVERD` overrides the daemon binary for dev.

@@ -689,6 +689,7 @@ impl PrintCadApp {
                                 .safety
                                 .newer_notice
                                 .then(|| self.session.file.safety.newer_text()),
+                            unsaved_in_log: self.session.file.unsaved_in_log,
                             save_over,
                             mesh_units: self.session.file.mesh_units_pending.as_ref().map(|path| {
                                 (

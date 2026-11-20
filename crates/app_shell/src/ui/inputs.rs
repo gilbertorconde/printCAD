@@ -214,6 +214,9 @@ pub struct FileMarks<'a> {
     pub read_only_links: &'a [core_document::BodyId],
     /// A newer printCAD wrote the file: what the card says, while it is up.
     pub newer_notice: Option<String>,
+    /// Batches of unsaved edits the document's log offers back, while the
+    /// card asking is up.
+    pub unsaved_in_log: Option<u32>,
     /// Saving over a file another version wrote, waiting for an answer.
     pub save_over: Option<crate::app::file_safety::SaveOverQuestion>,
     /// An STL waiting for its units: its file name and the answer offered.

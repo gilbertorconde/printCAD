@@ -1269,6 +1269,7 @@ dependencies = [
  "local_ipc",
  "serde",
  "serde_json",
+ "settings",
  "sha2 0.11.0",
  "tracing",
  "tracing-subscriber",

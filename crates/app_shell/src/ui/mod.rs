@@ -494,6 +494,28 @@ impl UiLayer {
         }
     }
 
+    /// The card offering back the unsaved edits the document's log holds,
+    /// above the cards already up.
+    fn unsaved_log_notice(
+        ctx: &Context,
+        viewport: egui::Rect,
+        batches: u32,
+        below: &[&str],
+        commands: &mut Vec<UiCommand>,
+    ) {
+        let lift: f32 = below
+            .iter()
+            .filter_map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(*id))))
+            .map(|card| card.height() + ui_kit::tokens::SPACE_2)
+            .sum();
+        let (restore, discard) = hud::draw_unsaved_log_notice(ctx, viewport, lift, batches);
+        if restore {
+            commands.push(UiCommand::RestoreUnsaved);
+        } else if discard {
+            commands.push(UiCommand::DiscardUnsaved);
+        }
+    }
+
     /// Whether `chord` runs a command while `active` is the workbench, as
     /// the keys stood at the last frame.
     pub fn is_shortcut(&self, chord: core_document::Chord, active: &WorkbenchId) -> bool {

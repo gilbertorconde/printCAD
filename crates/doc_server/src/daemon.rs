@@ -1,8 +1,9 @@
 //! The daemon: one document, one socket, N clients, no `Document` parsing.
 //!
 //! Responsibilities: own the document's file (reads on `OpenDocument`,
-//! atomic writes on `SaveDocument`), append every op batch to a sidecar log
-//! (`<file>.oplog.jsonl`: one JSON envelope per line), and put the clients'
+//! atomic writes on `SaveDocument`), append every op batch to the
+//! document's log (`crate::oplog_path_for`: one JSON envelope per line, in
+//! the application's data folder), and put the clients'
 //! batches in **one order**: under a single lock each batch gets the next
 //! sequence number, goes into the log and the unsaved tail, and is queued
 //! for every client, as `Ops` to the others and `Acked` to its sender. Every
@@ -21,9 +22,14 @@
 //!
 //! The log marks what the file holds: each batch's lines carry the batch's
 //! id, and every save (and every time the log gets its home) adds a line
-//! naming the batches still unsaved. A daemon that starts where one died
-//! reads its document from `<socket>.home` and its unsaved tail from the
-//! log, so a client joining it still gets the edits nobody saved.
+//! naming the batches still unsaved. When the last client leaves, it names
+//! none if that client said it was done (`Leave`: what it held unsaved it
+//! let go); a client that went without a word (it crashed) leaves the tail
+//! named. The tail a log holds when a daemon takes up its document (one
+//! that died left `<socket>.home` naming it, or a client opens it) is not
+//! put back by itself: it waits as the recoverable edits, which an open
+//! says it has, and comes back into the order on `RestoreUnsaved` (a
+//! client rejoining sends that first) or goes on `DiscardUnsaved`.
 
 use local_ipc::{Listener as UnixListener, Stream as UnixStream};
 use std::collections::HashMap;
@@ -64,7 +70,29 @@ struct State {
     /// joining client gets after the file.
     tail: Vec<Logged>,
     clients: HashMap<u64, Client>,
+    /// The batches already ordered, by id, with their sequence number
+    /// (`None` for one a daemon before this one ordered, read from the
+    /// log), so a batch sent again is answered rather than ordered twice.
+    ordered: HashMap<uuid::Uuid, Option<u64>>,
+    /// `ordered`'s ids, oldest first, so it forgets the oldest past
+    /// [`REMEMBERED_BATCHES`].
+    ordered_ids: std::collections::VecDeque<uuid::Uuid>,
+    /// This daemon started where another stopped and could not read back
+    /// the unsaved edits that one held; a save or a rebase ends it.
+    unsaved_lost: bool,
+    /// The unsaved edits the log held when this daemon took up its
+    /// document, which no client has asked back yet. Marks keep naming
+    /// them until one is asked for them (`RestoreUnsaved`), lets them go
+    /// (`DiscardUnsaved`) or saves.
+    recoverable: Vec<Logged>,
+    /// The last client to leave said it was done with the document.
+    last_left_cleanly: bool,
 }
+
+/// How many batch ids a daemon remembers to know a batch sent again. A
+/// client sends again only what was unanswered when its connection went,
+/// so the newest few thousand are what matters.
+const REMEMBERED_BATCHES: usize = 1 << 16;
 
 struct Client {
     actor: uuid::Uuid,
@@ -77,6 +105,8 @@ struct Client {
     socket: UnixStream,
     /// Batches this client has sent.
     batches: u64,
+    /// It said it was done with the document (`Leave`).
+    done: bool,
 }
 
 impl Client {
@@ -146,9 +176,15 @@ impl State {
         self.disconnect(stalled, limit);
     }
 
+    /// Queue `message` for every client.
+    fn tell_all(&mut self, limit: usize, message: impl Fn() -> ServerMessage) {
+        self.tell_others(u64::MAX, limit, message);
+    }
+
     /// Let `id` go: out of the document's clients, its peers told.
     fn leave(&mut self, id: u64, limit: usize) {
         if let Some(client) = self.clients.remove(&id) {
+            self.last_left_cleanly = client.done;
             let actor = client.actor;
             self.announce_peers(limit);
             self.tell_others(id, limit, || ServerMessage::PresenceGone { actor });
@@ -172,11 +208,26 @@ impl State {
         }
     }
 
-    /// The ids of the batches still unsaved, for the log's mark; an empty
-    /// batch has no lines in the log and changes nothing, so it is left out.
+    /// Remember that batch `id` was ordered, at `seq` when this daemon
+    /// ordered it.
+    fn remember(&mut self, id: uuid::Uuid, seq: Option<u64>) {
+        if self.ordered.insert(id, seq).is_none() {
+            self.ordered_ids.push_back(id);
+        }
+        while self.ordered_ids.len() > REMEMBERED_BATCHES {
+            if let Some(old) = self.ordered_ids.pop_front() {
+                self.ordered.remove(&old);
+            }
+        }
+    }
+
+    /// The ids of the batches still unsaved, for the log's mark: the
+    /// recoverable ones, then the tail. An empty batch has no lines in the
+    /// log and changes nothing, so it is left out.
     fn unsaved(&self) -> Vec<uuid::Uuid> {
-        self.tail
+        self.recoverable
             .iter()
+            .chain(&self.tail)
             .filter(|logged| !logged.ops.is_empty())
             .map(|logged| logged.id)
             .collect()
@@ -252,6 +303,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                 behind,
                 socket,
                 batches: 0,
+                done: false,
             },
         );
         state.announce_peers(limit);
@@ -265,13 +317,40 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
             ClientMessage::Hello { .. } => {
                 tracing::warn!("repeated Hello mid-session; ignoring");
             }
-            ClientMessage::Ops(ops) => order_batch(hub, id, actor, ops),
+            ClientMessage::Ops { batch, ops } => order_batch(hub, id, actor, batch, ops),
             ClientMessage::Presence(state) => {
                 // Now-state, not history: relayed, never logged.
                 lock(&hub.state).tell_others(id, limit, || ServerMessage::PresencePeer {
                     actor,
                     state: state.clone(),
                 });
+            }
+            ClientMessage::Leave => {
+                if let Some(client) = lock(&hub.state).clients.get_mut(&id) {
+                    client.done = true;
+                }
+            }
+            ClientMessage::RestoreUnsaved => {
+                let mut state = lock(&hub.state);
+                for mut logged in std::mem::take(&mut state.recoverable) {
+                    state.seq += 1;
+                    logged.seq = state.seq;
+                    state.remember(logged.id, Some(logged.seq));
+                    let (actor, seq) = (logged.actor, logged.seq);
+                    state.tell_all(limit, || ServerMessage::Ops {
+                        actor,
+                        seq,
+                        ops: logged.ops.clone(),
+                    });
+                    state.tail.push(logged);
+                }
+            }
+            ClientMessage::DiscardUnsaved => {
+                let mut state = lock(&hub.state);
+                if !state.recoverable.is_empty() {
+                    state.recoverable.clear();
+                    mark_unsaved(&state.unsaved(), home_document().as_deref());
+                }
             }
             ClientMessage::Rebase => {
                 let mut state = lock(&hub.state);
@@ -287,6 +366,8 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                         tracing::error!("op log truncate failed: {err}");
                     }
                     state.tail.clear();
+                    state.recoverable.clear();
+                    state.unsaved_lost = false;
                 }
             }
             ClientMessage::SaveDocument {
@@ -302,6 +383,9 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                 let reply = match written {
                     Ok(()) => {
                         set_oplog_home(&path);
+                        // The file now holds what this client chose; edits
+                        // left from before describe the file it replaced.
+                        state.recoverable.clear();
                         // What the snapshot holds leaves the tail: the
                         // others' batches this client had applied and its
                         // own sent before the snapshot. The rest, sent
@@ -314,6 +398,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                             None => false,
                         });
                         mark_unsaved(&state.unsaved(), Some(&path));
+                        state.unsaved_lost = false;
                         ServerMessage::SaveCompleted { path, at_seq }
                     }
                     Err(err) => ServerMessage::SaveFailed {
@@ -326,18 +411,28 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
             ClientMessage::OpenDocument { path, token } => {
                 let _file = lock(&hub.file);
                 let read = std::fs::read(&path);
-                let state = lock(&hub.state);
+                let mut state = lock(&hub.state);
                 match read {
                     Ok(bytes) => {
                         if set_oplog_home(&path) {
-                            mark_unsaved(&state.unsaved(), Some(&path));
+                            take_up_unsaved(&mut state, &path);
                         }
                         // The file is the saved past; the tail is the
                         // unsaved present. Queued together under the lock
                         // that orders batches: every batch heard before
                         // `Opened` is in one of them, every one after is
                         // newer than both.
-                        state.reply(id, ServerMessage::Opened { token, path, bytes });
+                        state.reply(
+                            id,
+                            ServerMessage::Opened {
+                                token,
+                                path,
+                                bytes,
+                                seq: state.seq,
+                                unsaved_lost: state.unsaved_lost,
+                                recoverable: state.recoverable.len() as u32,
+                            },
+                        );
                         for logged in &state.tail {
                             state.reply(
                                 id,
@@ -369,10 +464,12 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
 /// Give a client's batch its place in the document's order: the next
 /// sequence number, the log, the tail and every client's queue, all under
 /// one lock, so no two clients ever hear two batches in different orders.
-fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, ops: Vec<DocumentOp>) {
+/// A batch already ordered (sent again by a client whose connection went
+/// before its answer came) is only answered, with its place when this
+/// daemon ordered it.
+fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, batch_id: uuid::Uuid, ops: Vec<DocumentOp>) {
     let mut state = lock(&hub.state);
-    state.seq += 1;
-    let seq = state.seq;
+    let limit = hub.queue_limit;
     let batch = match state.clients.get_mut(&id) {
         Some(client) => {
             client.batches += 1;
@@ -380,11 +477,17 @@ fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, ops: Vec<DocumentOp>) {
         }
         None => return,
     };
-    let batch_id = uuid::Uuid::new_v4();
+    if let Some(&known) = state.ordered.get(&batch_id) {
+        let seq = known.unwrap_or(state.seq);
+        state.tell(id, limit, ServerMessage::Acked { seq });
+        return;
+    }
+    state.seq += 1;
+    let seq = state.seq;
+    state.remember(batch_id, Some(seq));
     if let Err(err) = append_ops(actor, batch_id, &ops) {
         tracing::error!("op log append failed: {err}");
     }
-    let limit = hub.queue_limit;
     let stalled: Vec<u64> = state
         .clients
         .iter()
@@ -439,6 +542,12 @@ fn unhomed_oplog() -> PathBuf {
 }
 
 fn document_oplog(document: &Path) -> PathBuf {
+    crate::oplog_path_for(document)
+}
+
+/// Where a document's log was kept before logs had a folder of their own:
+/// beside the document.
+fn legacy_oplog(document: &Path) -> PathBuf {
     if document
         .extension()
         .is_some_and(|ext| ext == "gz" || ext == "zst")
@@ -451,57 +560,190 @@ fn document_oplog(document: &Path) -> PathBuf {
     }
 }
 
-/// Home the op log beside `document`; true when it moved there now.
+/// The document this daemon's log is homed for.
+static HOME_DOCUMENT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn home_document() -> Option<PathBuf> {
+    lock(&HOME_DOCUMENT).clone()
+}
+
+/// Home the op log for `document`; true when it moved there now. Taken
+/// under the log's write lock, so no append lands in the unhomed log
+/// after its lines were carried over. A log still beside the document
+/// moves into place first, once.
 fn set_oplog_home(document: &Path) -> bool {
+    let _guard = lock(&OPLOG_WRITE);
     let home = document_oplog(document);
     let mut slot = lock(&OPLOG_PATH);
     if slot.as_deref() == Some(home.as_path()) {
         return false;
     }
     remember_home(document);
-    // Ops recorded before the document had a file live in the unhomed log;
-    // carry them over so the document's history starts at its beginning,
-    // not at its first save.
-    let orphan = unhomed_oplog();
-    if let Ok(text) = std::fs::read_to_string(&orphan)
-        && !text.is_empty()
+    *lock(&HOME_DOCUMENT) = Some(document.to_path_buf());
+    if let Some(dir) = home.parent()
+        && let Err(err) = std::fs::create_dir_all(dir)
     {
-        let appended = std::fs::OpenOptions::new()
+        tracing::warn!("the op log's folder {} was not made: {err}", dir.display());
+    }
+    adopt_legacy_log(&legacy_oplog(document), &home);
+    match serde_json::to_vec(document) {
+        Ok(text) => {
+            if let Err(err) = write_atomically(&home.with_extension("document"), &text) {
+                tracing::warn!("the op log's document was not noted: {err}");
+            }
+        }
+        Err(err) => tracing::warn!("the op log's document cannot be noted: {err}"),
+    }
+    // Ops recorded before the document had a file live in the unhomed log;
+    // carry them over, oldest generation first, so the document's history
+    // starts at its beginning, not at its first save.
+    let orphan = unhomed_oplog();
+    let mut sources = generations(&orphan);
+    sources.push(orphan.clone());
+    let mut carried = Ok(());
+    for source in &sources {
+        let Ok(text) = std::fs::read(source) else {
+            continue;
+        };
+        carried = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&home)
-            .and_then(|mut file| file.write_all(text.as_bytes()));
-        match appended {
-            Ok(()) => {
-                // Gone rather than emptied: this daemon's history has a home
-                // now, and a file left behind is one more thing to explain.
-                let _ = std::fs::remove_file(&orphan);
-                // The log's blob markers reference the unhomed store;
-                // the blobs move with the lines they back.
-                let orphan_blobs = orphan.with_extension("blobs");
-                let home_blobs = home.with_extension("blobs");
-                if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
-                    let moved = std::fs::create_dir_all(&home_blobs).and_then(|()| {
-                        entries.flatten().try_for_each(|entry| {
-                            std::fs::rename(entry.path(), home_blobs.join(entry.file_name()))
-                        })
-                    });
-                    match moved {
-                        Ok(()) => {
-                            let _ = std::fs::remove_dir(&orphan_blobs);
-                        }
-                        Err(err) => tracing::warn!(
-                            "the op log's blobs did not all move to {}: {err}",
-                            home_blobs.display()
-                        ),
+            .and_then(|mut file| file.write_all(&text));
+        if carried.is_err() {
+            break;
+        }
+    }
+    match carried {
+        Ok(()) => {
+            // Gone rather than emptied: this daemon's history has a home
+            // now, and a file left behind is one more thing to explain.
+            for source in &sources {
+                let _ = std::fs::remove_file(source);
+            }
+            // The log's blob markers reference the unhomed store;
+            // the blobs move with the lines they back.
+            let orphan_blobs = orphan.with_extension("blobs");
+            let home_blobs = home.with_extension("blobs");
+            if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
+                let moved = std::fs::create_dir_all(&home_blobs).and_then(|()| {
+                    entries.flatten().try_for_each(|entry| {
+                        std::fs::rename(entry.path(), home_blobs.join(entry.file_name()))
+                    })
+                });
+                match moved {
+                    Ok(()) => {
+                        let _ = std::fs::remove_dir(&orphan_blobs);
                     }
+                    Err(err) => tracing::warn!(
+                        "the op log's blobs did not all move to {}: {err}",
+                        home_blobs.display()
+                    ),
                 }
             }
-            Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
         }
+        Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
     }
     *slot = Some(home);
     true
+}
+
+/// Move a log kept beside its document, with its generations and blobs,
+/// to `home`, unless a log is there already.
+fn adopt_legacy_log(legacy: &Path, home: &Path) {
+    if std::fs::symlink_metadata(legacy).is_err() || std::fs::symlink_metadata(home).is_ok() {
+        return;
+    }
+    let mut moves: Vec<(PathBuf, PathBuf)> = generations(legacy)
+        .into_iter()
+        .filter_map(|old| {
+            let number = old.extension()?.to_str()?.to_owned();
+            Some((old, home.with_extension(format!("jsonl.{number}"))))
+        })
+        .collect();
+    moves.push((legacy.to_path_buf(), home.to_path_buf()));
+    let blobs = legacy.with_extension("blobs");
+    if let Ok(entries) = std::fs::read_dir(&blobs) {
+        let home_blobs = home.with_extension("blobs");
+        if let Err(err) = std::fs::create_dir_all(&home_blobs) {
+            tracing::warn!("the op log's blobs have nowhere to go: {err}");
+            return;
+        }
+        moves.extend(
+            entries
+                .flatten()
+                .map(|entry| (entry.path(), home_blobs.join(entry.file_name()))),
+        );
+    }
+    for (from, to) in moves {
+        // Across file systems a move is a copy and a removal.
+        let moved = std::fs::rename(&from, &to)
+            .or_else(|_| std::fs::copy(&from, &to).and_then(|_| std::fs::remove_file(&from)));
+        if let Err(err) = moved {
+            tracing::warn!("{} did not move to {}: {err}", from.display(), to.display());
+        }
+    }
+    let _ = std::fs::remove_dir(&blobs);
+    tracing::info!(
+        from = %legacy.display(),
+        to = %home.display(),
+        "moved a document's op log into the op log folder"
+    );
+}
+
+/// The log's rotated generations, oldest first: `<log>.1`, `<log>.2`, ...
+fn generations(log: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name)) = (log.parent(), log.file_name()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{}.", name.to_string_lossy());
+    let mut found: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let file = entry.file_name();
+            let number = file.to_str()?.strip_prefix(&prefix)?.parse().ok()?;
+            Some((number, entry.path()))
+        })
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+/// How many rotated generations a log keeps at most: past this the oldest
+/// go, and with them any unsaved edits they held.
+const MAX_GENERATIONS: usize = 16;
+
+/// Start a new generation: the live log takes the next number.
+fn rotate(log: &Path) {
+    let older = generations(log);
+    let next = older
+        .last()
+        .and_then(|path| path.extension()?.to_str()?.parse::<u64>().ok())
+        .map_or(1, |n| n + 1);
+    if let Err(err) = std::fs::rename(log, log.with_extension(format!("jsonl.{next}"))) {
+        tracing::warn!("the op log did not rotate, so it grows past its cap: {err}");
+        return;
+    }
+    let over = (older.len() + 1).saturating_sub(MAX_GENERATIONS);
+    if over > 0 {
+        tracing::warn!(
+            "the op log passed {MAX_GENERATIONS} generations; the oldest go, and a restart \
+             may not restore every unsaved edit"
+        );
+    }
+    for stale in older.iter().take(over) {
+        let _ = std::fs::remove_file(stale);
+    }
+}
+
+/// Take away every rotated generation: nothing before the live log is
+/// needed to restore the unsaved edits.
+fn drop_generations(log: &Path) {
+    for generation in generations(log) {
+        let _ = std::fs::remove_file(generation);
+    }
 }
 
 fn oplog_path() -> PathBuf {
@@ -514,9 +756,12 @@ fn oplog_path() -> PathBuf {
 /// any parameter payload.
 const BLOB_EXTRACT_THRESHOLD: usize = 256 * 1024;
 
-/// The log rotates once it passes this size; one previous generation is
-/// kept (`.oplog.jsonl.1`).
-const OPLOG_ROTATE_BYTES: u64 = 64 * 1024 * 1024;
+/// The log rotates once it passes this size, unless the daemon is started
+/// with another `--log-bytes`.
+pub const DEFAULT_LOG_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The size this daemon's log rotates at.
+static LOG_BYTES: AtomicU64 = AtomicU64::new(DEFAULT_LOG_BYTES);
 
 fn append_ops(
     actor: uuid::Uuid,
@@ -530,10 +775,8 @@ fn append_ops(
     }
     // Rotation before append: a single import op can be large, but the cap
     // is about unbounded sessions, not about splitting one op.
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() > OPLOG_ROTATE_BYTES)
-        && let Err(err) = std::fs::rename(&path, path.with_extension("jsonl.1"))
-    {
-        tracing::warn!("the op log did not rotate, so it grows past its cap: {err}");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_BYTES.load(Ordering::Relaxed)) {
+        rotate(&path);
     }
     let blob_dir = path.with_extension("blobs");
     let mut file = std::fs::OpenOptions::new()
@@ -603,6 +846,7 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 fn truncate_oplog() -> std::io::Result<()> {
     let _guard = lock(&OPLOG_WRITE);
     let path = oplog_path();
+    drop_generations(&path);
     if path.exists() {
         std::fs::write(path, b"")?;
     }
@@ -650,10 +894,15 @@ fn file_stamp(document: &Path) -> Option<serde_json::Value> {
 
 /// Add a mark to the log: the batches still unsaved (every batch logged
 /// before this line and not named here is in the file), with the file's
-/// stamp.
+/// stamp. A mark naming none leaves the rotated generations nothing to
+/// restore, so they go.
 fn mark_unsaved(unsaved: &[uuid::Uuid], document: Option<&Path>) {
     let _guard = lock(&OPLOG_WRITE);
-    let path = oplog_path();
+    append_mark(&oplog_path(), unsaved, document);
+}
+
+/// [`mark_unsaved`] on the log at `path`.
+fn append_mark(path: &Path, unsaved: &[uuid::Uuid], document: Option<&Path>) {
     let mark = serde_json::json!({
         "v": core_document::op::OP_PROTOCOL_VERSION,
         "unsaved": unsaved,
@@ -662,11 +911,101 @@ fn mark_unsaved(unsaved: &[uuid::Uuid], document: Option<&Path>) {
     let written = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
         .and_then(|mut file| writeln!(file, "{mark}"));
-    if let Err(err) = written {
-        tracing::error!("the op log's unsaved mark was not written: {err}");
+    match written {
+        Ok(()) if unsaved.is_empty() => drop_generations(path),
+        Ok(()) => {}
+        Err(err) => tracing::error!("the op log's unsaved mark was not written: {err}"),
     }
+}
+
+/// A document whose log ends with edits a session left unsaved, while no
+/// daemon serves it: what the start page offers back.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnsavedLog {
+    pub document: PathBuf,
+    /// When the log was last written, in milliseconds since the Unix epoch.
+    pub modified_ms: u64,
+}
+
+/// The documents whose logs in [`crate::oplog_dir`] end with unsaved edits.
+pub fn unsaved_logs() -> Vec<UnsavedLog> {
+    unsaved_logs_in(&crate::oplog_dir())
+}
+
+/// [`unsaved_logs`] in the log folder `dir`: each log is found by the note
+/// naming its document (`<key>.oplog.document`), and what its last line
+/// says (an edit, or a mark naming some unsaved) is enough. Opening the
+/// document reads the log whole and says what can come back.
+pub fn unsaved_logs_in(dir: &Path) -> Vec<UnsavedLog> {
+    let mut found: Vec<UnsavedLog> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|note| note.to_string_lossy().ends_with(".oplog.document"))
+        .filter_map(|note| {
+            let document: PathBuf = serde_json::from_slice(&std::fs::read(&note).ok()?).ok()?;
+            let log = note.with_extension("jsonl");
+            let modified = std::fs::metadata(&log).ok()?.modified().ok()?;
+            (document.is_file() && log_ends_unsaved(&log) && !served(&document)).then(|| {
+                UnsavedLog {
+                    document,
+                    modified_ms: modified
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_millis() as u64),
+                }
+            })
+        })
+        .collect();
+    found.sort_by_key(|log| std::cmp::Reverse(log.modified_ms));
+    found
+}
+
+/// Whether the log's last line leaves edits unsaved: an edit, or a mark
+/// naming some. Only the end of the log is read.
+fn log_ends_unsaved(log: &Path) -> bool {
+    use std::io::{Read as _, Seek as _};
+    let Ok(mut file) = std::fs::File::open(log) else {
+        return false;
+    };
+    let len = file.metadata().map_or(0, |m| m.len());
+    let mut end = Vec::new();
+    if file
+        .seek(std::io::SeekFrom::Start(len.saturating_sub(1 << 20)))
+        .and_then(|_| file.read_to_end(&mut end))
+        .is_err()
+    {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&end);
+    let Some(last) = text.lines().rev().find(|line| !line.trim().is_empty()) else {
+        return false;
+    };
+    match serde_json::from_str::<serde_json::Value>(last) {
+        Ok(line) if line.get("unsaved").is_some() => line["unsaved"]
+            .as_array()
+            .is_some_and(|ids| !ids.is_empty()),
+        Ok(line) => line.get("op").is_some(),
+        // A line longer than what was read: an edit's.
+        Err(_) => true,
+    }
+}
+
+/// Whether a daemon serves `document` now.
+fn served(document: &Path) -> bool {
+    UnixStream::connect(crate::socket_path_for(document)).is_ok()
+}
+
+/// Let go of the unsaved edits `document`'s log holds, while no daemon
+/// serves it: the start page's Discard.
+pub fn discard_unsaved_log(document: &Path) {
+    let log = document_oplog(document);
+    if served(document) || std::fs::symlink_metadata(&log).is_err() {
+        return;
+    }
+    append_mark(&log, &[], Some(document));
 }
 
 /// A batch read back from the log.
@@ -676,17 +1015,13 @@ struct Restored {
     ops: Vec<DocumentOp>,
 }
 
-/// The batches `log` holds that `document` does not: those its last mark
-/// names, then every batch after it (every batch, before any mark). None
-/// when the log cannot say: a line no batch id names where the tail would
-/// be (a daemon that marks nothing wrote it, so a save may have taken
-/// it), a file changed since the mark, a batch it names that the log no
-/// longer holds (rotated out of both generations), a blob or an op that
-/// does not read. The previous generation is read first, so a tail the
-/// log rotated over once is still found.
-fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
+/// Every line of `log` that reads, its generations first, so a tail the
+/// log rotated over is still found.
+fn read_log(log: &Path) -> Vec<serde_json::Value> {
     let mut lines = Vec::new();
-    for generation in [log.with_extension("jsonl.1"), log.to_path_buf()] {
+    let mut sources = generations(log);
+    sources.push(log.to_path_buf());
+    for generation in sources {
         if let Ok(text) = std::fs::read_to_string(&generation) {
             lines.extend(
                 text.lines()
@@ -694,6 +1029,33 @@ fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
             );
         }
     }
+    lines
+}
+
+/// The ids of the batches the log's lines hold, oldest first.
+fn logged_batches(lines: &[serde_json::Value]) -> Vec<uuid::Uuid> {
+    let mut ids: Vec<uuid::Uuid> = lines
+        .iter()
+        .filter_map(|line| line["batch"].as_str()?.parse().ok())
+        .collect();
+    ids.dedup();
+    ids
+}
+
+/// The batches the log's `lines` hold that `document` does not: those its
+/// last mark names, then every batch after it (every batch, before any
+/// mark). None when the log cannot say: a line no batch id names where
+/// the tail would be (a daemon that marks nothing wrote it, so a save may
+/// have taken it), a file changed since the mark, a batch it names that
+/// the log no longer holds (its generation dropped past the cap), a blob
+/// or an op that does not read. A batch whose lines come again later
+/// (sent once more to a daemon that did not know it had been logged) is
+/// taken once, where it first stands.
+fn restore_tail_from(
+    lines: &[serde_json::Value],
+    log: &Path,
+    document: &Path,
+) -> Option<Vec<Restored>> {
     let mark = lines.iter().rposition(|line| line.get("unsaved").is_some());
     let (listed, after) = match mark {
         Some(at) => {
@@ -714,6 +1076,7 @@ fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
     let blob_dir = log.with_extension("blobs");
     let mut tail: Vec<Restored> = Vec::new();
     let mut found = std::collections::HashSet::new();
+    let mut taken = std::collections::HashSet::new();
     for (at, line) in lines.iter().enumerate() {
         if line.get("op").is_none() {
             continue;
@@ -732,6 +1095,10 @@ fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
             );
             return None;
         };
+        let current = tail.last().map(|last| last.id);
+        if current != Some(batch) && !taken.insert(batch) {
+            continue;
+        }
         let mut op = line["op"].clone();
         if !inline_blobs(&mut op, &blob_dir) {
             tracing::warn!("a blob the op log names is missing; no unsaved tail");
@@ -796,42 +1163,103 @@ fn inline_blobs(value: &mut serde_json::Value, blob_dir: &Path) -> bool {
 /// document's log home and the unsaved tail the log holds, numbered from
 /// the start of this daemon's order.
 fn resume(state: &mut State, note: &Path) {
-    let Some(document) = noted_home(note) else {
+    let Some(document) = noted_home(note).filter(|document| document.is_file()) else {
+        // A daemon on a document with no file yet writes on where the one
+        // before it stopped; what it ordered is in the log already.
+        for id in logged_batches(&read_log(&oplog_path())) {
+            state.remember(id, None);
+        }
         return;
     };
-    if !document.is_file() {
-        return;
+    let log = document_oplog(&document);
+    let lines = read_log(&log);
+    for id in logged_batches(&lines) {
+        state.remember(id, None);
     }
-    let tail = restore_tail(&document_oplog(&document), &document).unwrap_or_default();
-    for batch in tail {
-        state.seq += 1;
-        state.tail.push(Logged {
-            seq: state.seq,
+    let tail = restore_tail_from(&lines, &log, &document).unwrap_or_else(|| {
+        state.unsaved_lost = true;
+        Vec::new()
+    });
+    state.recoverable = recoverable(tail);
+    set_oplog_home(&document);
+    mark_unsaved(&state.unsaved(), Some(&document));
+    tracing::info!(
+        document = %document.display(),
+        unsaved = state.recoverable.len(),
+        "took up a document whose daemon stopped"
+    );
+}
+
+/// Batches read back from the log, as edits waiting to be asked back.
+fn recoverable(tail: Vec<Restored>) -> Vec<Logged> {
+    tail.into_iter()
+        .map(|batch| Logged {
+            seq: 0,
             id: batch.id,
             actor: batch.actor,
             client: None,
             batch: 0,
             ops: batch.ops,
-        });
-    }
-    set_oplog_home(&document);
-    mark_unsaved(&state.unsaved(), Some(&document));
-    tracing::info!(
-        document = %document.display(),
-        unsaved = state.tail.len(),
-        "resumed a document whose daemon stopped"
-    );
+        })
+        .collect()
 }
 
-/// Run the daemon on `socket` with the default queue limit.
+/// The log just got its home on an open: the unsaved edits it holds from a
+/// session that ended without saving them wait to be asked back, and the
+/// log is marked.
+fn take_up_unsaved(state: &mut State, document: &Path) {
+    let log = document_oplog(document);
+    let lines = read_log(&log);
+    for id in logged_batches(&lines) {
+        state.remember(id, None);
+    }
+    let known: std::collections::HashSet<uuid::Uuid> = state.unsaved().into_iter().collect();
+    let tail = restore_tail_from(&lines, &log, document).unwrap_or_default();
+    state.recoverable = recoverable(
+        tail.into_iter()
+            .filter(|batch| !known.contains(&batch.id))
+            .collect(),
+    );
+    if !state.recoverable.is_empty() {
+        tracing::info!(
+            document = %document.display(),
+            unsaved = state.recoverable.len(),
+            "the document's log holds edits a session left unsaved"
+        );
+    }
+    mark_unsaved(&state.unsaved(), Some(document));
+}
+
+/// What a daemon holds to: how far a client may fall behind and how
+/// large its op log grows before it rotates.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// Messages a client may have queued and unwritten before it is
+    /// disconnected.
+    pub queue: usize,
+    /// Bytes the op log holds before it rotates to a new generation.
+    pub log_bytes: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            queue: DEFAULT_QUEUE_LIMIT,
+            log_bytes: DEFAULT_LOG_BYTES,
+        }
+    }
+}
+
+/// Run the daemon on `socket` with the default limits.
 pub fn run(socket: &Path) -> std::io::Result<()> {
-    run_with(socket, DEFAULT_QUEUE_LIMIT)
+    run_with(socket, Limits::default())
 }
 
 /// Run the daemon on `socket`: accept clients, serve each on its own
-/// thread, exit when the last one leaves. A client with more than
-/// `queue_limit` messages unwritten is disconnected.
-pub fn run_with(socket: &Path, queue_limit: usize) -> std::io::Result<()> {
+/// thread, exit when the last one leaves.
+pub fn run_with(socket: &Path, limits: Limits) -> std::io::Result<()> {
+    let queue_limit = limits.queue;
+    LOG_BYTES.store(limits.log_bytes.max(1), Ordering::Relaxed);
     if let Some(parent) = socket.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -876,10 +1304,18 @@ pub fn run_with(socket: &Path, queue_limit: usize) -> std::io::Result<()> {
 
     // Block until the last client leaves.
     let _ = exit_rx.recv();
-    // Everyone has gone, and the unsaved edits with them: the next daemon
-    // on this document starts from its file alone.
-    if lock(&OPLOG_PATH).is_some() {
-        mark_unsaved(&[], None);
+    // Everyone has gone. When the last said it was done, the unsaved edits
+    // went with it (all but those still waiting to be asked back); one that
+    // went without a word leaves them named, for the next open to offer.
+    let homed = lock(&OPLOG_PATH).is_some();
+    if homed {
+        let state = lock(&hub.state);
+        let unsaved = if state.last_left_cleanly {
+            state.recoverable.iter().map(|logged| logged.id).collect()
+        } else {
+            state.unsaved()
+        };
+        mark_unsaved(&unsaved, home_document().as_deref());
     }
     let _ = std::fs::remove_file(&note);
     let _ = std::fs::remove_file(socket);
@@ -891,20 +1327,41 @@ pub fn run_with(socket: &Path, queue_limit: usize) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    /// Keep the logs these tests write out of the user's data folder.
+    fn test_log_dir() {
+        static POINTED: std::sync::Once = std::sync::Once::new();
+        POINTED.call_once(|| {
+            let dir = std::env::temp_dir().join(format!("printcad_oplogs_{}", std::process::id()));
+            // Sound because every test reading the variable calls this
+            // first, and `Once` orders those reads after the single write.
+            unsafe { std::env::set_var("PRINTCAD_OPLOG_DIR", dir) };
+        });
+    }
+
     #[test]
     fn compressed_documents_keep_distinct_logs_and_blobs() {
+        test_log_dir();
         let paths = ["a.prtcad", "a.prtcad.gz", "a.prtcad.zst"];
-        let logs: Vec<_> = paths.iter().map(|p| document_oplog(Path::new(p))).collect();
-        assert_eq!(logs[0], Path::new("a.oplog.jsonl"));
-        for i in 0..logs.len() {
-            for j in 0..i {
-                assert_ne!(logs[i], logs[j]);
-                assert_ne!(
-                    logs[i].with_extension("blobs"),
-                    logs[j].with_extension("blobs")
-                );
+        for name in [document_oplog, legacy_oplog] {
+            let logs: Vec<_> = paths.iter().map(|p| name(Path::new(p))).collect();
+            for i in 0..logs.len() {
+                for j in 0..i {
+                    assert_ne!(logs[i], logs[j]);
+                    assert_ne!(
+                        logs[i].with_extension("blobs"),
+                        logs[j].with_extension("blobs")
+                    );
+                }
             }
         }
+        assert_eq!(
+            legacy_oplog(Path::new("a.prtcad")),
+            Path::new("a.oplog.jsonl")
+        );
+        assert_eq!(
+            document_oplog(Path::new("a.prtcad")).parent(),
+            Some(crate::oplog_dir().as_path())
+        );
         let tab = uuid::Uuid::nil();
         assert_eq!(
             crate::socket_path_for_untitled(tab),
@@ -921,6 +1378,39 @@ mod tests {
         );
     }
 
+    /// Homing the log waits for an append under way, so no line lands in
+    /// the unhomed log after its lines were carried over.
+    #[test]
+    fn homing_the_log_waits_for_its_write_lock() {
+        test_log_dir();
+        let dir = std::env::temp_dir().join(format!("printcad_homing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let unhomed = dir.join("unhomed.oplog.jsonl");
+        std::fs::write(&unhomed, "{\"op\":1}\n").expect("unhomed log");
+        *lock(&UNHOMED_PATH) = Some(unhomed.clone());
+        let document = dir.join("model.prtcad");
+
+        let appending = lock(&OPLOG_WRITE);
+        let homing = std::thread::spawn({
+            let document = document.clone();
+            move || set_oplog_home(&document)
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !homing.is_finished(),
+            "homing went ahead of an append under way"
+        );
+        drop(appending);
+        assert!(homing.join().expect("homing"));
+        let homed = std::fs::read_to_string(document_oplog(&document)).expect("homed log");
+        assert_eq!(homed, "{\"op\":1}\n");
+        assert!(std::fs::symlink_metadata(&unhomed).is_err());
+        *lock(&OPLOG_PATH) = None;
+        *lock(&UNHOMED_PATH) = None;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The tail read back is what the last mark leaves unsaved plus what
     /// follows it; lines from a daemon that marks nothing are never taken
     /// for unsaved, and past the mark they make the tail unknown.
@@ -931,7 +1421,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         let document = dir.join("model.prtcad");
         std::fs::write(&document, b"saved").expect("file");
-        let log = document_oplog(&document);
+        let log = dir.join("model.oplog.jsonl");
 
         let mut doc = core_document::Document::new("Log");
         let mut op = |name: &str| {
@@ -968,6 +1458,8 @@ mod tests {
                 })
                 .collect()
         };
+        let restore_tail =
+            |log: &Path, document: &Path| restore_tail_from(&read_log(log), log, document);
         let tail = restore_tail(&log, &document).expect("a tail");
         assert_eq!(
             names(tail),

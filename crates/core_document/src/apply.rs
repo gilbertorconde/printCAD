@@ -240,6 +240,47 @@ impl Document {
         self.pending_ops.take()
     }
 
+    /// [`Self::take_pending_ops`] with the id the batch goes to the server
+    /// under; `None` when nothing was recorded.
+    pub fn take_pending_batch(&mut self) -> Option<(uuid::Uuid, Vec<op::DocumentOp>)> {
+        self.pending_ops.take_batch()
+    }
+
+    /// The batches sent and not yet confirmed, oldest first, with their
+    /// ids: what goes to a new connection when the old one was lost, so
+    /// the server orders what it never received and knows again what it
+    /// did.
+    pub fn sent_batches(&self) -> Vec<(uuid::Uuid, Vec<op::DocumentOp>)> {
+        self.pending_ops.sent()
+    }
+
+    /// Hand this replica's edits the server has not confirmed over to
+    /// `next`, the server's copy of the document read again: the batches
+    /// in flight and the outbox are applied to it on top, each with its
+    /// inverse worked out there, and stay unconfirmed in it under the same
+    /// ids; the journal's open pairs go with them, so the gesture under way
+    /// closes in `next`. Answers the ops handed over, oldest first.
+    ///
+    /// `next` must be this document as the server holds it (the file and
+    /// its unsaved tail), so the user's undo history, whose inverses touch
+    /// only what the user's own edits touched, stays good on it.
+    pub fn carry_unconfirmed_to(&mut self, next: &mut Document) -> Vec<op::DocumentOp> {
+        let (mut in_flight, mut pending) = self.pending_ops.take_unconfirmed();
+        let mut carried = Vec::new();
+        for unconfirmed in in_flight
+            .iter_mut()
+            .flat_map(|batch| batch.ops.iter_mut())
+            .chain(pending.iter_mut())
+        {
+            unconfirmed.inverse = next.invert_op(&unconfirmed.op);
+            next.apply_remote_op(&unconfirmed.op);
+            carried.push(unconfirmed.op.clone());
+        }
+        next.pending_ops.restore(in_flight, pending);
+        next.journal_pending = std::mem::take(&mut self.journal_pending);
+        carried
+    }
+
     /// The server placed the oldest batch [`Self::take_pending_ops`] gave
     /// in the document's order.
     pub fn confirm_sent_ops(&mut self) {
@@ -273,12 +314,17 @@ impl Document {
         let (mut in_flight, mut pending) = self.pending_ops.take_unconfirmed();
         let exact = in_flight
             .iter()
-            .flatten()
+            .flat_map(|batch| &batch.ops)
             .chain(&pending)
             .all(|u| u.inverse.is_some());
         let local = !pending.is_empty() || !in_flight.is_empty();
         if exact && local {
-            for unconfirmed in in_flight.iter().flatten().chain(&pending).rev() {
+            for unconfirmed in in_flight
+                .iter()
+                .flat_map(|batch| &batch.ops)
+                .chain(&pending)
+                .rev()
+            {
                 if let Some(inverse) = &unconfirmed.inverse {
                     self.apply_remote_op(inverse);
                 }
@@ -288,7 +334,11 @@ impl Document {
             self.apply_remote_op(operation);
         }
         if exact && local {
-            for unconfirmed in in_flight.iter_mut().flatten().chain(pending.iter_mut()) {
+            for unconfirmed in in_flight
+                .iter_mut()
+                .flat_map(|batch| batch.ops.iter_mut())
+                .chain(pending.iter_mut())
+            {
                 unconfirmed.inverse = self.invert_op(&unconfirmed.op);
                 self.apply_remote_op(&unconfirmed.op);
             }

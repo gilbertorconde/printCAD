@@ -198,8 +198,10 @@ earlier open in 0.9.0 as before.
 The application does not write the file itself. Each document has a server
 process, `printcad-serverd`, reached over a local socket. The application
 sends it the saved bytes and every operation. The server stores them without
-reading them: the file, and the operation log beside it
-(`<file>.oplog.jsonl`).
+reading them: the file, and the document's operation log, kept in the
+application's data folder (`oplogs/`, one log per document, named after a
+hash of its path). A log an older version kept beside the document
+(`<file>.oplog.jsonl`) moves there the first time the document opens.
 
 Several copies of the application can edit one document through its
 server. The server puts their edits in one order and sends each edit to
@@ -215,12 +217,31 @@ the edits that its file does not hold yet, so a copy opened afterwards
 still gets them.
 
 The operation log marks, at every save, which edits the file does not hold
-yet. A server that starts after one stopped without warning reads those
-edits back, so a copy opened then still gets them. When every copy has
-closed the document, its unsaved edits are gone with them, and the next
-server starts from the file. A copy that stops taking the server's
-messages is disconnected once thousands are waiting for it; opening the
-document again gives it the file and the unsaved edits.
+yet. The log starts a new part every 64 MB and keeps every part back to
+the last save that left nothing unsaved (at most 16), so even a long run
+of unsaved edits can come back whole. When every copy has closed the
+document, saved or letting its edits go, the unsaved edits are gone with
+them, and the next server starts from the file.
+
+When the application crashed, or its server stopped without warning,
+the unsaved edits stay in the log. The start page lists such documents
+under Recover unsaved work, and opening one shows a card offering the
+edits back: Restore sends them through the server to every copy, after
+what the file holds; Discard lets them go. Saving the document without
+restoring them lets them go too.
+
+A copy that stops taking the server's messages is disconnected once
+thousands are waiting for it.
+
+A copy that loses its server (it stopped, or it disconnected the copy)
+connects again, starting a server when none runs. It sends again the
+edits the old server never confirmed, which the server takes once even
+when it had them already (a new server first brings back the unsaved edits
+the log held, which were this session's), then reads the file and the
+unsaved edits back,
+so it holds what the server holds; edits made meanwhile stay on top, and
+undo goes on as before. If the new server could not read back the unsaved
+edits the old one held, the copy keeps its own state and says to save it.
 
 When two copies add a feature at the same time, both take the same place
 at the end of the history; the one the server ordered later moves after

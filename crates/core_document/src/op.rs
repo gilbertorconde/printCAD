@@ -417,7 +417,16 @@ pub(crate) struct Unconfirmed {
 #[derive(Debug, Default)]
 pub struct OpBuffer {
     pending: Vec<Unconfirmed>,
-    in_flight: std::collections::VecDeque<Vec<Unconfirmed>>,
+    in_flight: std::collections::VecDeque<SentBatch>,
+}
+
+/// A batch taken for the server and not yet confirmed: its id, which the
+/// server logs it under and knows it again by when it is sent once more,
+/// and its ops.
+#[derive(Debug)]
+pub(crate) struct SentBatch {
+    pub(crate) id: Uuid,
+    pub(crate) ops: Vec<Unconfirmed>,
 }
 
 impl Clone for OpBuffer {
@@ -453,12 +462,29 @@ impl OpBuffer {
     /// Drain everything recorded since the last take, as one batch for the
     /// server; the batch waits for [`Self::confirm`].
     pub fn take(&mut self) -> Vec<DocumentOp> {
-        let batch = std::mem::take(&mut self.pending);
-        let ops = batch.iter().map(|u| u.op.clone()).collect();
-        if !batch.is_empty() {
-            self.in_flight.push_back(batch);
+        self.take_batch().map(|(_, ops)| ops).unwrap_or_default()
+    }
+
+    /// [`Self::take`] with the id the batch is sent under; `None` when
+    /// nothing was recorded.
+    pub fn take_batch(&mut self) -> Option<(Uuid, Vec<DocumentOp>)> {
+        if self.pending.is_empty() {
+            return None;
         }
-        ops
+        let ops = std::mem::take(&mut self.pending);
+        let id = Uuid::new_v4();
+        let taken = ops.iter().map(|u| u.op.clone()).collect();
+        self.in_flight.push_back(SentBatch { id, ops });
+        Some((id, taken))
+    }
+
+    /// The batches taken and not yet confirmed, oldest first, as they
+    /// were sent: what a new connection is sent again.
+    pub fn sent(&self) -> Vec<(Uuid, Vec<DocumentOp>)> {
+        self.in_flight
+            .iter()
+            .map(|batch| (batch.id, batch.ops.iter().map(|u| u.op.clone()).collect()))
+            .collect()
     }
 
     /// The server placed the oldest batch taken in the document's order.
@@ -479,14 +505,14 @@ impl OpBuffer {
 
     /// Every op not yet confirmed, oldest first: the batches in flight,
     /// then the outbox. Taken out; [`Self::restore`] puts them back.
-    pub(crate) fn take_unconfirmed(&mut self) -> (Vec<Vec<Unconfirmed>>, Vec<Unconfirmed>) {
+    pub(crate) fn take_unconfirmed(&mut self) -> (Vec<SentBatch>, Vec<Unconfirmed>) {
         (
             std::mem::take(&mut self.in_flight).into(),
             std::mem::take(&mut self.pending),
         )
     }
 
-    pub(crate) fn restore(&mut self, in_flight: Vec<Vec<Unconfirmed>>, pending: Vec<Unconfirmed>) {
+    pub(crate) fn restore(&mut self, in_flight: Vec<SentBatch>, pending: Vec<Unconfirmed>) {
         self.in_flight = in_flight.into();
         self.pending = pending;
     }

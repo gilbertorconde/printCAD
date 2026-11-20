@@ -31,7 +31,7 @@ use crate::op::DocumentOp;
 
 /// Version of the client↔server protocol; the `Hello` handshake refuses a
 /// mismatch loudly rather than misreading frames quietly.
-pub const SERVER_PROTOCOL_VERSION: u32 = 4;
+pub const SERVER_PROTOCOL_VERSION: u32 = 5;
 
 /// A message whose container bytes travel beside it rather than inside it.
 ///
@@ -86,8 +86,14 @@ pub enum ClientMessage {
     Hello { protocol: u32, actor: uuid::Uuid },
     /// User edits drained from the document's outbox, in order: one
     /// batch, answered by [`ServerMessage::Acked`] once it has its place in
-    /// the document's order.
-    Ops(Vec<DocumentOp>),
+    /// the document's order. `batch` names it in the op log; a batch sent
+    /// again under an id the server already ordered (a client that lost
+    /// its connection before the answer came) is answered without being
+    /// ordered twice.
+    Ops {
+        batch: uuid::Uuid,
+        ops: Vec<DocumentOp>,
+    },
     /// The client put another document in place of the one it had (a new
     /// document, a recovered copy): the ops logged so far do not describe
     /// its state. The server clears its log and unsaved tail only while
@@ -118,6 +124,16 @@ pub enum ClientMessage {
     /// with the request that asked for it (an open may be abandoned by a
     /// newer one).
     OpenDocument { path: PathBuf, token: u64 },
+    /// The unsaved edits a session left in the document's log (the
+    /// `recoverable` an open reports) come back: the server orders them
+    /// after everything so far and sends them to every client.
+    RestoreUnsaved,
+    /// Let those edits go: the log no longer offers them.
+    DiscardUnsaved,
+    /// This client is done with the document: what it holds unsaved, it
+    /// chose to let go. A client that leaves without it (one that crashed)
+    /// leaves its unsaved edits in the log, for the next open to offer.
+    Leave,
     /// Ephemeral presence: who this editor is and what they have selected.
     /// Relayed to peers, never logged: presence is now-state, not history.
     Presence(PresenceState),
@@ -177,12 +193,29 @@ pub enum ServerMessage {
     PresenceGone {
         actor: uuid::Uuid,
     },
+    /// The document's file, followed by its unsaved tail as
+    /// [`ServerMessage::Ops`].
     Opened {
         token: u64,
         path: PathBuf,
         /// Carried beside the message, not inside it (see [`Payload`]).
         #[serde(skip)]
         bytes: Vec<u8>,
+        /// The newest sequence number in the order when the file was read:
+        /// the tail that follows runs up to it.
+        #[serde(default)]
+        seq: u64,
+        /// The server started where another stopped and could not read
+        /// back the unsaved edits that one held: the file and tail lack
+        /// them, and only a client that held them still has them.
+        #[serde(default)]
+        unsaved_lost: bool,
+        /// Batches of unsaved edits the document's log holds from a
+        /// session that ended without saving them, offered back:
+        /// [`ClientMessage::RestoreUnsaved`] brings them into the order,
+        /// [`ClientMessage::DiscardUnsaved`] lets them go.
+        #[serde(default)]
+        recoverable: u32,
     },
     OpenFailed {
         token: u64,
