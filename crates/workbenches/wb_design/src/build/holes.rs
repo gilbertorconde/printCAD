@@ -94,6 +94,34 @@ pub(crate) fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
     centers
 }
 
+/// The diameter a hole at `sketch`'s centres drills unless told
+/// otherwise: its circles', construction geometry left out; the most
+/// common size when they differ (the largest of the equally common), with
+/// `true` for that. `None` for a sketch of lone points.
+pub(crate) fn sketch_circle_diameter(sketch: &Sketch) -> Option<(f32, bool)> {
+    // Each size and how many circles have it, sizes within a micrometre
+    // one size.
+    let mut sizes: Vec<(f64, usize)> = Vec::new();
+    for element in &sketch.geometry {
+        let GeometryElement::Circle(circle) = element else {
+            continue;
+        };
+        if sketch.is_construction(element.id()) {
+            continue;
+        }
+        let diameter = circle.radius * 2.0;
+        match sizes.iter_mut().find(|(d, _)| (d - diameter).abs() < 1e-3) {
+            Some((_, count)) => *count += 1,
+            None => sizes.push((diameter, 1)),
+        }
+    }
+    let (diameter, _) = sizes
+        .iter()
+        .copied()
+        .max_by(|a, b| a.1.cmp(&b.1).then(a.0.total_cmp(&b.0)))?;
+    Some((diameter as f32, sizes.len() > 1))
+}
+
 /// How many line pieces a cosmetic thread draws per turn.
 pub(super) const THREAD_SEGMENTS_PER_TURN: usize = 24;
 

@@ -2,8 +2,12 @@
 
 Design's Hole (Shift+H, with a sketch selected on a body that has a
 solid) drills at every circle centre and lone point of the sketch,
-construction geometry left out. It starts as a custom 5 mm hole, 10 mm
-deep, drilled against the sketch's normal; **Reversed** drills the other
+construction geometry left out. With no sketch selected and a flat face
+of the solid clicked, it drills where you clicked, from a hidden sketch
+of its own on that face; add points to that sketch for more holes. It starts as a custom hole the size of
+the sketch's circles (the most common size when they differ, which the
+log says; 5 mm for a sketch of points alone), 10 mm deep, drilled
+against the sketch's normal; **Reversed** drills the other
 way. The task panel sets the rows below; a script sets the same fields
 by name (`pc.design.hole`, `pc.design.set`).
 
@@ -206,7 +210,8 @@ depth = 3, across_flats = 7, turn_deg = 30, standard = "Din934"}`, each
 field left out taking its usual value.
 `start = {offset = 2, at = plane}` starts it 2 mm in from a datum plane
 or a sketch; `start = {face = {point = {x, y, z}, normal = {0, 0, 1}}}`
-from a face.
+from a face. `face_point = {x, y, z}` and `face_normal` in place of
+`sketch` place one hole on a flat face at that point.
 
 ## Holes already in a solid
 

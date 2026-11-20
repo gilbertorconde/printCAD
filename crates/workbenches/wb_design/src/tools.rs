@@ -317,16 +317,38 @@ impl DesignWorkbench {
             }
             "design.hole" => {
                 need_material(has_solid)?;
+                // With no sketch, a flat face picked: the hole drills where
+                // it was picked, from a sketch made as it goes in, starting
+                // on that face.
+                let (sketch, start) = match sketch {
+                    Some(sketch) => (sketch, crate::feature::HoleStart::default()),
+                    None => {
+                        let face = Self::selected_profile_face(ctx, body).ok_or_else(|| {
+                            given.say(
+                                "Select a sketch in the tree, or click a flat face of the solid, \
+                                 first",
+                                "It needs a sketch or a face: give `sketch`, or `face_point` \
+                                 and `face_normal`",
+                            )
+                        })?;
+                        let start = crate::feature::HoleStart {
+                            face: Some(face),
+                            ..Default::default()
+                        };
+                        (FeatureId(uuid::Uuid::nil()), start)
+                    }
+                };
+                let diameter = hole_diameter_of(ctx, sketch).map_or(5.0, |(d, _)| d);
                 (
                     DesignFeature::Hole {
                         cosmetic_thread: false,
-                        start: Default::default(),
+                        start,
                         clearance: None,
                         thread_length: Default::default(),
                         refine: false,
                         boolean_tolerance: None,
-                        sketch: need_sketch(sketch)?,
-                        diameter: 5.0,
+                        sketch,
+                        diameter,
                         depth: 10.0,
                         through_all: false,
                         cut: HoleCut::None,
@@ -751,4 +773,15 @@ impl DesignWorkbench {
         };
         Ok(feature)
     }
+}
+
+/// The diameter a hole at `sketch`'s centres drills unless told otherwise,
+/// from its circles, and whether they differ in size
+/// ([`build::sketch_circle_diameter`]).
+pub(crate) fn hole_diameter_of(
+    ctx: &WorkbenchRuntimeContext,
+    sketch: FeatureId,
+) -> Option<(f32, bool)> {
+    let sketch = build::load_sketch(ctx.document, sketch).ok()?;
+    build::sketch_circle_diameter(&sketch.sketch)
 }

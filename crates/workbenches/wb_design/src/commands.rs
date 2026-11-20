@@ -1253,6 +1253,113 @@ mod tests {
         );
     }
 
+    /// A hole given a flat face and no sketch drills where the face was
+    /// picked: from a hidden sketch of its own on the face, one point at
+    /// the pick, starting on that face. Given neither, it asks for one.
+    #[test]
+    fn a_hole_on_a_face_makes_its_own_sketch_at_the_pick() {
+        let mut s = Session::new();
+        let (body, profile) = s.sketch();
+        s.run("design.pad", json!({"sketch": profile, "length": 10.0}))
+            .unwrap();
+        let made = s
+            .run(
+                "design.hole",
+                json!({"body": body, "face_point": [3.0, 4.0, 10.0], "face_normal": [0.0, 0.0, 1.0]}),
+            )
+            .unwrap();
+        let fields = s.fields(&made);
+        let hole = &fields["Hole"];
+        assert_eq!(hole["start"]["face"]["normal"], json!([0.0, 0.0, 1.0]));
+        let sketch = FeatureId(hole["sketch"].as_str().unwrap().parse().unwrap());
+        assert!(
+            !s.doc.get_feature_meta(sketch).unwrap().visible,
+            "its sketch is hidden"
+        );
+        let own = crate::build::load_sketch(&s.doc, sketch).unwrap();
+        let plane = wb_sketch::profile::plane_of(&own.plane);
+        let centres = crate::build::hole_centers(&own.sketch);
+        assert_eq!(centres.len(), 1, "{centres:?}");
+        let at: Vec<f64> = (0..3)
+            .map(|k| {
+                plane.origin[k] + plane.x_axis[k] * centres[0][0] + plane.y_axis[k] * centres[0][1]
+            })
+            .collect();
+        let want = [3.0, 4.0, 10.0];
+        assert!((0..3).all(|k| (at[k] - want[k]).abs() < 1e-6), "{at:?}");
+        assert_eq!(hole["diameter"], json!(5.0));
+
+        let refused = s
+            .run("design.hole", json!({"body": body}))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("face"), "{refused}");
+    }
+
+    /// A hole takes its diameter from its sketch's circles: theirs when
+    /// they are one size, the most common when they differ (the log
+    /// saying so), 5 mm for points alone; a diameter given stands.
+    #[test]
+    fn a_hole_is_sized_from_its_sketchs_circles() {
+        use wb_sketch::sketch::{Circle, GeometryElement, Point, Sketch, SketchPlane, Vec2D};
+        let mut s = Session::new();
+        let (body, profile) = s.sketch();
+        s.run("design.pad", json!({"sketch": profile, "length": 10.0}))
+            .unwrap();
+        // A sketch of circles `radii` across X, and `points` lone points.
+        let mut positions = |name: &str, radii: &[f64], points: usize| {
+            let mut sketch = Sketch::new(name);
+            for (i, r) in radii.iter().enumerate() {
+                let x = 10.0 * i as f64;
+                let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))));
+                sketch.add_geometry(GeometryElement::Circle(Circle::new(c, *r)));
+            }
+            for i in 0..points {
+                let at = Vec2D::new(10.0 * i as f64, 20.0);
+                sketch.add_geometry(GeometryElement::Point(Point::new(at)));
+            }
+            let feature = wb_sketch::SketchFeature::new(sketch, SketchPlane::default());
+            s.doc
+                .add_feature_in_body(feature, name.to_string(), Some(body))
+                .unwrap()
+        };
+        let alike = positions("alike", &[1.6, 1.6], 1);
+        let mixed = positions("mixed", &[3.0, 1.6, 1.6, 2.5], 0);
+        let points = positions("points", &[], 2);
+        let diameter = |s: &mut Session, args: Value| {
+            let made = s.run("design.hole", args).unwrap();
+            s.fields(&made)["Hole"]["diameter"].as_f64().unwrap()
+        };
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        assert!(near(diameter(&mut s, json!({"sketch": alike})), 3.2));
+        assert!(near(diameter(&mut s, json!({"sketch": mixed})), 3.2));
+        assert!(near(diameter(&mut s, json!({"sketch": points})), 5.0));
+        let given = json!({"sketch": mixed, "diameter": 7.0});
+        assert!(near(diameter(&mut s, given), 7.0));
+
+        // Made from the toolbar on circles of mixed sizes, the log names
+        // the size taken; of one size, it says nothing of it.
+        for (sketch, says) in [(mixed, true), (alike, false)] {
+            let mut ctx = core_document::testing::ctx(&mut s.doc);
+            ctx.active_document_object = Some(sketch);
+            s.bench
+                .create_feature(
+                    &mut ctx,
+                    "design.hole",
+                    body,
+                    crate::Given::default(),
+                    |_| Ok(()),
+                )
+                .unwrap();
+            let logs: Vec<String> = ctx.drain_logs().into_iter().map(|l| l.message).collect();
+            let told = logs.iter().any(|l| l.contains("most common"));
+            assert_eq!(told, says, "{logs:?}");
+            if says {
+                assert!(logs.iter().any(|l| l.contains("3.2")), "{logs:?}");
+            }
+        }
+    }
+
     /// Fillet and chamfer from the toolbar with nothing picked ask for a
     /// pick rather than taking every edge; a script still rounds every
     /// edge, by default or asked for by name.
