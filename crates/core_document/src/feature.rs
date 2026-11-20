@@ -59,6 +59,15 @@ pub trait WorkbenchFeature: Serialize + serde::de::DeserializeOwned + Send + Syn
         serde_json::to_value(self).expect("a feature serializes to JSON")
     }
 
+    /// [`Self::to_json`] written over `spare`, a value nothing else holds
+    /// (the feature's data from an earlier write): every node whose shape
+    /// still agrees is kept, so a large feature written again after a small
+    /// change allocates and frees little.
+    fn to_json_over(&self, mut spare: serde_json::Value) -> serde_json::Value {
+        crate::json_over::write_over(&mut spare, self).expect("a feature serializes to JSON");
+        spare
+    }
+
     /// The feature read back from what the document stores.
     fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
         Self::deserialize(value).map_err(|e| {

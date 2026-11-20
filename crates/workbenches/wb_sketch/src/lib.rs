@@ -634,6 +634,11 @@ struct Tab {
     /// The sketch the sketcher last wrote, as a read of it answers, while
     /// the document holds that very write.
     written: std::cell::RefCell<Option<Written>>,
+    /// The data written before [`Self::written`]'s: once nothing else
+    /// holds it (the document, its undo steps and its unsent edits have
+    /// all moved on), the next write is made over it, keeping its nodes,
+    /// rather than allocated whole and this freed.
+    spare: std::cell::RefCell<Option<std::sync::Arc<serde_json::Value>>>,
     /// The sketches in construction mode, in which every newly created
     /// element (from any drawing tool) is flagged as construction
     /// geometry. Each sketch keeps its own mode; the `sketch.construction`
@@ -936,7 +941,15 @@ impl SketchWorkbench {
             feature.plane = local_plane(&feature.plane, &plane, &placement);
             feature.sketch.plane = local_plane(&feature.sketch.plane, &sketch_plane, &placement);
         }
-        let data = std::sync::Arc::new(feature.to_json());
+        let spare = self
+            .tab
+            .spare
+            .take()
+            .and_then(|s| std::sync::Arc::try_unwrap(s).ok());
+        let data = std::sync::Arc::new(match spare {
+            Some(spare) => feature.to_json_over(spare),
+            None => feature.to_json(),
+        });
         if let Err(e) = ctx
             .document
             .update_feature_data(id, std::sync::Arc::clone(&data))
@@ -954,13 +967,17 @@ impl SketchWorkbench {
         let feature = std::sync::Arc::new(feature);
         // A text's letters are made again when its data is read, so a
         // sketch with texts is read back rather than taken as written.
-        *self.tab.written.borrow_mut() = feature.sketch.texts.is_empty().then(|| Written {
-            sketch: id,
-            data,
-            stored_planes,
-            placement,
-            feature: std::sync::Arc::clone(&feature),
-        });
+        let replaced = std::mem::replace(
+            &mut *self.tab.written.borrow_mut(),
+            feature.sketch.texts.is_empty().then(|| Written {
+                sketch: id,
+                data,
+                stored_planes,
+                placement,
+                feature: std::sync::Arc::clone(&feature),
+            }),
+        );
+        self.tab.spare.replace(replaced.map(|w| w.data));
         Some(feature)
     }
 
