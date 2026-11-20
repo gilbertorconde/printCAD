@@ -2,9 +2,9 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchParameters, CameraOrientRequest, Document,
-    DocumentError, DocumentService, FeatureId, FeatureNode, HookOutcome, HostRequest, MenuItem,
-    MenuScope, PassiveGeometry, PropertyHints, ViewportPick, Workbench, WorkbenchContext,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, CameraOrientRequest,
+    Document, DocumentError, DocumentService, FeatureId, FeatureNode, HookOutcome, HostRequest,
+    MenuItem, MenuScope, PassiveGeometry, PropertyHints, ViewportPick, Workbench, WorkbenchContext,
     WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
@@ -91,6 +91,9 @@ impl Workbench for FakeBench {
     ) -> Option<f32> {
         self.pick_distance
     }
+}
+
+impl BenchPanels for FakeBench {
     fn menu_items(&self, _scope: &MenuScope, _document: &Document) -> Vec<MenuItem> {
         self.items
             .iter()
@@ -390,6 +393,8 @@ impl Workbench for Panicky {
     fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
 }
 
+impl BenchPanels for Panicky {}
+
 impl BenchBuild for Panicky {
     fn rebuild_jobs(&self, _document: &mut Document) -> Vec<core_document::RebuildJob> {
         let sizes: Vec<u32> = Vec::new();
@@ -459,6 +464,8 @@ impl Workbench for Importer {
         context.register_import(core_document::FileImport::new("Drawing", ["DRW"], command));
     }
 }
+
+impl BenchPanels for Importer {}
 
 impl BenchBuild for Importer {}
 

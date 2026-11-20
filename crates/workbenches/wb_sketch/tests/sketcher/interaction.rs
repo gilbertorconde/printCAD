@@ -8,8 +8,8 @@ use crate::{
     line_of, number_text, spline_of, view_proj, view_proj_from,
 };
 use core_document::{
-    BenchCommands, Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark,
-    SketchPalette, ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent,
+    BenchCommands, BenchPanels, Document, FeatureId, KeyCode, MarkKind, MouseButton,
+    ScreenSpaceMark, SketchPalette, ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
 use sketch_model::SketchFeature;
@@ -5220,7 +5220,6 @@ fn task_panel_request(
 /// Escape while sketching stays the gesture's.
 #[test]
 fn the_header_cancel_ends_a_sketch_session_as_it_found_it() {
-    use core_document::Workbench;
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 7.0));
     h.key(KeyCode::Escape, None);

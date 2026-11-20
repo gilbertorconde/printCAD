@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, Chord,
-    CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId, FeatureInfo,
+    ActionDescriptor, BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId,
+    Chord, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId, FeatureInfo,
     FeatureNode, InputResult, MarkKind, MenuItem, MenuScope, OverlayMesh, Parameter, PropertyHints,
     ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior,
     ToolDescriptor, ToolHint, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
@@ -782,34 +782,6 @@ impl Workbench for WasmWorkbench {
         !self.inner().frame.transport.is_empty()
     }
 
-    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
-        let mut inner = self.inner();
-        let mut card = self.refresh(&mut inner, ctx).card.clone()?;
-        card.widgets = Self::with_progress(&inner, &card.widgets);
-        Some(card)
-    }
-
-    /// Only for the card the package shows: an event while it shows none,
-    /// or a `CardClose` naming another card, a stale one, never reaches it.
-    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
-        let Ok(json) = serde_json::to_string(event) else {
-            return;
-        };
-        let mut inner = self.inner();
-        let shown = self.refresh(&mut inner, ctx).card.as_ref().map(|c| &c.id);
-        let current = match (shown, event) {
-            (None, _) => false,
-            (Some(shown), bench_api::PanelEvent::CardClose { id, .. }) => shown == id,
-            (Some(_), _) => true,
-        };
-        if !current {
-            return;
-        }
-        let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
-            b.panel_event("card", &json)
-        });
-    }
-
     /// The cosmetic threads the body's plan declares for the feature, each
     /// a helix over its round face.
     fn passive_geometry(
@@ -868,36 +840,6 @@ impl Workbench for WasmWorkbench {
         inner.guest.jobs.running()
             || inner.guest.jobs.has_finished(&inner.session)
             || (inner.active && inner.frame.animating)
-    }
-
-    fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
-        let Some(Ok(json)) = convert::menu_scope(scope).map(|s| serde_json::to_string(&s)) else {
-            return Vec::new();
-        };
-        let mut inner = self.inner();
-        let answer = self.read_call(&mut inner, document, Budget::Frame, |b| b.menu_items(&json));
-        answer
-            .and_then(|json| parse::<Vec<bench_api::MenuItem>>(self.id(), "menu items", &json))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|item| self.menu_item(item))
-            .collect()
-    }
-
-    fn on_command(
-        &mut self,
-        id: &str,
-        scope: &MenuScope,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> bool {
-        let Some(Ok(scope)) = convert::menu_scope(scope).map(|s| serde_json::to_string(&s)) else {
-            return false;
-        };
-        let mut inner = self.inner();
-        self.write_call(&mut inner, ctx, Budget::Long, |b| {
-            b.menu_command(id, &scope)
-        })
-        .unwrap_or(false)
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -996,34 +938,6 @@ impl Workbench for WasmWorkbench {
         self.deliver_within(&mut inner, ctx, input, Budget::Long);
     }
 
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        let mut inner = self.inner();
-        let task = self.refresh(&mut inner, ctx).task.clone()?;
-        let header = task_header(&self.refresh(&mut inner, ctx).panel);
-        let status = header.status.map(|status| core_document::TaskStatus {
-            text: status.text,
-            detail: status.detail,
-            tone: match status.tone {
-                bench_api::Tone::Good => core_document::StatusTone::Good,
-                bench_api::Tone::Warning => core_document::StatusTone::Warning,
-                bench_api::Tone::Bad => core_document::StatusTone::Bad,
-                _ => core_document::StatusTone::Info,
-            },
-        });
-        Some(TaskInfo {
-            title: task.title,
-            subtitle: header.subtitle,
-            status,
-            icon: self.icon(&task.icon),
-            confirmable: task.confirmable,
-            stepwise: false,
-        })
-    }
-
-    fn has_settings(&self) -> bool {
-        !self.settings_panel().is_empty()
-    }
-
     /// What the frame shows, from one look at the package: refreshed
     /// once, its regions worked out once.
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
@@ -1073,26 +987,6 @@ impl Workbench for WasmWorkbench {
         };
         let mut inner = self.inner();
         self.deliver(&mut inner, ctx, input);
-    }
-
-    fn settings_json(&self) -> Option<serde_json::Value> {
-        let mut inner = self.inner();
-        let (json, _) = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.settings())?;
-        let json = json?;
-        inner.guest.settings = Some(json.clone());
-        serde_json::from_str(&json).ok()
-    }
-
-    fn apply_settings_json(&mut self, value: &serde_json::Value) {
-        let json = value.to_string();
-        let mut inner = self.inner();
-        inner.guest.settings = Some(json.clone());
-        inner.settings_panel = None;
-        let _ = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.apply_settings(&json));
     }
 
     fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -1161,6 +1055,114 @@ impl Workbench for WasmWorkbench {
             invalidate_owned(ctx.document, &self.package, body);
         }
         removed
+    }
+}
+
+impl BenchPanels for WasmWorkbench {
+    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+        let mut inner = self.inner();
+        let mut card = self.refresh(&mut inner, ctx).card.clone()?;
+        card.widgets = Self::with_progress(&inner, &card.widgets);
+        Some(card)
+    }
+
+    /// Only for the card the package shows: an event while it shows none,
+    /// or a `CardClose` naming another card, a stale one, never reaches it.
+    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
+        let Ok(json) = serde_json::to_string(event) else {
+            return;
+        };
+        let mut inner = self.inner();
+        let shown = self.refresh(&mut inner, ctx).card.as_ref().map(|c| &c.id);
+        let current = match (shown, event) {
+            (None, _) => false,
+            (Some(shown), bench_api::PanelEvent::CardClose { id, .. }) => shown == id,
+            (Some(_), _) => true,
+        };
+        if !current {
+            return;
+        }
+        let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+            b.panel_event("card", &json)
+        });
+    }
+
+    fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
+        let Some(Ok(json)) = convert::menu_scope(scope).map(|s| serde_json::to_string(&s)) else {
+            return Vec::new();
+        };
+        let mut inner = self.inner();
+        let answer = self.read_call(&mut inner, document, Budget::Frame, |b| b.menu_items(&json));
+        answer
+            .and_then(|json| parse::<Vec<bench_api::MenuItem>>(self.id(), "menu items", &json))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| self.menu_item(item))
+            .collect()
+    }
+
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        let Some(Ok(scope)) = convert::menu_scope(scope).map(|s| serde_json::to_string(&s)) else {
+            return false;
+        };
+        let mut inner = self.inner();
+        self.write_call(&mut inner, ctx, Budget::Long, |b| {
+            b.menu_command(id, &scope)
+        })
+        .unwrap_or(false)
+    }
+
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        let mut inner = self.inner();
+        let task = self.refresh(&mut inner, ctx).task.clone()?;
+        let header = task_header(&self.refresh(&mut inner, ctx).panel);
+        let status = header.status.map(|status| core_document::TaskStatus {
+            text: status.text,
+            detail: status.detail,
+            tone: match status.tone {
+                bench_api::Tone::Good => core_document::StatusTone::Good,
+                bench_api::Tone::Warning => core_document::StatusTone::Warning,
+                bench_api::Tone::Bad => core_document::StatusTone::Bad,
+                _ => core_document::StatusTone::Info,
+            },
+        });
+        Some(TaskInfo {
+            title: task.title,
+            subtitle: header.subtitle,
+            status,
+            icon: self.icon(&task.icon),
+            confirmable: task.confirmable,
+            stepwise: false,
+        })
+    }
+
+    fn has_settings(&self) -> bool {
+        !self.settings_panel().is_empty()
+    }
+
+    fn settings_json(&self) -> Option<serde_json::Value> {
+        let mut inner = self.inner();
+        let (json, _) = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.settings())?;
+        let json = json?;
+        inner.guest.settings = Some(json.clone());
+        serde_json::from_str(&json).ok()
+    }
+
+    fn apply_settings_json(&mut self, value: &serde_json::Value) {
+        let json = value.to_string();
+        let mut inner = self.inner();
+        inner.guest.settings = Some(json.clone());
+        inner.settings_panel = None;
+        let _ = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.apply_settings(&json));
     }
 }
 

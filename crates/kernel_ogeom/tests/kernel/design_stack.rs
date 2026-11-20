@@ -2,7 +2,7 @@
 //! `wb_design::body_build_ops` → `OgeomKernel::execute_solid_chain` → mesh.
 //! This exercises the exact pipeline the app's recompute driver runs.
 
-use core_document::{BenchCommands, BodyId, Document, FeatureId};
+use core_document::{BenchCommands, BenchPanels, BodyId, Document, FeatureId};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use sketch_model::SketchFeature;
@@ -4857,7 +4857,7 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
 #[test]
 fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
     use core_document::history::OpJournal;
-    use core_document::{MenuScope, Workbench, WorkbenchFeature};
+    use core_document::{MenuScope, WorkbenchFeature};
     let (mut doc, body) = block();
     let raised = sketch_model::sketch::SketchPlane {
         origin: [0.0, 0.0, 10.0],

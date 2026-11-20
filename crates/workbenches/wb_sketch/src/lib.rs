@@ -65,10 +65,10 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, FeatureId, FeatureInfo,
-    HostRequest, InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
-    base_tool_id, tool_variant,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, FeatureId,
+    FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
+    WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
 use feature::SketchFeature;
@@ -1374,14 +1374,6 @@ impl SketchWorkbench {
 }
 
 impl Workbench for SketchWorkbench {
-    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
-        self.dimension_card(ctx)
-    }
-
-    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
-        self.dimension_event(ctx, event);
-    }
-
     fn tool_history(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -1468,58 +1460,9 @@ impl Workbench for SketchWorkbench {
         self.tab.active_sketch_id.is_some() && self.tab.dim_capture.takes_text()
     }
 
-    fn settings_json(&self) -> Option<serde_json::Value> {
-        serde_json::to_value(self.options).ok()
-    }
-
-    fn apply_settings_json(&mut self, value: &serde_json::Value) {
-        if let Ok(options) = serde_json::from_value(value.clone()) {
-            self.options = options;
-        }
-    }
-
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
         self.frame.clear();
         Some(&mut self.tab)
-    }
-
-    fn menu_items(&self, scope: &MenuScope, _document: &core_document::Document) -> Vec<MenuItem> {
-        match scope {
-            MenuScope::StartPage => vec![
-                MenuItem::new("sketch.start_blank", "Empty sketch")
-                    .icon("sketch-new")
-                    .hint("2D on XY plane"),
-            ],
-            _ => Vec::new(),
-        }
-    }
-
-    /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
-    /// open for editing. The Edit menu's clipboard entries act on the
-    /// selection of the sketch under edit.
-    fn on_command(
-        &mut self,
-        id: &str,
-        scope: &MenuScope,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> bool {
-        match (scope, id) {
-            (MenuScope::StartPage, "sketch.start_blank") => {
-                let body = ctx.selected_body_id.map(BodyId);
-                self.create_sketch_on_plane(
-                    ctx,
-                    body,
-                    SketchPlane::default(),
-                    NewSketchOn::default(),
-                );
-                true
-            }
-            (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
-            (MenuScope::EditMenu, "edit.cut") => self.clipboard_copy(ctx, true),
-            (MenuScope::EditMenu, "edit.paste") => self.clipboard_paste(ctx),
-            (MenuScope::Popup(tag), _) => self.node_command(ctx, id, tag),
-            _ => false,
-        }
     }
 
     fn passive_geometry(
@@ -1658,38 +1601,6 @@ impl Workbench for SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         self.handle_input(event, active_tool, ctx)
-    }
-
-    fn has_settings(&self) -> bool {
-        true
-    }
-
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        if self.tab.pending_creation.is_some() {
-            return Some(TaskInfo {
-                title: "New sketch".to_string(),
-                icon: "sketch-new",
-                confirmable: false,
-                stepwise: false,
-                ..Default::default()
-            });
-        }
-        let id = self.tab.active_sketch_id?;
-        let name = ctx.document.get_feature_meta(id)?.name.clone();
-        let feature = self.frame_displayed(ctx);
-        Some(TaskInfo {
-            title: name,
-            subtitle: feature
-                .as_ref()
-                .map(|f| crate::style::placement_label(f))
-                .unwrap_or_default(),
-            status: feature.map(|f| self.task_status(&f)),
-            icon: "sketch-edit",
-            // Cancel puts the sketch back as the session found it.
-            confirmable: true,
-            // Every line drawn or constraint added is a step of its own.
-            stepwise: true,
-        })
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
@@ -1922,6 +1833,97 @@ impl Workbench for SketchWorkbench {
     /// Edges are being found in a reference picture.
     fn busy(&self) -> bool {
         self.tab.picture_edges.running()
+    }
+}
+
+impl BenchPanels for SketchWorkbench {
+    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+        self.dimension_card(ctx)
+    }
+
+    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
+        self.dimension_event(ctx, event);
+    }
+
+    fn settings_json(&self) -> Option<serde_json::Value> {
+        serde_json::to_value(self.options).ok()
+    }
+
+    fn apply_settings_json(&mut self, value: &serde_json::Value) {
+        if let Ok(options) = serde_json::from_value(value.clone()) {
+            self.options = options;
+        }
+    }
+
+    fn menu_items(&self, scope: &MenuScope, _document: &core_document::Document) -> Vec<MenuItem> {
+        match scope {
+            MenuScope::StartPage => vec![
+                MenuItem::new("sketch.start_blank", "Empty sketch")
+                    .icon("sketch-new")
+                    .hint("2D on XY plane"),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
+    /// open for editing. The Edit menu's clipboard entries act on the
+    /// selection of the sketch under edit.
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        match (scope, id) {
+            (MenuScope::StartPage, "sketch.start_blank") => {
+                let body = ctx.selected_body_id.map(BodyId);
+                self.create_sketch_on_plane(
+                    ctx,
+                    body,
+                    SketchPlane::default(),
+                    NewSketchOn::default(),
+                );
+                true
+            }
+            (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
+            (MenuScope::EditMenu, "edit.cut") => self.clipboard_copy(ctx, true),
+            (MenuScope::EditMenu, "edit.paste") => self.clipboard_paste(ctx),
+            (MenuScope::Popup(tag), _) => self.node_command(ctx, id, tag),
+            _ => false,
+        }
+    }
+
+    fn has_settings(&self) -> bool {
+        true
+    }
+
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.tab.pending_creation.is_some() {
+            return Some(TaskInfo {
+                title: "New sketch".to_string(),
+                icon: "sketch-new",
+                confirmable: false,
+                stepwise: false,
+                ..Default::default()
+            });
+        }
+        let id = self.tab.active_sketch_id?;
+        let name = ctx.document.get_feature_meta(id)?.name.clone();
+        let feature = self.frame_displayed(ctx);
+        Some(TaskInfo {
+            title: name,
+            subtitle: feature
+                .as_ref()
+                .map(|f| crate::style::placement_label(f))
+                .unwrap_or_default(),
+            status: feature.map(|f| self.task_status(&f)),
+            icon: "sketch-edit",
+            // Cancel puts the sketch back as the session found it.
+            confirmable: true,
+            // Every line drawn or constraint added is a step of its own.
+            stepwise: true,
+        })
     }
 }
 

@@ -456,18 +456,6 @@ impl core_document::Workbench for MeshWorkbench {
         }
     }
 
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        let t = self.tab.task.as_ref()?;
-        let node = ctx.document.get_feature_meta(t.id)?;
-        Some(core_document::TaskInfo {
-            title: node.name.clone(),
-            icon: "workbench-mesh",
-            confirmable: true,
-            stepwise: false,
-            ..Default::default()
-        })
-    }
-
     fn editing_feature(&self) -> Option<FeatureId> {
         self.tab.task.as_ref().map(|t| t.id)
     }
@@ -545,6 +533,20 @@ impl core_document::Workbench for MeshWorkbench {
             return InputResult::consumed();
         }
         InputResult::ignored()
+    }
+}
+
+impl core_document::BenchPanels for MeshWorkbench {
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        let t = self.tab.task.as_ref()?;
+        let node = ctx.document.get_feature_meta(t.id)?;
+        Some(core_document::TaskInfo {
+            title: node.name.clone(),
+            icon: "workbench-mesh",
+            confirmable: true,
+            stepwise: false,
+            ..Default::default()
+        })
     }
 }
 

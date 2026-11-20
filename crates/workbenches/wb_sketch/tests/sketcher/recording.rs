@@ -6,8 +6,8 @@
 use super::Harness;
 use crate::{CAM_POS, VIEWPORT, all_points};
 use core_document::{
-    BenchCommands, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId,
-    HookOutcome, KeyCode, Recorded, Workbench, WorkbenchContext, WorkbenchFeature,
+    BenchCommands, BenchPanels, CommandArgs, CommandError, CommandResult, CommandSpec, Document,
+    FeatureId, HookOutcome, KeyCode, Recorded, Workbench, WorkbenchContext, WorkbenchFeature,
     WorkbenchRuntimeContext,
 };
 use sketch_model::SketchFeature;

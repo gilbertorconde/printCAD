@@ -46,8 +46,8 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, BodyPlacement, FeatureId,
-    FeatureInfo, FeatureNode, HostRequest, InputResult, Workbench, WorkbenchContext,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, BodyPlacement,
+    FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult, Workbench, WorkbenchContext,
     WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
@@ -536,23 +536,6 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
-    fn menu_items(
-        &self,
-        scope: &core_document::MenuScope,
-        document: &core_document::Document,
-    ) -> Vec<core_document::MenuItem> {
-        self.menu_entries(scope, document)
-    }
-
-    fn on_command(
-        &mut self,
-        id: &str,
-        scope: &core_document::MenuScope,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> bool {
-        self.menu_command(id, scope, ctx)
-    }
-
     /// The joints of other bodies that hold them to `body`.
     fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
         joints(document)
@@ -706,12 +689,6 @@ impl Workbench for AssemblyWorkbench {
         self.open_task(ctx, id);
     }
 
-    /// The task's title and the name of what it edits under it: the
-    /// panel itself carries no title.
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        self.task_of(ctx)
-    }
-
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.cancel_pointer_gesture(ctx);
         self.put_back_motion(ctx);
@@ -734,6 +711,31 @@ impl Workbench for AssemblyWorkbench {
         self.tab.measuring = None;
         self.put_back_explosion(ctx);
         self.tab.task = None;
+    }
+}
+
+impl BenchPanels for AssemblyWorkbench {
+    fn menu_items(
+        &self,
+        scope: &core_document::MenuScope,
+        document: &core_document::Document,
+    ) -> Vec<core_document::MenuItem> {
+        self.menu_entries(scope, document)
+    }
+
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &core_document::MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        self.menu_command(id, scope, ctx)
+    }
+
+    /// The task's title and the name of what it edits under it: the
+    /// panel itself carries no title.
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        self.task_of(ctx)
     }
 }
 

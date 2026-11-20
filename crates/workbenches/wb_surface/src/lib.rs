@@ -31,10 +31,10 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, CommandArgs, CommandResult,
-    Document, FeatureId, FeatureInfo, HostRequest, InputResult, Parameter, RebuildJob, TaskInfo,
-    ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, CommandArgs,
+    CommandResult, Document, FeatureId, FeatureInfo, HostRequest, InputResult, Parameter,
+    RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -804,43 +804,6 @@ impl Workbench for SurfaceWorkbench {
         InputResult::ignored()
     }
 
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        if self.tab.task.is_none()
-            && let Some(analysis) = &self.tab.analysis
-        {
-            let (title, icon) = match analysis.display {
-                analysis::Display::Curvature { .. } => ("Curvature", "bspline-comb"),
-                analysis::Display::Zebra { .. } => ("Zebra stripes", "draw-style-shaded"),
-            };
-            return Some(TaskInfo {
-                title: title.into(),
-                icon,
-                confirmable: false,
-                stepwise: false,
-                ..Default::default()
-            });
-        }
-        if self.tab.task.is_none() && self.tab.check.is_some() {
-            return Some(TaskInfo {
-                title: "Continuity".into(),
-                icon: "surface-continuity",
-                confirmable: false,
-                stepwise: false,
-                ..Default::default()
-            });
-        }
-        let task = self.tab.task.as_ref()?;
-        let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature)?;
-        let kind = feature.kind();
-        Some(TaskInfo {
-            title: kind.label.to_string(),
-            icon: kind.icon,
-            confirmable: true,
-            stepwise: false,
-            ..Default::default()
-        })
-    }
-
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
         core_document::ViewportOutput {
             meshes: self.overlay_meshes(ctx, ctx.active_document_object),
@@ -883,6 +846,49 @@ impl Workbench for SurfaceWorkbench {
         });
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchPanels for SurfaceWorkbench {
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.tab.task.is_none()
+            && let Some(analysis) = &self.tab.analysis
+        {
+            let (title, icon) = match analysis.display {
+                analysis::Display::Curvature { .. } => ("Curvature", "bspline-comb"),
+                analysis::Display::Zebra { .. } => ("Zebra stripes", "draw-style-shaded"),
+            };
+            return Some(TaskInfo {
+                title: title.into(),
+                icon,
+                confirmable: false,
+                stepwise: false,
+                ..Default::default()
+            });
+        }
+        if self.tab.task.is_none() && self.tab.check.is_some() {
+            return Some(TaskInfo {
+                title: "Continuity".into(),
+                icon: "surface-continuity",
+                confirmable: false,
+                stepwise: false,
+                ..Default::default()
+            });
+        }
+        let task = self.tab.task.as_ref()?;
+        let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature)?;
+        let kind = feature.kind();
+        Some(TaskInfo {
+            title: kind.label.to_string(),
+            icon: kind.icon,
+            confirmable: true,
+            stepwise: false,
+            ..Default::default()
+        })
+    }
+
     fn has_settings(&self) -> bool {
         true
     }
@@ -895,10 +901,6 @@ impl Workbench for SurfaceWorkbench {
         if let Ok(options) = serde_json::from_value(value.clone()) {
             self.options = options;
         }
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 

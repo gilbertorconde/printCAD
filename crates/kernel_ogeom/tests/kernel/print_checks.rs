@@ -1,7 +1,7 @@
 //! The checks a part gets before it prints, called as a script calls
 //! them, through the real benches with the kernel answering.
 
-use core_document::{Document, WorkbenchRuntimeContext};
+use core_document::{BenchPanels, Document, WorkbenchRuntimeContext};
 use scripting::ScriptEngine;
 
 use super::common::{Benches, benches, chain};

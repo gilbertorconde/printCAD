@@ -500,6 +500,7 @@ fn apply_fields(feature: &mut DesignFeature, fields: &Map<String, Value>) -> Res
 mod tests {
     use super::*;
     use crate::test_support::made_id;
+    use core_document::BenchPanels;
     use core_document::{Document, Workbench};
 
     fn call(

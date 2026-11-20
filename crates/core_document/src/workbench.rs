@@ -11,6 +11,9 @@ use crate::rebuild::RebuildJob;
 use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 use crate::{Document, FeatureId};
 
+mod panels;
+pub use panels::BenchPanels;
+
 mod build;
 pub use build::BenchBuild;
 
@@ -847,7 +850,7 @@ impl<T: Default + Send + 'static> TabSlot for T {
 /// the bench as `dyn Any` through the registry's drawing side
 /// ([`crate::DocumentService::set_drawing_side`]).
 pub trait Workbench:
-    std::any::Any + Send + BenchCommands + BenchOutput + BenchParameters + BenchBuild
+    std::any::Any + Send + BenchCommands + BenchOutput + BenchParameters + BenchBuild + BenchPanels
 {
     /// Returns metadata describing this workbench.
     fn descriptor(&self) -> WorkbenchDescriptor;
@@ -996,23 +999,6 @@ pub trait Workbench:
         None
     }
 
-    /// What this bench offers in a contextual menu, computed while the
-    /// menu is open. Every bench is asked, whichever is active.
-    fn menu_items(&self, _scope: &MenuScope, _document: &Document) -> Vec<MenuItem> {
-        Vec::new()
-    }
-
-    /// Run one of this bench's `menu_items` ids in the scope it was
-    /// offered in. `false` when the id is not one of this bench's.
-    fn on_command(
-        &mut self,
-        _id: &str,
-        _scope: &MenuScope,
-        _ctx: &mut WorkbenchRuntimeContext,
-    ) -> bool {
-        false
-    }
-
     /// The host's answer to this bench's
     /// [`HostRequest::CloseToolGesture`](crate::HostRequest::CloseToolGesture)
     /// or [`HostRequest::UndoToolGesture`](crate::HostRequest::UndoToolGesture),
@@ -1080,22 +1066,6 @@ pub trait Workbench:
         false
     }
 
-    /// The card over the view next to what it edits, while the bench is
-    /// active and has one: declared widgets the host draws as it draws a
-    /// task panel's, with OK and Cancel. Only for a quick edit of a value
-    /// or two (a dimension, a corner's size); a feature with more to set
-    /// is a task. Asked every frame; edits wait in the bench until OK.
-    fn floating_card(&mut self, _ctx: &WorkbenchRuntimeContext) -> Option<panel_api::FloatingCard> {
-        None
-    }
-
-    /// A change on the floating card: its widgets' events, and its OK or
-    /// Cancel as [`panel_api::PanelEvent::CardClose`], after which the
-    /// bench puts the card away. OK writes what the card holds; the host
-    /// closes it as one undo step, and on Cancel takes back anything
-    /// written while the card was open.
-    fn card_event(&mut self, _ctx: &mut WorkbenchRuntimeContext, _event: &panel_api::PanelEvent) {}
-
     /// Called every frame while this workbench is not active and
     /// [`Self::busy`]: the work it runs away from the window ends whatever
     /// bench is on screen, and this is where it hears of it.
@@ -1115,11 +1085,6 @@ pub trait Workbench:
     /// Cancel a held pointer gesture when the window loses focus. A release
     /// outside the window may not arrive; restore the gesture's press state.
     fn cancel_pointer_gesture(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// What the task panel is editing, if anything. `Some` opens the panel.
-    fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        None
-    }
 
     /// The keys in effect for this workbench's tools and actions, by id,
     /// after the user's changes; an id with no key is absent. Called once
@@ -1161,24 +1126,9 @@ pub trait Workbench:
         true
     }
 
-    /// The bench has a Preferences page, which its drawing side draws:
-    /// without one it takes no place in the rail.
-    fn has_settings(&self) -> bool {
-        false
-    }
-
     /// Finish/close the current editing session (e.g., finish sketch).
     /// Called when the user requests to finish editing (e.g., via UI button).
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// This bench's own settings, for the host to keep in the user's
-    /// settings file without reading them. `None` when it has none.
-    fn settings_json(&self) -> Option<serde_json::Value> {
-        None
-    }
-
-    /// Settings `settings_json` produced earlier, back from the file.
-    fn apply_settings_json(&mut self, _value: &serde_json::Value) {}
 
     /// The bench's state for the document on screen: everything that is
     /// not a setting or a cache keyed by what it was worked out from,

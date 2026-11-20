@@ -234,17 +234,6 @@ impl core_document::Workbench for InspectionWorkbench {
         Some(&mut self.tab)
     }
 
-    fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        self.tab.tolerance_task.as_ref()?;
-        Some(core_document::TaskInfo {
-            title: "Geometric tolerance".into(),
-            icon: "constraint-perpendicular",
-            confirmable: true,
-            stepwise: false,
-            ..Default::default()
-        })
-    }
-
     fn busy(&self) -> bool {
         self.tab.maps.busy() || self.tab.tolerance_readings.busy() || self.tab.fitting.running()
     }
@@ -325,6 +314,19 @@ impl core_document::Workbench for InspectionWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         self.handle_input(event, active_tool, ctx)
+    }
+}
+
+impl core_document::BenchPanels for InspectionWorkbench {
+    fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        self.tab.tolerance_task.as_ref()?;
+        Some(core_document::TaskInfo {
+            title: "Geometric tolerance".into(),
+            icon: "constraint-perpendicular",
+            confirmable: true,
+            stepwise: false,
+            ..Default::default()
+        })
     }
 }
 

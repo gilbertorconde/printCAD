@@ -78,9 +78,10 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, Document, FeatureId,
-    FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, Document,
+    FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    base_tool_id,
 };
 use features::datum_icon;
 use making::{Given, ToolMade, take_base};
@@ -413,22 +414,6 @@ impl Workbench for DesignWorkbench {
         self.register_tools(context);
     }
 
-    /// A feature row offers Duplicate, and a move into each other body
-    /// built here (not one read from a file); a sketch's row offers each
-    /// flat face its body borrows to map it onto.
-    fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
-        self.menu_entries(scope, document)
-    }
-
-    fn on_command(
-        &mut self,
-        id: &str,
-        scope: &MenuScope,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> bool {
-        self.menu_command(id, scope, ctx)
-    }
-
     fn tool_toggled(&self, tool_id: &str) -> bool {
         match base_tool_id(tool_id) {
             "design.scan_deviation" => self.tab.scan_deviation,
@@ -467,27 +452,6 @@ impl Workbench for DesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         self.take_input(event, active_tool, ctx)
-    }
-
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        if self.tab.centre.is_some() {
-            return Some(TaskInfo {
-                title: "Centre line".to_string(),
-                icon: centre::ICON,
-                confirmable: false,
-                stepwise: false,
-                ..Default::default()
-            });
-        }
-        #[cfg(feature = "egui")]
-        {
-            self.task_info(ctx)
-        }
-        #[cfg(not(feature = "egui"))]
-        {
-            let _ = ctx;
-            None
-        }
     }
 
     fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -531,12 +495,55 @@ impl Workbench for DesignWorkbench {
         self.tool_enabled(tool_id, ctx)
     }
 
-    fn has_settings(&self) -> bool {
-        true
-    }
-
     fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
         build::delete_feature(ctx.document, id)
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchPanels for DesignWorkbench {
+    /// A feature row offers Duplicate, and a move into each other body
+    /// built here (not one read from a file); a sketch's row offers each
+    /// flat face its body borrows to map it onto.
+    fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
+        self.menu_entries(scope, document)
+    }
+
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        self.menu_command(id, scope, ctx)
+    }
+
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.tab.centre.is_some() {
+            return Some(TaskInfo {
+                title: "Centre line".to_string(),
+                icon: centre::ICON,
+                confirmable: false,
+                stepwise: false,
+                ..Default::default()
+            });
+        }
+        #[cfg(feature = "egui")]
+        {
+            self.task_info(ctx)
+        }
+        #[cfg(not(feature = "egui"))]
+        {
+            let _ = ctx;
+            None
+        }
+    }
+
+    fn has_settings(&self) -> bool {
+        true
     }
 
     fn settings_json(&self) -> Option<serde_json::Value> {
@@ -547,10 +554,6 @@ impl Workbench for DesignWorkbench {
         if let Ok(options) = serde_json::from_value(value.clone()) {
             self.options = options;
         }
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 

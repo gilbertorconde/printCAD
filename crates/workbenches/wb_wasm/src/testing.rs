@@ -11,8 +11,8 @@ use bench_api::{Capabilities, FloatingCard, Frame, PanelEvent};
 use core_document::history::OpJournal;
 use core_document::runtime::{KeyCode, MouseButton};
 use core_document::{
-    BenchCommands, CommandArgs, CommandResult, Document, Workbench, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BenchCommands, BenchPanels, CommandArgs, CommandResult, Document, Workbench,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use std::path::Path;
 use std::time::{Duration, Instant};

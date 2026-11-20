@@ -686,6 +686,7 @@ fn focused_number<'w>(widgets: &'w [Widget], focused: Option<&str>) -> Option<&'
 mod tests {
     use super::*;
     use crate::test_support::{bare_geometry, pad};
+    use core_document::BenchPanels;
     use core_document::Document;
     use sketch_model::SketchFeature;
     use sketch_model::sketch::{GeometryElement, Point, Sketch, Vec2D};
@@ -1144,7 +1145,6 @@ mod tests {
     /// body again, Done keeps them.
     #[test]
     fn a_split_from_the_body_menu_is_taken_back_by_cancel() {
-        use core_document::Workbench;
         for accept in [false, true] {
             let mut doc = Document::new("t");
             let body = doc.create_body(Some("Plate".into()));
