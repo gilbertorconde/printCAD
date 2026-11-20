@@ -9,6 +9,7 @@ use ui_kit::widgets::{Card, overline};
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
 use super::{FileCommand, StartKind, UiCommand};
+use crate::app::examples::Example;
 
 pub struct StartPageInputs<'a> {
     pub recent: &'a [RecentEntry],
@@ -437,7 +438,7 @@ pub fn draw_start_page(
             }
             if nav_item(ui, "Examples", false).clicked() {
                 commands.push(UiCommand::StartNew(StartKind::Example(
-                    bench_fixtures::Scene::Pocket,
+                    Example::DesignWorkflow,
                 )));
             }
             if nav_item(ui, "Preferences", false).clicked() {
@@ -606,22 +607,22 @@ pub fn draw_start_page(
                     let learn_w = (width - 3.0 * CARD_GAP) / 4.0;
                     ui.horizontal(|ui| {
                         // Each card opens an example built for it.
-                        for (title, subtitle, scene) in [
+                        for (title, subtitle, example) in [
                             (
                                 "Sketcher basics",
                                 "A dimensioned sketch, open for editing",
-                                bench_fixtures::Scene::Sketch,
+                                Example::SketcherBasics,
                             ),
                             (
                                 "Design workflow",
                                 "Sketch → Pad → Pocket, ready to fillet",
-                                bench_fixtures::Scene::Pocket,
+                                Example::DesignWorkflow,
                             ),
                         ] {
                             if action_card(ui, vec2(learn_w, 62.0), false, None, title, subtitle)
                                 .clicked()
                             {
-                                commands.push(UiCommand::StartNew(StartKind::Example(scene)));
+                                commands.push(UiCommand::StartNew(StartKind::Example(example)));
                             }
                         }
                         if action_card(

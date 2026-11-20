@@ -63,8 +63,9 @@ pub enum StartKind {
         workbench: core_document::WorkbenchId,
         command: String,
     },
-    /// A document with one of the bundled example scenes on its body.
-    Example(bench_fixtures::Scene),
+    /// One of the examples shipped with the app, opened as an untitled
+    /// document.
+    Example(crate::app::examples::Example),
     /// The exporting walkthrough: the pocketed example, and the export
     /// dialog once its solid is built.
     ExportWalkthrough,

@@ -17,6 +17,7 @@ pub(crate) mod crash;
 pub(crate) mod discovery;
 pub(crate) mod doc_io;
 pub(crate) mod edges;
+pub(crate) mod examples;
 pub(crate) mod export;
 pub(crate) mod face_pick;
 pub(crate) mod file_safety;

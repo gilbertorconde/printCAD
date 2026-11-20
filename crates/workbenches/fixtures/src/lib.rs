@@ -1,6 +1,8 @@
 //! Ready-made scenes built from the benches' own feature types, for the
 //! app's headless bench hooks and for tests. The host never names a bench;
-//! this crate composes them on its behalf.
+//! this crate composes them on its behalf. What users open is not built
+//! here: the start page's examples are documents the app ships, and the
+//! calibration coupon is the facade's.
 
 use core_document::{BodyId, Document, FeatureId};
 use wb_design::{DesignFeature, ExtrudeMode};
