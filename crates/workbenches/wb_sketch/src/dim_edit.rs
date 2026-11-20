@@ -125,8 +125,7 @@ impl SketchWorkbench {
             });
         }
         *slot = constraint;
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
     }
 
     /// Open the value editor on dimension `id`, just added: by its label,

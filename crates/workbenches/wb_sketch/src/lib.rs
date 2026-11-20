@@ -101,9 +101,18 @@ use uuid::Uuid;
 /// per frame from the current zoom.
 const SNAP_TOLERANCE_PX: f64 = 8.0;
 
-/// The open sketch's locked elements with the sketch they were worked
-/// out on.
-type LockedAt = (Sketch, std::sync::Arc<HashSet<Uuid>>);
+/// A sketch the sketcher wrote: the data it wrote, kept so the document
+/// holding that very value (not an equal one) can be told, its planes
+/// as stored, and the sketch as a read of that data placed at
+/// `placement` answers it.
+#[derive(Clone)]
+struct Written {
+    sketch: core_document::FeatureId,
+    data: std::sync::Arc<serde_json::Value>,
+    stored_planes: (SketchPlane, SketchPlane),
+    placement: core_document::BodyPlacement,
+    feature: std::sync::Arc<SketchFeature>,
+}
 
 /// Elements-panel filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -559,14 +568,16 @@ struct Tab {
     /// from.
     scan_guides: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<scan::Chain2>>)>>,
     /// The elements of the open sketch nothing left free can move, with
-    /// the sketch they were worked out on.
-    locked: std::cell::RefCell<Option<LockedAt>>,
+    /// the content number ([`frame_memo::ContentKey::shape`]) of the
+    /// sketch they were worked out on.
+    locked: std::cell::RefCell<Option<(u64, std::sync::Arc<HashSet<Uuid>>)>>,
     /// The freedom the verdict reports while no diagnosis is cached, with
-    /// the sketch it was worked out on.
-    freedom: std::cell::RefCell<Option<(Sketch, i32)>>,
+    /// the content number of the sketch it was worked out on.
+    freedom: std::cell::RefCell<Option<(u64, i32)>>,
     /// The open sketch solved from where it stands for its diagnosis and
-    /// its locked elements, with the sketch it was solved from.
-    settled: std::cell::RefCell<Option<(Sketch, std::sync::Arc<solver::Settled>)>>,
+    /// its locked elements, with the content number of the sketch it was
+    /// solved from.
+    settled: std::cell::RefCell<Option<(u64, std::sync::Arc<solver::Settled>)>>,
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
     sketch_picker: Option<SketchPicker>,
@@ -620,6 +631,9 @@ struct Tab {
     /// when it has moved on without a write of ours (an undo, a script), the
     /// cached solve verdict and the selection are checked again.
     own_seq: std::sync::atomic::AtomicU64,
+    /// The sketch the sketcher last wrote, as a read of it answers, while
+    /// the document holds that very write.
+    written: std::cell::RefCell<Option<Written>>,
     /// The sketches in construction mode, in which every newly created
     /// element (from any drawing tool) is flagged as construction
     /// geometry. Each sketch keeps its own mode; the `sketch.construction`
@@ -795,26 +809,66 @@ impl SketchWorkbench {
 
     /// The edited sketch read from the document, placed, with a dragged
     /// label where it is held: what [`Self::frame_sketch`] keeps.
-    fn read_active_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
+    fn read_active_sketch(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<std::sync::Arc<SketchFeature>> {
         let id = self.tab.active_sketch_id?;
-        let mut feature = stored_sketch(ctx.document, id)?;
         let placement = sketch_placement(ctx.document, id);
-        feature.plane = placed_plane(&feature.plane, &placement);
-        feature.sketch.plane = placed_plane(&feature.sketch.plane, &placement);
+        let mut feature = match self.written_read(ctx.document, id, &placement) {
+            Some(written) => written,
+            None => {
+                let mut feature = stored_sketch(ctx.document, id)?;
+                feature.plane = placed_plane(&feature.plane, &placement);
+                feature.sketch.plane = placed_plane(&feature.sketch.plane, &placement);
+                std::sync::Arc::new(feature)
+            }
+        };
         if let Some(LabelDrag {
             constraint,
             current: Some(offset),
             ..
         }) = &self.tab.label_drag
-            && let Some(c) = feature
-                .sketch
-                .constraints
-                .iter_mut()
-                .find(|c| c.id == *constraint)
+            && let Some(at) = (feature.sketch.constraints.iter()).position(|c| c.id == *constraint)
         {
-            c.label_offset = Some(*offset);
+            let feature = std::sync::Arc::make_mut(&mut feature);
+            feature.sketch.constraints[at].label_offset = Some(*offset);
         }
         Some(feature)
+    }
+
+    /// The sketch last written ([`Written`]) when a read of sketch `id`,
+    /// placed at `placement`, answers exactly it: the document holds that
+    /// write's data itself (no later write, undo or peer's op replaced
+    /// it), no formula sets its values, and the body sits where it did.
+    fn written_read(
+        &self,
+        document: &core_document::Document,
+        id: core_document::FeatureId,
+        placement: &core_document::BodyPlacement,
+    ) -> Option<std::sync::Arc<SketchFeature>> {
+        self.written_held(document, id, |written| {
+            (written.placement == *placement).then(|| std::sync::Arc::clone(&written.feature))
+        })
+    }
+
+    /// `take` of the sketch last written ([`Written`]) while sketch `id`
+    /// as read from `document` is exactly it: the document holds that
+    /// write's data itself (no later write, undo or peer's op replaced
+    /// it) and no formula sets its values.
+    fn written_held<T>(
+        &self,
+        document: &core_document::Document,
+        id: core_document::FeatureId,
+        take: impl FnOnce(&Written) -> Option<T>,
+    ) -> Option<T> {
+        let written = self.tab.written.borrow();
+        let written = written.as_ref()?;
+        let data = document.get_feature_meta(id)?.data.as_ref();
+        let held = written.sketch == id
+            && std::ptr::eq(data, &*written.data)
+            && (document.feature_values(id)).is_some_and(|v| std::ptr::eq(v, data));
+        if held { take(written) } else { None }
     }
 
     /// Persist a modified sketch feature back into the document and mark it
@@ -822,44 +876,111 @@ impl SketchWorkbench {
     /// plane the edit did not move keeps its stored value exactly, so
     /// repeated edits never drift it.
     fn store_sketch(&self, ctx: &mut WorkbenchRuntimeContext, feature: SketchFeature) -> bool {
-        let stored = self.store_sketch_data(ctx, feature);
-        if stored && let Some(id) = self.tab.active_sketch_id {
+        self.write_sketch(ctx, feature).is_some()
+    }
+
+    /// [`Self::store_sketch`] of a sketch [`Self::solve`] has just answered,
+    /// `dof` the freedom that solve measured: kept as the verdict's
+    /// freedom for the content the stored sketch is numbered, which a read
+    /// of it shares while it reads back the same.
+    fn store_solved(
+        &self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: SketchFeature,
+        dof: Option<i32>,
+    ) -> bool {
+        let Some(stored) = self.write_sketch(ctx, feature) else {
+            return false;
+        };
+        if let Some(dof) = dof {
+            let shape = self.frame.content(&stored).shape;
+            *self.tab.freedom.borrow_mut() = Some((shape, dof));
+        }
+        true
+    }
+
+    /// [`Self::store_sketch`], answering the sketch stored, placed as a
+    /// read of it places it.
+    fn write_sketch(
+        &self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: SketchFeature,
+    ) -> Option<std::sync::Arc<SketchFeature>> {
+        let stored = self.store_sketch_data_placed(ctx, feature)?;
+        if let Some(id) = self.tab.active_sketch_id {
             ctx.document.mark_feature_dirty(id);
         }
-        stored
+        Some(stored)
     }
 
     /// [`Self::store_sketch`] for a change nothing is built from (where a
     /// dimension's label sits): the solids that use the sketch stay as
     /// they are.
-    fn store_sketch_data(
+    fn store_sketch_data(&self, ctx: &mut WorkbenchRuntimeContext, feature: SketchFeature) -> bool {
+        self.store_sketch_data_placed(ctx, feature).is_some()
+    }
+
+    /// [`Self::store_sketch_data`], answering the sketch stored, placed as
+    /// a read of it places it.
+    fn store_sketch_data_placed(
         &self,
         ctx: &mut WorkbenchRuntimeContext,
         mut feature: SketchFeature,
-    ) -> bool {
-        let Some(id) = self.tab.active_sketch_id else {
-            return false;
-        };
+    ) -> Option<std::sync::Arc<SketchFeature>> {
+        let id = self.tab.active_sketch_id?;
         let placement = sketch_placement(ctx.document, id);
-        if let Some(stored) = stored_sketch(ctx.document, id) {
-            feature.plane = local_plane(&feature.plane, &stored.plane, &placement);
-            feature.sketch.plane =
-                local_plane(&feature.sketch.plane, &stored.sketch.plane, &placement);
+        let stored = self
+            .written_held(ctx.document, id, |written| Some(written.stored_planes))
+            .or_else(|| stored_sketch(ctx.document, id).map(|s| (s.plane, s.sketch.plane)));
+        if let Some((plane, sketch_plane)) = stored {
+            feature.plane = local_plane(&feature.plane, &plane, &placement);
+            feature.sketch.plane = local_plane(&feature.sketch.plane, &sketch_plane, &placement);
         }
-        if let Err(e) = ctx.document.update_feature_data(id, feature.to_json()) {
+        let data = std::sync::Arc::new(feature.to_json());
+        if let Err(e) = ctx
+            .document
+            .update_feature_data(id, std::sync::Arc::clone(&data))
+        {
             ctx.log_error(format!("Failed to update sketch: {e}"));
-            return false;
+            return None;
         }
         self.tab.own_seq.store(
             ctx.document.mutation_seq(),
             std::sync::atomic::Ordering::Relaxed,
         );
-        true
+        let stored_planes = (feature.plane, feature.sketch.plane);
+        feature.plane = placed_plane(&feature.plane, &placement);
+        feature.sketch.plane = placed_plane(&feature.sketch.plane, &placement);
+        let feature = std::sync::Arc::new(feature);
+        // A text's letters are made again when its data is read, so a
+        // sketch with texts is read back rather than taken as written.
+        *self.tab.written.borrow_mut() = feature.sketch.texts.is_empty().then(|| Written {
+            sketch: id,
+            data,
+            stored_planes,
+            placement,
+            feature: std::sync::Arc::clone(&feature),
+        });
+        Some(feature)
+    }
+
+    /// [`Self::solve`] `feature`, then [`Self::store_solved`] it.
+    fn solve_and_store(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        mut feature: SketchFeature,
+    ) -> bool {
+        let dof = self.solve(ctx, &mut feature);
+        self.store_solved(ctx, feature, dof)
     }
 
     /// Run the constraint solver on `feature`, record the outcome, and log
-    /// failures. Returns the (possibly adjusted) feature.
-    fn solve(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
+    /// failures; answers the freedom the solve measured, if it did.
+    fn solve(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: &mut SketchFeature,
+    ) -> Option<i32> {
         // An edit may have taken selected items away: they leave the
         // selection with it, so Delete and the tools act on what is there.
         self.tab
@@ -872,18 +993,19 @@ impl SketchWorkbench {
             // The panel's Solve now button runs it.
             self.tab.last_diagnosis = None;
             self.tab.unsolved_edits = !solver::holds(&feature.sketch);
-            return;
+            return None;
         }
-        self.solve_now(ctx, feature);
+        self.solve_now(ctx, feature)
     }
 
-    /// Run the solver whatever the auto-update switch says.
-    fn solve_now(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
+    /// Run the solver whatever the auto-update switch says; answers the
+    /// freedom the solve measured, if it did.
+    fn solve_now(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: &mut SketchFeature,
+    ) -> Option<i32> {
         let (outcome, dof) = solver::solve_measured(&mut feature.sketch);
-        if let Some(dof) = dof {
-            // The verdict reads the sketch as stored, which this is.
-            *self.tab.freedom.borrow_mut() = Some((feature.sketch.clone(), dof));
-        }
         self.tab.unsolved_edits = false;
         self.tab.last_solve = Some(outcome);
         self.tab.last_diagnosis = None; // recomputed lazily by the panel
@@ -892,6 +1014,7 @@ impl SketchWorkbench {
                 "Constraints did not converge (residual {residual:.2e}); check for contradictions"
             ));
         }
+        dof
     }
 
     fn clear_interaction_state(&mut self) {
@@ -1128,8 +1251,7 @@ impl SketchWorkbench {
             (false, n) => format!("Hid internal geometry: {n} element(s)"),
         });
         if !changed.is_empty() {
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
         }
         InputResult::consumed()
     }
@@ -1193,8 +1315,7 @@ impl SketchWorkbench {
         ctx.log_info(format!(
             "Removed axis alignment: {changed} constraint(s) now relative"
         ));
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         InputResult::consumed()
     }
 
@@ -1726,7 +1847,7 @@ impl Workbench for SketchWorkbench {
                 .as_ref()
                 .map(|f| crate::style::placement_label(f))
                 .unwrap_or_default(),
-            status: feature.map(|f| self.task_status(&f.sketch)),
+            status: feature.map(|f| self.task_status(&f)),
             icon: "sketch-edit",
             // Cancel puts the sketch back as the session found it.
             confirmable: true,

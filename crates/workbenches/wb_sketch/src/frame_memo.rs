@@ -374,9 +374,9 @@ impl FrameMemo {
     pub(crate) fn active(
         &self,
         key: ActiveKey,
-        read: impl FnOnce() -> Option<SketchFeature>,
+        read: impl FnOnce() -> Option<Arc<SketchFeature>>,
     ) -> Option<Arc<SketchFeature>> {
-        self.active.get(key, || read().map(Arc::new))
+        self.active.get(key, read)
     }
 
     pub(crate) fn displayed(

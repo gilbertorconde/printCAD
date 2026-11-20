@@ -495,12 +495,12 @@ impl SketchWorkbench {
             self.tab.dim_capture.clear_buffers();
         }
         if effect.changed || added > 0 {
-            self.solve(ctx, &mut feature);
+            let dof = self.solve(ctx, &mut feature);
             if let Some(log) = effect.log {
                 ctx.log_info(log);
             }
             let curve = feature.sketch.geometry.last().map(|g| g.id());
-            let stored = self.store_sketch(ctx, feature);
+            let stored = self.store_solved(ctx, feature, dof);
             // Each segment is an undo step of its own, whose step the
             // gesture keeps: taking it back puts the gesture before it.
             if chain
@@ -1301,8 +1301,7 @@ impl SketchWorkbench {
             })),
             serde_json::json!(made),
         );
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
     }
 
     /// Resolve a released box selection. A drag beyond the snap tolerance
@@ -1438,8 +1437,7 @@ impl SketchWorkbench {
                     p.position = original;
                 }
             }
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
         }
     }
 

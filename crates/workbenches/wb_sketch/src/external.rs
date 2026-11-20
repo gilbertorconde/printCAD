@@ -581,8 +581,7 @@ impl SketchWorkbench {
             );
         }
         if added > 0 {
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
             ctx.log_info(match added {
                 1 => "Added 1 external element".to_string(),
                 n => format!("Added {n} external elements"),
@@ -683,8 +682,7 @@ impl SketchWorkbench {
                 commands::made_since(&feature.sketch, &before),
             );
         }
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         ctx.log_info(match added {
             1 => "Added 1 intersection element".to_string(),
             n => format!("Added {n} intersection elements"),
@@ -725,8 +723,7 @@ impl SketchWorkbench {
         }
         // Nothing moved: no edit to record.
         if serde_json::to_value(&before).ok() != serde_json::to_value(&feature.sketch).ok() {
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
         }
     }
 }

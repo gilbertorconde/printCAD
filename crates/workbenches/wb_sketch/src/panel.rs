@@ -184,17 +184,20 @@ impl SketchWorkbench {
     /// switch says.
     fn solve_from_panel(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         if let Some(mut feature) = self.get_active_sketch(ctx) {
-            self.solve_now(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            let dof = self.solve_now(ctx, &mut feature);
+            self.store_solved(ctx, feature, dof);
         }
     }
 
     /// Make sure a diagnosis is cached, then read the verdict.
-    fn diagnosed_verdict(&mut self, sketch: &Sketch) -> crate::verdict::SolverVerdict {
+    fn diagnosed_verdict(
+        &mut self,
+        feature: &std::sync::Arc<crate::SketchFeature>,
+    ) -> crate::verdict::SolverVerdict {
         if self.tab.last_diagnosis.is_none() {
-            self.tab.last_diagnosis = Some(self.diagnose(sketch));
+            self.tab.last_diagnosis = Some(self.diagnose(feature));
         }
-        self.solver_verdict(sketch)
+        self.solver_verdict(feature)
     }
 
     /// The task panel body. Returns how the task ended, if it did.
@@ -334,7 +337,7 @@ impl SketchWorkbench {
         let on_datum = feature.support.is_some();
         let plane = feature.plane;
         let sketch = &feature.sketch;
-        let mut widgets = self.problem_widgets(sketch);
+        let mut widgets = self.problem_widgets(&feature);
         if self.tab.sketch_picker.is_some() {
             widgets.extend(self.picker_widgets(ctx, &plane));
         }
@@ -465,9 +468,9 @@ impl SketchWorkbench {
     /// What the header's status pill cannot do: a conflict or a
     /// redundancy names its constraints, and a click on it selects their
     /// geometry; with automatic update off, Solve now.
-    fn problem_widgets(&mut self, sketch: &Sketch) -> Vec<Widget> {
+    fn problem_widgets(&mut self, feature: &std::sync::Arc<crate::SketchFeature>) -> Vec<Widget> {
         // Also keeps the diagnosis the header's pill reads.
-        let state = self.diagnosed_verdict(sketch);
+        let state = self.diagnosed_verdict(feature);
         let mut widgets = Vec::new();
         if !state.offenders.is_empty() {
             let kind = if state.kind == crate::verdict::SolverKind::Conflicting {
@@ -1151,7 +1154,7 @@ impl SketchWorkbench {
             element: self.tab.hovered,
             constraint: self.tab.hovered_constraint,
         };
-        let elements = self.element_items(ctx, sketch, &hand, kept_rows);
+        let elements = self.element_items(ctx, feature, &hand, kept_rows);
         let mut constraint_children = Vec::new();
         let shown = self.listed_constraints(sketch);
         // While a filter narrows the list, what it shows can go at once.
@@ -1231,10 +1234,11 @@ impl SketchWorkbench {
     fn element_items(
         &mut self,
         ctx: &WorkbenchRuntimeContext,
-        sketch: &Sketch,
+        feature: &std::sync::Arc<crate::SketchFeature>,
         hand: &InHand,
         kept: Vec<Item>,
     ) -> Vec<Item> {
+        let sketch = &feature.sketch;
         let mut kept = KeptRows {
             rows: (std::mem::take(&mut self.tab.panel.element_keys).into_iter())
                 .zip(kept)
@@ -1298,7 +1302,7 @@ impl SketchWorkbench {
             .into_iter()
             .collect();
         let external = sketch.external_ids();
-        let locked = self.locked_elements(sketch);
+        let locked = self.locked_elements(feature);
         let rows = self
             .frame
             .row_text(self.active_key(ctx).without_label(), || RowText::of(sketch));
@@ -1994,8 +1998,7 @@ impl SketchWorkbench {
             "delete" => {
                 if let Some(mut feature) = self.get_active_sketch(ctx) {
                     feature.sketch.constraints.remove(idx);
-                    self.solve(ctx, &mut feature);
-                    self.store_sketch(ctx, feature);
+                    self.solve_and_store(ctx, feature);
                 }
                 return;
             }
@@ -2007,10 +2010,10 @@ impl SketchWorkbench {
     fn button_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str) {
         match id {
             "problems" => {
-                let Some(feature) = self.get_active_sketch(ctx) else {
+                let Some(feature) = self.frame_sketch(ctx) else {
                     return;
                 };
-                let state = self.diagnosed_verdict(&feature.sketch);
+                let state = self.diagnosed_verdict(&feature);
                 self.tab.selected.clear();
                 for constraint in &feature.sketch.constraints {
                     if state.offenders.contains(&constraint.id) {

@@ -239,8 +239,7 @@ impl SketchWorkbench {
                 serde_json::Value::Null,
             );
         }
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         InputResult::consumed()
     }
 }

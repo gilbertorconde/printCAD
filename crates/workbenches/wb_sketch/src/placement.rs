@@ -401,8 +401,7 @@ impl SketchWorkbench {
             commands::made_since(&feature.sketch, &before),
         );
         self.tab.sketch_picker = None;
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         ctx.log_info(carbon_copy_log(&name, count, constraints));
     }
 
