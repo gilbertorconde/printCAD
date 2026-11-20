@@ -498,6 +498,25 @@ fn working_cursor(cursor: egui::CursorIcon, working: bool) -> egui::CursorIcon {
     }
 }
 
+/// A resizable panel's contents, laid out in a child spanning the panel
+/// and clipped to it, the panel then taking exactly that room. A panel
+/// keeps the size its contents report, so a row a fraction too wide (a
+/// scroll bar sliding in takes its room a fraction at a time) would
+/// otherwise widen it for good, and by how much would depend on the
+/// frames that happened to run.
+fn panel_contents<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let rect = ui.max_rect();
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("panel_contents")
+            .max_rect(rect),
+    );
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    let out = add(&mut child);
+    ui.advance_cursor_after_rect(rect);
+    out
+}
+
 /// Turn a panel hook's write-backs into commands. A feature the hook
 /// created becomes the tree selection so the host's active object follows;
 /// every request the hook made goes to the host as it is.

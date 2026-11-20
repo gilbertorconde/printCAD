@@ -241,6 +241,10 @@ pub(crate) struct BenchProgress {
     /// Frames the picture has waited for the scene to settle; past its
     /// wait, the picture has been asked for.
     pub picture_frames: u32,
+    /// The view's rectangle the picture's wait has seen, which starts the
+    /// wait again when it changes (the window taking its size, a panel
+    /// opening).
+    pub picture_viewport: Option<(f32, f32, u32, u32)>,
     pub task_fired: bool,
     pub workbench_fired: bool,
     pub repair_fired: bool,
@@ -268,6 +272,7 @@ impl Default for BenchProgress {
             quiet: 0,
             waiting: false,
             picture_frames: 0,
+            picture_viewport: None,
             task_fired: false,
             workbench_fired: false,
             repair_fired: false,
@@ -520,9 +525,9 @@ impl PrintCadApp {
         let scene = hooks.picture.is_some();
         let window = hooks.window.is_some();
         // Settling waits out a camera that is still turning to its view,
-        // which a fast build would otherwise catch half way, and a scripted
-        // click and its tool, an edit or a chat until they have had their
-        // turn.
+        // which a fast build would otherwise catch half way, a view whose
+        // rectangle is still changing, and a scripted click and its tool,
+        // an edit or a chat until they have had their turn.
         // `PRINTCAD_BENCH_UI`'s steps play once every other hook has had
         // its turn and the scene has settled, and the picture waits for
         // them.
@@ -557,6 +562,11 @@ impl PrintCadApp {
             && !self.session.view.camera.is_animating()
             && !clicking
         {
+            let viewport = self.session.view.camera.viewport_info();
+            if self.bench.picture_viewport != Some(viewport) {
+                self.bench.picture_viewport = Some(viewport);
+                self.bench.picture_frames = 0;
+            }
             self.bench.picture_frames += 1;
             self.redraw_needed = true;
             if self.bench.picture_frames > PICTURE_SETTLE_FRAMES
