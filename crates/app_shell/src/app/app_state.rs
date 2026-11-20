@@ -485,9 +485,9 @@ pub(crate) struct Packages {
     /// or removed while the app runs.
     pub installed: Vec<workbenches::PackageStatus>,
     /// Package installs, update checks and updates running on threads.
-    pub work: crate::app::packages::PackageWork,
+    pub work: package_store::PackageWork,
     /// The workbench stores' indexes, and which are being fetched.
-    pub store: crate::app::packages::StoreView,
+    pub store: package_store::StoreView,
     /// What the last look for a newer printCAD found.
-    pub release_check: crate::app::updates::ReleaseCheck,
+    pub release_check: package_store::ReleaseCheck,
 }

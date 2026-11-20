@@ -17,6 +17,7 @@ viewport_camera = { path = "../viewport_camera" }
 local_ipc = { path = "../local_ipc" }
 app_log = { path = "../app_log" }
 app_platform = { path = "../app_platform" }
+package_store = { path = "../package_store" }
 anyhow.workspace = true
 agents = { path = "../agents" }
 base64.workspace = true

@@ -184,6 +184,7 @@ dependencies = [
  "kernel_ogeom",
  "local_ipc",
  "notify-rust",
+ "package_store",
  "png",
  "pprof",
  "printcad-bench-api",
@@ -3620,6 +3621,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "package_store"
+version = "0.1.0"
+dependencies = [
+ "app_log",
+ "app_platform",
+ "core_document",
+ "serde_json",
+ "settings",
+ "workbenches",
 ]
 
 [[package]]

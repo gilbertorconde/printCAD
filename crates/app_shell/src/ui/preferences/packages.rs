@@ -11,7 +11,7 @@ pub(super) fn packages_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
     packages: &[workbenches::PackageStatus],
-    store: &crate::app::packages::StoreView,
+    store: &package_store::StoreView,
     filter: &str,
 ) {
     use workbenches::PackageState;
@@ -214,9 +214,9 @@ pub(super) fn browse_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
     packages: &[workbenches::PackageStatus],
-    store: &crate::app::packages::StoreView,
+    store: &package_store::StoreView,
 ) {
-    use crate::app::packages::store_name;
+    use package_store::store_name;
     // The page on screen with a store not fetched yet fetches by itself.
     if store.unlooked() {
         state.package_request = Some(super::super::UiCommand::LookAtStores);
@@ -347,9 +347,9 @@ pub(super) fn browse_page(
 pub(super) fn stores_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
-    store: &crate::app::packages::StoreView,
+    store: &package_store::StoreView,
 ) {
-    use crate::app::packages::store_name;
+    use package_store::store_name;
     // What each store holds shows once it is read.
     if store.unlooked() {
         state.package_request = Some(super::super::UiCommand::LookAtStores);

@@ -118,7 +118,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let packages = app::packages::register(&mut registry, &user_settings.packages);
+    let packages = package_store::register(&mut registry, &user_settings.packages);
     let user_settings_check_updates = user_settings.packages.check_updates;
 
     // The benches' own settings, back from the file.

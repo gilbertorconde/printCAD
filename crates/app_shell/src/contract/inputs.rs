@@ -171,9 +171,9 @@ pub struct UiFrameInputs<'a> {
     /// The workbench packages found when the app started, and since.
     pub packages: &'a [workbenches::PackageStatus],
     /// What the last look for a newer printCAD found.
-    pub release: &'a crate::app::updates::ReleaseCheck,
+    pub release: &'a package_store::ReleaseCheck,
     /// The workbench store's list, and whether it is being fetched.
-    pub store: &'a crate::app::packages::StoreView,
+    pub store: &'a package_store::StoreView,
     /// A script printed or failed since the last frame: show the console.
     pub console_attention: bool,
     /// Every command's id, for the console's completion.

@@ -1,29 +1,9 @@
-//! Whether a newer printCAD is out: the latest release on GitHub, read on
-//! a thread when the app starts (when the user allows it) and whenever
-//! asked. Nothing is downloaded; the Updates page says what was found.
+//! Whether a newer printCAD is out, looked for on a package thread when
+//! the app starts (when the user allows it) and whenever asked.
+
+use package_store::{PackageNews, ReleaseCheck};
 
 use crate::PrintCadApp;
-use crate::app::packages::PackageNews;
-
-/// Where the app's releases are published.
-pub(crate) const REPOSITORY: &str = "gilbertorconde/printCAD";
-pub(crate) const RELEASES_PAGE: &str = "https://github.com/gilbertorconde/printCAD/releases";
-
-/// What the last look at the releases found.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) enum ReleaseCheck {
-    #[default]
-    NotChecked,
-    Checking,
-    /// The latest release, its page, and whether it is newer than this
-    /// build.
-    Found {
-        tag: String,
-        page: String,
-        newer: bool,
-    },
-    Failed(String),
-}
 
 impl PrintCadApp {
     /// Look for a newer release, away from the window. `quiet` says only
@@ -34,13 +14,7 @@ impl PrintCadApp {
         }
         self.packages.release_check = ReleaseCheck::Checking;
         self.package_thread(move || {
-            let found = workbenches::latest_release(REPOSITORY, env!("CARGO_PKG_VERSION"))
-                .map(|(latest, newer)| ReleaseCheck::Found {
-                    tag: latest.tag,
-                    page: latest.page,
-                    newer,
-                })
-                .unwrap_or_else(ReleaseCheck::Failed);
+            let found = package_store::latest_release(env!("CARGO_PKG_VERSION"));
             PackageNews::AppRelease { found, quiet }
         });
     }

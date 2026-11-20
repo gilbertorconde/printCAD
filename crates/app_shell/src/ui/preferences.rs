@@ -203,9 +203,9 @@ pub struct PreferencesInputs<'a> {
     /// The workbench packages found at start and since.
     pub packages: &'a [workbenches::PackageStatus],
     /// What the last look for a newer printCAD found.
-    pub release: &'a crate::app::updates::ReleaseCheck,
+    pub release: &'a package_store::ReleaseCheck,
     /// The workbench store's list.
-    pub store: &'a crate::app::packages::StoreView,
+    pub store: &'a package_store::StoreView,
 }
 
 /// The six ways the puck moves, in the order the device reports them: what
@@ -1785,10 +1785,10 @@ fn split_words(text: &str) -> Vec<String> {
 fn updates_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
-    release: &crate::app::updates::ReleaseCheck,
+    release: &package_store::ReleaseCheck,
     filter: &str,
 ) {
-    use crate::app::updates::{RELEASES_PAGE, ReleaseCheck};
+    use package_store::{RELEASES_PAGE, ReleaseCheck};
     let checking = *release == ReleaseCheck::Checking;
     let (status, color) = match release {
         ReleaseCheck::NotChecked => ("Not looked yet".to_string(), TEXT3),
@@ -2370,8 +2370,8 @@ mod rail {
         let mut registry = DocumentService::default();
         workbenches::register_all_workbenches(&mut registry).unwrap();
         let mut state = PreferencesState::default();
-        let release = crate::app::updates::ReleaseCheck::NotChecked;
-        let store = crate::app::packages::StoreView::default();
+        let release = package_store::ReleaseCheck::NotChecked;
+        let store = package_store::StoreView::default();
         let ctx = egui::Context::default();
         ui_kit::theme::apply_theme(&ctx);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {

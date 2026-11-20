@@ -366,12 +366,12 @@ impl UiLayer {
         preferences: &mut preferences::PreferencesState,
         dismissed_release: &mut Option<String>,
         ctx: &Context,
-        release: &crate::app::updates::ReleaseCheck,
+        release: &package_store::ReleaseCheck,
         viewport: egui::Rect,
         settings: &settings::UserSettings,
         unit: core_document::Unit,
     ) -> bool {
-        let crate::app::updates::ReleaseCheck::Found {
+        let package_store::ReleaseCheck::Found {
             tag,
             page,
             newer: true,

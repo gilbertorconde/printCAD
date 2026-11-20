@@ -1,252 +1,23 @@
-//! Workbench packages: loaded at start as the user allowed; installed from
-//! a file or a GitHub release, updated, removed, turned on and off, and
-//! given or refused what they may reach, all while the app runs. Whatever
-//! is slow (the network, compiling a component) runs on a thread of its own
-//! and reports through `PackageNews`; the registry changes on the UI
-//! thread, between frames.
-
-use std::sync::mpsc;
+//! Workbench packages in the running app: installed from a file or a
+//! GitHub release, updated, removed, turned on and off, and given or
+//! refused what they may reach, all while the app runs. Whatever is slow
+//! (the network, compiling a component) runs on a package thread
+//! (`package_store::PackageWork`); the registry changes on the UI thread,
+//! between frames.
 
 use core_document::{Workbench, WorkbenchId};
-use settings::{PackageGrant, PackageSettings};
-use workbenches::{Capabilities, Package, PackageState, PackageStatus};
+use package_store::{PackageNews, Ready, keep_store, prepare, root, store_name};
+use settings::PackageSettings;
+use workbenches::{Package, PackageState, PackageStatus};
 
 use crate::PrintCadApp;
 use crate::contract::ActiveWorkbench;
-
-/// A package whose files are in place, and its workbench made ready to
-/// register: `None` when the user turned the package off.
-pub(crate) struct Ready {
-    /// What was done, for the notice: "Installed", "Updated", "Loaded".
-    pub(crate) done: &'static str,
-    pub(crate) package: Package,
-    pub(crate) bench: Option<Result<Box<dyn Workbench>, String>>,
-}
-
-/// What a package thread found.
-pub(crate) enum PackageNews {
-    Ready(Box<Ready>),
-    Failed(String),
-    Checked(Vec<(String, Result<Option<String>, String>)>),
-    /// What the app's own releases hold; `quiet` for the look at start.
-    AppRelease {
-        found: crate::app::updates::ReleaseCheck,
-        quiet: bool,
-    },
-    /// The index of the workbench store at `url`; `quiet` for the look
-    /// at start.
-    Store {
-        url: String,
-        found: Result<workbenches::StoreIndex, String>,
-        quiet: bool,
-    },
-}
-
-/// One workbench store as the app knows it.
-#[derive(Default)]
-pub(crate) struct StoreState {
-    /// Its index as last fetched, or as kept from a run before.
-    pub index: Option<workbenches::StoreIndex>,
-    /// A fetch is out.
-    pub looking: bool,
-    /// Why the last fetch failed.
-    pub error: Option<String>,
-    /// A fetch was asked for in this run.
-    pub looked: bool,
-}
-
-/// What the app knows of the workbench stores the user keeps.
-#[derive(Default)]
-pub(crate) struct StoreView {
-    /// Each store by its index's address, in the user's order.
-    pub stores: Vec<(String, StoreState)>,
-    /// Installed packages already warned of as taken off a list.
-    warned: std::collections::HashSet<String>,
-}
-
-/// A store's name: what its index calls it, else its address's host.
-pub(crate) fn store_name(url: &str, index: Option<&workbenches::StoreIndex>) -> String {
-    index
-        .and_then(|i| i.name.clone())
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| {
-            url.split("://")
-                .nth(1)
-                .unwrap_or(url)
-                .split('/')
-                .next()
-                .unwrap_or(url)
-                .to_string()
-        })
-}
-
-impl StoreView {
-    /// Every listing of every store, each with its store's address.
-    pub fn listings(&self) -> impl Iterator<Item = (&str, &workbenches::Listing)> {
-        self.stores.iter().flat_map(|(url, state)| {
-            state
-                .index
-                .iter()
-                .flat_map(|i| i.packages.iter())
-                .map(move |l| (url.as_str(), l))
-        })
-    }
-
-    /// Store `url`'s listing of package `id`.
-    pub fn listing(&self, url: &str, id: &str) -> Option<&workbenches::Listing> {
-        self.listings()
-            .find(|(u, l)| *u == url && l.id == id)
-            .map(|(_, l)| l)
-    }
-
-    /// The listing of an installed package: the same id from the same
-    /// repository, in any store.
-    pub fn lists(&self, status: &PackageStatus) -> Option<&workbenches::Listing> {
-        let source = status.source.as_ref()?;
-        self.listings()
-            .map(|(_, l)| l)
-            .find(|l| l.id == status.id && source.repo.eq_ignore_ascii_case(&l.repository))
-    }
-
-    /// Whether a store has not been fetched in this run.
-    pub fn unlooked(&self) -> bool {
-        self.stores.iter().any(|(_, s)| !s.looked)
-    }
-
-    /// Follow the user's list: a store added is kept from a run before
-    /// where it can be, one removed goes.
-    fn follow(&mut self, urls: &[String]) {
-        let mut before = std::mem::take(&mut self.stores);
-        for url in urls {
-            let state = match before.iter().position(|(u, _)| u == url) {
-                Some(at) => before.remove(at).1,
-                None => StoreState {
-                    index: kept_store(url),
-                    ..StoreState::default()
-                },
-            };
-            self.stores.push((url.clone(), state));
-        }
-    }
-}
-
-/// The index of store `url` as the last run kept it.
-fn kept_store(url: &str) -> Option<workbenches::StoreIndex> {
-    let value: serde_json::Value = settings::json_file::load(&settings::store_cache(url)?)
-        .map_err(|err| app_log::warn(format!("Could not read the workbench store: {err}")))
-        .ok()?;
-    workbenches::read_store(&value.to_string()).ok()
-}
-
-/// Keep store `url`'s index for the next run, and for browsing offline.
-fn keep_store(url: &str, index: &workbenches::StoreIndex) {
-    let Some(path) = settings::store_cache(url) else {
-        return;
-    };
-    let written = settings::json_file::keep(&path, &Some(index.clone()));
-    if let Err(e) = written {
-        app_log::warn(format!("Could not keep the workbench store's list: {e}"));
-    }
-}
-
-/// The package threads' line back, and how many are out.
-pub(crate) struct PackageWork {
-    pub(crate) tx: mpsc::Sender<PackageNews>,
-    rx: mpsc::Receiver<PackageNews>,
-    pub(crate) pending: usize,
-}
-
-impl Default for PackageWork {
-    fn default() -> Self {
-        let (tx, rx) = mpsc::channel();
-        Self { tx, rx, pending: 0 }
-    }
-}
-
-impl PackageWork {
-    /// A package thread is out: the frames keep coming until it reports.
-    pub(crate) fn busy(&self) -> bool {
-        self.pending > 0
-    }
-}
-
-/// What the user allowed a package, as the loader reads it.
-pub(crate) fn capabilities(grant: PackageGrant) -> Capabilities {
-    Capabilities {
-        save_dialog: grant.save_dialog,
-        open_dialog: grant.open_dialog,
-        helper: grant.helper,
-        network: grant.network,
-    }
-}
-
-/// Load every installed package the user has not turned off, after the
-/// built-in benches.
-pub(crate) fn register(
-    registry: &mut core_document::DocumentService,
-    settings: &PackageSettings,
-) -> Vec<PackageStatus> {
-    if let Some(compiled) = settings::compiled_packages_dir() {
-        workbenches::set_compiled_cache(compiled);
-    }
-    let Some(root) = settings::workbenches_dir() else {
-        return Vec::new();
-    };
-    let statuses = workbenches::register_packages(
-        registry,
-        &root,
-        |id| settings.enabled(id),
-        |id| capabilities(settings.grant(id)),
-    );
-    for status in &statuses {
-        match &status.state {
-            PackageState::Loaded => app_log::info(format!(
-                "Loaded the workbench package {} {}",
-                status.name, status.version
-            )),
-            PackageState::Failed(reason) => app_log::warn(format!(
-                "The workbench package {} did not load: {reason}",
-                status.id
-            )),
-            PackageState::Disabled => {}
-        }
-    }
-    statuses
-}
-
-/// `package`'s workbench, made ready as `settings` allow; `None` when
-/// they turn it off. Slow: it compiles the component.
-fn prepare(
-    package: &Package,
-    settings: &PackageSettings,
-) -> Option<Result<Box<dyn Workbench>, String>> {
-    let id = &package.manifest.id;
-    settings
-        .enabled(id)
-        .then(|| workbenches::prepare_package(package, &capabilities(settings.grant(id))))
-}
-
-fn root() -> Option<std::path::PathBuf> {
-    let root = settings::workbenches_dir();
-    if root.is_none() {
-        app_log::error("There is no folder to install workbench packages in");
-    }
-    root
-}
 
 impl PrintCadApp {
     /// Run `work` on a thread of its own, its news read by
     /// [`Self::drain_package_news`].
     pub(crate) fn package_thread(&mut self, work: impl FnOnce() -> PackageNews + Send + 'static) {
-        let tx = self.packages.work.tx.clone();
-        self.packages.work.pending += 1;
-        let started = app_platform::spawn("printcad-packages", move || {
-            let _ = tx.send(work());
-        });
-        if let Err(e) = started {
-            self.packages.work.pending -= 1;
-            app_log::error(format!("Could not start the package work: {e}"));
-        }
+        self.packages.work.spawn(work);
     }
 
     /// Put a package's files in place with `place` and make its workbench
@@ -378,7 +149,7 @@ impl PrintCadApp {
                     else {
                         continue;
                     };
-                    if self.packages.store.warned.insert(status.id.clone()) {
+                    if self.packages.store.warn_once(&status.id) {
                         app_log::warn(format!(
                             "{} was taken off the workbench store's list: {why}",
                             status.name
@@ -427,8 +198,7 @@ impl PrintCadApp {
 
     /// Take what the package threads found, once a frame.
     pub(crate) fn drain_package_news(&mut self) {
-        while let Ok(news) = self.packages.work.rx.try_recv() {
-            self.packages.work.pending = self.packages.work.pending.saturating_sub(1);
+        while let Some(news) = self.packages.work.take() {
             match news {
                 PackageNews::Ready(ready) => self.take_ready(*ready),
                 PackageNews::Failed(e) => app_log::error(e),
