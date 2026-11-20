@@ -8,9 +8,9 @@ use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature
 use kernel_api::{
     BooleanOp, Profile, ProfileSegment, ProfileWire, RevolveTermination, SolidOp, SweepKind,
 };
-use wb_sketch::SketchFeature;
-use wb_sketch::profile;
-use wb_sketch::sketch::{GeometryElement, Sketch};
+use sketch_model::SketchFeature;
+use sketch_model::profile;
+use sketch_model::sketch::{GeometryElement, Sketch};
 
 use crate::feature::{
     DesignFeature, HelixMode, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
@@ -290,7 +290,7 @@ pub(super) fn loft_section(
         .sketch
         .geometry
         .iter()
-        .filter(|g| !matches!(g, wb_sketch::sketch::GeometryElement::Point(_)))
+        .filter(|g| !matches!(g, sketch_model::sketch::GeometryElement::Point(_)))
         .count();
     if curves == 0 {
         let points: Vec<_> = sketch
@@ -298,7 +298,7 @@ pub(super) fn loft_section(
             .geometry
             .iter()
             .filter_map(|g| match g {
-                wb_sketch::sketch::GeometryElement::Point(p) => Some(p.position),
+                sketch_model::sketch::GeometryElement::Point(p) => Some(p.position),
                 _ => None,
             })
             .collect();
@@ -503,10 +503,10 @@ fn spine_segment(
             let start = pos(arc.start)?;
             let end = pos(arc.end)?;
             let start_vec =
-                wb_sketch::sketch::Vec2D::new(start[0] - center[0], start[1] - center[1]);
-            let end_vec = wb_sketch::sketch::Vec2D::new(end[0] - center[0], end[1] - center[1]);
+                sketch_model::sketch::Vec2D::new(start[0] - center[0], start[1] - center[1]);
+            let end_vec = sketch_model::sketch::Vec2D::new(end[0] - center[0], end[1] - center[1]);
             let (start_angle, sweep) =
-                wb_sketch::geom2d::arc_angles(start_vec.to_glam(), end_vec.to_glam());
+                sketch_model::geom2d::arc_angles(start_vec.to_glam(), end_vec.to_glam());
             let mid_angle = start_angle + sweep * 0.5;
             let radius = ((start[0] - center[0]).powi(2) + (start[1] - center[1]).powi(2)).sqrt();
             let mid = [

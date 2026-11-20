@@ -6,7 +6,7 @@
 //! left as it is, and the feature's error names its loose ends.
 
 use core_document::{Document, FeatureId, WorkbenchFeature};
-use wb_sketch::SketchFeature;
+use sketch_model::SketchFeature;
 
 use crate::feature::DesignFeature;
 
@@ -22,7 +22,7 @@ const MOST_REACH: f64 = 0.5;
 pub(crate) struct SketchRepair {
     pub sketch: FeatureId,
     pub before: serde_json::Value,
-    pub done: wb_sketch::repair::Repaired,
+    pub done: sketch_model::repair::Repaired,
 }
 
 impl SketchRepair {
@@ -64,13 +64,15 @@ pub(crate) fn close_profile(
     let sketch = feature.sketch()?;
     let before = document.get_feature_data(sketch)?.clone();
     let mut drawn = SketchFeature::from_json(&before).ok()?;
-    let loose = wb_sketch::profile::loose_ends(&drawn.sketch).len();
+    let loose = sketch_model::profile::loose_ends(&drawn.sketch).len();
     if loose == 0 {
         return None;
     }
     let reach = (size_of(&drawn.sketch) * REACH).clamp(LEAST_REACH, MOST_REACH);
-    let done = wb_sketch::repair::repair(&mut drawn.sketch, reach);
-    if done.joined + done.closed == 0 || !wb_sketch::profile::loose_ends(&drawn.sketch).is_empty() {
+    let done = sketch_model::repair::repair(&mut drawn.sketch, reach);
+    if done.joined + done.closed == 0
+        || !sketch_model::profile::loose_ends(&drawn.sketch).is_empty()
+    {
         return None;
     }
     document.update_feature_data(sketch, drawn.to_json()).ok()?;
@@ -83,11 +85,11 @@ pub(crate) fn close_profile(
 }
 
 /// The diagonal of the box round a sketch's points, mm.
-fn size_of(sketch: &wb_sketch::sketch::Sketch) -> f64 {
+fn size_of(sketch: &sketch_model::sketch::Sketch) -> f64 {
     let mut lo = [f64::INFINITY; 2];
     let mut hi = [f64::NEG_INFINITY; 2];
     for g in &sketch.geometry {
-        if let wb_sketch::sketch::GeometryElement::Point(p) = g {
+        if let sketch_model::sketch::GeometryElement::Point(p) = g {
             for (k, c) in [p.position.x, p.position.y].into_iter().enumerate() {
                 lo[k] = lo[k].min(c);
                 hi[k] = hi[k].max(c);

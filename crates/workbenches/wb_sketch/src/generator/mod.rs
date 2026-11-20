@@ -7,7 +7,7 @@ pub(crate) mod panel;
 
 use core_document::WorkbenchFeature;
 use sketch_model::feature::SketchFeature;
-pub use sketch_model::generator::*;
+pub(crate) use sketch_model::generator::*;
 
 impl crate::SketchWorkbench {
     /// Whether the sketch open for editing is a generated one. Read off

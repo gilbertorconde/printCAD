@@ -11,8 +11,9 @@ use core_document::{
     Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette,
     ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
-use wb_sketch::sketch::{GeometryElement, Sketch};
-use wb_sketch::{SketchFeature, SketchWorkbench};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Sketch};
+use wb_sketch::SketchWorkbench;
 
 mod chain;
 mod constraints;
@@ -402,7 +403,7 @@ impl Harness {
     /// the egui plane picker, which has no headless harness) and make it the
     /// active object, exactly as the picker's create path does.
     fn create_sketch(&mut self) -> FeatureId {
-        use wb_sketch::sketch::Sketch;
+        use sketch_model::sketch::Sketch;
         let sketch = Sketch::new("test-sketch");
         let plane = sketch.plane;
         let id = self
@@ -785,7 +786,7 @@ fn dragging_a_constrained_point_respects_constraints() {
     assert_eq!(sketch.constraints.len(), 1);
     assert!(matches!(
         sketch.constraints[0].kind,
-        wb_sketch::sketch::ConstraintKind::Horizontal { .. }
+        sketch_model::sketch::ConstraintKind::Horizontal { .. }
     ));
     let ys: Vec<f64> = point_positions(&sketch).iter().map(|p| p.y).collect();
     assert!(
@@ -897,7 +898,7 @@ fn circles_take_the_segments_their_size_on_screen_needs() {
         let before = h.overlays().len();
         h.edit_sketch(|sketch| {
             let center = point(sketch, x, y);
-            let circle = wb_sketch::sketch::Circle::new(center, radius);
+            let circle = sketch_model::sketch::Circle::new(center, radius);
             sketch.add_geometry(GeometryElement::Circle(circle));
         });
         h.overlays().len() - before
@@ -1052,7 +1053,7 @@ fn the_axes_hide_with_origin_lines_off_but_while_picked() {
 /// between them.
 #[test]
 fn closed_regions_are_shaded_while_editing_as_out_of_it() {
-    use wb_sketch::sketch::{Circle, Point, Vec2D};
+    use sketch_model::sketch::{Circle, Point, Vec2D};
     let kernel = &REGIONS;
     let shaded = |h: &mut Harness| {
         let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
@@ -1273,7 +1274,7 @@ fn the_construction_button_converts_projected_geometry_with_the_rest() {
 /// on its ends and made to count: one closed profile to extrude.
 #[test]
 fn a_projected_arc_closed_by_a_line_is_a_profile() {
-    use wb_sketch::sketch::Arc;
+    use sketch_model::sketch::Arc;
     let mut h = Harness::sketching();
     let arc = h.edit_sketch(|s| {
         let [centre, start, end] = [0.0, 10.0, -10.0].map(|x| point(s, x, 0.0));
@@ -1297,7 +1298,7 @@ fn a_projected_arc_closed_by_a_line_is_a_profile() {
 
     let sketch = h.sketch();
     assert!(sketch.external[&arc].defining, "the arc counts");
-    let wires = wb_sketch::profile::extract_wires(&sketch).expect("a profile");
+    let wires = sketch_model::profile::extract_wires(&sketch).expect("a profile");
     assert_eq!(wires.len(), 1, "{wires:?}");
     assert_eq!(wires[0].segments.len(), 2, "the arc and the line");
 }
@@ -1306,7 +1307,7 @@ fn a_projected_arc_closed_by_a_line_is_a_profile() {
 /// move.
 #[test]
 fn a_line_on_projected_spline_ends_leaves_no_freedom() {
-    use wb_sketch::sketch::BSpline;
+    use sketch_model::sketch::BSpline;
     let mut h = Harness::sketching();
     let poles = h.edit_sketch(|s| {
         let poles: Vec<_> = [(10.0, 0.0), (10.0, 6.0), (4.0, 10.0), (-4.0, 10.0)]
@@ -1445,7 +1446,7 @@ fn construction_on_a_mixed_selection_converts_all_of_it() {
 
 #[test]
 fn editing_a_dimension_constraint_re_solves_the_sketch() {
-    use wb_sketch::sketch::{Constraint, ConstraintKind};
+    use sketch_model::sketch::{Constraint, ConstraintKind};
 
     let mut h = Harness::sketching();
     // Axis-snapped horizontal line: 10 long, auto Horizontal constraint.
@@ -1743,7 +1744,7 @@ fn ellipse_tool_extracts_ellipse_profile() {
         "ratio {}",
         ellipse.ratio
     );
-    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    let wires = sketch_model::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1);
     assert!(matches!(
         &wires[0].segments[0],
@@ -1766,7 +1767,7 @@ fn bspline_draw_closes_profile_with_line() {
 
     let sketch = h.sketch();
     assert_eq!(sketch.geometry.len(), 5, "3 points + spline + line");
-    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    let wires = sketch_model::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 2);
     assert!(wires[0].segments.iter().any(|s| matches!(
@@ -1910,7 +1911,7 @@ fn offset_rectangle_end_to_end_produces_closed_loop() {
 
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (8, 8));
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    let wires = sketch_model::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(wires.len(), 2, "original + offset are both closed loops");
     for (x, y) in [(2.0, 2.0), (10.0, 2.0), (10.0, 6.0), (2.0, 6.0)] {
         assert!(h.point_at(x, y), "offset corner ({x}, {y}) 2mm inside");
@@ -1987,7 +1988,7 @@ fn an_offset_of_several_curves_moves_each_the_same_way() {
         .constraints
         .iter()
         .filter_map(|c| match &c.kind {
-            wb_sketch::sketch::ConstraintKind::Offset { pairs, .. } => Some(pairs.len()),
+            sketch_model::sketch::ConstraintKind::Offset { pairs, .. } => Some(pairs.len()),
             _ => None,
         })
         .collect();
@@ -2017,7 +2018,7 @@ fn an_offset_of_a_rectangle_and_its_hole_copies_each() {
     for (x, y) in [(1.0, 1.0), (11.0, 1.0), (11.0, 7.0), (1.0, 7.0)] {
         assert!(h.point_at(x, y), "corner ({x}, {y}) 1 mm inside");
     }
-    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    let wires = sketch_model::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 4, "two loops and their copies");
 }
 
@@ -2038,7 +2039,7 @@ fn translate_copy_makes_n_copies_end_to_end() {
 
 #[test]
 fn scale_carries_manual_label_centers_through_history_and_copies() {
-    use wb_sketch::sketch::{Arc, Circle, ConstraintKind, Point, Vec2D};
+    use sketch_model::sketch::{Arc, Circle, ConstraintKind, Point, Vec2D};
 
     for factor in [0.5, 2.0] {
         for copies in [0, 1] {
@@ -2295,7 +2296,7 @@ fn shape_tools_draw_closed_profiles_end_to_end() {
         }
         assert_eq!(h.counts(), counts, "{what}");
         let sketch = h.sketch();
-        let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+        let wires = sketch_model::profile::extract_wires(&sketch).unwrap();
         assert_eq!(wires.len(), 1, "{what}: one closed loop");
         assert_eq!(wires[0].segments.len(), segments, "{what}");
         if let Some(n) = constraints {
@@ -2320,14 +2321,14 @@ fn shape_tools_draw_closed_profiles_end_to_end() {
 }
 
 /// A projection's source, standing in for a datum's.
-fn datum_source() -> wb_sketch::sketch::ExternalSource {
-    use wb_sketch::sketch::{ExternalReference, ExternalSource};
+fn datum_source() -> sketch_model::sketch::ExternalSource {
+    use sketch_model::sketch::{ExternalReference, ExternalSource};
     let datum = uuid::Uuid::new_v4();
     ExternalSource::of_reference(ExternalReference::Datum { datum })
 }
 
 fn point(sketch: &mut Sketch, x: f64, y: f64) -> uuid::Uuid {
-    use wb_sketch::sketch::{Point, Vec2D};
+    use sketch_model::sketch::{Point, Vec2D};
     sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
 }
 
@@ -2357,7 +2358,7 @@ fn assert_arc_slot_shape(sketch: &Sketch, what: &str) {
         "{what}: concentric rails"
     );
     let c = at(sketch, rails[0].center);
-    let radius = |a: &wb_sketch::sketch::Arc| {
+    let radius = |a: &sketch_model::sketch::Arc| {
         let r = (at(sketch, a.start) - at(sketch, a.center)).length();
         let r_end = (at(sketch, a.end) - at(sketch, a.center)).length();
         assert!((r - r_end).abs() < 1e-4, "{what}: ends on the arc");
@@ -2415,7 +2416,7 @@ fn an_arc_slot_holds_its_shape_when_dragged() {
         h.click(3.0, 12.0, "sketch.arc_slot");
         let (p, l, _, a) = h.counts();
         assert_eq!((p, l, a), (7, 0, 4), "rails + caps");
-        let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+        let wires = sketch_model::profile::extract_wires(&h.sketch()).unwrap();
         assert_eq!(wires.len(), 1);
         assert_eq!(wires[0].segments.len(), 4);
         assert_arc_slot_shape(&h.sketch(), "drawn");
@@ -2447,7 +2448,7 @@ fn a_slot_holds_its_shape_when_dragged() {
         h.click(3.0, 3.0, "sketch.slot");
         h.click(13.0, 3.0, "sketch.slot");
         assert_eq!(h.counts(), (6, 2, 0, 2), "junctions + centres, sides, caps");
-        let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+        let wires = sketch_model::profile::extract_wires(&h.sketch()).unwrap();
         assert_eq!(wires.len(), 1);
         assert_eq!(wires[0].segments.len(), 4);
 
@@ -2510,7 +2511,7 @@ fn trim_hover_highlights_removable_span() {
 
 #[test]
 fn clicking_near_a_line_attaches_new_point_onto_it() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
 
     let mut h = Harness::sketching();
     // Base line along X (gets an auto Horizontal from the axis snap).
@@ -2546,7 +2547,7 @@ fn clicking_near_a_line_attaches_new_point_onto_it() {
 
 #[test]
 fn fully_constrained_sketch_renders_green() {
-    use wb_sketch::sketch::{Constraint, ConstraintKind};
+    use sketch_model::sketch::{Constraint, ConstraintKind};
 
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 7.0));
@@ -2593,7 +2594,7 @@ fn no_geometry_created_without_active_sketch() {
 // On-view parameters (type-to-constrain)
 // ---------------------------------------------------------------------------
 
-use wb_sketch::sketch::ConstraintKind;
+use sketch_model::sketch::ConstraintKind;
 
 fn distance_constraints(sketch: &Sketch) -> Vec<(f64, bool)> {
     sketch
@@ -3064,7 +3065,7 @@ fn glyph_click_selects_constraint_and_delete_removes_it() {
     // Repeated relational icons include a clickable numeric suffix, even
     // where its center lies outside the icon's own pick circle.
     h.edit_sketch(|s| {
-        use wb_sketch::sketch::{ConstraintKind, Line};
+        use sketch_model::sketch::{ConstraintKind, Line};
         let lines: Vec<_> = (0..3)
             .map(|i| {
                 let a = point(s, 3.0, 10.0 + i as f64 * 2.0);
@@ -3512,7 +3513,7 @@ fn a_point_can_be_pinned_to_the_origin_from_the_viewport() {
     assert!(
         sketch.constraints.iter().any(|c| matches!(
             c.kind,
-            ConstraintKind::Coincident { point2, .. } if point2 == wb_sketch::sketch::ORIGIN_ID
+            ConstraintKind::Coincident { point2, .. } if point2 == sketch_model::sketch::ORIGIN_ID
         )),
         "the constraint points at the origin"
     );
@@ -3631,7 +3632,7 @@ fn the_start_card_command_opens_a_blank_sketch_on_the_selected_body() {
         .active_document_object
         .expect("the new sketch is the active object");
     let node = h.doc.get_feature_meta(created).expect("the sketch exists");
-    assert_eq!(node.workbench_id.as_str(), wb_sketch::KIND);
+    assert_eq!(node.workbench_id.as_str(), sketch_model::KIND);
     assert_eq!(node.body, Some(body));
     assert_eq!(h.wb.editing_feature(), Some(created));
 }
@@ -3812,7 +3813,7 @@ fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
 /// circle centred on the Y axis keeps its centre there.
 #[test]
 fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
-    use wb_sketch::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
+    use sketch_model::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
     let mut h = Harness::sketching();
     // Near the origin, then near the X axis far from it.
     h.line((0.05, -0.04), (12.0, 0.08));
@@ -3854,7 +3855,7 @@ fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
 
 #[test]
 fn a_click_by_a_line_s_middle_lands_on_it_and_stays_there() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
 
     let mut h = Harness::sketching();
     h.line((3.0, 4.0), (23.0, 4.0));
@@ -3882,7 +3883,7 @@ fn a_click_by_a_line_s_middle_lands_on_it_and_stays_there() {
 
 #[test]
 fn a_click_by_two_lines_crossing_lands_on_the_crossing() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
 
     let mut h = Harness::sketching();
     h.line((3.0, 4.0), (23.0, 14.0));
@@ -3950,7 +3951,7 @@ fn the_snap_cue_names_where_the_click_lands() {
 /// broken elements, while the sound line beside them still snaps.
 #[test]
 fn pointer_work_over_stale_and_invalid_geometry_never_panics() {
-    use wb_sketch::sketch::{Arc, BSpline, Circle, Ellipse, Line, Point, Vec2D};
+    use sketch_model::sketch::{Arc, BSpline, Circle, Ellipse, Line, Point, Vec2D};
     let mut h = Harness::sketching();
     h.line((3.0, 4.0), (23.0, 4.0));
     h.edit_sketch(|s| {
@@ -4015,7 +4016,7 @@ fn with_snapping_off_there_is_no_cue_and_no_snap() {
     let sketch = h.sketch();
     assert!(
         sketch.geometry.iter().any(|g| matches!(g,
-            wb_sketch::sketch::GeometryElement::Point(p)
+            sketch_model::sketch::GeometryElement::Point(p)
                 if (p.position.x - 13.2).abs() < 1e-2 && (p.position.y - 4.2).abs() < 1e-2)),
         "the point stays where it was clicked"
     );
@@ -4026,7 +4027,7 @@ fn with_snapping_off_there_is_no_cue_and_no_snap() {
 /// it; each segment is held that way.
 #[test]
 fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
-    use wb_sketch::sketch::{ConstraintKind, GeometryElement};
+    use sketch_model::sketch::{ConstraintKind, GeometryElement};
 
     let mut h = Harness::sketching();
     h.line((3.0, 4.0), (23.0, 4.0));
@@ -4062,7 +4063,7 @@ fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
     // The touching end stays on the circle and the segment touches it there
     // once the circle moves: its point-on-circle survives the redundancy check.
     let mut moved = sketch.clone();
-    let radius = |sketch: &wb_sketch::sketch::Sketch| {
+    let radius = |sketch: &sketch_model::sketch::Sketch| {
         sketch
             .geometry
             .iter()
@@ -4093,10 +4094,10 @@ fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
     for (point, x, y) in [(center, 30.0, 16.0), (start, 30.0, 30.0)] {
         moved.add_constraint(ConstraintKind::FixedPoint {
             point,
-            position: wb_sketch::sketch::Vec2D::new(x, y),
+            position: sketch_model::sketch::Vec2D::new(x, y),
         });
     }
-    wb_sketch::operations::solve(&mut moved).unwrap();
+    sketch_model::operations::solve(&mut moved).unwrap();
     let at = |id| moved.point_position(id).unwrap().to_glam();
     let (c, s, e) = (at(center), at(start), at(end));
     let (_, radius) = radius(&moved);
@@ -4288,7 +4289,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
 /// from the toolbar the way a user makes them.
 mod curve_constraints {
     use super::*;
-    use wb_sketch::sketch::{ConstraintKind, X_AXIS_ID};
+    use sketch_model::sketch::{ConstraintKind, X_AXIS_ID};
 
     /// Draw an arc about `(cx, cy)` from `radius` right of it, a quarter
     /// turn counter-clockwise.
@@ -4694,7 +4695,7 @@ fn rectangle_variants_draw_turned_rectangles_and_frames() {
         h.click(x, y, "sketch.rect:frame");
     }
     assert_eq!(h.counts(), (17, 16, 0, 0));
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    let wires = sketch_model::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(
         wires.len(),
         4,
@@ -4750,7 +4751,7 @@ fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
     let sketch = h.sketch();
     let spline = spline_of(&sketch);
     assert_eq!(spline.fit_points.len(), 4);
-    let near = |sketch: &Sketch, b: &wb_sketch::sketch::BSpline, x: f64, y: f64| {
+    let near = |sketch: &Sketch, b: &sketch_model::sketch::BSpline, x: f64, y: f64| {
         b.points(sketch, 2000)
             .unwrap()
             .iter()
@@ -4814,10 +4815,10 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
         .count();
     assert_eq!(conics, 2);
     assert!(h.point_at(15.0, 3.0) && h.point_at(15.0, -1.0));
-    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    let wires = sketch_model::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1, "the hyperbola's open arc is left out");
     h.line((15.0, 3.0), (15.0, -1.0));
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    let wires = sketch_model::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(wires.len(), 2);
 
     // Dragging an end slides it along its curve.
@@ -4827,7 +4828,7 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
     let sketch = h.sketch();
     for g in &sketch.geometry {
         if let GeometryElement::Conic(c) = g {
-            let shape = wb_sketch::conic::Shape::of(c, &sketch).unwrap();
+            let shape = sketch_model::conic::Shape::of(c, &sketch).unwrap();
             for id in [c.start, c.end] {
                 let p = sketch.point_position(id).unwrap();
                 let miss = shape.distance([p.x, p.y]).abs();
@@ -4839,7 +4840,7 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
 
 #[test]
 fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
-    use wb_sketch::sketch::{ConstraintKind, InternalRole};
+    use sketch_model::sketch::{ConstraintKind, InternalRole};
     let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.ellipse");
     h.click(10.0, 0.0, "sketch.ellipse");
@@ -4986,7 +4987,7 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
 /// last segment and its end on the axis.
 #[test]
 fn a_direction_snap_onto_an_axis_keeps_both_constraints() {
-    use wb_sketch::sketch::{GeometryElement, X_AXIS_ID};
+    use sketch_model::sketch::{GeometryElement, X_AXIS_ID};
     let mut h = Harness::sketching();
     h.click(0.0, 5.0, "sketch.line");
     h.click(10.0, 7.0, "sketch.line");
@@ -5017,7 +5018,7 @@ fn a_direction_snap_onto_an_axis_keeps_both_constraints() {
 /// on the same spot steps to the guide under it.
 #[test]
 fn a_click_again_steps_through_what_lies_on_one_another() {
-    use wb_sketch::sketch::GeometryElement;
+    use sketch_model::sketch::GeometryElement;
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 0.0));
     let guide = h.edit_sketch(|s| {
@@ -5049,8 +5050,8 @@ fn a_click_again_steps_through_what_lies_on_one_another() {
 
 #[test]
 fn the_constraint_list_filters_by_kind_and_by_the_selection() {
+    use sketch_model::sketch::ConstraintKind;
     use wb_sketch::ConstraintFilter;
-    use wb_sketch::sketch::ConstraintKind;
     let mut h = Harness::sketching();
     // A rectangle: four axis constraints. A free line beside it, sized.
     h.click(2.0, 2.0, "sketch.rect");
@@ -5255,7 +5256,7 @@ fn the_header_cancel_ends_a_sketch_session_as_it_found_it() {
 /// length.
 mod default_label_placement {
     use super::*;
-    use wb_sketch::sketch::{Arc, ConstraintKind, Line};
+    use sketch_model::sketch::{Arc, ConstraintKind, Line};
 
     /// The painter's pill around a label: the monospace advance plus its
     /// padding.
@@ -5505,7 +5506,7 @@ mod default_label_placement {
         // independently from two projected points in this test camera.
         let (origin, unit) = (h.px_of(0.0, 0.0), h.px_of(1.0, 0.0));
         let d = 14.0 / f64::from(unit.0 - origin.0);
-        let offset = wb_sketch::sketch::Vec2D::new(d, d);
+        let offset = sketch_model::sketch::Vec2D::new(d, d);
         h.edit_sketch(|s| {
             s.constraints[1].label_offset = Some(offset);
         });
@@ -5596,7 +5597,7 @@ fn other_line(sketch: &Sketch, id: uuid::Uuid) -> uuid::Uuid {
 /// so, and is held so.
 #[test]
 fn a_line_drawn_nearly_parallel_or_square_to_another_ends_so_and_held_so() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     // Along (2, 1) from (2, -12) the end would be (12, -7), along (-1, 2)
     // it would be (-2, -4): each a little off.
     for (what, end) in [("parallel", (12.0, -6.7)), ("square", (-2.3, -4.0))] {
@@ -5667,7 +5668,7 @@ fn last_point(sketch: &Sketch) -> glam::DVec2 {
 /// line only while Auto constraints is on.
 #[test]
 fn a_point_on_a_line_s_extension_is_held_on_the_line() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     for auto in [true, false] {
         let mut h = Harness::sketching();
         h.wb.options.auto_constraints = auto;
@@ -5713,7 +5714,7 @@ fn a_point_on_a_line_s_extension_is_held_on_the_line() {
 /// guide and snap away.
 #[test]
 fn a_point_on_an_arc_s_continuation_is_held_on_the_arc() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     // A quarter arc about (15, 0) of radius 4, from 0 to 90 degrees; the
     // click at 225 degrees, 0.15 outside the circle.
     let center = glam::DVec2::new(15.0, 0.0);
@@ -5770,7 +5771,12 @@ fn coincident_count(sketch: &Sketch) -> usize {
     sketch
         .constraints
         .iter()
-        .filter(|c| matches!(c.kind, wb_sketch::sketch::ConstraintKind::Coincident { .. }))
+        .filter(|c| {
+            matches!(
+                c.kind,
+                sketch_model::sketch::ConstraintKind::Coincident { .. }
+            )
+        })
         .count()
 }
 
@@ -5795,7 +5801,7 @@ fn a_point_dragged_onto_another_joins_it_once_rested_there() {
 
 #[test]
 fn a_point_dragged_onto_a_line_is_held_on_it() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     let mut h = Harness::sketching();
     h.wb.options.drag_constraint_delay_ms = 0.0;
     let first = slanted_line(&mut h);
@@ -5862,7 +5868,7 @@ fn rim(body: core_document::BodyId) -> core_document::EdgeRef {
 /// back at once.
 #[test]
 fn a_distance_reaches_a_model_edge_in_one_step() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     let (mut h, body) = beside_the_block();
     selected_point(&mut h, 5.0, 5.0);
     assert!(h.tool_enabled("sketch.constrain.distance"));
@@ -5907,7 +5913,7 @@ fn a_distance_reaches_a_model_edge_in_one_step() {
 /// end is the vertex, and the point lands on it.
 #[test]
 fn coincident_takes_a_model_vertex() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     let (mut h, body) = beside_the_block();
     selected_point(&mut h, 14.0, 13.0);
     h.key(KeyCode::A, Some("sketch.constrain.coincident"));
@@ -6014,7 +6020,7 @@ fn continue_drawing_keeps_the_tool_or_hands_back_select() {
 /// elements once its constraint is on; off, it is put away.
 #[test]
 fn continue_constraining_arms_the_tool_again() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     for continuing in [false, true] {
         let mut h = Harness::sketching();
         h.wb.options.continue_constraining = continuing;
@@ -6055,7 +6061,7 @@ fn continue_constraining_arms_the_tool_again() {
 /// selection for a constraint tool, or hand it to an armed one.
 #[test]
 fn the_origin_and_the_axes_are_selected_by_their_tools() {
-    use wb_sketch::sketch::{ConstraintKind, ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
+    use sketch_model::sketch::{ConstraintKind, ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
     for (tool, axis) in [
         ("sketch.select_x_axis", X_AXIS_ID),
         ("sketch.select_y_axis", Y_AXIS_ID),
@@ -6117,7 +6123,7 @@ fn an_armed_tool_cancels_and_a_misfit_never_arms() {
 
 #[test]
 fn repair_action_closes_an_imported_outline_and_drops_stale_construction() {
-    use wb_sketch::sketch::{Line, Point, Vec2D};
+    use sketch_model::sketch::{Line, Point, Vec2D};
     let mut h = Harness::new();
     let id = h.create_sketch();
     let mut sketch = h.sketch();
@@ -6138,7 +6144,7 @@ fn repair_action_closes_an_imported_outline_and_drops_stale_construction() {
     }
     sketch.set_construction(points[2], true);
     sketch.set_construction(points[5], true);
-    assert!(wb_sketch::profile::extract_wires(&sketch).is_err());
+    assert!(sketch_model::profile::extract_wires(&sketch).is_err());
     let plane = sketch.plane;
     h.doc
         .update_feature_data(
@@ -6148,7 +6154,7 @@ fn repair_action_closes_an_imported_outline_and_drops_stale_construction() {
         .unwrap();
     h.activate("sketch.repair");
     let repaired = h.sketch();
-    let wires = wb_sketch::profile::extract_wires(&repaired).unwrap();
+    let wires = sketch_model::profile::extract_wires(&repaired).unwrap();
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 3);
     for (removed, kept) in [(points[2], points[1]), (points[5], points[0])] {
@@ -6189,10 +6195,10 @@ fn clicks_snap_to_a_pictures_edge_unless_alt_is_held() {
         png,
     );
     h.edit_sketch(|s| {
-        s.images.push(wb_sketch::sketch::ReferenceImage {
+        s.images.push(sketch_model::sketch::ReferenceImage {
             id: uuid::Uuid::new_v4(),
             asset,
-            center: wb_sketch::sketch::Vec2D::new(0.0, 0.0),
+            center: sketch_model::sketch::Vec2D::new(0.0, 0.0),
             width: 20.0,
             angle_deg: 0.0,
             opacity: 0.5,

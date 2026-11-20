@@ -2,20 +2,15 @@
 // the kernel bench use; the panel-only state and helpers go unused there.
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
-pub use sketch_model::KIND;
-
 mod actions;
 mod appearance;
-pub use sketch_model::boundary;
 mod candidates;
 mod chain;
 mod closed_parts;
 mod commands;
-pub use sketch_model::conic;
 mod constrain;
 mod constraint_tools;
 mod corner_task;
-use sketch_model::curves;
 mod dim_edit;
 mod dimension_task;
 mod drawing;
@@ -28,51 +23,42 @@ use external_follow::{
     Projection, follow_references, project_source_in, projection_key, solid_built_from,
 };
 pub(crate) use external_follow::{project_source, with_edge_names};
-use sketch_model::feature;
 mod frame_memo;
-pub mod generator;
-pub use sketch_model::geom2d;
+mod generator;
 mod glyphs;
 mod images;
 mod input;
 pub mod internal;
-use sketch_model::measure;
 mod model_picks;
 pub mod nodes;
-pub use sketch_model::operations;
 mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
 mod panel;
-use sketch_model::params;
 mod picture_edges;
 mod placement;
-pub use sketch_model::profile;
 mod rect;
-pub use sketch_model::regions;
 mod registration;
 mod relations;
-pub use sketch_model::render;
-pub use sketch_model::repair;
 mod reuse;
 mod scan;
 mod selection;
 #[cfg(feature = "egui")]
 mod settings;
-pub use sketch_model::shape;
-pub use sketch_model::sketch;
 pub mod snap;
-use sketch_model::solver;
-pub use sketch_model::spline;
-pub use solver::report as solver_report;
 pub mod spline_edit;
 mod step;
-pub use sketch_model::style;
-pub use sketch_model::text;
 mod tools;
 mod verdict;
 mod viewport_out;
 mod walls;
+
+// The sketch model's modules, named at the root so the sketcher reaches
+// them as `crate::sketch`, `crate::profile` and the rest.
+use sketch_model::{
+    KIND, boundary, conic, curves, feature, geom2d, measure, operations, params, profile, regions,
+    render, repair, shape, sketch, solver, spline, style, text,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -84,7 +70,7 @@ use core_document::{
     WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
-pub use feature::{AttachedSupport, DatumSupport, FaceSupport, LentFace, SketchFeature};
+use feature::SketchFeature;
 use operations::SolveOutcome;
 use ovp::DimCapture;
 use placement::local_plane;

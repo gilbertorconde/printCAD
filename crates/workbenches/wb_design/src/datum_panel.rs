@@ -178,7 +178,7 @@ fn feature_refs(ctx: &WorkbenchRuntimeContext, body: BodyId, own_seq: Option<u64
         let Some(feature) = ctx
             .document
             .feature_values(sketch)
-            .and_then(|v| wb_sketch::SketchFeature::from_json(v).ok())
+            .and_then(|v| sketch_model::SketchFeature::from_json(v).ok())
         else {
             continue;
         };
@@ -187,7 +187,7 @@ fn feature_refs(ctx: &WorkbenchRuntimeContext, body: BodyId, own_seq: Option<u64
             if refs.points.len() + refs.lines.len() >= MOST_SKETCH_REFS {
                 break;
             }
-            use wb_sketch::sketch::GeometryElement;
+            use sketch_model::sketch::GeometryElement;
             let id = element.id();
             let Some(at) = crate::datum_refs::sketch_points_of(&feature, id) else {
                 continue;

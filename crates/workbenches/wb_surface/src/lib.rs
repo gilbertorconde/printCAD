@@ -169,7 +169,7 @@ impl SurfaceWorkbench {
             .feature_tree()
             .all_nodes()
             .filter(|(_, n)| n.body == Some(body))
-            .all(|(_, n)| matches!(n.workbench_id.as_str(), wb_sketch::KIND | "core.datum"));
+            .all(|(_, n)| matches!(n.workbench_id.as_str(), sketch_model::KIND | "core.datum"));
         only_drawings && !document.body_solid_is_imported(body) && document.body(body).is_some()
     }
 
@@ -182,7 +182,7 @@ impl SurfaceWorkbench {
             && ctx
                 .document
                 .get_feature_meta(id)
-                .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND)
+                .is_some_and(|n| n.workbench_id.as_str() == sketch_model::KIND)
         {
             curves.push(CurveRef::Sketch(id));
         }
@@ -285,7 +285,7 @@ impl SurfaceWorkbench {
         let sketch = ctx
             .active_document_object
             .and_then(|id| ctx.document.get_feature_meta(id))
-            .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND);
+            .is_some_and(|n| n.workbench_id.as_str() == sketch_model::KIND);
         sketch || !ctx.selected_edges.is_empty() || !ctx.picked_faces().is_empty()
     }
 
@@ -295,7 +295,7 @@ impl SurfaceWorkbench {
     fn new_sketch(ctx: &mut WorkbenchRuntimeContext) {
         let (body, _) = Self::target_body(ctx);
         ctx.request(HostRequest::StartOn {
-            workbench: core_document::WorkbenchId::from(wb_sketch::KIND),
+            workbench: core_document::WorkbenchId::from(sketch_model::KIND),
             attach: core_document::SketchAttachRequest {
                 body: body.0,
                 face: ctx
@@ -1560,7 +1560,7 @@ mod tests {
         let mut document = Document::new("t");
         let body = document.create_body(Some("Sheet".into()));
         let sketch = document.add_feature_of_kind(
-            core_document::WorkbenchId::new(wb_sketch::KIND),
+            core_document::WorkbenchId::new(sketch_model::KIND),
             "Outline".into(),
             Some(body),
             Vec::new(),
@@ -1658,7 +1658,7 @@ mod tests {
         let mut document = Document::new("t");
         let body = document.create_body(None);
         let sketch = document.add_feature_of_kind(
-            core_document::WorkbenchId::new(wb_sketch::KIND),
+            core_document::WorkbenchId::new(sketch_model::KIND),
             "Sketch".into(),
             Some(body),
             Vec::new(),
@@ -1692,7 +1692,7 @@ mod tests {
         let Some(HostRequest::StartOn { workbench, attach }) = requests.first() else {
             panic!("{requests:?}");
         };
-        assert_eq!(workbench.as_str(), wb_sketch::KIND);
+        assert_eq!(workbench.as_str(), sketch_model::KIND);
         let body = document.body(BodyId(attach.body)).unwrap();
         assert_eq!(body.name, "Surface", "a new surface body");
     }

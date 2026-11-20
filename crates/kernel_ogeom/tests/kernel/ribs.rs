@@ -197,8 +197,8 @@ fn a_rib_that_meets_no_solid_or_closes_fails() {
 fn a_rib_feature_fills_a_channel_from_its_sketch() {
     use super::common::{Features, body_volume, registry, settle_as_host};
     use core_document::Document;
-    use wb_sketch::SketchFeature;
-    use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+    use sketch_model::SketchFeature;
+    use sketch_model::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
     let registry = registry();
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Bracket".into()));

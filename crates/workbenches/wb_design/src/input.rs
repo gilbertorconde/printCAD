@@ -10,7 +10,7 @@ use core_document::{
     BodyId, HostRequest, InputResult, Workbench, WorkbenchFeature, WorkbenchId,
     WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id,
 };
-use wb_sketch::SketchFeature;
+use sketch_model::SketchFeature;
 
 impl DesignWorkbench {
     /// While a reading tool is armed: a click on a scan reads the round or
@@ -603,9 +603,9 @@ impl DesignWorkbench {
                     None => face,
                 }
                 .on_its_plane();
-                let plane = wb_sketch::sketch::SketchPlane::from_face(
-                    wb_sketch::boundary::widen3(face.point),
-                    wb_sketch::boundary::widen3(face.normal),
+                let plane = sketch_model::sketch::SketchPlane::from_face(
+                    sketch_model::boundary::widen3(face.point),
+                    sketch_model::boundary::widen3(face.normal),
                 );
                 feature.plane = plane;
                 feature.sketch.plane = plane;
@@ -646,7 +646,7 @@ impl DesignWorkbench {
                     // The sketcher picks the active object up as its edit
                     // session on activation.
                     ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from(
-                        wb_sketch::KIND,
+                        sketch_model::KIND,
                     )));
                 } else {
                     ctx.log_warn("Select a sketch in the tree first");

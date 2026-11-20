@@ -3,8 +3,8 @@
 
 use super::Harness;
 use core_document::{Workbench, WorkbenchInputEvent};
+use sketch_model::sketch::{Circle, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
 use uuid::Uuid;
-use wb_sketch::sketch::{Circle, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
 
 /// Everything the view draws this frame, as text to compare; `afresh`
 /// with what the bench kept from earlier frames forgotten first.
@@ -136,7 +136,7 @@ fn crowded_labels_arranged_from_the_last_sit_where_fresh_ones_do() {
     });
     same(&mut h, "a relation added");
     h.edit_sketch(|s| {
-        let equal = |c: &&wb_sketch::sketch::Constraint| {
+        let equal = |c: &&sketch_model::sketch::Constraint| {
             matches!(c.kind, ConstraintKind::EqualRadius { .. })
         };
         let third = s.constraints.iter().filter(equal).nth(2).unwrap().id;

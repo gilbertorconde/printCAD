@@ -4,8 +4,8 @@
 
 use super::Harness;
 use core_document::{KeyCode, Workbench};
+use sketch_model::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 use uuid::Uuid;
-use wb_sketch::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 
 /// Points at `at` with the ids `ids`, picked in that order, then `tool`.
 fn pick_points_then(h: &mut Harness, at: &[(f64, f64)], ids: &[u128], tool: &str) {
@@ -64,7 +64,7 @@ fn a_relation_held_already_is_not_added_again() {
     h.line((2.0, 3.0), (12.0, 5.0));
     let horizontals = |h: &Harness| {
         let sketch = h.sketch();
-        let level = |c: &&wb_sketch::sketch::Constraint| {
+        let level = |c: &&sketch_model::sketch::Constraint| {
             matches!(c.kind, ConstraintKind::Horizontal { .. })
         };
         sketch.constraints.iter().filter(level).count()

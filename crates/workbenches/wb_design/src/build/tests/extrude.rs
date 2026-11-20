@@ -68,7 +68,7 @@ fn a_pad_starts_on_the_plane_it_names() {
     let (mut doc, body, sketch_id) = doc_with_body_sketch();
     let side = {
         let s = Sketch::new("side");
-        SketchFeature::new(s, wb_sketch::sketch::SketchPlane::xz())
+        SketchFeature::new(s, sketch_model::sketch::SketchPlane::xz())
     };
     let side = add(&mut doc, body, side, "side");
     if let DesignFeature::Pad { extras, sketch, .. } = &mut started {

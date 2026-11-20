@@ -11,7 +11,7 @@ mod stored_json;
 
 use core_document::KeyCode;
 use glam::{Mat4, Vec3};
-use wb_sketch::sketch::{self, GeometryElement, Sketch};
+use sketch_model::sketch::{self, GeometryElement, Sketch};
 
 /// `$all` lists a sketch's elements of one kind, `$first` takes the first.
 macro_rules! kind {

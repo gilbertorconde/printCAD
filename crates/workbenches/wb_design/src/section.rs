@@ -10,11 +10,11 @@ use core_document::{
 };
 use kernel_api::{ProjectedEdge, SectionCurve, SectionRun};
 use serde_json::Value;
-use uuid::Uuid;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{
     Arc, BSpline, Circle, Ellipse, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
 };
+use uuid::Uuid;
 
 use crate::DesignWorkbench;
 use crate::feature::MirrorPlane;
@@ -250,7 +250,7 @@ pub(crate) fn section_body(
         let offset = f64::from(cuts.offset) + f64::from(cuts.spacing) * f64::from(index);
         let plane = sketch_plane(ctx.document, &cuts.plane, offset)?;
         let runs = kernel
-            .section(&blob, &wb_sketch::profile::plane_of(&plane), None)
+            .section(&blob, &sketch_model::profile::plane_of(&plane), None)
             .map_err(|e| e.to_string())?;
         sketches.push((offset, outline(plane, &runs)));
     }
@@ -358,7 +358,7 @@ mod tests {
             };
             let sketch = outline(SketchPlane::xy(), std::slice::from_ref(&run));
             assert_eq!(
-                wb_sketch::profile::extract_wires(&sketch).is_ok(),
+                sketch_model::profile::extract_wires(&sketch).is_ok(),
                 run.closed,
                 "gap {gap}"
             );

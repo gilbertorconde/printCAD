@@ -1912,7 +1912,7 @@ pub enum DesignFeature {
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
-        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// The sketch's regions it takes, by name (`sketch_model::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
         #[walk(setting)]
@@ -1991,7 +1991,7 @@ pub enum DesignFeature {
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
-        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// The sketch's regions it takes, by name (`sketch_model::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
         #[walk(setting)]
@@ -2038,7 +2038,7 @@ pub enum DesignFeature {
         mode: RevolveMode,
         #[serde(default)]
         up_to_face: Option<FacePick>,
-        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// The sketch's regions it takes, by name (`sketch_model::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
         #[walk(setting)]
@@ -2088,7 +2088,7 @@ pub enum DesignFeature {
         mode: RevolveMode,
         #[serde(default)]
         up_to_face: Option<FacePick>,
-        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// The sketch's regions it takes, by name (`sketch_model::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
         #[walk(setting)]
@@ -2966,7 +2966,7 @@ fn default_project_height() -> f32 {
 }
 
 fn default_text_font() -> String {
-    wb_sketch::text::DEFAULT_FONT.to_string()
+    sketch_model::text::DEFAULT_FONT.to_string()
 }
 
 fn default_text_size() -> f32 {

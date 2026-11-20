@@ -441,8 +441,8 @@ name = "bench_fixtures"
 version = "0.1.0"
 dependencies = [
  "core_document",
+ "sketch_model",
  "wb_design",
- "wb_sketch",
 ]
 
 [[package]]
@@ -2426,6 +2426,7 @@ dependencies = [
  "printcad-kernel-api",
  "scripting",
  "serde_json",
+ "sketch_model",
  "sketch_solver",
  "thiserror 2.0.20",
  "tracing",
@@ -3891,9 +3892,9 @@ dependencies = [
  "project_archive",
  "serde",
  "serde_json",
+ "sketch_model",
  "uuid",
  "wb_design",
- "wb_sketch",
  "zip",
 ]
 
@@ -6168,6 +6169,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sketch_model",
  "tracing",
  "ui_kit",
  "uuid",
@@ -6243,9 +6245,9 @@ dependencies = [
  "printcad-kernel-api",
  "serde",
  "serde_json",
+ "sketch_model",
  "ui_kit",
  "uuid",
- "wb_sketch",
 ]
 
 [[package]]
@@ -6265,6 +6267,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "sketch_model",
  "tar",
  "toml",
  "tracing",
@@ -6273,7 +6276,6 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
- "wb_sketch",
 ]
 
 [[package]]
@@ -7046,6 +7048,7 @@ dependencies = [
  "bench_panel",
  "core_document",
  "project_tools",
+ "sketch_model",
  "tracing",
  "wb_assembly",
  "wb_design",

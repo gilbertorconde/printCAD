@@ -61,10 +61,10 @@ fn sketch_numbers_survive_import_and_native_roundtrip_without_narrowing() {
             value
         );
         assert!(
-            matches!(imported.sketch.get_geometry(imported.source_radii[0].0), Some(wb_sketch::sketch::GeometryElement::Circle(c)) if c.radius == value.abs())
+            matches!(imported.sketch.get_geometry(imported.source_radii[0].0), Some(sketch_model::sketch::GeometryElement::Circle(c)) if c.radius == value.abs())
         );
         assert!(
-            matches!(imported.sketch.constraints[0].kind, wb_sketch::sketch::ConstraintKind::DistanceX { value: stored, .. } if stored == value)
+            matches!(imported.sketch.constraints[0].kind, sketch_model::sketch::ConstraintKind::DistanceX { value: stored, .. } if stored == value)
         );
         let bytes = project
             .document

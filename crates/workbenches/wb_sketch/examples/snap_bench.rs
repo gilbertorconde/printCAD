@@ -29,11 +29,12 @@ use core_document::{
     Document, MouseButton, TaskRequest, Workbench, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::{Mat4, Vec3};
-use wb_sketch::sketch::{
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{
     Arc, Circle, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
 };
+use wb_sketch::SketchWorkbench;
 use wb_sketch::snap::{self, Guide, SnapContext};
-use wb_sketch::{SketchFeature, SketchWorkbench};
 
 struct Counting;
 
@@ -351,7 +352,7 @@ fn fitted(mut sketch: Sketch) -> Sketch {
             .to_vec();
         sketch
             .soft
-            .push(wb_sketch::sketch::SoftData { element, points });
+            .push(sketch_model::sketch::SoftData { element, points });
     }
     sketch
 }

@@ -9,8 +9,9 @@ use core_document::{
     CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId, HookOutcome,
     KeyCode, Recorded, Workbench, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
 };
-use wb_sketch::sketch::{GeometryElement, Sketch};
-use wb_sketch::{SketchFeature, SketchWorkbench};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Sketch};
+use wb_sketch::SketchWorkbench;
 
 /// The bench's commands, run on a document, for the replay.
 struct Replay {
@@ -278,7 +279,7 @@ fn typed_lengths_polyline_arcs_and_a_spline_replay_too() {
         sketch
             .constraints
             .iter()
-            .any(|c| matches!(c.kind, wb_sketch::sketch::ConstraintKind::Distance { distance, .. } if (distance - 12.0).abs() < 1e-4)),
+            .any(|c| matches!(c.kind, sketch_model::sketch::ConstraintKind::Distance { distance, .. } if (distance - 12.0).abs() < 1e-4)),
         "the typed length is a constraint"
     );
     let done = summary(&sketch);
@@ -598,7 +599,7 @@ fn constraints_on_model_edges_replay_with_their_projections() {
 /// ends, and the session replays.
 #[test]
 fn a_dimension_held_already_is_refused_in_any_form() {
-    use wb_sketch::sketch::ConstraintKind;
+    use sketch_model::sketch::ConstraintKind;
     let (mut s, id, before) = session_on_a_sketch();
     s.full_click(0.0, 0.0, "sketch.line");
     s.mouse_move(6.0, 0.0, "sketch.line");
@@ -671,7 +672,7 @@ fn a_dimension_held_already_is_refused_in_any_form() {
         .find(|c| matches!(c.kind, ConstraintKind::Radius { .. }))
         .unwrap()
         .clone();
-    let circle = wb_sketch::sketch::constraint_refs(&radius.kind)[0];
+    let circle = sketch_model::sketch::constraint_refs(&radius.kind)[0];
     let sketch = id.0.to_string();
     let run = |s: &mut Harness, cmd: &str, args: serde_json::Value| {
         let serde_json::Value::Object(args) = args else {

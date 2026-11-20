@@ -85,7 +85,7 @@ pub(super) fn project_editor(
                 *text = value.clone();
                 changed = true;
             }
-            let fonts = wb_sketch::text::FONTS;
+            let fonts = sketch_model::text::FONTS;
             let mut options: Vec<String> = fonts.iter().map(|(n, _)| n.to_string()).collect();
             let at = fonts.iter().position(|(n, _)| *n == font.as_str());
             if at.is_none() {

@@ -8,11 +8,11 @@ use project_archive::coordinates::Point2;
 use project_archive::sketch_decode::{
     FcConstraint, FcConstraintType as C, FcGeoIndex, FcGeometry, FcPointPos as P, FcShape, FcSketch,
 };
-use uuid::Uuid;
-use wb_sketch::sketch::{
+use sketch_model::sketch::{
     Arc, AxisDirection, BSpline, Circle, Constraint, ConstraintKind as K, GeometryElement as G,
     Line, ORIGIN_ID, Point, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
 };
+use uuid::Uuid;
 
 pub struct ImportedSketch {
     pub sketch: Sketch,
@@ -199,7 +199,7 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
         .keys()
         .map(|&id| (id, canonical(id, &aliases)))
         .collect();
-    wb_sketch::operations::join_points(&mut imported.sketch, &aliases).map_err(|error| {
+    sketch_model::operations::join_points(&mut imported.sketch, &aliases).map_err(|error| {
         FcstdError::Format {
             object: name.into(),
             reason: error.to_string(),
@@ -599,7 +599,7 @@ fn translate(sketch: &Sketch, elements: Elements, c: &FcConstraint, value: f64) 
                     point,
                     angle_rad: 0.0,
                 };
-                let measured = wb_sketch::sketch::measured_value(sketch, &probe)?.to_radians();
+                let measured = sketch_model::sketch::measured_value(sketch, &probe)?.to_radians();
                 let angle_rad = if c.kind == C::Tangent {
                     if measured.abs() > std::f64::consts::FRAC_PI_2 {
                         std::f64::consts::PI

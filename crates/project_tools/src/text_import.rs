@@ -5,8 +5,8 @@
 use core_document::Document;
 use project_archive::archive::FcstdError;
 use project_archive::document_xml::{FcObject, Placement};
-use wb_sketch::sketch::{GeometryElement, Sketch, Vec2D};
-use wb_sketch::text::{self, TextSpec};
+use sketch_model::sketch::{GeometryElement, Sketch, Vec2D};
+use sketch_model::text::{self, TextSpec};
 
 use crate::numeric::sketch_plane;
 use crate::report::{Finding, note};
@@ -32,7 +32,7 @@ pub(crate) fn text_sketch(
     placement: Placement,
     document: &mut Document,
     findings: &mut Vec<Finding>,
-) -> Result<Result<wb_sketch::SketchFeature, String>, FcstdError> {
+) -> Result<Result<sketch_model::SketchFeature, String>, FcstdError> {
     let name = object.name.as_str();
     let string = object.string("String")?;
     if string.trim().is_empty() {
@@ -132,7 +132,7 @@ pub(crate) fn text_sketch(
     text::refresh(&mut sketch);
     let plane = sketch_plane(name, placement)?;
     sketch.plane = plane;
-    Ok(Ok(wb_sketch::SketchFeature::new(sketch, plane)))
+    Ok(Ok(sketch_model::SketchFeature::new(sketch, plane)))
 }
 
 /// The file's justification by its name.

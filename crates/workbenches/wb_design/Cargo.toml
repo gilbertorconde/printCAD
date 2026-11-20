@@ -15,7 +15,7 @@ core_document = { path = "../../core_document" }
 bench_panel = { path = "../../bench_panel", optional = true }
 kernel_api.workspace = true
 metrology = { path = "../../metrology" }
-wb_sketch = { path = "../wb_sketch", default-features = false }
+sketch_model = { path = "../../sketch_model" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
@@ -26,4 +26,5 @@ egui = { workspace = true, optional = true }
 ui_kit = { path = "../../ui_kit", optional = true }
 
 [dev-dependencies]
+wb_sketch = { path = "../wb_sketch", default-features = false }
 core_document = { path = "../../core_document", features = ["test-support"] }

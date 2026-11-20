@@ -818,7 +818,7 @@ mod tests {
     /// flatness on both sides of the collinear and the radius limits: the
     /// kernel builds the profile exactly when the shared three-point rule
     /// makes an arc, which is what the sketcher's regions close
-    /// (`wb_sketch`'s
+    /// (`sketch_model`'s
     /// `regions::tests::a_nearly_flat_arc_closes_a_region_when_it_is_an_arc`).
     #[test]
     fn the_kernel_builds_a_nearly_flat_arc_when_the_shared_rule_does() {

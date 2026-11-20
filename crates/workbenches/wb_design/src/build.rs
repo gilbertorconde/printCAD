@@ -50,9 +50,9 @@ pub(crate) use threads::{
 use core_document::{BodyId, Document, FeatureId, RebuildJob, WorkbenchFeature};
 pub use core_document::{BuildError, BuildPlan};
 use kernel_api::{BooleanOp, FaceProbe, Profile, SolidOp};
-use wb_sketch::SketchFeature;
-use wb_sketch::profile;
-use wb_sketch::sketch::GeometryElement;
+use sketch_model::SketchFeature;
+use sketch_model::profile;
+use sketch_model::sketch::GeometryElement;
 
 use crate::feature::{DesignFeature, FacePick};
 
@@ -628,7 +628,7 @@ pub(crate) fn load_sketch(
 pub(crate) fn sketch_normal(document: &Document, sketch_id: FeatureId) -> Option<[f32; 3]> {
     load_sketch(document, sketch_id)
         .ok()
-        .map(|sketch| wb_sketch::boundary::narrow3(sketch.plane.normal))
+        .map(|sketch| sketch_model::boundary::narrow3(sketch.plane.normal))
 }
 
 fn sketch_profile(
@@ -645,8 +645,12 @@ fn sketch_profile(
 pub(crate) fn sketch_regions(
     document: &Document,
     id: FeatureId,
-) -> std::rc::Rc<Vec<wb_sketch::regions::Region>> {
-    type Kept = Option<(FeatureId, u64, std::rc::Rc<Vec<wb_sketch::regions::Region>>)>;
+) -> std::rc::Rc<Vec<sketch_model::regions::Region>> {
+    type Kept = Option<(
+        FeatureId,
+        u64,
+        std::rc::Rc<Vec<sketch_model::regions::Region>>,
+    )>;
     thread_local! {
         static KEPT: std::cell::RefCell<Kept> = const { std::cell::RefCell::new(None) };
     }
@@ -687,7 +691,7 @@ pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, St
         .all_nodes()
         .filter(|(id, n)| {
             n.body == Some(body)
-                && (n.workbench_id.as_str() == wb_sketch::KIND
+                && (n.workbench_id.as_str() == sketch_model::KIND
                     || crate::borrow::lends_sketch(document, **id))
         })
         .map(|(id, n)| (n.seq, *id, n.name.clone()))
@@ -741,7 +745,7 @@ pub(crate) fn sketch_choices(
 
 /// Human description of the plane a feature's sketch sits on.
 pub fn sketch_plane_description(document: &Document, sketch: FeatureId) -> String {
-    use wb_sketch::sketch::SketchPlane;
+    use sketch_model::sketch::SketchPlane;
     if let Some(borrowed) = crate::borrow::sketch(document, sketch) {
         return match borrowed {
             Ok(feature) => {

@@ -229,7 +229,7 @@ impl DesignWorkbench {
                         .feature_tree()
                         .all_nodes()
                         .filter(|(id, n)| {
-                            n.workbench_id.as_str() == wb_sketch::KIND
+                            n.workbench_id.as_str() == sketch_model::KIND
                                 && n.body == Some(body)
                                 && **id != not
                         })
@@ -571,7 +571,7 @@ impl DesignWorkbench {
                         height: 0.6,
                         wrap: false,
                         text: "Text".to_string(),
-                        font: wb_sketch::text::DEFAULT_FONT.to_string(),
+                        font: sketch_model::text::DEFAULT_FONT.to_string(),
                         size: 5.0,
                         spacing: 0.0,
                         angle: 0.0,

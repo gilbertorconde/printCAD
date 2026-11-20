@@ -421,7 +421,7 @@ fn extrude_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
         (None, None) => Some(0.0),
         (face, at) => (|| {
             let sketch = crate::build::load_sketch(maker.document, (*sketch)?).ok()?;
-            let plane = wb_sketch::profile::plane_of(&sketch.plane);
+            let plane = sketch_model::profile::plane_of(&sketch.plane);
             let target = match (face, at) {
                 (Some(face), _) => crate::build::face_pick_plane(face),
                 (None, Some(at)) => crate::build::start_plane(maker.document, at).ok()?,
@@ -681,7 +681,7 @@ fn revolve_ring(
     let sketch_feature = crate::build::load_sketch(maker.document, sketch).ok()?;
     let (point, way) =
         crate::build::axis_in_sketch(maker.document, &sketch_feature, axis, project).ok()?;
-    let plane = wb_sketch::profile::plane_of(&sketch_feature.plane);
+    let plane = sketch_model::profile::plane_of(&sketch_feature.plane);
     let at = |p: [f64; 2]| -> [f64; 3] {
         std::array::from_fn(|k| plane.origin[k] + plane.x_axis[k] * p[0] + plane.y_axis[k] * p[1])
     };
@@ -964,24 +964,24 @@ pub(crate) fn sketch_centre(
     let data = document
         .feature_values(sketch)
         .or_else(|| document.get_feature_data(sketch))?;
-    let feature = wb_sketch::SketchFeature::from_json(data).ok()?;
-    let points: Vec<Vec3> = wb_sketch::render::sketch_polylines(&feature.sketch, &feature.plane)
+    let feature = sketch_model::SketchFeature::from_json(data).ok()?;
+    let points: Vec<Vec3> = sketch_model::render::sketch_polylines(&feature.sketch, &feature.plane)
         .into_iter()
         .flatten()
-        .map(|p| Vec3::from_array(wb_sketch::boundary::narrow3(p)))
+        .map(|p| Vec3::from_array(sketch_model::boundary::narrow3(p)))
         .collect();
     let (lo, hi) = points.iter().fold(
         (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
         |(lo, hi), p| (lo.min(*p), hi.max(*p)),
     );
     let centre = if points.is_empty() {
-        Vec3::from_array(wb_sketch::boundary::narrow3(feature.plane.origin))
+        Vec3::from_array(sketch_model::boundary::narrow3(feature.plane.origin))
     } else {
         (lo + hi) * 0.5
     };
     Some((
         centre.to_array(),
-        wb_sketch::boundary::narrow3(feature.plane.normal),
+        sketch_model::boundary::narrow3(feature.plane.normal),
     ))
 }
 
@@ -1550,14 +1550,18 @@ mod tests {
         }}));
         // The rectangle has no centres: nothing to stand on.
         assert!(handles_of(&doc, hole, EYE).is_empty());
-        let mut lone = wb_sketch::sketch::Sketch::new("p");
-        lone.add_geometry(wb_sketch::sketch::GeometryElement::Point(
-            wb_sketch::sketch::Point::new(wb_sketch::sketch::Vec2D::new(2.0, 1.0)),
+        let mut lone = sketch_model::sketch::Sketch::new("p");
+        lone.add_geometry(sketch_model::sketch::GeometryElement::Point(
+            sketch_model::sketch::Point::new(sketch_model::sketch::Vec2D::new(2.0, 1.0)),
         ));
         let plane = lone.plane;
         let body = doc.get_feature_meta(hole).and_then(|n| n.body);
         let points = doc
-            .add_feature_in_body(wb_sketch::SketchFeature::new(lone, plane), "p".into(), body)
+            .add_feature_in_body(
+                sketch_model::SketchFeature::new(lone, plane),
+                "p".into(),
+                body,
+            )
             .unwrap();
         let mut data = doc.get_feature_data(hole).unwrap().clone();
         data["Hole"]["sketch"] = serde_json::json!(points);

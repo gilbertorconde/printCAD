@@ -325,7 +325,7 @@ mod tests {
 
     impl WorkbenchFeature for Stub {
         fn workbench_id() -> core_document::WorkbenchId {
-            core_document::WorkbenchId::from(wb_sketch::KIND)
+            core_document::WorkbenchId::from(sketch_model::KIND)
         }
         fn dependencies(&self) -> Vec<FeatureId> {
             Vec::new()

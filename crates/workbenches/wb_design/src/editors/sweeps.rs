@@ -371,11 +371,11 @@ fn axis_choices(
 ) -> Vec<(RevolveAxis, String)> {
     let mut choices = Vec::new();
     if let Some(sketch) = ctx.document.feature_values(sketch).and_then(|data| {
-        <wb_sketch::SketchFeature as core_document::WorkbenchFeature>::from_json(data).ok()
+        <sketch_model::SketchFeature as core_document::WorkbenchFeature>::from_json(data).ok()
     }) {
         let mut n = 0;
         for element in &sketch.sketch.geometry {
-            if let wb_sketch::sketch::GeometryElement::Line(line) = element {
+            if let sketch_model::sketch::GeometryElement::Line(line) = element {
                 n += 1;
                 let kind = if sketch.sketch.is_construction(line.id) {
                     "construction line"
@@ -609,7 +609,7 @@ fn path_curves_editor(
     spine: FeatureId,
     path_curves: &mut Vec<uuid::Uuid>,
 ) -> bool {
-    use wb_sketch::sketch::GeometryElement;
+    use sketch_model::sketch::GeometryElement;
     let Ok(drawn) = crate::build::load_sketch(ctx.document, spine) else {
         return false;
     };
@@ -638,7 +638,7 @@ fn path_curves_editor(
     }
     for id in &curves {
         let mut on = path_curves.is_empty() || path_curves.contains(id);
-        let name = wb_sketch::style::element_name(sketch, *id);
+        let name = sketch_model::style::element_name(sketch, *id);
         if f.check(&mut on, &name, "") {
             let taken: Vec<uuid::Uuid> = curves
                 .iter()

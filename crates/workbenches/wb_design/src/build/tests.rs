@@ -8,7 +8,7 @@ use crate::hole_tables::{ScrewSeat, ThreadStandard};
 use crate::references::retarget_feature_sketch;
 use crate::test_support::{HoleFields, bare_geometry, hole, pad, set_hole};
 use kernel_api::{ExtrudeTermination, ProfileSegment, SweepKind};
-use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
+use sketch_model::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
 mod bodies;
 mod dressup;

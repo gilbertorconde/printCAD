@@ -4,9 +4,9 @@
 //! app's recompute driver builds them.
 
 use core_document::{BodyId, BodyPlacement, Document, FeatureId, WorkbenchFeature};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{Circle, GeometryElement, Point, Sketch, SketchPlane, Vec2D};
 use wb_design::{BorrowSource, BorrowedRef, DesignFeature, EdgePick, FacePick};
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{Circle, GeometryElement, Point, Sketch, SketchPlane, Vec2D};
 
 use super::common::{Features, body_volume, chain, extrude, rect_at, store_solid, try_chain};
 

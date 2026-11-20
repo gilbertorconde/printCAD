@@ -18,6 +18,7 @@ use project_archive::saved_shape::{Mark, SavedShape};
 use project_archive::sketch_decode::FcSketch;
 use project_archive::traversal::{ParentMap, TraversalPath};
 use serde::Serialize;
+use sketch_model::SketchFeature;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -25,7 +26,6 @@ use wb_design::{
     ChamferMode, DesignFeature, EdgePick, EdgeSel, FacePick, LoftSection, MirrorPlane, PatternAxis,
     SketchAxis, ThreadSpec, ThreadStandard, TransformStep,
 };
-use wb_sketch::SketchFeature;
 
 pub struct ImportedProject {
     pub document: Document,

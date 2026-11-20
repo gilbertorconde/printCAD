@@ -10,9 +10,9 @@ use kernel_api::{
     SolidBuildResult, SolidOp, TessellationSettings,
 };
 use kernel_ogeom::OgeomKernel;
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 use wb_design::DesignFeature;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 
 /// The benches a test registers and the document their commands edit: the
 /// host a script's calls reach, the kernel answering the benches' queries.

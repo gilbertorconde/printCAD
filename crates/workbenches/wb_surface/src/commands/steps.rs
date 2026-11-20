@@ -203,7 +203,7 @@ pub(super) fn sketch_curves(
         let sketch = FeatureId(raw);
         let is_sketch = document
             .get_feature_meta(sketch)
-            .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND);
+            .is_some_and(|n| n.workbench_id.as_str() == sketch_model::KIND);
         if !is_sketch {
             return Err(CommandError::bad(
                 "sketches",

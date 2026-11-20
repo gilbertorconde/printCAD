@@ -5,7 +5,7 @@
 
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 use kernel_api::RecognizedHole;
-use wb_sketch::sketch::{Circle, GeometryElement, Point, Sketch, SketchPlane, Vec2D};
+use sketch_model::sketch::{Circle, GeometryElement, Point, Sketch, SketchPlane, Vec2D};
 
 use crate::feature::{DrillPoint, FacePick, HoleCut, HoleFit};
 use crate::{DesignFeature, DesignWorkbench};
@@ -144,7 +144,7 @@ fn drill(
     let sketch_id = ctx
         .document
         .add_feature_in_body(
-            wb_sketch::SketchFeature::new(sketch, plane),
+            sketch_model::SketchFeature::new(sketch, plane),
             name,
             Some(body),
         )

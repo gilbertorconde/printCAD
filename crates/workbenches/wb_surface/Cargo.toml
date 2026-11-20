@@ -15,7 +15,7 @@ bench_panel = { path = "../../bench_panel", optional = true }
 bench_api.workspace = true
 kernel_api.workspace = true
 glam = { workspace = true }
-wb_sketch = { path = "../wb_sketch", default-features = false }
+sketch_model = { path = "../../sketch_model" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

@@ -5,11 +5,11 @@
 //! calibration coupon is the facade's.
 
 use core_document::{BodyId, Document, FeatureId};
-use wb_design::{DesignFeature, ExtrudeMode};
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{
     Circle, Constraint, ConstraintKind, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
 };
+use wb_design::{DesignFeature, ExtrudeMode};
 
 /// How far a scene goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +185,7 @@ mod tests {
             let opened = doc.get_feature_meta(handles.feature).unwrap();
             let kind = opened.workbench_id.as_str();
             match scene {
-                Scene::Sketch => assert_eq!(kind, wb_sketch::KIND),
+                Scene::Sketch => assert_eq!(kind, sketch_model::KIND),
                 _ => assert_eq!(kind, wb_design::KIND),
             }
         }

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use core_document::Document;
 use core_document::history::OpJournal;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{Arc, Circle, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{Arc, Circle, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D};
 
 struct Live;
 

@@ -255,13 +255,13 @@ fn direction_references(
     sketches.sort_by_key(|(seq, ..)| *seq);
     for (_, sketch, name) in sketches {
         let Some(feature) = ctx.document.feature_values(sketch).and_then(|data| {
-            <wb_sketch::SketchFeature as core_document::WorkbenchFeature>::from_json(data).ok()
+            <sketch_model::SketchFeature as core_document::WorkbenchFeature>::from_json(data).ok()
         }) else {
             continue;
         };
         let mut n = 0;
         for element in &feature.sketch.geometry {
-            if let wb_sketch::sketch::GeometryElement::Line(line) = element {
+            if let sketch_model::sketch::GeometryElement::Line(line) = element {
                 n += 1;
                 out.push((
                     ExtrudeDirection::SketchLine {

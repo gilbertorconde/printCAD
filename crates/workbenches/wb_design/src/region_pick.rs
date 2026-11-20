@@ -9,8 +9,8 @@ use core_document::{
     BodyId, Document, FeatureId, FeaturePart, OverlayMesh, WorkbenchFeature,
     WorkbenchRuntimeContext,
 };
-use wb_sketch::SketchFeature;
-use wb_sketch::profile;
+use sketch_model::SketchFeature;
+use sketch_model::profile;
 
 use crate::feature::DesignFeature;
 
@@ -59,7 +59,7 @@ fn on_plane(
     viewport_pos: (f32, f32),
 ) -> Option<[f64; 2]> {
     use glam::DVec3;
-    use wb_sketch::boundary::{place_direction, place_point, widen3};
+    use sketch_model::boundary::{place_direction, place_point, widen3};
     let (origin, dir) = ctx.viewport_to_ray(viewport_pos)?;
     // The sketch keeps its plane in its body's frame.
     let into = ctx.document.body_placement(body).inverse();
@@ -129,7 +129,7 @@ pub(crate) fn picked_axis(
         let id: uuid::Uuid = curve.parse().ok()?;
         matches!(
             drawn.sketch.get_geometry(id),
-            Some(wb_sketch::sketch::GeometryElement::Line(_))
+            Some(sketch_model::sketch::GeometryElement::Line(_))
         )
         .then_some(crate::feature::RevolveAxis::SketchLine(id))
     })
@@ -160,7 +160,7 @@ pub(crate) fn picked_curves(ctx: &WorkbenchRuntimeContext, sketch: FeatureId) ->
 /// `adding` it joins those taken or leaves them. Empty means the regions
 /// the whole profile takes; `None` when the click would take nothing.
 pub(crate) fn clicked(
-    regions: &[wb_sketch::regions::Region],
+    regions: &[sketch_model::regions::Region],
     chosen: &[String],
     name: &str,
     adding: bool,
@@ -216,7 +216,7 @@ pub(crate) fn click(
         return false;
     };
     let regions = crate::build::sketch_regions(ctx.document, sketch_id);
-    let Some(hit) = wb_sketch::regions::region_at(&regions, at) else {
+    let Some(hit) = sketch_model::regions::region_at(&regions, at) else {
         return false;
     };
     let Some(chosen) = (match &mut feature {
@@ -326,7 +326,7 @@ pub(crate) fn overlay(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<Ov
 #[cfg(test)]
 mod tests {
     use super::clicked;
-    use wb_sketch::regions::Region;
+    use sketch_model::regions::Region;
 
     fn region(name: &str, default: bool) -> Region {
         Region {

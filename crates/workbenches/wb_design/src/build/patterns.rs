@@ -4,9 +4,9 @@
 use super::{dot3, edge_probe_of, face_probe, load_sketch, mirror_plane, sketch_profile};
 use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature};
 use kernel_api::{BooleanOp, SolidOp};
-use wb_sketch::SketchFeature;
-use wb_sketch::profile;
-use wb_sketch::sketch::GeometryElement;
+use sketch_model::SketchFeature;
+use sketch_model::profile;
+use sketch_model::sketch::GeometryElement;
 
 use crate::feature::{DesignFeature, PatternAxis, TransformStep};
 
@@ -676,7 +676,7 @@ fn outline_of(document: &Document, id: FeatureId) -> Vec<[f64; 3]> {
         other => match other.sketch() {
             Some(sketch) => load_sketch(document, sketch)
                 .map(|s| {
-                    wb_sketch::render::sketch_polylines(&s.sketch, &s.plane)
+                    sketch_model::render::sketch_polylines(&s.sketch, &s.plane)
                         .into_iter()
                         .flatten()
                         .collect()

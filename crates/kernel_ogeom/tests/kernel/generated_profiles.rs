@@ -3,12 +3,12 @@
 //! what its numbers say it is; and a gear whose teeth a variable sets.
 
 use core_document::{BodyId, Document, FeatureId, WorkbenchFeature};
-use wb_design::DesignFeature;
-use wb_sketch::SketchFeature;
-use wb_sketch::generator::{
+use sketch_model::SketchFeature;
+use sketch_model::generator::{
     GearSpec, Generator, ShaftSection, ShaftSpec, SprocketSpec, new_sketch,
 };
-use wb_sketch::sketch::SketchPlane;
+use sketch_model::sketch::SketchPlane;
+use wb_design::DesignFeature;
 
 use super::common::{Features, add_variables, chain, pad, rebuilt, registry, set_variable, volume};
 
