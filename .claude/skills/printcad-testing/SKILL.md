@@ -40,7 +40,7 @@ The before-committing checks and the comment rule are in `CLAUDE.md`. Pictures f
   or `node scripts/gates.mjs --heavy`; they have their own budget (300 s
   a program, 600 s in all). The lint gates clippy them with the feature
   on, so a change that breaks their build fails on its pull request. CI's
-  `heavy` job runs them on every push to master, nightly, on
+  `heavy` job runs them on every push to master, on
   `workflow_dispatch`, and on a pull request carrying the `heavy-tests`
   label.
 - CI (`.github/workflows/ci.yml`): a push to master builds, lints and

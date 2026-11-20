@@ -10,9 +10,6 @@ on:
   # A branch's full run on request; like a push to master it saves the
   # caches, which pull requests only read.
   workflow_dispatch:
-  # Nightly, the heavy tests alone.
-  schedule:
-    - cron: "17 3 * * *"
 
 concurrency:
   # A newer push to the same pull request replaces the run in progress.
@@ -25,7 +22,6 @@ env:
 jobs:
   # What a pull request reaches; a push to master takes everything.
   scope:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     outputs:
       tests: ${{ steps.scope.outputs.tests }}
@@ -48,7 +44,6 @@ jobs:
           fi
 
   lint:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -102,7 +97,7 @@ jobs:
 
   heavy:
     # The heavy tests (each package's `heavy` modules, built only with its
-    # `heavy-tests` feature): on every push to master, nightly, on request,
+    # `heavy-tests` feature): on every push to master, on request,
     # and on a pull request carrying the `heavy-tests` label.
     if: >-
       github.event_name != 'pull_request' ||
