@@ -223,43 +223,45 @@ fn panel(
         .size_range(260.0..=480.0)
         .frame(egui::Frame::new().fill(BG1))
         .show(ui, |ui| {
-            // Nothing paints past the panel, whatever a bench's editor asks.
-            ui.set_clip_rect(ui.max_rect());
-            let rect = ui.max_rect().intersect(ui.clip_rect());
-            ui.painter().vline(
-                rect.left() + 0.5,
-                rect.y_range(),
-                egui::Stroke::new(1.0, BORDER),
-            );
-            let done = egui::Frame::new()
-                .inner_margin(egui::Margin {
-                    left: 14,
-                    right: 12,
-                    top: 12,
-                    bottom: 10,
-                })
-                .show(ui, |ui| header_row(ui, header))
-                .inner;
-            request.accept |= done.accept;
-            request.cancel |= done.cancel;
-            let strip = ui.min_rect();
-            ui.painter().hline(
-                strip.x_range(),
-                strip.bottom() - 0.5,
-                egui::Stroke::new(1.0, BORDER),
-            );
+            super::panel_contents(ui, |ui| {
+                // Nothing paints past the panel, whatever a bench's editor asks.
+                ui.set_clip_rect(ui.max_rect());
+                let rect = ui.max_rect().intersect(ui.clip_rect());
+                ui.painter().vline(
+                    rect.left() + 0.5,
+                    rect.y_range(),
+                    egui::Stroke::new(1.0, BORDER),
+                );
+                let done = egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: 14,
+                        right: 12,
+                        top: 12,
+                        bottom: 10,
+                    })
+                    .show(ui, |ui| header_row(ui, header))
+                    .inner;
+                request.accept |= done.accept;
+                request.cancel |= done.cancel;
+                let strip = ui.min_rect();
+                ui.painter().hline(
+                    strip.x_range(),
+                    strip.bottom() - 0.5,
+                    egui::Stroke::new(1.0, BORDER),
+                );
 
-            egui::ScrollArea::vertical()
-                .id_salt("task_body")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    egui::Frame::new()
-                        .inner_margin(egui::Margin::same(12))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            body(ui, request);
-                        });
-                });
+                egui::ScrollArea::vertical()
+                    .id_salt("task_body")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin::same(12))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                body(ui, request);
+                            });
+                    });
+            })
         });
 }
 

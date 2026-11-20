@@ -188,109 +188,111 @@ pub fn draw_assistant(
                 .inner_margin(egui::Margin::symmetric(10, 8)),
         )
         .show(ui, |ui| {
-            // Nothing paints past the panel, whatever its content asks.
-            ui.set_clip_rect(ui.max_rect());
-            let panel = ui.max_rect();
-            if let Some(chat) = state.active.clone() {
-                take_dropped_files(ui, panel, chat, commands);
-            }
-            tab_strip(ui, state, chats, &agents, commands, &mut result);
-            history_list(ui, state, past_chats, commands);
-            rename_row(ui, state, chats, commands);
-            rules_editor(ui, state, document_name, document_rules, commands);
-            ui.separator();
-            for (index, approval) in approvals.iter().enumerate() {
-                approval_card(ui, index, approval, chats, commands);
-            }
-            let Some(chat) = state
-                .active
-                .as_ref()
-                .and_then(|id| chats.iter().find(|c| &c.id == id))
-            else {
-                empty(ui, &agents, commands, &mut result);
-                return;
-            };
-            // A chat from an earlier visit wakes once it is on screen.
-            if chat.status == ChatStatus::Resting {
-                commands.push(UiCommand::WakeChat(chat.id.clone()));
-            }
-            let scroll = state.scroll.entry(chat.id.clone()).or_default();
-            chat_header(ui, chat, scroll, commands);
-            // Alt+Up and Alt+Down jump while the panel is in use.
-            if ui.rect_contains_pointer(panel)
-                || ui.memory(|m| m.focused().is_some_and(|f| f == input_id(chat)))
-            {
-                ui.input_mut(|i| {
-                    if i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp) {
-                        scroll.jump = Some(Jump::Previous);
-                    }
-                    if i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown) {
-                        scroll.jump = Some(Jump::Next);
-                    }
-                });
-            }
-            ui.add_space(SPACE_1);
-            let draft = state.drafts.entry(chat.id.clone()).or_default();
-            let options = mentions
-                .iter()
-                .find(|(tab, _)| *tab == chat.tab)
-                .map_or(&[][..], |(_, options)| options.as_slice());
-            // The box to write in keeps the bottom; the conversation
-            // scrolls in what is left above it.
-            egui::Panel::bottom(egui::Id::new(("assistant_composer", &chat.id)))
-                .resizable(false)
-                .show_separator_line(false)
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-                    top: 6,
-                    ..Default::default()
-                }))
-                .show(ui, |ui| {
-                    queued_list(ui, chat, draft, commands);
-                    input(ui, chat, draft, options, paste_pressed, commands);
-                });
-            let scroll = state.scroll.entry(chat.id.clone()).or_default();
-            let land_on = scroll
-                .jump
-                .take()
-                .and_then(|jump| scroll.target(jump, chat.entries.len().saturating_sub(1)));
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE)
-                .show(ui, |ui| {
-                    let out = egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            ui.set_max_width(ui.available_width());
-                            ui.spacing_mut().item_spacing.y = SPACE_2;
-                            let origin = ui.min_rect().top();
-                            let mut user_tops = Vec::new();
-                            // The last entries may still be growing.
-                            let settled = chat.entries.len().saturating_sub(2);
-                            for (index, entry) in chat.entries.iter().enumerate() {
-                                let force = index >= settled || land_on == Some(index);
-                                let rect = ui_kit::lazy::row(
-                                    ui,
-                                    ("entry", &chat.id, index),
-                                    force,
-                                    |ui| {
-                                        draw_entry(ui, chat, index, entry, commands);
-                                    },
-                                )
-                                .rect;
-                                if matches!(entry, ChatEntry::User { .. }) {
-                                    user_tops.push((index, rect.top() - origin));
+            super::panel_contents(ui, |ui| {
+                // Nothing paints past the panel, whatever its content asks.
+                ui.set_clip_rect(ui.max_rect());
+                let panel = ui.max_rect();
+                if let Some(chat) = state.active.clone() {
+                    take_dropped_files(ui, panel, chat, commands);
+                }
+                tab_strip(ui, state, chats, &agents, commands, &mut result);
+                history_list(ui, state, past_chats, commands);
+                rename_row(ui, state, chats, commands);
+                rules_editor(ui, state, document_name, document_rules, commands);
+                ui.separator();
+                for (index, approval) in approvals.iter().enumerate() {
+                    approval_card(ui, index, approval, chats, commands);
+                }
+                let Some(chat) = state
+                    .active
+                    .as_ref()
+                    .and_then(|id| chats.iter().find(|c| &c.id == id))
+                else {
+                    empty(ui, &agents, commands, &mut result);
+                    return;
+                };
+                // A chat from an earlier visit wakes once it is on screen.
+                if chat.status == ChatStatus::Resting {
+                    commands.push(UiCommand::WakeChat(chat.id.clone()));
+                }
+                let scroll = state.scroll.entry(chat.id.clone()).or_default();
+                chat_header(ui, chat, scroll, commands);
+                // Alt+Up and Alt+Down jump while the panel is in use.
+                if ui.rect_contains_pointer(panel)
+                    || ui.memory(|m| m.focused().is_some_and(|f| f == input_id(chat)))
+                {
+                    ui.input_mut(|i| {
+                        if i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp) {
+                            scroll.jump = Some(Jump::Previous);
+                        }
+                        if i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown) {
+                            scroll.jump = Some(Jump::Next);
+                        }
+                    });
+                }
+                ui.add_space(SPACE_1);
+                let draft = state.drafts.entry(chat.id.clone()).or_default();
+                let options = mentions
+                    .iter()
+                    .find(|(tab, _)| *tab == chat.tab)
+                    .map_or(&[][..], |(_, options)| options.as_slice());
+                // The box to write in keeps the bottom; the conversation
+                // scrolls in what is left above it.
+                egui::Panel::bottom(egui::Id::new(("assistant_composer", &chat.id)))
+                    .resizable(false)
+                    .show_separator_line(false)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                        top: 6,
+                        ..Default::default()
+                    }))
+                    .show(ui, |ui| {
+                        queued_list(ui, chat, draft, commands);
+                        input(ui, chat, draft, options, paste_pressed, commands);
+                    });
+                let scroll = state.scroll.entry(chat.id.clone()).or_default();
+                let land_on = scroll
+                    .jump
+                    .take()
+                    .and_then(|jump| scroll.target(jump, chat.entries.len().saturating_sub(1)));
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        let out = egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                ui.set_max_width(ui.available_width());
+                                ui.spacing_mut().item_spacing.y = SPACE_2;
+                                let origin = ui.min_rect().top();
+                                let mut user_tops = Vec::new();
+                                // The last entries may still be growing.
+                                let settled = chat.entries.len().saturating_sub(2);
+                                for (index, entry) in chat.entries.iter().enumerate() {
+                                    let force = index >= settled || land_on == Some(index);
+                                    let rect = ui_kit::lazy::row(
+                                        ui,
+                                        ("entry", &chat.id, index),
+                                        force,
+                                        |ui| {
+                                            draw_entry(ui, chat, index, entry, commands);
+                                        },
+                                    )
+                                    .rect;
+                                    if matches!(entry, ChatEntry::User { .. }) {
+                                        user_tops.push((index, rect.top() - origin));
+                                    }
+                                    if land_on == Some(index) {
+                                        ui.scroll_to_rect(rect, Some(egui::Align::TOP));
+                                    }
                                 }
-                                if land_on == Some(index) {
-                                    ui.scroll_to_rect(rect, Some(egui::Align::TOP));
-                                }
-                            }
-                            user_tops
-                        });
-                    scroll.user_tops = out.inner;
-                    scroll.offset = out.state.offset.y;
-                    scroll.at_bottom =
-                        out.state.offset.y + out.inner_rect.height() >= out.content_size.y - 4.0;
-                });
+                                user_tops
+                            });
+                        scroll.user_tops = out.inner;
+                        scroll.offset = out.state.offset.y;
+                        scroll.at_bottom = out.state.offset.y + out.inner_rect.height()
+                            >= out.content_size.y - 4.0;
+                    });
+            })
         });
     result
 }

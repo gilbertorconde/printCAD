@@ -18,6 +18,10 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. UiL
   (the script strips metadata and normalises the stroke color).
 - UI-local state (filters, drafts, palette query) lives on `UiLayer`;
   anything the host mutates is seeded from `UiFrameInputs` every frame.
+- A resizable side panel draws its contents through `ui::panel_contents`,
+  so it keeps the width it was given (its default on a fresh start, or
+  where it was dragged): egui keeps the size a panel's contents report,
+  and a row a fraction too wide would otherwise widen it for good.
 - `ui-mockup/` is the design reference and stays untracked; only tokens,
   icons, motion drawings and fonts are vendored from it.
 

@@ -57,7 +57,9 @@ primary button held and let go, the `move`s between them a drag), and a
 picture
 waits for them, so a capture shows a panel in a state only clicks reach;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
-once the scene settles (the renderer's scene readback, `request_capture`),
+once the scene settles (the kernel idle, the camera still and the view's
+rectangle unchanged for 60 frames; the renderer's scene readback,
+`request_capture`),
 and `PRINTCAD_BENCH_WINDOW=<path>` one of the whole window, panels and
 menus with it (`CaptureKind::Window`); while steps, a click, an edit, a
 chat or a picture still wait, the loop keeps frames coming

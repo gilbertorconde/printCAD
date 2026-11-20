@@ -158,225 +158,227 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         .size_range(240.0..=420.0)
         .frame(egui::Frame::new().fill(BG1))
         .show(ui, |ui| {
-            // Nothing paints past the panel, whatever the content's height.
-            ui.set_clip_rect(ui.max_rect());
-            let rect = ui.max_rect().intersect(ui.clip_rect());
-            ui.painter().vline(
-                rect.right() - 0.5,
-                rect.y_range(),
-                egui::Stroke::new(1.0, BORDER),
-            );
-
-            let tree_model = feature_tree::DocumentTree::build(document, registry);
-            let selected_id = active_tree_selection
-                .or_else(|| active_document_object.map(TreeItemId::from))
-                .unwrap_or(TreeItemId::DocumentRoot);
-            let mut jump_to = None;
-
-            // Header: "Model", the problem count and the filter box.
-            let (header, _) = ui.allocate_exact_size(
-                egui::Vec2::new(ui.available_width(), TAB_BAR),
-                egui::Sense::hover(),
-            );
-            ui.painter().hline(
-                header.x_range(),
-                header.bottom() - 0.5,
-                egui::Stroke::new(1.0, BORDER),
-            );
-            let mut h = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(header.shrink2(egui::Vec2::new(10.0, 0.0)))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            );
-            h.spacing_mut().item_spacing.x = SPACE_2;
-            ui_kit::icon::draw(&mut h, "tree-group", 14.0, TEXT2);
-            h.label(
-                RichText::new("Model")
-                    .font(sans_medium(FONT_SM))
-                    .color(TEXT1),
-            );
-            h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let fold = format!("Fold the panel to its icons{fold_keys}");
-                if ui_kit::widgets::icon_button(ui, "panel-left-close", &fold).clicked() {
-                    result.fold = Some(true);
-                }
-                // An exact footprint: a frame grown inside the header would
-                // take the header's full height.
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::Vec2::new(104.0, 22.0), egui::Sense::hover());
-                ui.painter().rect(
-                    rect,
-                    4.0,
-                    BG2,
+            super::panel_contents(ui, |ui| {
+                // Nothing paints past the panel, whatever the content's height.
+                ui.set_clip_rect(ui.max_rect());
+                let rect = ui.max_rect().intersect(ui.clip_rect());
+                ui.painter().vline(
+                    rect.right() - 0.5,
+                    rect.y_range(),
                     egui::Stroke::new(1.0, BORDER),
-                    egui::StrokeKind::Inside,
                 );
-                let mut inner = ui.new_child(
+
+                let tree_model = feature_tree::DocumentTree::build(document, registry);
+                let selected_id = active_tree_selection
+                    .or_else(|| active_document_object.map(TreeItemId::from))
+                    .unwrap_or(TreeItemId::DocumentRoot);
+                let mut jump_to = None;
+
+                // Header: "Model", the problem count and the filter box.
+                let (header, _) = ui.allocate_exact_size(
+                    egui::Vec2::new(ui.available_width(), TAB_BAR),
+                    egui::Sense::hover(),
+                );
+                ui.painter().hline(
+                    header.x_range(),
+                    header.bottom() - 0.5,
+                    egui::Stroke::new(1.0, BORDER),
+                );
+                let mut h = ui.new_child(
                     egui::UiBuilder::new()
-                        .max_rect(rect.shrink2(egui::Vec2::new(6.0, 0.0)))
+                        .max_rect(header.shrink2(egui::Vec2::new(10.0, 0.0)))
                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
                 );
-                inner.spacing_mut().item_spacing.x = 4.0;
-                ui_kit::icon::draw(&mut inner, "search", 11.0, TEXT3);
-                inner.add(
-                    egui::TextEdit::singleline(filter)
-                        .desired_width(f32::INFINITY)
-                        .frame(egui::Frame::NONE)
-                        .hint_text(RichText::new("Filter").color(TEXT3))
-                        .font(sans(FONT_XS)),
+                h.spacing_mut().item_spacing.x = SPACE_2;
+                ui_kit::icon::draw(&mut h, "tree-group", 14.0, TEXT2);
+                h.label(
+                    RichText::new("Model")
+                        .font(sans_medium(FONT_SM))
+                        .color(TEXT1),
                 );
-                let problems = tree_model.problems().len();
-                if problems > 0 {
-                    let note = if tree_model.has_errors() {
-                        ui_kit::widgets::Note::Error
-                    } else {
-                        ui_kit::widgets::Note::Warning
-                    };
-                    let text =
-                        format!("{problems} problem{}", if problems == 1 { "" } else { "s" });
-                    let pill = ui_kit::widgets::status_pill(
-                        ui,
-                        note,
-                        &text,
-                        "Click to go to the next one",
-                    )
-                    .interact(egui::Sense::click())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                    if pill.clicked() {
-                        jump_to = tree_model.next_problem(Some(selected_id));
+                h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let fold = format!("Fold the panel to its icons{fold_keys}");
+                    if ui_kit::widgets::icon_button(ui, "panel-left-close", &fold).clicked() {
+                        result.fold = Some(true);
                     }
-                }
-            });
-
-            // The active workbench's own panel content.
-            if registry.workbench_mut(&active_workbench.0).is_ok() {
-                let wb = bench_panel::bench_ui(registry, &active_workbench.0);
-                let mut ctx = panel_ctx(document, &host, active_document_object);
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(10, 6))
-                    .show(ui, |ui| {
-                        if let Some(wb) = wb {
-                            wb.ui_left_panel(ui, &mut ctx);
-                        }
-                    });
-                result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
-                flush_ctx_logs(&mut ctx);
-            }
-            ui.add_space(SPACE_1);
-            // The tree takes the upper part and the property panel the
-            // rest, split where the divider between them was dragged.
-            let total = ui.available_height();
-            let tree_height = tree_height(total, *tree_share);
-            let mut selected_detail: Option<String> = None;
-            egui::ScrollArea::vertical()
-                .id_salt("model_tree")
-                .max_height(tree_height)
-                .min_scrolled_height(tree_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    let in_hand: Vec<core_document::FeatureId> = match selected_id {
-                        TreeItemId::Feature(id) => Some(id),
-                        _ => None,
-                    }
-                    .into_iter()
-                    .chain(tree_also.iter().copied())
-                    .collect();
-                    let related = feature_tree::related_features(
-                        document,
-                        feature_tree::last_hovered_feature(ui),
-                        &in_hand,
+                    // An exact footprint: a frame grown inside the header would
+                    // take the header's full height.
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::Vec2::new(104.0, 22.0), egui::Sense::hover());
+                    ui.painter().rect(
+                        rect,
+                        4.0,
+                        BG2,
+                        egui::Stroke::new(1.0, BORDER),
+                        egui::StrokeKind::Inside,
                     );
-                    let tree_ui = feature_tree::draw_tree(
-                        ui,
-                        &tree_model,
-                        feature_tree::TreeDrawOptions::new(
-                            Some(selected_id),
-                            editing_feature,
-                            filter.trim(),
+                    let mut inner = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(rect.shrink2(egui::Vec2::new(6.0, 0.0)))
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    );
+                    inner.spacing_mut().item_spacing.x = 4.0;
+                    ui_kit::icon::draw(&mut inner, "search", 11.0, TEXT3);
+                    inner.add(
+                        egui::TextEdit::singleline(filter)
+                            .desired_width(f32::INFINITY)
+                            .frame(egui::Frame::NONE)
+                            .hint_text(RichText::new("Filter").color(TEXT3))
+                            .font(sans(FONT_XS)),
+                    );
+                    let problems = tree_model.problems().len();
+                    if problems > 0 {
+                        let note = if tree_model.has_errors() {
+                            ui_kit::widgets::Note::Error
+                        } else {
+                            ui_kit::widgets::Note::Warning
+                        };
+                        let text =
+                            format!("{problems} problem{}", if problems == 1 { "" } else { "s" });
+                        let pill = ui_kit::widgets::status_pill(
+                            ui,
+                            note,
+                            &text,
+                            "Click to go to the next one",
                         )
-                        .with_also(tree_also)
-                        .revealing(reveal_body)
-                        .jumping_to(jump_to)
-                        .relating(&related)
-                        .lighting(face_maker, reveal_face_maker)
-                        .with_bench_menus(document, registry)
-                        .with_keys(keymap)
-                        .with_file_marks(read_only, read_only_links),
-                    );
-                    result.bench_command = tree_ui.bench_command;
-                    result.tree_selection = tree_ui.selection;
-                    if let Some(feature) = tree_ui.toggle_feature {
-                        result
-                            .commands
-                            .push(super::UiCommand::ToggleTreeFeature(feature));
+                        .interact(egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if pill.clicked() {
+                            jump_to = tree_model.next_problem(Some(selected_id));
+                        }
                     }
-                    result.tree_activation = tree_ui.activation;
-                    result.tree_hovered = tree_ui.hovered;
-                    result.imported_visibility_change = tree_ui.imported_visibility_change;
-                    result.body_visibility_change = tree_ui.body_visibility_change;
-                    result.tree_feature_command = tree_ui.feature_command;
-                    result.delete_item = tree_ui.delete_item;
-                    result.repair = tree_ui.repair;
-                    result.details = tree_ui.details;
-                    result.convert = tree_ui.convert;
-                    result.commands.extend(tree_ui.commands);
-                    result.local = tree_ui.local;
-                    if let Some(repo) = tree_ui.install_package {
-                        result
-                            .commands
-                            .push(super::UiCommand::InstallPackageFromGithub(repo));
-                    }
-                    if tree_ui.new_variable_set {
-                        result.commands.push(super::UiCommand::NewVariableSet);
-                    }
-                    if tree_ui.new_configurations {
-                        result
-                            .commands
-                            .push(super::UiCommand::Config(super::ConfigEdit::NewTable));
-                    }
-                    // Hover wins; the selection stands in when the pointer
-                    // is elsewhere, so the line never goes blank mid-glance.
-                    selected_detail = tree_ui
-                        .hovered
-                        .and_then(|id| tree_model.detail_for(id))
-                        .or_else(|| tree_model.detail_for(selected_id));
                 });
 
-            divider(ui, total, tree_share);
-            let props = property_panel::draw_property_panel(
-                ui,
-                document,
-                registry,
-                property_panel::PanelSubject {
-                    selected: selected_id,
-                    detail: selected_detail.as_deref(),
-                    physical,
-                    bounds_mm,
-                    inertia_references,
-                    inertia_about,
-                },
-                property_tab,
-                rename_buffer,
-                variables,
-            );
-            result.commands.extend(props.commands);
-            if props.feature_command.is_some() {
-                result.tree_feature_command = props.feature_command;
-            }
-            if props.imported_visibility.is_some() {
-                result.imported_visibility_change = props.imported_visibility;
-            }
-            if props.body_visibility.is_some() {
-                result.body_visibility_change = props.body_visibility;
-            }
-            if props.parameter.is_some() {
-                result.parameter = props.parameter;
-            }
-            if props.body_display.is_some() {
-                result.body_display = props.body_display;
-            }
-            result.rename = props.rename;
-            let _ = vseparator;
+                // The active workbench's own panel content.
+                if registry.workbench_mut(&active_workbench.0).is_ok() {
+                    let wb = bench_panel::bench_ui(registry, &active_workbench.0);
+                    let mut ctx = panel_ctx(document, &host, active_document_object);
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            if let Some(wb) = wb {
+                                wb.ui_left_panel(ui, &mut ctx);
+                            }
+                        });
+                    result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
+                    flush_ctx_logs(&mut ctx);
+                }
+                ui.add_space(SPACE_1);
+                // The tree takes the upper part and the property panel the
+                // rest, split where the divider between them was dragged.
+                let total = ui.available_height();
+                let tree_height = tree_height(total, *tree_share);
+                let mut selected_detail: Option<String> = None;
+                egui::ScrollArea::vertical()
+                    .id_salt("model_tree")
+                    .max_height(tree_height)
+                    .min_scrolled_height(tree_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let in_hand: Vec<core_document::FeatureId> = match selected_id {
+                            TreeItemId::Feature(id) => Some(id),
+                            _ => None,
+                        }
+                        .into_iter()
+                        .chain(tree_also.iter().copied())
+                        .collect();
+                        let related = feature_tree::related_features(
+                            document,
+                            feature_tree::last_hovered_feature(ui),
+                            &in_hand,
+                        );
+                        let tree_ui = feature_tree::draw_tree(
+                            ui,
+                            &tree_model,
+                            feature_tree::TreeDrawOptions::new(
+                                Some(selected_id),
+                                editing_feature,
+                                filter.trim(),
+                            )
+                            .with_also(tree_also)
+                            .revealing(reveal_body)
+                            .jumping_to(jump_to)
+                            .relating(&related)
+                            .lighting(face_maker, reveal_face_maker)
+                            .with_bench_menus(document, registry)
+                            .with_keys(keymap)
+                            .with_file_marks(read_only, read_only_links),
+                        );
+                        result.bench_command = tree_ui.bench_command;
+                        result.tree_selection = tree_ui.selection;
+                        if let Some(feature) = tree_ui.toggle_feature {
+                            result
+                                .commands
+                                .push(super::UiCommand::ToggleTreeFeature(feature));
+                        }
+                        result.tree_activation = tree_ui.activation;
+                        result.tree_hovered = tree_ui.hovered;
+                        result.imported_visibility_change = tree_ui.imported_visibility_change;
+                        result.body_visibility_change = tree_ui.body_visibility_change;
+                        result.tree_feature_command = tree_ui.feature_command;
+                        result.delete_item = tree_ui.delete_item;
+                        result.repair = tree_ui.repair;
+                        result.details = tree_ui.details;
+                        result.convert = tree_ui.convert;
+                        result.commands.extend(tree_ui.commands);
+                        result.local = tree_ui.local;
+                        if let Some(repo) = tree_ui.install_package {
+                            result
+                                .commands
+                                .push(super::UiCommand::InstallPackageFromGithub(repo));
+                        }
+                        if tree_ui.new_variable_set {
+                            result.commands.push(super::UiCommand::NewVariableSet);
+                        }
+                        if tree_ui.new_configurations {
+                            result
+                                .commands
+                                .push(super::UiCommand::Config(super::ConfigEdit::NewTable));
+                        }
+                        // Hover wins; the selection stands in when the pointer
+                        // is elsewhere, so the line never goes blank mid-glance.
+                        selected_detail = tree_ui
+                            .hovered
+                            .and_then(|id| tree_model.detail_for(id))
+                            .or_else(|| tree_model.detail_for(selected_id));
+                    });
+
+                divider(ui, total, tree_share);
+                let props = property_panel::draw_property_panel(
+                    ui,
+                    document,
+                    registry,
+                    property_panel::PanelSubject {
+                        selected: selected_id,
+                        detail: selected_detail.as_deref(),
+                        physical,
+                        bounds_mm,
+                        inertia_references,
+                        inertia_about,
+                    },
+                    property_tab,
+                    rename_buffer,
+                    variables,
+                );
+                result.commands.extend(props.commands);
+                if props.feature_command.is_some() {
+                    result.tree_feature_command = props.feature_command;
+                }
+                if props.imported_visibility.is_some() {
+                    result.imported_visibility_change = props.imported_visibility;
+                }
+                if props.body_visibility.is_some() {
+                    result.body_visibility_change = props.body_visibility;
+                }
+                if props.parameter.is_some() {
+                    result.parameter = props.parameter;
+                }
+                if props.body_display.is_some() {
+                    result.body_display = props.body_display;
+                }
+                result.rename = props.rename;
+                let _ = vseparator;
+            })
         });
 
     result
