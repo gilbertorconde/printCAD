@@ -1947,6 +1947,79 @@ fn an_offset_waits_in_the_panel_for_its_distance() {
     assert_eq!((params.offset_distance, params.offset_both), (1.0, true));
 }
 
+/// Radii of the circles centred near (x, y), smallest first, to a
+/// hundredth.
+fn radii_about(sketch: &Sketch, x: f64, y: f64) -> Vec<f64> {
+    let mut radii: Vec<f64> = crate::all_circles(sketch)
+        .iter()
+        .filter(|c| {
+            let p = sketch.point_position(c.center).unwrap();
+            (p.x - x).abs() < 0.05 && (p.y - y).abs() < 0.05
+        })
+        .map(|c| (c.radius * 100.0).round() / 100.0)
+        .collect();
+    radii.sort_by(f64::total_cmp);
+    radii
+}
+
+/// Several closed curves offset together all grow or all shrink, as the
+/// one nearest the click does, linked by one dimension, as one undo step.
+#[test]
+fn an_offset_of_several_curves_moves_each_the_same_way() {
+    let mut h = Harness::sketching();
+    for (x, r) in [(0.0, 2.0), (10.0, 3.0)] {
+        h.click(x, 0.0, "sketch.circle");
+        h.click(x + r, 0.0, "sketch.circle");
+    }
+    h.box_select(-4.0, -4.0, 15.0, 4.0);
+    let params = h.wb.tool_params_mut();
+    params.offset_distance = 1.0;
+    params.offset_linked = true;
+    let closed = h.gestures_closed;
+    // Outside the first circle, inside neither: both grow.
+    h.click(0.0, 2.5, "sketch.offset");
+    assert_eq!(h.gestures_closed, closed + 1, "one undo step");
+    let sketch = h.sketch();
+    assert_eq!(radii_about(&sketch, 0.0, 0.0), [2.0, 3.0]);
+    assert_eq!(radii_about(&sketch, 10.0, 0.0), [3.0, 4.0]);
+    let offsets: Vec<usize> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match &c.kind {
+            wb_sketch::sketch::ConstraintKind::Offset { pairs, .. } => Some(pairs.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offsets, [2], "one dimension holds both copies");
+    h.history(false);
+    assert_eq!(crate::all_circles(&h.sketch()).len(), 2, "undone at once");
+}
+
+/// A rectangle and the hole in it offset together: the click inside the
+/// rectangle shrinks both, each closed loop copied on its own.
+#[test]
+fn an_offset_of_a_rectangle_and_its_hole_copies_each() {
+    let mut h = Harness::sketching();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.rect");
+    h.click(6.0, 4.0, "sketch.circle");
+    h.click(8.0, 4.0, "sketch.circle");
+    h.box_select(-2.0, -2.0, 14.0, 10.0);
+    h.wb.tool_params_mut().offset_distance = 1.0;
+    h.click(0.5, 0.5, "sketch.offset");
+    let sketch = h.sketch();
+    assert_eq!(
+        radii_about(&sketch, 6.0, 4.0),
+        [1.0, 2.0],
+        "the hole shrinks"
+    );
+    for (x, y) in [(1.0, 1.0), (11.0, 1.0), (11.0, 7.0), (1.0, 7.0)] {
+        assert!(h.point_at(x, y), "corner ({x}, {y}) 1 mm inside");
+    }
+    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 4, "two loops and their copies");
+}
+
 #[test]
 fn translate_copy_makes_n_copies_end_to_end() {
     let mut h = Harness::sketching();

@@ -2715,6 +2715,7 @@ Notes:
 - Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, `fillet_radius` and `chamfer_length` 2 mm when not given. A polygon's second click is a corner, or with `polygon_flats = true` the middle of a side, sizing it across its flats (a nut trap's width). `polygon_sides` takes 3 to 1000 and `copies` 0 to 10000; a count outside is refused. A fillet or chamfer takes one click on the corner. A bspline ends with the word "finish" in `points`, and so does an open path; a path's click on its first node closes it, and a click with `drag = {x, y}` places a smooth node whose handle the drag pulled there.
 - A value typed at a click (`typed = {length = 20}`) sets the shape's size; with `constrain = true` it is kept as a dimension. The names are length, angle, width, height, diameter, radius, major_radius, minor_radius, sweep (an arc's turn, degrees counter-clockwise) and x and y (a shape's first point).
 - It returns every element made, end points and centres included, and every constraint made with them.
+- Offset copies every curve in `selection` `offset_distance` off it, each circle, ellipse, spline or conic on its own and each run of lines and arcs sharing ends as one chain. One goes to the side of its click. Of several, the closed ones all grow or all shrink as the one nearest the click does, and an open one takes the click's side; `offset_linked` holds every copy to its original by one dimension.
 
 See also `pc.sketch.polyline`, `pc.sketch.rect`, `pc.sketch.circle`.
 

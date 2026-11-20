@@ -392,7 +392,7 @@ values always stay.
 | Extend | | Extends a curve's end to the next curve |
 | Split | | Splits a curve where you click |
 | Copy, Move, Rotate, Scale | | Copy, move, turn or size the selection from a base point or pivot |
-| Offset | | Copies a curve or chain at a distance |
+| Offset | | Copies each selected curve or chain at a distance |
 | Symmetry | | Mirrors the selection about a line, two points or a point |
 | Rectangular array | | Copies the selection into rows and columns |
 | Join curves | | Merges a chain of curves into one B-spline |
@@ -432,8 +432,11 @@ Rotate:
 - **Follow the original**: the copies stay the original's size, spaced by
   one pitch, as the original changes.
 
-Offset copies the selected curves to the side of its click. The copies
-wait in the Tool section, whose distance, Round, Both sides and other
+Offset copies the selected curves to the side of its click. Several
+curves or chains (circles, or an outline and the holes in it) are copied
+each on its own in one step: the closed ones all grow or all shrink as the
+one nearest the click does, and an open one goes to the click's side. The
+copies wait in the Tool section, whose distance, Round, Both sides and other
 switches change them in the view; as with a shape, only Cancel drops
 them, and OK and everything else copy at what the section shows, carried
 on to the tool. A frame round any
