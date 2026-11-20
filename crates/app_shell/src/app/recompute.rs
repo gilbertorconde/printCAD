@@ -5,7 +5,7 @@
 //! each plan to the kernel worker. Responses are folded back into the
 //! document by `drain_kernel_responses`.
 
-use core_document::{FeatureId, RebuildJob};
+use core_document::FeatureId;
 use kernel_api::TessellationSettings;
 
 use crate::PrintCadApp;
@@ -28,25 +28,18 @@ impl PrintCadApp {
         }
         self.settle_coarse_builds();
         for job in self.registry.rebuild_jobs(&mut self.session.document) {
-            let body_id = job.body;
-            self.session.document.clear_body_feature_errors(body_id);
-            let job = match job.plan {
-                Ok(mut plan) => {
-                    if let Some(error) = plan.failed.take() {
-                        self.plan_failed(&error, &std::mem::take(&mut plan.unbuilt));
-                    }
-                    RebuildJob {
-                        body: body_id,
-                        plan: Ok(plan),
-                    }
-                }
-                plan => RebuildJob {
-                    body: body_id,
-                    plan,
-                },
-            };
-            match job.plan {
-                Ok(plan) if plan.ops.is_empty() => {
+            let begun = build_driver::begin(&mut self.session.document, job);
+            let body_id = begun.body;
+            if let Some(error) = &begun.refused {
+                let name = error
+                    .feature
+                    .and_then(|f| self.session.document.get_feature_meta(f))
+                    .map(|n| format!("`{}`: ", n.name))
+                    .unwrap_or_default();
+                app_log::warn(format!("Recompute skipped: {name}{error}"));
+            }
+            match begun.next {
+                build_driver::Next::Emptied => {
                     self.session.builds.coarse.remove(&body_id.0);
                     self.session.builds.preview_rest.remove(&body_id.0);
                     // A build still out is of a history that is gone.
@@ -54,13 +47,8 @@ impl PrintCadApp {
                         self.session.builds.stale.insert(body_id.0);
                         self.drop_build_out(body_id.0);
                     }
-                    // Only geometry the features produced is cleared; an
-                    // imported solid outlives an empty history.
-                    if !self.session.document.body_solid_is_imported(body_id) {
-                        self.session.document.remove_imported_geometry(body_id);
-                    }
                 }
-                Ok(plan) => {
+                build_driver::Next::Build(plan) => {
                     let preview = self
                         .session
                         .builds
@@ -69,7 +57,7 @@ impl PrintCadApp {
                         .map(|f| f.0);
                     let mut build = QueuedBuild {
                         ops: plan.ops,
-                        op_features: plan.op_features.iter().map(|id| id.0).collect(),
+                        op_features: plan.op_features,
                         preview,
                         probes: plan.probes,
                         projections: plan.projections,
@@ -101,55 +89,8 @@ impl PrintCadApp {
                         }
                     }
                 }
-                Err(err) => self.plan_failed(&err, &[]),
+                build_driver::Next::Unplanned => {}
             }
-        }
-    }
-
-    /// A feature that could not be planned: the error on it, and on each
-    /// feature after it a word that it was not built.
-    fn plan_failed(&mut self, err: &core_document::BuildError, unbuilt: &[FeatureId]) {
-        let name = err
-            .feature
-            .and_then(|f| self.session.document.get_feature_meta(f))
-            .map(|n| format!("`{}`: ", n.name))
-            .unwrap_or_default();
-        if let Some(feature) = err.feature {
-            self.session
-                .document
-                .set_feature_error(feature, Some(err.message.clone()));
-            self.mark_unbuilt(feature, unbuilt.iter().copied());
-        }
-        app_log::warn(format!("Recompute skipped: {name}{err}"));
-    }
-
-    /// Features left out of a build because `failed`, before them, fails.
-    pub(crate) fn mark_unbuilt(
-        &mut self,
-        failed: FeatureId,
-        unbuilt: impl IntoIterator<Item = FeatureId>,
-    ) {
-        mark_unbuilt(&mut self.session.document, failed, unbuilt);
-    }
-}
-
-/// Mark the features left out of a build because `failed`, before them,
-/// fails.
-pub(crate) fn mark_unbuilt(
-    document: &mut core_document::Document,
-    failed: FeatureId,
-    unbuilt: impl IntoIterator<Item = FeatureId>,
-) {
-    let name = document
-        .get_feature_meta(failed)
-        .map(|n| n.name.clone())
-        .unwrap_or_default();
-    for feature in unbuilt {
-        if feature != failed {
-            document.set_feature_error(
-                feature,
-                Some(format!("not built: `{name}` before it fails")),
-            );
         }
     }
 }
@@ -288,7 +229,7 @@ const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
 #[derive(Clone)]
 pub(crate) struct QueuedBuild {
     ops: Vec<kernel_api::SolidOp>,
-    op_features: Vec<uuid::Uuid>,
+    op_features: Vec<FeatureId>,
     preview: Option<uuid::Uuid>,
     probes: Vec<core_document::PlanProbe>,
     projections: Vec<core_document::PlanProjection>,
@@ -301,7 +242,7 @@ impl QueuedBuild {
     /// features follow it: what the open task shows, built first.
     fn up_to_edited(&self) -> Option<QueuedBuild> {
         let feature = self.preview?;
-        let end = self.op_features.iter().rposition(|f| *f == feature)? + 1;
+        let end = self.op_features.iter().rposition(|f| f.0 == feature)? + 1;
         (end < self.ops.len()).then(|| QueuedBuild {
             ops: self.ops[..end].to_vec(),
             op_features: self.op_features[..end].to_vec(),
@@ -477,7 +418,7 @@ impl PrintCadApp {
                 self.registry
                     .invalidate_body(&mut self.session.document, body);
             } else {
-                store_built_solid(&mut self.session.document, body, preview.full);
+                build_driver::store_solid(&mut self.session.document, body, preview.full);
             }
         }
         // A body shown at the feature, its history after it still to build.
@@ -517,7 +458,7 @@ impl PrintCadApp {
     ) {
         let document = &mut self.session.document;
         match preview.shown {
-            Some(shown) => store_built_solid(document, body, *shown),
+            Some(shown) => build_driver::store_solid(document, body, *shown),
             None => document.remove_imported_geometry(body),
         }
         let placement = document.body_placement(body);
@@ -620,7 +561,7 @@ impl PrintCadApp {
         }
     }
 
-    /// Land a body's new shape where [`land_shape`] puts it, and say so.
+    /// Land a body's new shape where [`build_driver::land_shape`] puts it, and say so.
     pub(crate) fn apply_shape_read(
         &mut self,
         body: core_document::BodyId,
@@ -641,22 +582,22 @@ impl PrintCadApp {
             }
         };
         let summary = std::mem::take(&mut read.summary);
-        match land_shape(
+        match build_driver::land_shape(
             &mut self.session.document,
             &self.registry,
             body,
             asset,
             read,
         ) {
-            Landed::Dropped => return,
-            Landed::StandIn => {
+            build_driver::Landed::Dropped => return,
+            build_driver::Landed::StandIn => {
                 self.session.shape_replaced(body);
                 app_log::info(format!(
                     "`{name}` does not build; it shows the shape kept for it until it does"
                 ));
                 return;
             }
-            Landed::Shape => self.session.shape_replaced(body),
+            build_driver::Landed::Shape => self.session.shape_replaced(body),
         }
         let notes = if summary.is_empty() {
             String::new()
@@ -1170,86 +1111,6 @@ fn coarse(fine: TessellationSettings) -> TessellationSettings {
     }
 }
 
-/// Where a shape read from a file went.
-pub(crate) enum Landed {
-    /// The body's base or its shape.
-    Shape,
-    /// The body's stand-in, shown while its history does not build.
-    StandIn,
-    /// Nothing: a stand-in no longer due.
-    Dropped,
-}
-
-/// Put a shape read from the file `asset` on `body`: as its stand-in while
-/// that is due, else as its base, which its features then build on, or as
-/// its shape when it has no history.
-pub(crate) fn land_shape(
-    document: &mut core_document::Document,
-    registry: &core_document::DocumentService,
-    body: core_document::BodyId,
-    asset: uuid::Uuid,
-    read: kernel_api::MeshSolidResult,
-) -> Landed {
-    let geometry = core_document::ImportedGeometry {
-        bounds_mm: read.bounds_mm.or_else(|| read.mesh.bounds()),
-        mesh: std::sync::Arc::new(read.mesh),
-        source_asset: Some(asset),
-        revision: 0,
-        brep_blob_path: None,
-        mesh_path: None,
-        face_colors_path: None,
-        health: Some(read.health),
-    };
-    if document.is_stand_in(body, asset) {
-        // A build that succeeded, or a tip moved, while it was read leaves
-        // nothing to stand in for.
-        if document.stand_in_due(body) != Some(asset) {
-            return Landed::Dropped;
-        }
-        document.set_imported_geometry(body, geometry);
-        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
-        return Landed::StandIn;
-    }
-    if document.has_base_solid(body) {
-        document.set_base_solid(body, geometry, read.brep_blob, read.face_colors);
-        // Its features build again on the new base.
-        registry.invalidate_body(document, body);
-    } else {
-        document.set_imported_geometry(body, geometry);
-        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
-    }
-    Landed::Shape
-}
-
-/// Put a body's rebuilt solid in the document: its shape and the mesh drawn
-/// from it. The solid is derived from the history, so landing it is not an
-/// edit: a document opened and built again stays unedited.
-pub(crate) fn store_built_solid(
-    document: &mut core_document::Document,
-    body: core_document::BodyId,
-    result: kernel_api::SolidBuildResult,
-) {
-    let edited = document.metadata().dirty();
-    let bounds_mm = result.bounds_mm;
-    document.set_imported_brep_data(body, result.brep_blob, Vec::new());
-    document.set_imported_geometry(
-        body,
-        core_document::ImportedGeometry {
-            mesh: std::sync::Arc::new(result.mesh),
-            source_asset: None,
-            revision: 0,
-            bounds_mm,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
-    if !edited {
-        document.mark_clean();
-    }
-}
-
 /// `document` with each body of `previews` given its whole solid back.
 fn with_whole_solids<'a>(
     document: &'a core_document::Document,
@@ -1260,7 +1121,7 @@ fn with_whole_solids<'a>(
     }
     let mut document = document.clone();
     for (body, preview) in previews {
-        store_built_solid(&mut document, *body, preview.full.clone());
+        build_driver::store_solid(&mut document, *body, preview.full.clone());
     }
     std::borrow::Cow::Owned(document)
 }
@@ -1279,7 +1140,7 @@ mod tests {
         };
         let mut document = core_document::Document::new("t");
         let body = document.create_body(None);
-        store_built_solid(&mut document, body, solid(1.0));
+        build_driver::store_solid(&mut document, body, solid(1.0));
         let preview = crate::app::session::BodyPreview {
             full: solid(2.0),
             complete: true,
@@ -1445,7 +1306,7 @@ mod tests {
                 op(BooleanOp::Fuse),
                 op(BooleanOp::Cut),
             ],
-            op_features: vec![a, b, b, c],
+            op_features: [a, b, b, c].map(FeatureId).to_vec(),
             preview,
             probes: Vec::new(),
             projections: Vec::new(),
@@ -1453,7 +1314,7 @@ mod tests {
         };
         let first = build(Some(b)).up_to_edited().expect("a feature follows");
         assert_eq!(first.ops.len(), 3, "up to the edited feature's last op");
-        assert_eq!(first.op_features, vec![a, b, b]);
+        assert_eq!(first.op_features, [a, b, b].map(FeatureId));
         assert!(first.partial);
         assert!(build(Some(c)).up_to_edited().is_none(), "the last feature");
         assert!(build(None).up_to_edited().is_none(), "nothing edited");

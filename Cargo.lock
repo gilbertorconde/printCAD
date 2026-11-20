@@ -154,6 +154,7 @@ dependencies = [
  "base64 0.23.1",
  "bench_fixtures",
  "bench_panel",
+ "build_driver",
  "core_document",
  "doc_render",
  "doc_server",
@@ -541,6 +542,17 @@ checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
 dependencies = [
  "memchr",
  "serde_core",
+]
+
+[[package]]
+name = "build_driver"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "kernel_ogeom",
+ "printcad-kernel-api",
+ "serde",
+ "uuid",
 ]
 
 [[package]]
@@ -3892,6 +3904,7 @@ dependencies = [
 name = "project_tools"
 version = "0.1.0"
 dependencies = [
+ "build_driver",
  "core_document",
  "glam 0.33.7",
  "kernel_ogeom",
@@ -3902,6 +3915,7 @@ dependencies = [
  "sketch_model",
  "uuid",
  "wb_design",
+ "wb_sketch",
  "zip",
 ]
 

@@ -48,7 +48,9 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   path from `FileState::links_from`, the folder the document was opened
   from; a link found nowhere is `link_missing` and Relink… records a
   `SetBodyLink`), `workbench_host.rs` (ctx
-  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive; keeps
+  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive; runs each
+  body's chain through `build_driver::build_until_failure` and lands
+  answers through the driver's store steps in `step_import.rs`; keeps
   the last few solids per body by what they were built from, so moving a
   body's tip back and forth through its history, or undo and redo, finds
   them built),

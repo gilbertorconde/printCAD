@@ -10,9 +10,10 @@ pub mod report;
 use crate::document_import::{BodyKind, ConvertedBody, ImportedObject, ImportedProject};
 use crate::error::{ErrorCategory, Failure};
 use crate::report::Finding;
+use build_driver::Chain;
 use core_document::FeatureId;
 use kernel_api::TessellationSettings;
-use kernel_ogeom::{ChainRequest, OgeomKernel};
+use kernel_ogeom::OgeomKernel;
 use measure::{Difference, Measures, Tolerances, compare};
 use project_archive::archive::FcstdArchive as Archive;
 use project_archive::document_xml::{FcDocument, Placement};
@@ -438,8 +439,7 @@ impl Checker<'_> {
             };
             stepped = true;
             let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.kernel
-                    .execute_solid_chain(ChainRequest::new(&plan.ops[..=last], &detail))
+                build_driver::execute(&mut self.kernel, &up_to(&plan, last + 1, &detail), None)
             }));
             let built = match built {
                 Ok(Ok(built)) => built,
@@ -499,8 +499,11 @@ impl Checker<'_> {
         // No step to hold the history to: name where the whole build stops.
         let failure = project.build_failures.get(&body.shape_of)?;
         let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.kernel
-                .execute_solid_chain(ChainRequest::new(&plan.ops, &detail))
+            build_driver::execute(
+                &mut self.kernel,
+                &up_to(&plan, plan.ops.len(), &detail),
+                None,
+            )
         }));
         let feature = match built {
             Ok(Err(error)) => name_of(plan.op_features.get(error.op_index).copied()),
@@ -513,6 +516,22 @@ impl Checker<'_> {
             reason: Some(failure.reason.clone()),
             located_by: Located::BuildFailure,
         })
+    }
+}
+
+/// The first `ops` ops of `plan`, asked nothing else.
+fn up_to<'a>(
+    plan: &'a core_document::BuildPlan,
+    ops: usize,
+    detail: &'a TessellationSettings,
+) -> Chain<'a> {
+    Chain {
+        ops: &plan.ops[..ops],
+        op_features: &plan.op_features[..ops],
+        detail,
+        range: None,
+        probes: &[],
+        projections: &[],
     }
 }
 

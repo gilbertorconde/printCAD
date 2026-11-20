@@ -35,16 +35,30 @@ dependency DAG → `drive_part_recompute` (each frame) asks every bench for
 its `rebuild_jobs` (a `BuildPlan` of `SolidOp`s per body, the bench settling
 the dirty flags of the plan's features and inputs itself) → kernel worker
 thread → results land in the document's imported-geometry sidecar →
-rendered/picked like any body. A failure leaves the body its history
+rendered/picked like any body. `crates/build_driver` holds every step
+between a plan and the document, for all three callers: `begin` (the
+body's errors cleared, a plan failure recorded, an emptied history's
+geometry dropped; `Next::{Build, Emptied, Unplanned}`), `execute` (the one
+`execute_solid_chain` call: tags, preview range, probes, projections, an
+optional `ChainCache`), `build_until_failure` (generic over how a chain
+runs, so the worker wraps its kept solids and chain states around it) and
+the landing (`store_answers`, `store_solid`, `record_failure`,
+`clear_unbuilt`, `land_shape`). `build_all` runs it all on the calling
+thread round after round (shapes read through a `ShapeReader`, evaluate,
+mesh histories, solid jobs, mirrored copies last) until no job is left,
+answering a `BodyBuild` per body (`refused`, `KernelStep`): headless
+`--script` and `project_tools::import_document` (a registry of the Sketch
+and Design benches) build that way. A failure leaves the body its history
 before the failing feature: a plan that cannot plan a feature stops there
 (`BuildPlan::failed`, the features after it in `unbuilt`; Design's
 `body_plan` and Surface's `plan_until_failure`, beside the strict
 `body_build_ops`/`body_plan` that answer an error), and a kernel failure
-at op N has the worker build the ops before the failing feature's first
-(`run_chain`, `KernelResponse::SolidBuilt::failed`); the failing feature
-carries the error and every feature after it "not built"
-(`mark_unbuilt`), and a first feature failing leaves no built shape
-(`SolidFailed::nothing_built`). A body has one build out at a time
+at op N builds the ops before the failing feature's first
+(`build_until_failure`, `Built::Before`, the worker's
+`KernelResponse::SolidBuilt::failed`); the failing feature carries the
+error and every feature after it "not built" (`record_failure`), and a
+first feature failing leaves no built shape (`Built::Failed::nothing_built`,
+`clear_unbuilt`). A body has one build out at a time
 (`session.builds.out`, `recompute::BuildsOut`): a plan made while it builds waits in its
 place, a newer one replacing it, and goes when the build lands
 (`build_landed`), so a drag that changes a feature every frame builds only

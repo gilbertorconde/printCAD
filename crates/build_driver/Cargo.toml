@@ -1,0 +1,15 @@
+[package]
+name = "build_driver"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Builds a document's solids: plans, chain runs, results and errors, for every caller"
+
+[dependencies]
+core_document = { path = "../core_document" }
+kernel_api.workspace = true
+kernel_ogeom = { path = "../kernel_ogeom" }
+serde.workspace = true
+uuid.workspace = true

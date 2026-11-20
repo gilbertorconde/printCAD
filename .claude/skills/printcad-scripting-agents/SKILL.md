@@ -83,7 +83,8 @@ taking a `path` to skip their dialog. Script files: `script_library.rs`
 reads `settings::scripts_dir()` every 2 s into `script.<name>` keymap
 bindings (`Target::Script`), the Scripts menu, toolbar button and palette.
 `printcad --script` (`headless.rs`) runs before the event loop, rebuilds
-on the calling thread, logs to stderr. `docs/SCRIPTING.md`'s command
+on the calling thread (`build_driver::build_all`, the app's own build
+steps), logs to stderr. `docs/SCRIPTING.md`'s command
 reference is generated; a test fails when it drifts
 (`PRINTCAD_WRITE_DOCS=1` rewrites it). `CommandSpec::fields` is the
 field list of what a command makes (Design's feature commands: the

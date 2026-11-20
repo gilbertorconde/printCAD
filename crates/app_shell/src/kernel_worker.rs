@@ -18,6 +18,8 @@ use std::time::Instant;
 
 use std::sync::{Arc, Mutex};
 
+use build_driver::{BuildFailure, Built, Chain, build_until_failure};
+use core_document::FeatureId;
 use kernel_api::{ImportedModel, SolidBuildResult, SolidOp, TessellationSettings};
 use kernel_ogeom::{Canceller, OgeomKernel, Watch};
 use tracing::info;
@@ -106,7 +108,7 @@ struct BuildRequest {
     ops: Vec<SolidOp>,
     /// The feature each op index belongs to, so a failure is pinned on the
     /// culprit in the tree.
-    op_features: Vec<Uuid>,
+    op_features: Vec<FeatureId>,
     detail: TessellationSettings,
     /// The feature being edited, whose preview the result carries.
     preview: Option<Uuid>,
@@ -123,16 +125,6 @@ struct BuildRequest {
 /// Each request emits exactly one response; the UI's `in_flight` counter is
 /// decremented when one is drained, so spurious extras would skew the
 /// status bar's busy state and job count.
-/// Where a body's build stopped, and what it left out.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BuildFailure {
-    pub feature: Option<Uuid>,
-    pub error: String,
-    /// The edges of the failing fillet or chamfer.
-    pub edges: kernel_api::EdgeRefusal,
-    pub unbuilt: Vec<Uuid>,
-}
-
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum KernelResponse {
     StepImported {
@@ -157,7 +149,7 @@ pub enum KernelResponse {
         projections: Vec<core_document::PlanProjection>,
         /// The feature of each op the result was built from, which
         /// `result.warnings` index.
-        op_features: Vec<core_document::FeatureId>,
+        op_features: Vec<FeatureId>,
         /// Found among the solids kept, not built: `elapsed` says nothing
         /// of how long the body takes to build.
         kept: bool,
@@ -167,12 +159,7 @@ pub enum KernelResponse {
     },
     SolidFailed {
         body_id: Uuid,
-        failed_feature: Option<Uuid>,
-        error: String,
-        /// The edges of the failing fillet or chamfer.
-        edges: kernel_api::EdgeRefusal,
-        /// The features after the failing one, left out.
-        unbuilt: Vec<Uuid>,
+        failure: BuildFailure,
         /// The first feature failed: the body has no built solid.
         nothing_built: bool,
     },
@@ -390,7 +377,7 @@ impl KernelWorker {
         &mut self,
         body_id: Uuid,
         ops: Vec<SolidOp>,
-        op_features: Vec<Uuid>,
+        op_features: Vec<FeatureId>,
         detail: TessellationSettings,
         preview: Option<Uuid>,
         probes: Vec<core_document::PlanProbe>,
@@ -678,7 +665,7 @@ impl BuiltSolids {
     /// they build, the detail, the preview, the probes and the projections.
     fn key(
         ops: &[SolidOp],
-        op_features: &[Uuid],
+        op_features: &[FeatureId],
         detail: &TessellationSettings,
         preview: &Option<std::ops::Range<usize>>,
         asked: &[kernel_api::ChainProbe],
@@ -811,128 +798,63 @@ fn build(
         if book.superseded.remove(&serial) {
             return KernelResponse::SolidFailed {
                 body_id,
-                failed_feature: None,
-                error: SUPERSEDED.to_string(),
-                edges: Default::default(),
-                unbuilt: Vec::new(),
+                failure: BuildFailure {
+                    feature: None,
+                    op_index: 0,
+                    error: SUPERSEDED.to_string(),
+                    edges: Default::default(),
+                    unbuilt: Vec::new(),
+                },
                 nothing_built: false,
             };
         }
         book.running.insert(serial, (started, watch.canceller()));
     }
-    // The edited feature's ops, first to last.
-    let range = preview.and_then(|feature| {
-        let first = op_features.iter().position(|f| *f == feature)?;
-        let last = op_features.iter().rposition(|f| *f == feature)?;
-        Some(first..last + 1)
-    });
-    let outcome = run_chain(
-        kernel,
-        shared,
-        body_id,
-        Chain {
-            ops: &ops,
-            op_features: &op_features,
-            detail: &detail,
-            range,
-            probes: &probes,
-            projections: &projections,
-        },
-    );
-    match outcome {
-        Ok((result, kept)) => KernelResponse::SolidBuilt {
+    let chain = Chain {
+        ops: &ops,
+        op_features: &op_features,
+        detail: &detail,
+        range: preview.and_then(|feature| Chain::ops_of(&op_features, FeatureId(feature))),
+        probes: &probes,
+        projections: &projections,
+    };
+    match build_until_failure(chain, |chain| run_chain(kernel, shared, body_id, chain)) {
+        Built::Whole((result, kept)) => KernelResponse::SolidBuilt {
             body_id,
             result: Box::new(result),
             elapsed: started.elapsed(),
             probes,
             projections,
-            op_features: feature_ids(&op_features),
+            op_features,
             kept,
             failed: None,
         },
-        Err(err) => {
-            let prefix = core_document::rebuild::FailedPrefix::at(&op_features, err.op_index);
-            let failed_feature = prefix.as_ref().map(|p| p.feature);
-            let cancelled = err.message.contains("cancelled");
-            let start = prefix.as_ref().map(|p| p.start);
-            let unbuilt = prefix.as_ref().map_or_else(Vec::new, |p| p.unbuilt.clone());
-            // The history before the failing feature is what the body is.
-            match start {
-                Some(start) if start > 0 && !cancelled => {
-                    let mut probes = probes;
-                    let mut projections = projections;
-                    prefix
-                        .as_ref()
-                        .unwrap()
-                        .retain_questions(&mut probes, &mut projections);
-                    match run_chain(
-                        kernel,
-                        shared,
-                        body_id,
-                        Chain {
-                            ops: &ops[..start],
-                            op_features: &op_features[..start],
-                            detail: &detail,
-                            range: None,
-                            probes: &probes,
-                            projections: &projections,
-                        },
-                    ) {
-                        Ok((result, kept)) => KernelResponse::SolidBuilt {
-                            body_id,
-                            result: Box::new(result),
-                            elapsed: started.elapsed(),
-                            probes,
-                            projections,
-                            op_features: feature_ids(&op_features[..start]),
-                            kept,
-                            failed: Some(BuildFailure {
-                                feature: failed_feature,
-                                error: err.message,
-                                edges: err.edges,
-                                unbuilt,
-                            }),
-                        },
-                        Err(_) => KernelResponse::SolidFailed {
-                            body_id,
-                            failed_feature,
-                            error: err.message,
-                            edges: err.edges,
-                            unbuilt,
-                            nothing_built: false,
-                        },
-                    }
-                }
-                _ => KernelResponse::SolidFailed {
-                    body_id,
-                    failed_feature,
-                    error: err.message,
-                    edges: err.edges,
-                    unbuilt,
-                    nothing_built: start == Some(0) && !cancelled,
-                },
-            }
-        }
+        // The history before the failing feature is what the body is.
+        Built::Before {
+            result: (result, kept),
+            ops: start,
+            probes,
+            projections,
+            failure,
+        } => KernelResponse::SolidBuilt {
+            body_id,
+            result: Box::new(result),
+            elapsed: started.elapsed(),
+            probes,
+            projections,
+            op_features: op_features[..start].to_vec(),
+            kept,
+            failed: Some(failure),
+        },
+        Built::Failed {
+            failure,
+            nothing_built,
+        } => KernelResponse::SolidFailed {
+            body_id,
+            failure,
+            nothing_built,
+        },
     }
-}
-
-fn feature_ids(op_features: &[Uuid]) -> Vec<core_document::FeatureId> {
-    op_features
-        .iter()
-        .copied()
-        .map(core_document::FeatureId)
-        .collect()
-}
-
-/// What one chain run builds: the ops, the feature of each, the detail,
-/// the edited feature's ops and the probes and projections asked.
-struct Chain<'a> {
-    ops: &'a [kernel_api::SolidOp],
-    op_features: &'a [Uuid],
-    detail: &'a TessellationSettings,
-    range: Option<std::ops::Range<usize>>,
-    probes: &'a [core_document::PlanProbe],
-    projections: &'a [core_document::PlanProjection],
 }
 
 /// One chain run, from the solids kept when it was built alike before,
@@ -943,35 +865,22 @@ fn run_chain(
     body_id: Uuid,
     chain: Chain<'_>,
 ) -> Result<(SolidBuildResult, bool), kernel_api::ChainError> {
-    let Chain {
-        ops,
-        op_features,
-        detail,
-        range,
-        probes,
-        projections,
-    } = chain;
-    let asked: Vec<kernel_api::ChainProbe> = probes.iter().map(|p| p.probe).collect();
+    let asked: Vec<kernel_api::ChainProbe> = chain.probes.iter().map(|p| p.probe).collect();
     let projections: Vec<kernel_api::ChainProjection> =
-        projections.iter().map(|p| p.projection).collect();
-    // Each op's faces are named after the feature it builds.
-    let tags: Vec<kernel_api::TopoName> = op_features
-        .iter()
-        .map(|f| kernel_api::naming::name_of_id(f.as_bytes()))
-        .collect();
-    let key = BuiltSolids::key(ops, op_features, detail, &range, &asked, &projections);
+        chain.projections.iter().map(|p| p.projection).collect();
+    let key = BuiltSolids::key(
+        chain.ops,
+        chain.op_features,
+        chain.detail,
+        &chain.range,
+        &asked,
+        &projections,
+    );
     if let Some(result) = key.and_then(|key| lock(&shared.built).get(body_id, key)) {
         return Ok((result, true));
     }
     let mut states = lock(&shared.chains).take(body_id);
-    let outcome = kernel.execute_solid_chain(
-        kernel_ogeom::ChainRequest::new(ops, detail)
-            .tags(&tags)
-            .preview(range)
-            .probes(&asked)
-            .projections(&projections)
-            .cache(Some(&mut states)),
-    );
+    let outcome = build_driver::execute(kernel, &chain, Some(&mut states));
     lock(&shared.chains).put(body_id, states);
     if let (Ok(result), Some(key)) = (&outcome, key) {
         lock(&shared.built).keep(body_id, key, result);
@@ -1373,7 +1282,7 @@ mod tests {
         worker.request_build_solid(
             body,
             ops,
-            features,
+            features.into_iter().map(FeatureId).collect(),
             TessellationSettings::default(),
             None,
             Vec::new(),
@@ -1382,7 +1291,7 @@ mod tests {
     }
 
     fn cancelled(response: &KernelResponse) -> bool {
-        matches!(response, KernelResponse::SolidFailed { error, .. } if error.contains("cancelled"))
+        matches!(response, KernelResponse::SolidFailed { failure, .. } if failure.cancelled())
     }
 
     /// A build dropped while it waits behind others is answered as
@@ -1406,8 +1315,8 @@ mod tests {
         assert_eq!(built, busy, "the builds running land");
         assert!(
             out.iter().any(
-                |r| matches!(r, KernelResponse::SolidFailed { body_id, error, .. }
-                if *body_id == last && error == SUPERSEDED)
+                |r| matches!(r, KernelResponse::SolidFailed { body_id, failure, .. }
+                if *body_id == last && failure.error == SUPERSEDED)
             ),
             "the dropped one is skipped"
         );
@@ -1437,6 +1346,7 @@ mod tests {
         };
         let broken = SolidOp::Surface(SurfaceOp::PlanarFill { curves: Vec::new() });
         let [a, b, c] = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        let id = FeatureId;
         let mut worker = KernelWorker::spawn();
         build(
             &mut worker,
@@ -1453,8 +1363,8 @@ mod tests {
         else {
             panic!("the history before the failure builds");
         };
-        assert_eq!(failed.feature, Some(b));
-        assert_eq!(failed.unbuilt, vec![c]);
+        assert_eq!(failed.feature, Some(id(b)));
+        assert_eq!(failed.unbuilt, vec![id(c)]);
         let span = result.mesh.bounds().map(|(lo, hi)| hi[0] - lo[0]);
         assert!(span.is_some_and(|x| (x - 10.0).abs() < 1e-3), "{span:?}");
 
@@ -1466,8 +1376,8 @@ mod tests {
         );
         let out = answers(&mut worker, 1);
         assert!(
-            matches!(&out[0], KernelResponse::SolidFailed { nothing_built: true, unbuilt, .. }
-                if *unbuilt == vec![c]),
+            matches!(&out[0], KernelResponse::SolidFailed { nothing_built: true, failure, .. }
+                if failure.unbuilt == vec![id(c)]),
             "a failing first step leaves nothing built"
         );
     }

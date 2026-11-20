@@ -83,8 +83,9 @@ are in the skill the index below names.
   command contract; above it `bench_panel` (declared panels in egui) and
   `sketch_model` (the f64 sketch, `SketchFeature`, solving, profiles and
   regions, text layout, generated profiles; no egui).
-- On the document: `doc_server` (`printcad-serverd`), `doc_render` (CPU
-  thumbnails, PDF, print layout), `scripting` (Lua), `surface_texture`
+- On the document: `build_driver` (builds solids from the benches' plans,
+  see the recompute loop), `doc_server` (`printcad-serverd`), `doc_render`
+  (CPU thumbnails, PDF, print layout), `scripting` (Lua), `surface_texture`
   (pressing the body's `core_document::texture` into a mesh), benches `wb_sketch`,
   `wb_assembly`, `wb_inspect`, `wb_mesh`, `wb_wasm` (packages); then
   `wb_design`, `wb_surface` on `sketch_model`; then `bench_fixtures`,
@@ -101,7 +102,14 @@ to. Recompute loop: workbench edits
 document → features marked dirty via the dependency DAG →
 `drive_part_recompute` (each frame) asks every bench for its `rebuild_jobs`
 → kernel worker thread → results land in the document's imported-geometry
-sidecar → rendered/picked like any body.
+sidecar → rendered/picked like any body. Everything between the plan and
+the document is `build_driver`'s: starting a job (`begin`), the chain run
+and its fallback to the history before a failing feature
+(`build_until_failure`), and landing (`store_answers`, `store_solid`,
+`record_failure`); headless `--script` and project import build through
+its synchronous `build_all`, the app through the same pieces on its
+worker, so the three cannot drift. Never call `execute_solid_chain` or the
+build-result `Document` methods from anywhere else.
 
 ## Kernel gap protocol
 
@@ -281,7 +289,7 @@ hacks, no silently degraded feature). Instead:
 Project skills under `.claude/skills/` hold everything else this file used to carry. Load the one whose area you touch before editing:
 
 - `printcad-document-model`: Document, ops, persistence, doc_server, doc_render, linked copies, notes, placement, formulas, tasks and undo.
-- `printcad-kernel`: kernel_api / kernel_ogeom, rebuilds (recompute loop, preview), imports, progress, shape health, face naming, known approximations.
+- `printcad-kernel`: kernel_api / kernel_ogeom, build_driver, rebuilds (recompute loop, preview), imports, progress, shape health, face naming, known approximations.
 - `printcad-sketcher`: sketch_solver, sketch_model, wb_sketch, image_edges.
 - `printcad-benches`: wb_design, wb_surface, wb_assembly, wb_mesh (+ surface_texture), wb_inspect (+ metrology), project import.
 - `printcad-workbench-api`: the `Workbench` trait, bench_api, wb_wasm packages and sdk/, the facade and fixtures.

@@ -17,8 +17,9 @@ const LAYERS = [
   // What the benches share over the document: the declared panels drawn
   // for the benches and the app, and the sketch model.
   ["bench_panel", "sketch_model"],
-  // What works on the document: the server, scripting and the benches.
-  ["doc_server", "doc_render", "scripting", "surface_texture", "wb_sketch", "wb_assembly", "wb_inspect", "wb_mesh",
+  // What works on the document: the build driver, the server, scripting
+  // and the benches.
+  ["build_driver", "doc_server", "doc_render", "scripting", "surface_texture", "wb_sketch", "wb_assembly", "wb_inspect", "wb_mesh",
    "wb_wasm"],
   // Benches built on the sketcher's.
   ["wb_design", "wb_surface"],

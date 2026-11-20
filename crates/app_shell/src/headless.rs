@@ -531,198 +531,51 @@ fn context(document: &mut Document) -> WorkbenchRuntimeContext<'_> {
     ctx
 }
 
+/// Reads a shape the document takes from a file as the kernel reads files:
+/// a copy of the asset under its own name, removed once read.
+struct ShapeFiles;
+
+impl build_driver::ShapeReader for ShapeFiles {
+    fn read(
+        &mut self,
+        kernel: &mut kernel_ogeom::OgeomKernel,
+        document: &Document,
+        asset: uuid::Uuid,
+        detail: &TessellationSettings,
+    ) -> Option<kernel_api::MeshSolidResult> {
+        let (reference, bytes) = document.asset_with_bytes(asset)?;
+        let name = Path::new(&reference.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let shape = crate::platform::scratch_file(&name, &bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|path| {
+                let shape = kernel.read_solid(&path, detail).map_err(|e| e.to_string());
+                let _ = std::fs::remove_file(path);
+                shape
+            });
+        shape
+            .inspect_err(|error| eprintln!("a shape could not be read from {name}: {error}"))
+            .ok()
+    }
+}
+
 impl Headless {
     /// Build every solid that changed, here and now, until nothing is left
     /// to build. The failures, as `{feature, name, error}`.
     fn rebuild(&mut self) -> Vec<Value> {
-        let mut kernel = kernel_ogeom::OgeomKernel::new();
-        // A plan that fails keeps its body's features clean, so the loop
-        // ends; the bound is a guard, not the expected way out.
-        let mut read = std::collections::HashSet::new();
-        for _ in 0..32 {
-            self.read_shapes(&mut read);
-            // What stands on a solid just built follows it before the next
-            // round is planned.
-            self.registry.evaluate(&mut self.document);
-            self.rebuild_meshes();
-            let jobs = self.registry.rebuild_jobs(&mut self.document);
-            if jobs.is_empty() {
-                break;
-            }
-            for job in jobs {
-                let body = job.body;
-                self.document.clear_body_feature_errors(body);
-                let mut plan = match job.plan {
-                    Ok(plan) => plan,
-                    Err(err) => {
-                        if let Some(feature) = err.feature {
-                            self.document
-                                .set_feature_error(feature, Some(err.message.clone()));
-                        }
-                        continue;
-                    }
-                };
-                if let Some(err) = plan.failed.take()
-                    && let Some(feature) = err.feature
-                {
-                    self.document.set_feature_error(feature, Some(err.message));
-                    let unbuilt = std::mem::take(&mut plan.unbuilt);
-                    crate::app::recompute::mark_unbuilt(&mut self.document, feature, unbuilt);
-                }
-                // A step that fails leaves the body the history before it.
-                loop {
-                    if plan.ops.is_empty() {
-                        if !self.document.body_solid_is_imported(body) {
-                            self.document.remove_imported_geometry(body);
-                        }
-                        break;
-                    }
-                    let asked: Vec<kernel_api::ChainProbe> =
-                        plan.probes.iter().map(|p| p.probe).collect();
-                    let tags: Vec<kernel_api::TopoName> = plan
-                        .op_features
-                        .iter()
-                        .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
-                        .collect();
-                    let projections: Vec<kernel_api::ChainProjection> =
-                        plan.projections.iter().map(|p| p.projection).collect();
-                    match kernel.execute_solid_chain(
-                        kernel_ogeom::ChainRequest::new(
-                            &plan.ops,
-                            &TessellationSettings::default(),
-                        )
-                        .tags(&tags)
-                        .probes(&asked)
-                        .projections(&projections),
-                    ) {
-                        Ok(result) => {
-                            self.document.store_build_warnings(
-                                &plan.op_features,
-                                &plan.probes,
-                                &plan.projections,
-                                &result,
-                            );
-                            self.document
-                                .store_probe_answers(&plan.probes, &result.probes);
-                            self.document
-                                .store_projections(&plan.projections, &result.projections);
-                            crate::app::recompute::store_built_solid(
-                                &mut self.document,
-                                body,
-                                result,
-                            );
-                            break;
-                        }
-                        Err(err) => {
-                            let Some(feature) = plan.op_features.get(err.op_index).copied() else {
-                                break;
-                            };
-                            self.document.set_feature_failure(
-                                feature,
-                                err.message.clone(),
-                                err.edges.clone(),
-                            );
-                            let prefix = plan.keep_before_failure(err.op_index).unwrap();
-                            crate::app::recompute::mark_unbuilt(
-                                &mut self.document,
-                                feature,
-                                prefix.unbuilt,
-                            );
-                        }
-                    }
-                }
-            }
+        let built = build_driver::build_all(
+            &mut self.document,
+            &self.registry,
+            &mut kernel_ogeom::OgeomKernel::new(),
+            &TessellationSettings::default(),
+            &mut ShapeFiles,
+        );
+        for note in &built.notes {
+            eprintln!("{note}");
         }
-        self.read_shapes(&mut read);
-        self.mirror_copies();
         crate::app::scripts::rebuild_failures(&self.document)
-    }
-
-    fn rebuild_meshes(&mut self) {
-        use kernel_api::KernelQueries;
-        let plans = self.registry.mesh_build_plans(&self.document);
-        for plan in plans {
-            if self.document.mesh_steps(&plan).is_some() {
-                continue;
-            }
-            let Some(start) = self.document.mesh_start(plan.body) else {
-                continue;
-            };
-            let answer = match plan.restored_start(&start.mesh) {
-                Some(answer) => Ok(answer),
-                None => kernel_ogeom::QUERIES
-                    .build_mesh_chain(&start.mesh, &plan.ops)
-                    .map_err(|e| e.to_string()),
-            };
-            plan.land(&mut self.document, answer);
-        }
-    }
-
-    /// Read every shape the document takes from a file and has not yet
-    /// (`Document::bodies_awaiting_shape`): shapes replaced or given from
-    /// a file, and the stand-ins of bodies that do not build. Each is read
-    /// once a rebuild.
-    fn read_shapes(
-        &mut self,
-        read: &mut std::collections::HashSet<(core_document::BodyId, uuid::Uuid)>,
-    ) {
-        let mut kernel = kernel_ogeom::OgeomKernel::new();
-        let detail = TessellationSettings::default();
-        for (body, asset) in self.document.bodies_awaiting_shape() {
-            if !read.insert((body, asset)) {
-                continue;
-            }
-            let Some((reference, bytes)) = self.document.asset_with_bytes(asset) else {
-                continue;
-            };
-            let name = Path::new(&reference.path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let shape = crate::platform::scratch_file(&name, &bytes)
-                .map_err(|e| e.to_string())
-                .and_then(|path| {
-                    let shape = kernel.read_solid(&path, &detail).map_err(|e| e.to_string());
-                    let _ = std::fs::remove_file(path);
-                    shape
-                });
-            match shape {
-                Ok(shape) => {
-                    crate::app::recompute::land_shape(
-                        &mut self.document,
-                        &self.registry,
-                        body,
-                        asset,
-                        shape,
-                    );
-                }
-                Err(error) => eprintln!("a shape could not be read from {name}: {error}"),
-            }
-        }
-    }
-
-    /// Give every mirrored copy without one its snapshot: its source's,
-    /// mirrored by the kernel.
-    fn mirror_copies(&mut self) {
-        use kernel_api::KernelQueries;
-        for (body, from, plane) in self.document.copies_awaiting_shape() {
-            match kernel_ogeom::QUERIES.mirror(
-                &from,
-                plane.point.map(f64::from),
-                plane.normal.map(f64::from),
-            ) {
-                Ok(blob) => {
-                    self.document.set_mirrored_shape(body, &from, blob);
-                }
-                Err(error) => {
-                    let name = self
-                        .document
-                        .body(body)
-                        .map_or("a mirrored copy", |b| b.name.as_str());
-                    eprintln!("`{name}` could not be mirrored: {error}");
-                }
-            }
-        }
     }
 
     /// Read `path` into the document as the app's import does: a file
@@ -1468,5 +1321,137 @@ endsolid t
             );
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The app builds a document as a script does: its kernel worker,
+    /// with its threads, kept solids and chain states, and the landing of
+    /// its answers come to the same meshes and the same feature errors as
+    /// the build on the script's thread, for a body that builds, one that
+    /// stops at a failing fillet and one built against another body.
+    #[test]
+    fn the_app_s_kernel_worker_builds_what_a_script_builds() {
+        use crate::kernel_worker::{KernelResponse, KernelWorker};
+        use build_driver::{Next, clear_unbuilt, record_failure, store_answers, store_solid};
+        let mut registry = registry();
+        let made = r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            pc.design.fillet{body = body, radius = 50, mode = "Radius",
+              edges = {Edges = {{point = {20, 5, 5}, direction = {0, 1, 0}}}}}
+            local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+            pc.sketch.rect{sketch = top, x = 2, y = 2, width = 5, height = 5}
+            pc.design.pad{sketch = top, length = 3}
+            local tool = pc.doc.new_body{name = "Tool"}
+            local t = pc.sketch.new{body = tool, plane = "XY"}
+            pc.sketch.circle{sketch = t, x = 10, y = 5, radius = 3}
+            pc.design.pad{sketch = t, length = 20}
+            local other = pc.doc.new_body{name = "Other"}
+            local o = pc.sketch.new{body = other, plane = "XY"}
+            pc.sketch.rect{sketch = o, x = 0, y = 0, width = 30, height = 30}
+            pc.design.pad{sketch = o, length = 2}
+            pc.design.boolean{body = other, tool_body = tool, kind = "Cut"}
+            assert(#pc.doc.rebuild() == 2, "the fillet fails, the pad after it is left out")
+            "#;
+        let made = run_in_empty_document(&mut registry, made, "made").unwrap();
+        // Nothing built: every body's history to build again.
+        let unbuilt = |registry: &DocumentService| {
+            let mut document = made.clone();
+            for body in document.bodies().iter().map(|b| b.id).collect::<Vec<_>>() {
+                document.remove_imported_geometry(body);
+                document.clear_body_feature_errors(body);
+            }
+            registry.invalidate_all(&mut document);
+            document
+        };
+        let scripted = unbuilt(&registry);
+        let (scripted, out) = run_in_document(&mut registry, scripted, "pc.doc.rebuild()", "s");
+        out.unwrap();
+
+        let mut app = unbuilt(&registry);
+        let mut worker = KernelWorker::spawn();
+        let detail = TessellationSettings::default();
+        for _ in 0..32 {
+            let jobs = registry.rebuild_jobs(&mut app);
+            if jobs.is_empty() {
+                break;
+            }
+            for job in jobs {
+                let begun = build_driver::begin(&mut app, job);
+                if let Next::Build(plan) = begun.next {
+                    worker.request_build_solid(
+                        begun.body.0,
+                        plan.ops,
+                        plan.op_features,
+                        detail.clone(),
+                        None,
+                        plan.probes,
+                        plan.projections,
+                    );
+                }
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            while worker.in_flight() > 0 && std::time::Instant::now() < deadline {
+                for answer in worker.drain() {
+                    match answer {
+                        KernelResponse::SolidBuilt {
+                            body_id,
+                            result,
+                            probes,
+                            projections,
+                            op_features,
+                            failed,
+                            ..
+                        } => {
+                            let body = core_document::BodyId(body_id);
+                            store_answers(&mut app, &op_features, &probes, &projections, &result);
+                            store_solid(&mut app, body, *result);
+                            if let Some(failed) = failed {
+                                record_failure(&mut app, &failed);
+                            }
+                        }
+                        KernelResponse::SolidFailed {
+                            body_id,
+                            failure,
+                            nothing_built,
+                        } => {
+                            record_failure(&mut app, &failure);
+                            if nothing_built {
+                                clear_unbuilt(&mut app, core_document::BodyId(body_id));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+
+        let shown = |document: &Document| {
+            let bodies: Vec<_> = document
+                .bodies()
+                .iter()
+                .map(|b| {
+                    let mesh = document.imported_geometry(b.id).map(|g| g.mesh.clone());
+                    let mesh = mesh.map(|m| (m.positions.clone(), m.indices.clone()));
+                    (b.name.clone(), mesh)
+                })
+                .collect();
+            let mut errors: Vec<_> = document
+                .feature_tree()
+                .all_nodes()
+                .map(|(_, n)| (n.name.clone(), n.error.clone(), n.warning.clone()))
+                .collect();
+            errors.sort();
+            (bodies, errors)
+        };
+        let (bodies, errors) = shown(&scripted);
+        assert!(
+            bodies.iter().all(|(_, mesh)| mesh.is_some()),
+            "every body built"
+        );
+        assert_eq!(errors.iter().filter(|(_, e, _)| e.is_some()).count(), 2);
+        assert_eq!((bodies, errors), shown(&app));
     }
 }
