@@ -304,7 +304,7 @@ fn set_joint(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandRe
         .filter(|n| n.workbench_id.as_str() == JOINT_KIND)
         .ok_or_else(not_a_joint)?;
     let mut feature: JointFeature =
-        serde_json::from_value(node.data.clone()).map_err(|_| not_a_joint())?;
+        serde_json::from_value(Value::clone(&node.data)).map_err(|_| not_a_joint())?;
     // Other faces, another body or another kind first: the settings
     // below apply to the joint they make.
     let tool = match a.opt_string("kind")? {

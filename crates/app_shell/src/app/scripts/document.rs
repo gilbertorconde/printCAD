@@ -292,7 +292,7 @@ pub(crate) fn document_command(
                 // formulas worked out, a plane where what it stands on is.
                 "values": document
                     .feature_values(node.id)
-                    .filter(|v| **v != node.data)
+                    .filter(|v| **v != *node.data)
                     .cloned(),
             }))
         }

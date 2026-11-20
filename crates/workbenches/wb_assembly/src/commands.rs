@@ -172,7 +172,8 @@ pub(crate) fn record_joint(
     let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
         return;
     };
-    let Ok(joint) = serde_json::from_value::<JointFeature>(node.data.clone()) else {
+    let Ok(joint) = serde_json::from_value::<JointFeature>(serde_json::Value::clone(&node.data))
+    else {
         return;
     };
     let settings = |kind: &JointKind| match *kind {
@@ -322,7 +323,8 @@ pub(crate) fn record_coupling(
     let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
         return;
     };
-    let Ok(coupling) = serde_json::from_value::<Coupling>(node.data.clone()) else {
+    let Ok(coupling) = serde_json::from_value::<Coupling>(serde_json::Value::clone(&node.data))
+    else {
         return;
     };
     let now = coupling_settings(&coupling);

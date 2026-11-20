@@ -487,7 +487,7 @@ fn datum_support(
         .document
         .feature_values(id)
         .cloned()
-        .unwrap_or_else(|| node.data.clone());
+        .unwrap_or_else(|| Value::clone(&node.data));
     let at = support.plane_from(&values).ok_or_else(not_a_plane)?;
     Ok(((support, at), node.body))
 }

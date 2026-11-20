@@ -521,7 +521,7 @@ mod tests {
             Some("acme.cam 0.1.0"),
             "the older writer is back"
         );
-        assert_eq!(node.data, serde_json::json!({"v": 1}));
+        assert_eq!(*node.data, serde_json::json!({"v": 1}));
         assert_eq!(node.package_source.as_deref(), Some("acme/cam"));
     }
 

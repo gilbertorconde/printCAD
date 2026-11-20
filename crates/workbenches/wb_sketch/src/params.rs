@@ -61,7 +61,7 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
     }
     // Only the constraints and the texts, as stored, which the pointers
     // name: not the curves, nor the letters made of the texts.
-    let Ok(Numbered { sketch }) = Numbered::deserialize(&node.data) else {
+    let Ok(Numbered { sketch }) = Numbered::deserialize(&*node.data) else {
         return Vec::new();
     };
     let mut out = Vec::new();

@@ -387,7 +387,7 @@ impl DocumentService {
             // itself) and put back after.
             let taken = evaluation.data.remove(&node.id);
             let had = taken.is_some();
-            let mut values = taken.unwrap_or_else(|| node.data.clone());
+            let mut values = taken.unwrap_or_else(|| serde_json::Value::clone(&node.data));
             let values_of = |id: FeatureId| {
                 evaluation
                     .data
@@ -525,7 +525,7 @@ impl DocumentService {
         } else {
             None
         };
-        let mut data = node.data.clone();
+        let mut data = serde_json::Value::clone(&node.data);
         let slot = data
             .pointer_mut(&parameter.pointer)
             .ok_or_else(|| format!("{} has no {} now", node.name, parameter.label))?;
