@@ -3,11 +3,9 @@
 use axes::AxisSystem;
 use glam::{Vec2, Vec3};
 use settings::{CameraSettings, ProjectionMode, SixDofSettings};
+use viewport_camera::focal_view::{ViewState, clip, ops};
 
-use super::CameraController;
-use super::ops;
-use super::state::CadCameraState;
-use super::zoom_cursor;
+use super::{CameraController, axis_frame, focal_plane_hit};
 
 /// A camera on a `width` x `height` viewport at the window's corner.
 fn camera(width: u32, height: u32) -> CameraController {
@@ -35,10 +33,19 @@ fn corner_depths(cam: &CameraController, scene: (Vec3, Vec3)) -> Vec<f32> {
 #[test]
 fn orientation_normalizes_after_orbit_steps() {
     let settings = CameraSettings::default();
-    let axes = AxisSystem::from(settings.axis_preset);
-    let mut cam = CadCameraState::new(&settings, (640, 480));
+    let axes = axis_frame(&AxisSystem::from(settings.axis_preset));
+    let mut cam = ViewState::new(
+        &settings.view_settings(),
+        &axis_frame(&AxisSystem::from(settings.axis_preset)),
+        (640, 480),
+    );
     for _ in 0..50 {
-        ops::orbit_pixels(&mut cam, &axes, Vec2::new(2.0, -1.5), &settings);
+        ops::orbit_pixels(
+            &mut cam,
+            &axes,
+            Vec2::new(2.0, -1.5),
+            &settings.view_settings(),
+        );
     }
     assert!((cam.orientation.length() - 1.0).abs() < 1e-4);
 }
@@ -46,7 +53,11 @@ fn orientation_normalizes_after_orbit_steps() {
 #[test]
 fn ortho_height_matches_perspective_visible_height_at_focal_plane() {
     let settings = CameraSettings::default();
-    let mut cam = CadCameraState::new(&settings, (800, 600));
+    let mut cam = ViewState::new(
+        &settings.view_settings(),
+        &axis_frame(&AxisSystem::from(settings.axis_preset)),
+        (800, 600),
+    );
     cam.focal_distance = 123.45;
     cam.height_angle_rad = (47.0_f64).to_radians();
     let h_persp = cam.visible_height_at_focal_plane();
@@ -61,10 +72,14 @@ fn ortho_height_matches_perspective_visible_height_at_focal_plane() {
 #[test]
 fn perspective_dolly_preserves_focal_point() {
     let settings = CameraSettings::default();
-    let axes = AxisSystem::from(settings.axis_preset);
-    let mut cam = CadCameraState::new(&settings, (512, 512));
+    let axes = axis_frame(&AxisSystem::from(settings.axis_preset));
+    let mut cam = ViewState::new(
+        &settings.view_settings(),
+        &axis_frame(&AxisSystem::from(settings.axis_preset)),
+        (512, 512),
+    );
     let focal_before = cam.focal_point_vec3(&axes);
-    zoom_cursor::apply_zoom_wheels(&mut cam, &axes, None, 1.0, &settings);
+    ops::apply_zoom_wheels(&mut cam, &axes, None, 1.0, &settings.view_settings());
     let focal_after = cam.focal_point_vec3(&axes);
     assert!((focal_before - focal_after).length() < 1e-3);
 }
@@ -74,10 +89,14 @@ fn perspective_dolly_preserves_focal_point() {
 fn an_empty_scene_leaves_the_clip_planes_alone() {
     let settings = CameraSettings::default();
     assert!(settings.auto_near_far);
-    let axes = AxisSystem::from(settings.axis_preset);
-    let mut cam = CadCameraState::new(&settings, (100, 100));
+    let axes = axis_frame(&AxisSystem::from(settings.axis_preset));
+    let mut cam = ViewState::new(
+        &settings.view_settings(),
+        &axis_frame(&AxisSystem::from(settings.axis_preset)),
+        (100, 100),
+    );
     let planes = (cam.near_plane, cam.far_plane);
-    super::auto_clip::update_auto_clip(&mut cam, &axes, None, &settings);
+    clip::update_auto_clip(&mut cam, &axes, None, &settings.view_settings());
     assert_eq!((cam.near_plane, cam.far_plane), planes);
 }
 
@@ -88,14 +107,24 @@ fn zoom_to_cursor_preserves_world_point_on_focal_plane() {
         invert_zoom: false,
         ..CameraSettings::default()
     };
-    let axes = AxisSystem::from(settings.axis_preset);
-    let mut cam = CadCameraState::new(&settings, (640, 480));
+    let axes = axis_frame(&AxisSystem::from(settings.axis_preset));
+    let mut cam = ViewState::new(
+        &settings.view_settings(),
+        &axis_frame(&AxisSystem::from(settings.axis_preset)),
+        (640, 480),
+    );
     cam.focal_distance = 80.0;
     let cursor = Vec2::new(123.0, 210.0);
 
-    let w0 = zoom_cursor::intersect_focal_plane_world(&cam, &axes, cursor).expect("hit plane");
-    zoom_cursor::apply_zoom_wheels(&mut cam, &axes, Some(cursor), 2.0, &settings);
-    let w1 = zoom_cursor::intersect_focal_plane_world(&cam, &axes, cursor).expect("hit after zoom");
+    let w0 = focal_plane_hit(&cam, &axes, cursor).expect("hit plane");
+    ops::apply_zoom_wheels(
+        &mut cam,
+        &axes,
+        Some(cursor),
+        2.0,
+        &settings.view_settings(),
+    );
+    let w1 = focal_plane_hit(&cam, &axes, cursor).expect("hit after zoom");
     let delta_p = (w0 - w1).length();
     assert!(
         delta_p < 5e-2,
@@ -104,9 +133,15 @@ fn zoom_to_cursor_preserves_world_point_on_focal_plane() {
 
     cam.projection = ProjectionMode::Orthographic;
     cam.ortho_height = cam.visible_height_at_focal_plane();
-    let w2 = zoom_cursor::intersect_focal_plane_world(&cam, &axes, cursor).expect("ortho hit");
-    zoom_cursor::apply_zoom_wheels(&mut cam, &axes, Some(cursor), -1.5, &settings);
-    let w3 = zoom_cursor::intersect_focal_plane_world(&cam, &axes, cursor).expect("ortho after");
+    let w2 = focal_plane_hit(&cam, &axes, cursor).expect("ortho hit");
+    ops::apply_zoom_wheels(
+        &mut cam,
+        &axes,
+        Some(cursor),
+        -1.5,
+        &settings.view_settings(),
+    );
+    let w3 = focal_plane_hit(&cam, &axes, cursor).expect("ortho after");
     let delta_o = (w2 - w3).length();
     assert!(delta_o < 5e-2, "ortho zoom cursor delta {delta_o}");
 }
@@ -204,11 +239,8 @@ fn pushing_sideways_pans_across_the_view() {
     let moved = camera.position_vec() - before;
 
     // The eye slides along the screen's horizontal, not along its depth.
-    let right = camera.state.right_world(&camera.axis_system()).normalize();
-    let forward = camera
-        .state
-        .forward_world(&camera.axis_system())
-        .normalize();
+    let right = camera.state.right_world(&camera.frame).normalize();
+    let forward = camera.state.forward_world(&camera.frame).normalize();
     assert!(moved.length() > 1e-3);
     assert!(moved.normalize().dot(right).abs() > 0.99);
     assert!(moved.normalize().dot(forward).abs() < 0.01);
@@ -259,7 +291,7 @@ fn twisting_turns_the_view_without_moving_the_focal_point() {
 #[test]
 fn rolling_keeps_the_view_pointing_where_it_was() {
     let (mut camera, settings, device) = controller();
-    let axes = camera.axis_system();
+    let axes = camera.frame;
     let forward_before = camera.state.forward_world(&axes).normalize();
     let up_before = camera.state.up_world(&axes).normalize();
     camera.apply_device_motion(deflect(4, device.full_scale), 0.1, &settings, &device);
@@ -274,7 +306,7 @@ fn rolling_keeps_the_view_pointing_where_it_was() {
 fn a_sketch_keeps_its_plane_square_to_the_view() {
     let (mut camera, settings, device) = controller();
     camera.set_orbit_lock(true);
-    let axes = camera.axis_system();
+    let axes = camera.frame;
     let forward_before = camera.state.forward_world(&axes).normalize();
 
     // Tilt and turn are dropped under the lock...
@@ -321,7 +353,7 @@ fn one_axis_at_a_time_drops_the_rest() {
     camera.apply_device_motion(readings, 0.1, &settings, &device);
     let without_filter = camera.position_vec() - start;
 
-    let up = camera.state.up_world(&camera.axis_system()).normalize();
+    let up = camera.state.up_world(&camera.frame).normalize();
     assert!(with_filter.dot(up).abs() < 1e-4);
     assert!(without_filter.dot(up).abs() > 1e-3);
 }
@@ -371,7 +403,7 @@ fn a_cursor_point_on_the_focal_plane_projects_back_under_the_cursor() {
     for projection in [ProjectionMode::Perspective, ProjectionMode::Orthographic] {
         cam.state.projection = projection;
         cam.state.ortho_height = cam.state.visible_height_at_focal_plane();
-        let hit = zoom_cursor::intersect_focal_plane_world(&cam.state, &cam.axes, cursor)
+        let hit = focal_plane_hit(&cam.state, &cam.frame, cursor)
             .expect("the focal plane faces the camera");
         let local = cam.world_to_viewport(hit).expect("visible");
         let screen = cam.world_to_screen(hit).expect("visible");
@@ -391,7 +423,7 @@ fn a_camera_inside_the_scene_box_keeps_the_near_plane_close() {
     let settings = CameraSettings::default();
     let mut cam = camera(800, 600);
     // Framed on a 40 mm part at the origin.
-    cam.reset_to_fit(Vec3::ZERO, 20.0, None, &settings);
+    cam.reset_to_fit(Vec3::ZERO, 20.0, &settings);
     let eye = Vec3::from_array(cam.position());
     let forward = (Vec3::from_array(cam.target()) - eye).normalize();
     // The part's nearest point, seen from here.
@@ -417,7 +449,7 @@ fn clipping_encloses_the_whole_scene_after_framing_one_part() {
     let settings = CameraSettings::default();
     let mut cam = camera(800, 600);
     // Fit selection frames one part and passes no box of its own.
-    cam.reset_to_fit(Vec3::new(5.0, 5.0, 5.0), 5.0, None, &settings);
+    cam.reset_to_fit(Vec3::new(5.0, 5.0, 5.0), 5.0, &settings);
     let scene = (
         Vec3::new(-200.0, -150.0, -80.0),
         Vec3::new(220.0, 160.0, 90.0),
@@ -458,12 +490,12 @@ fn a_short_focal_distance_keeps_the_whole_scene_inside_the_far_plane() {
     let settings = CameraSettings::default();
     let mut cam = camera(800, 600);
     // Framed on a small part, then drawn in to 2 mm from a picked point.
-    cam.reset_to_fit(Vec3::ZERO, 10.0, None, &settings);
-    let focal = cam.state.focal_point_vec3(&cam.axes);
+    cam.reset_to_fit(Vec3::ZERO, 10.0, &settings);
+    let focal = cam.state.focal_point_vec3(&cam.frame);
     cam.state.focal_distance = 2.0;
     cam.state.rederive_eye_from_focal(
         glam::DVec3::new(focal.x as f64, focal.y as f64, focal.z as f64),
-        &cam.axes,
+        &cam.frame,
     );
     // Other imports sit up to half a metre away, around the camera.
     let scene = (Vec3::splat(-500.0), Vec3::splat(500.0));
@@ -499,7 +531,7 @@ fn picking_pivots_and_orbiting_never_clip_the_scene() {
         Vec3::new(154.3, 63.95, 131.9),
     );
     let (c, r) = crate::app::view_fit::aabb_fit_center_radius(scene.0, scene.1);
-    cam.reset_to_fit(c, r, Some(scene), &settings);
+    cam.reset_to_fit(c, r, &settings);
 
     // A fixed sequence of points on the scene, spread through the box.
     let mut seed = 0x2545_f491_4f6c_dd1du64;
@@ -516,12 +548,12 @@ fn picking_pivots_and_orbiting_never_clip_the_scene() {
             cam.on_mmb_pivot_pick(Some(hit), &settings);
         } else {
             let pivot = Vec3::from_array(cam.target());
-            super::ops::orbit_pixels_around_world_anchor(
+            ops::orbit_pixels_around_world_anchor(
                 &mut cam.state,
-                &cam.axes,
+                &cam.frame,
                 glam::DVec3::new(pivot.x as f64, pivot.y as f64, pivot.z as f64),
                 Vec2::new((next() - 0.5) * 400.0, (next() - 0.5) * 300.0),
-                &settings,
+                &settings.view_settings(),
             );
         }
         cam.apply_auto_clip_planes(&settings);
@@ -561,13 +593,13 @@ fn an_orthographic_view_keeps_what_lies_behind_the_eye() {
         Vec3::new(154.3, 63.95, 131.9),
     );
     let (c, r) = crate::app::view_fit::aabb_fit_center_radius(scene.0, scene.1);
-    cam.reset_to_fit(c, r, Some(scene), &settings);
+    cam.reset_to_fit(c, r, &settings);
     cam.state.projection = ProjectionMode::Orthographic;
     // The eye 20 mm off a point in the middle of the scene.
     cam.state.focal_distance = 20.0;
     cam.state.rederive_eye_from_focal(
         glam::DVec3::new(c.x as f64, c.y as f64, c.z as f64),
-        &cam.axes,
+        &cam.frame,
     );
     cam.set_scene_bounds(Some(scene));
     cam.apply_auto_clip_planes(&settings);
@@ -590,7 +622,7 @@ fn an_orthographic_view_keeps_what_lies_behind_the_eye() {
 fn an_orthographic_pivot_pick_behind_the_eye_is_taken() {
     let settings = CameraSettings::default();
     let mut cam = camera(800, 600);
-    cam.reset_to_fit(Vec3::ZERO, 50.0, None, &settings);
+    cam.reset_to_fit(Vec3::ZERO, 50.0, &settings);
     cam.state.projection = ProjectionMode::Orthographic;
     let eye = Vec3::from_array(cam.position());
     let forward = (Vec3::from_array(cam.target()) - eye).normalize();
@@ -617,7 +649,7 @@ fn a_field_of_view_change_keeps_the_object_its_size() {
 
     let settings = CameraSettings::default();
     let mut cam = camera(800, 600);
-    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, &settings);
     let focal = Vec3::from_array(cam.target());
     let visible_height = |c: &CameraController| {
         2.0 * c.state.focal_distance * (c.state.height_angle_rad * 0.5).tan()
@@ -745,7 +777,7 @@ fn a_new_or_framed_view_looks_down_from_above() {
     let mut cam = CameraController::new(&settings, (800, 600));
     for framed in [false, true] {
         if framed {
-            cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+            cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, &settings);
         }
         let (forward, up) = cam.view_basis();
         assert!(
@@ -805,16 +837,21 @@ fn a_kept_view_comes_back_as_it_was() {
 
     let settings = CameraSettings::default();
     let mut cam = camera(800, 600);
-    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, &settings);
     for _ in 0..7 {
-        ops::orbit_pixels(&mut cam.state, &cam.axes, Vec2::new(13.0, -4.0), &settings);
+        ops::orbit_pixels(
+            &mut cam.state,
+            &cam.frame,
+            Vec2::new(13.0, -4.0),
+            &settings.view_settings(),
+        );
     }
     cam.set_field_of_view(33.0, &settings);
     cam.state.focal_distance *= 0.4;
 
     for projection in [ProjectionMode::Perspective, ProjectionMode::Orthographic] {
         cam.state
-            .set_projection_preserve_framing(projection, &cam.axes);
+            .set_projection_preserve_framing(projection, &cam.frame);
         let kept = cam.kept_view();
         let text = serde_json::to_string(&kept).unwrap();
         let read: KeptView = serde_json::from_str(&text).unwrap();
@@ -858,9 +895,14 @@ fn a_kept_view_that_does_not_fit_is_refused() {
 fn a_view_returned_to_moves_back_where_it_was_kept() {
     let settings = CameraSettings::default();
     let mut cam = camera(800, 600);
-    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, &settings);
     for _ in 0..5 {
-        ops::orbit_pixels(&mut cam.state, &cam.axes, Vec2::new(17.0, 6.0), &settings);
+        ops::orbit_pixels(
+            &mut cam.state,
+            &cam.frame,
+            Vec2::new(17.0, 6.0),
+            &settings.view_settings(),
+        );
     }
     let kept = cam.kept_view();
     let (eye, target) = (

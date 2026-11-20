@@ -226,7 +226,8 @@ hacks, no silently degraded feature). Instead:
   nested in a loop a hole) is the same shape for a sketch that does neither.
 - **Pocket/Groove cut AGAINST the sketch normal by default** (a face
   sketch's normal points out of the material, so the default digs in).
-- **NDC is Y-down**: the camera bakes a Y flip into `view_proj`, and the
+- **NDC is Y-down**: the camera bakes a Y flip into `view_proj` (its one
+  definition is `viewport_camera::focal_view::ViewState::view_projection`), and the
   renderer's vertex shaders flip it back to the GPU's Y-up clip space.
   Transform helpers live in `core_document::runtime` (ctx methods + free
   functions); mirror them, never re-derive with a different convention.

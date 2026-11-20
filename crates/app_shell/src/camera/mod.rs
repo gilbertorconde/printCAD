@@ -1,32 +1,34 @@
-//! CAD-style viewport camera for printCAD (`docs/CAMERA.md`).
+//! The app's view camera (`docs/CAMERA.md`): window input, the settings
+//! and device readings that steer it, and the views kept between runs, over
+//! the camera maths of [`viewport_camera::focal_view`].
 //!
-//! Invariants worth preserving:
-//! - **`focal_distance`** measured along **`forward`** (eye→focal ray), not spherical radius quirks.
-//! - **Pan** translates `eye`; focal point stays `eye + forward * focal_distance` (orientation fixed).
-//! - **Perspective zoom** dolls along **forward** so the pivot stays fixed unless zoom-to-cursor corrects.
-//!
-//! `view_projection` bakes Vulkan's Y-down clip space into the matrix; the
+//! `view_projection` bakes the Y-down clip space into the matrix; the
 //! helpers that project and unproject through it live in
 //! `core_document::runtime`, and every caller goes through them.
 
-mod animate;
-mod auto_clip;
-mod core;
-mod math;
-mod ops;
 pub(crate) mod section;
-pub(crate) mod state;
-mod zoom_cursor;
 
 use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
-use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
-use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
+use glam::{DVec3, Quat, Vec2, Vec3};
 use settings::{CameraSettings, NavigationStyle, ProjectionMode, SixDofMotion, SixDofSettings};
-use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
 use viewport_camera::controller::GestureKind;
+use viewport_camera::focal_view::hold::Hold;
+use viewport_camera::focal_view::tween::ViewTween;
+use viewport_camera::focal_view::{
+    AxisFrame, ViewState, canonical_quat_to_world, clip, nearest_view, ops, orientation_facing,
+};
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
+
+/// The axis preset as the camera maths takes it.
+fn axis_frame(axes: &AxisSystem) -> AxisFrame {
+    AxisFrame {
+        horizontal: axes.horizontal().vector(),
+        vertical: axes.vertical().vector(),
+        depth: axes.depth().vector(),
+    }
+}
 
 /// Normalizes one device reading: full scale to ±1, dead zone to rest,
 /// inverted axes flipped, and the dominant axis alone when asked for.
@@ -66,10 +68,10 @@ fn device_axes(readings: [f32; 6], device: &SixDofSettings) -> Option<[f32; 6]> 
 pub const FOV_RANGE_DEG: (f32, f32) = (10.0, 120.0);
 
 pub struct CameraController {
-    pub(crate) state: CadCameraState,
-    axes: AxisSystem,
+    pub(crate) state: ViewState,
+    frame: AxisFrame,
     axis_preset: AxisPreset,
-    tween: CameraTween,
+    tween: ViewTween,
     scene_aabb: Option<(Vec3, Vec3)>,
     pending_wheel_lines: f32,
     last_cursor_viewport: Option<Vec2>,
@@ -94,12 +96,12 @@ pub struct CameraController {
     mmb_was_down_scene: bool,
     mmb_anchor_vp: Vec2,
     mmb_dragging_scene: bool,
-    navigation_hold: Option<core::Hold>,
+    navigation_hold: Option<Hold>,
     pixels_per_point: f32,
     roll_hold: Option<(Vec2, Quat)>,
     /// The orbit a left drag on the orientation cube holds, taken at the
     /// drag's first move.
-    cube_hold: Option<core::Hold>,
+    cube_hold: Option<Hold>,
     /// The keyboard's modifiers: Shift turns a right click into a snap to
     /// the nearest view, and steers a touchpad's scroll.
     modifiers: winit::keyboard::ModifiersState,
@@ -107,11 +109,12 @@ pub struct CameraController {
 
 impl CameraController {
     pub fn new(settings: &CameraSettings, initial_viewport: (u32, u32)) -> Self {
+        let frame = axis_frame(&AxisSystem::from(settings.axis_preset));
         Self {
-            state: CadCameraState::new(settings, initial_viewport),
-            axes: AxisSystem::from(settings.axis_preset),
+            state: ViewState::new(&settings.view_settings(), &frame, initial_viewport),
+            frame,
             axis_preset: settings.axis_preset,
-            tween: CameraTween::default(),
+            tween: ViewTween::default(),
             scene_aabb: None,
             pending_wheel_lines: 0.0,
             last_cursor_viewport: None,
@@ -253,12 +256,12 @@ impl CameraController {
                 self.last_cursor_vp_for_drag = self.last_cursor_viewport;
                 if let Some(p) = self.last_cursor_viewport {
                     self.rmb_anchor_vp = p;
-                    self.navigation_hold = Some(core::Hold::begin(
+                    self.navigation_hold = Some(Hold::begin(
                         &self.state,
-                        &self.axes,
-                        settings,
+                        &self.frame,
+                        &settings.view_settings(),
                         p,
-                        self.state.focal_point_dvec(&self.axes),
+                        self.state.focal_point_dvec(&self.frame),
                         GestureKind::Pan,
                         self.pixels_per_point,
                     ));
@@ -277,12 +280,12 @@ impl CameraController {
                 if let Some(p) = self.last_cursor_viewport {
                     self.mmb_anchor_vp = p;
                     self.last_cursor_vp_for_drag = Some(p);
-                    let focal = self.state.focal_point_dvec(&self.axes);
+                    let focal = self.state.focal_point_dvec(&self.frame);
                     let anchor = if settings.orbit_pivot_pick {
                         pick_world_under_cursor
                             .filter(|hit| {
                                 (*hit - self.state.eye_vec3())
-                                    .dot(self.state.forward_world(&self.axes))
+                                    .dot(self.state.forward_world(&self.frame))
                                     > 0.0
                             })
                             .map(|hit| hit.as_dvec3())
@@ -291,10 +294,10 @@ impl CameraController {
                         focal
                     };
                     self.orbit_anchor_world = Some(anchor);
-                    self.navigation_hold = Some(core::Hold::begin(
+                    self.navigation_hold = Some(Hold::begin(
                         &self.state,
-                        &self.axes,
-                        settings,
+                        &self.frame,
+                        &settings.view_settings(),
                         p,
                         anchor,
                         GestureKind::Orbit,
@@ -397,7 +400,7 @@ impl CameraController {
                     self.state.orientation = orientation;
                     ops::roll_pixels(
                         &mut self.state,
-                        &self.axes,
+                        &self.frame,
                         (cur.x - start.x) / self.pixels_per_point,
                     );
                     self.last_cursor_vp_for_drag = Some(cur);
@@ -406,17 +409,17 @@ impl CameraController {
 
                 if self.rmb_dragging_scene && !self.lmb_was_down_scene {
                     let hold = self.navigation_hold.get_or_insert_with(|| {
-                        core::Hold::begin(
+                        Hold::begin(
                             &self.state,
-                            &self.axes,
-                            settings,
+                            &self.frame,
+                            &settings.view_settings(),
                             last,
-                            self.state.focal_point_dvec(&self.axes),
+                            self.state.focal_point_dvec(&self.frame),
                             GestureKind::Pan,
                             self.pixels_per_point,
                         )
                     });
-                    hold.sample(&mut self.state, &self.axes, cur);
+                    hold.sample(&mut self.state, &self.frame, cur);
                     self.last_cursor_vp_for_drag = Some(cur);
                     self.state.clip_dirty = true;
                     return CameraPointerResult::Redraw;
@@ -433,7 +436,7 @@ impl CameraController {
                         let hold = self
                             .navigation_hold
                             .expect("middle press acquires its navigation snapshot");
-                        hold.sample(&mut self.state, &self.axes, cur);
+                        hold.sample(&mut self.state, &self.frame, cur);
                         self.last_cursor_vp_for_drag = Some(cur);
                         self.state.clip_dirty = true;
                         return CameraPointerResult::Redraw;
@@ -465,9 +468,19 @@ impl CameraController {
                         self.cancel_animation();
                         let delta = Vec2::new(pos.x as f32, pos.y as f32);
                         if self.modifiers.shift_key() || self.orbit_locked {
-                            ops::pan_pixels(&mut self.state, &self.axes, delta, settings);
+                            ops::pan_pixels(
+                                &mut self.state,
+                                &self.frame,
+                                delta,
+                                &settings.view_settings(),
+                            );
                         } else {
-                            ops::orbit_pixels(&mut self.state, &self.axes, delta, settings);
+                            ops::orbit_pixels(
+                                &mut self.state,
+                                &self.frame,
+                                delta,
+                                &settings.view_settings(),
+                            );
                         }
                         self.state.clip_dirty = true;
                     }
@@ -501,17 +514,17 @@ impl CameraController {
         if let Some(hold) = self.navigation_hold
             && let Some(pointer) = self.last_cursor_viewport
         {
-            let hold = hold.zoomed(lines, settings);
-            hold.sample(&mut self.state, &self.axes, pointer);
+            let hold = hold.zoomed(lines, &settings.view_settings());
+            hold.sample(&mut self.state, &self.frame, pointer);
             self.navigation_hold = Some(hold);
             return;
         }
-        zoom_cursor::apply_zoom_wheels(
+        ops::apply_zoom_wheels(
             &mut self.state,
-            &self.axes,
+            &self.frame,
             self.last_cursor_viewport,
             lines,
-            settings,
+            &settings.view_settings(),
         );
     }
 
@@ -560,16 +573,17 @@ impl CameraController {
         // it whole would throw the view across the scene.
         let dt = dt_secs.clamp(0.001, 0.1);
         self.cancel_animation();
+        let view = settings.view_settings();
 
         // Pan is already in pixels per second.
         if pan != Vec2::ZERO {
-            ops::pan_pixels(&mut self.state, &self.axes, pan * dt, settings);
+            ops::pan_pixels(&mut self.state, &self.frame, pan * dt, &view);
         }
 
         // Zoom is in wheel steps per second; positive zooms in, the way
         // scrolling up does.
         if zoom != 0.0 {
-            zoom_cursor::apply_zoom_wheels(&mut self.state, &self.axes, None, zoom * dt, settings);
+            ops::apply_zoom_wheels(&mut self.state, &self.frame, None, zoom * dt, &view);
         }
 
         // The turns arrive in degrees per second, and orbit takes pixels:
@@ -586,19 +600,23 @@ impl CameraController {
                 Some(pivot) if settings.orbit_pivot_pick => {
                     ops::orbit_pixels_around_world_anchor(
                         &mut self.state,
-                        &self.axes,
+                        &self.frame,
                         pivot,
                         delta,
-                        settings,
+                        &view,
                     );
                 }
-                _ => ops::orbit_pixels(&mut self.state, &self.axes, delta, settings),
+                _ => ops::orbit_pixels(&mut self.state, &self.frame, delta, &view),
             }
         }
 
         if roll != 0.0 {
             // Roll works in its own units, where one pixel is 0.01 radians.
-            ops::roll_pixels(&mut self.state, &self.axes, (roll * dt).to_radians() / 0.01);
+            ops::roll_pixels(
+                &mut self.state,
+                &self.frame,
+                (roll * dt).to_radians() / 0.01,
+            );
         }
 
         true
@@ -608,7 +626,12 @@ impl CameraController {
     /// caller supplies.
     pub fn on_mmb_pivot_pick(&mut self, world_hit: Option<Vec3>, settings: &CameraSettings) {
         if let Some(hit) = world_hit
-            && ops::set_pivot_world_hit(&mut self.state, &self.axes, hit, settings)
+            && ops::set_pivot_world_hit(
+                &mut self.state,
+                &self.frame,
+                hit,
+                &settings.view_settings(),
+            )
         {
             self.state.clip_dirty = true;
             self.cancel_animation();
@@ -620,11 +643,26 @@ impl CameraController {
             return false;
         };
         self.cancel_animation();
-        ops::set_pivot_focal_plane_cursor(&mut self.state, &self.axes, vp, settings)
+        let state = &self.state;
+        let focal_plane = viewport_to_plane(
+            state,
+            &self.frame,
+            vp,
+            state.focal_point_vec3(&self.frame),
+            state.forward_world(&self.frame),
+        );
+        focal_plane.is_some_and(|point| {
+            ops::set_pivot_world_hit(
+                &mut self.state,
+                &self.frame,
+                point,
+                &settings.view_settings(),
+            )
+        })
     }
 
     pub fn update(&mut self, dt_secs: f32, _settings: &CameraSettings) -> bool {
-        let had = self.tween.tick(dt_secs, &mut self.state, &self.axes);
+        let had = self.tween.tick(dt_secs, &mut self.state, &self.frame);
         if had {
             self.state.clip_dirty = true;
             true
@@ -643,7 +681,7 @@ impl CameraController {
     }
 
     pub fn view_projection(&self) -> [[f32; 4]; 4] {
-        self.state.view_projection(&self.axes).to_cols_array_2d()
+        self.state.view_projection(&self.frame).to_cols_array_2d()
     }
 
     /// Viewport-local pixel position of a world point: the space of
@@ -677,7 +715,7 @@ impl CameraController {
     }
 
     pub fn focal_point_world(&self) -> Vec3 {
-        self.state.focal_point_vec3(&self.axes)
+        self.state.focal_point_vec3(&self.frame)
     }
 
     /// Red crosshair at orbit focal point: only while orbiting (MMB), rolling (LMB+RMB) or animating a view.
@@ -706,22 +744,15 @@ impl CameraController {
         self.world_to_screen(Vec3::from_array(self.target()))
     }
 
-    pub fn reset_to_fit(
-        &mut self,
-        center: Vec3,
-        radius: f32,
-        zoom_limit_aabb: Option<(Vec3, Vec3)>,
-        settings: &CameraSettings,
-    ) {
+    pub fn reset_to_fit(&mut self, center: Vec3, radius: f32, settings: &CameraSettings) {
         self.forget_released([false; 3]);
         self.cancel_animation();
         ops::fit_sphere(
             &mut self.state,
-            &self.axes,
+            &self.frame,
             center,
             radius,
-            zoom_limit_aabb,
-            settings,
+            &settings.view_settings(),
         );
         self.after_scene_or_settings_touch(settings);
     }
@@ -739,10 +770,16 @@ impl CameraController {
         self.forget_released([false; 3]);
         // A turn under way (onto the plane, as a session opens) is the
         // orientation to keep.
-        self.tween.finish(&mut self.state, &self.axes);
+        self.tween.finish(&mut self.state, &self.frame);
         let (forward, _) = self.view_basis();
         let center = center - forward * (center - self.focal_point_world()).dot(forward);
-        ops::fit_sphere_as_oriented(&mut self.state, &self.axes, center, radius, settings);
+        ops::fit_sphere_as_oriented(
+            &mut self.state,
+            &self.frame,
+            center,
+            radius,
+            &settings.view_settings(),
+        );
         self.after_scene_or_settings_touch(settings);
     }
 
@@ -766,11 +803,16 @@ impl CameraController {
     }
 
     pub fn clamp_focal_to_settings(&mut self, settings: &CameraSettings) {
-        self.state.clamp_focal_distance(settings);
+        self.state.clamp_focal_distance(&settings.view_settings());
     }
 
     pub fn apply_auto_clip_planes(&mut self, settings: &CameraSettings) {
-        auto_clip::update_auto_clip(&mut self.state, &self.axes, self.scene_aabb, settings);
+        clip::update_auto_clip(
+            &mut self.state,
+            &self.frame,
+            self.scene_aabb,
+            &settings.view_settings(),
+        );
         trace!(
             target: "printcad.camera",
             proj = ?self.state.projection,
@@ -803,31 +845,38 @@ impl CameraController {
         }
         self.forget_released([false; 3]);
         let new = f64::from(degrees.clamp(FOV_RANGE_DEG.0, FOV_RANGE_DEG.1)).to_radians();
-        let old = self.state.height_angle_rad;
-        let focal = self.state.focal_point_dvec(&self.axes);
         self.cancel_animation();
-        self.state.focal_distance *= (old * 0.5).tan() / (new * 0.5).tan();
-        self.state.clamp_focal_distance(settings);
-        self.state.height_angle_rad = new;
-        self.state.rederive_eye_from_focal(focal, &self.axes);
-        self.state.clip_dirty = true;
+        self.state
+            .set_field_of_view(&self.frame, new, &settings.view_settings());
     }
 
     pub fn sync_with_settings(&mut self, settings: &CameraSettings) {
         if self.axis_preset != settings.axis_preset {
             self.axis_preset = settings.axis_preset;
-            self.axes = AxisSystem::from(self.axis_preset);
+            self.frame = axis_frame(&AxisSystem::from(self.axis_preset));
         }
         self.state.height_angle_rad = (settings.fov_degrees as f64).to_radians();
         self.state.ortho_height = settings.ortho_height_mm as f64;
 
         let target_proj = settings.projection;
         if target_proj != self.state.projection {
+            let prev = self.state.projection;
             self.state
-                .set_projection_preserve_framing(target_proj, &self.axes);
+                .set_projection_preserve_framing(target_proj, &self.frame);
+            debug!(
+                target: "printcad.camera",
+                ?prev,
+                new = ?target_proj,
+                focal_mm = self.state.focal_distance,
+                ortho_height_mm = self.state.ortho_height,
+                height_angle_deg = self.state.height_angle_rad.to_degrees(),
+                near = self.state.near_plane,
+                far = self.state.far_plane,
+                "projection transition"
+            );
         }
 
-        self.state.clamp_focal_distance(settings);
+        self.state.clamp_focal_distance(&settings.view_settings());
         self.after_scene_or_settings_touch(settings);
 
         debug!(
@@ -863,12 +912,12 @@ impl CameraController {
         let start = Vec2::new(w as f32, h as f32) * 0.5;
         if self.cube_hold.is_none() {
             self.cancel_animation();
-            self.cube_hold = Some(core::Hold::begin(
+            self.cube_hold = Some(Hold::begin(
                 &self.state,
-                &self.axes,
-                settings,
+                &self.frame,
+                &settings.view_settings(),
                 start,
-                self.state.focal_point_dvec(&self.axes),
+                self.state.focal_point_dvec(&self.frame),
                 GestureKind::Orbit,
                 self.pixels_per_point,
             ));
@@ -876,7 +925,7 @@ impl CameraController {
         let hold = self.cube_hold.expect("taken above");
         hold.sample(
             &mut self.state,
-            &self.axes,
+            &self.frame,
             start + offset * self.pixels_per_point,
         );
         self.state.clip_dirty = true;
@@ -900,13 +949,20 @@ impl CameraController {
         self.forget_released([false; 3]);
         self.cancel_animation();
         let mut target = self.state.clone();
-        ops::fit_sphere(&mut target, &self.axes, center, radius, None, settings);
+        ops::fit_sphere(
+            &mut target,
+            &self.frame,
+            center,
+            radius,
+            &settings.view_settings(),
+        );
         if let Some(view) = view {
-            let focal = target.focal_point_dvec(&self.axes);
-            target.orientation = canonical_quat_to_world(&self.axes, view.orientation());
-            target.rederive_eye_from_focal(focal, &self.axes);
+            let focal = target.focal_point_dvec(&self.frame);
+            target.orientation = canonical_quat_to_world(&self.frame, view.orientation());
+            target.rederive_eye_from_focal(focal, &self.frame);
         }
-        self.tween = CameraTween::toward(&self.state, &self.axes, &target, settings);
+        self.tween =
+            ViewTween::toward(&self.state, &self.frame, &target, &settings.view_settings());
         self.after_scene_or_settings_touch(settings);
     }
 
@@ -920,7 +976,7 @@ impl CameraController {
     /// axis nearest the screen's up.
     pub fn snap_to_nearest_view(&mut self, settings: &CameraSettings) {
         let (forward, up) = self.view_basis();
-        let (direction, up) = nearest_view(forward, up, self.axes.vertical().vector());
+        let (direction, up) = nearest_view(forward, up, self.frame.vertical);
         let centre = self.focal_point_world();
         self.orient_to_plane(centre, -direction, up, Some(centre), settings);
     }
@@ -929,13 +985,19 @@ impl CameraController {
         self.forget_released([false; 3]);
         self.cancel_animation();
         let qc = view.orientation();
-        let q_end = canonical_quat_to_world(&self.axes, qc);
-        let focal = self.state.focal_point_dvec(&self.axes);
+        let q_end = canonical_quat_to_world(&self.frame, qc);
+        let focal = self.state.focal_point_dvec(&self.frame);
         let fd = self.state.focal_distance;
-        let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end.normalize());
-        let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
+        let eye_end = self.state.eye_for(&self.frame, q_end.normalize(), focal);
 
-        self.tween = CameraTween::begin(&self.state, &self.axes, eye_end, q_end, fd, settings);
+        self.tween = ViewTween::begin(
+            &self.state,
+            &self.frame,
+            eye_end,
+            q_end,
+            fd,
+            &settings.view_settings(),
+        );
     }
 
     pub fn orient_to_plane(
@@ -957,17 +1019,9 @@ impl CameraController {
         }
         let cam_up = up_raw.normalize();
 
-        // The camera state consumes the orientation as `q * (-depth) =
-        // forward` and `q * vertical = up` in the ACTIVE axis preset, not
-        // the canonical XYZ basis, which rolls the view under the default
-        // Z-up preset. Build q as the rotation mapping the preset pair onto
-        // the target pair.
-        let depth = self.axes.depth().vector();
-        let vertical = self.axes.vertical().vector();
-        let src_forward = -depth;
-        let src = Mat3::from_cols(src_forward, vertical, src_forward.cross(vertical));
-        let dst = Mat3::from_cols(forward, cam_up, forward.cross(cam_up));
-        let q_end = Quat::from_mat3(&(dst * src.transpose())).normalize();
+        // Relative to the active axis preset, never the canonical XYZ
+        // basis, which would roll the view under the default Z-up preset.
+        let q_end = orientation_facing(&self.frame, forward, cam_up);
 
         let fd = self.state.focal_distance;
         // The point asked for, else what the view was on, carried square
@@ -979,11 +1033,17 @@ impl CameraController {
             target - normal * (target - plane_origin).dot(normal)
         });
         let focal = DVec3::new(centre.x as f64, centre.y as f64, centre.z as f64);
-        let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end);
-        let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
+        let eye_end = self.state.eye_for(&self.frame, q_end, focal);
 
         self.cancel_animation();
-        self.tween = CameraTween::begin(&self.state, &self.axes, eye_end, q_end, fd, settings);
+        self.tween = ViewTween::begin(
+            &self.state,
+            &self.frame,
+            eye_end,
+            q_end,
+            fd,
+            &settings.view_settings(),
+        );
     }
 
     pub fn apply_rotate_delta(&mut self, delta: &RotateDelta, settings: &CameraSettings) {
@@ -991,23 +1051,29 @@ impl CameraController {
         let angle = delta.degrees.to_radians();
         let current = self.state.orientation;
         let axis_world = match delta.axis {
-            RotateAxis::ScreenX => current * (-math::control_horizontal_vec(&self.axes)),
-            RotateAxis::ScreenY => current * (-self.axes.vertical().vector()),
-            RotateAxis::ScreenZ => current * self.axes.depth().vector(),
+            RotateAxis::ScreenX => current * (-self.frame.control_horizontal()),
+            RotateAxis::ScreenY => current * (-self.frame.vertical),
+            RotateAxis::ScreenZ => current * self.frame.depth,
         };
         if axis_world.length_squared() <= 0.0 {
             return;
         }
         let qdelta = Quat::from_axis_angle(axis_world.normalize(), angle);
         let q_end = (qdelta * current).normalize();
-        let focal = self.state.focal_point_dvec(&self.axes);
+        let focal = self.state.focal_point_dvec(&self.frame);
         let fd = self.state.focal_distance;
 
-        let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end);
-        let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
+        let eye_end = self.state.eye_for(&self.frame, q_end, focal);
 
         self.cancel_animation();
-        self.tween = CameraTween::begin(&self.state, &self.axes, eye_end, q_end, fd, settings);
+        self.tween = ViewTween::begin(
+            &self.state,
+            &self.frame,
+            eye_end,
+            q_end,
+            fd,
+            &settings.view_settings(),
+        );
     }
 
     pub fn position(&self) -> [f32; 3] {
@@ -1028,14 +1094,11 @@ impl CameraController {
     /// orientation maps the axis preset's depth and vertical.
     pub fn view_basis(&self) -> (Vec3, Vec3) {
         let q = self.state.orientation.normalize();
-        (
-            q * -self.axes.depth().vector(),
-            q * self.axes.vertical().vector(),
-        )
+        (q * -self.frame.depth, q * self.frame.vertical)
     }
 
     pub fn axis_system(&self) -> AxisSystem {
-        self.axes
+        AxisSystem::from(self.axis_preset)
     }
 
     pub(crate) fn position_vec(&self) -> Vec3 {
@@ -1049,7 +1112,7 @@ impl CameraController {
 
     /// Where the view stands, to put it back another time.
     pub fn kept_view(&self) -> KeptView {
-        let target = self.state.focal_point_dvec(&self.axes);
+        let target = self.state.focal_point_dvec(&self.frame);
         KeptView {
             target: target.to_array(),
             orientation: self.state.orientation.normalize().to_array(),
@@ -1066,7 +1129,7 @@ impl CameraController {
     /// viewport: the split view's side pane once its camera is unlinked.
     pub fn detached(&self, settings: &CameraSettings) -> Self {
         let mut camera = Self::new(settings, self.state.viewport_size);
-        camera.axes = self.axes;
+        camera.frame = self.frame;
         camera.axis_preset = self.axis_preset;
         camera.pixels_per_point = self.pixels_per_point;
         camera.scene_aabb = self.scene_aabb;
@@ -1095,13 +1158,14 @@ impl CameraController {
         };
         self.forget_released([false; 3]);
         self.cancel_animation();
-        self.tween = CameraTween::toward(&self.state, &self.axes, &target, settings);
+        self.tween =
+            ViewTween::toward(&self.state, &self.frame, &target, &settings.view_settings());
         true
     }
 
     /// The camera state standing where `view` was kept, or `None` for a
     /// view of another axis preset or numbers that make no view.
-    fn state_at(&self, view: &KeptView, settings: &CameraSettings) -> Option<CadCameraState> {
+    fn state_at(&self, view: &KeptView, settings: &CameraSettings) -> Option<ViewState> {
         let orientation = Quat::from_array(view.orientation);
         let usable = view.axis_preset == self.axis_preset
             && view.target.iter().all(|v| v.is_finite())
@@ -1125,7 +1189,7 @@ impl CameraController {
             .clamp(f64::from(FOV_RANGE_DEG.0), f64::from(FOV_RANGE_DEG.1))
             .to_radians();
         state.ortho_height = view.ortho_height;
-        state.rederive_eye_from_focal(DVec3::from_array(view.target), &self.axes);
+        state.rederive_eye_from_focal(DVec3::from_array(view.target), &self.frame);
         state.clip_dirty = true;
         Some(state)
     }
@@ -1153,10 +1217,6 @@ pub struct KeptView {
     pub side: Option<Box<KeptView>>,
 }
 
-fn rotate_vec_by_quat(v: Vec3, q: Quat) -> Vec3 {
-    q * v
-}
-
 #[derive(Debug)]
 pub enum CameraPointerResult {
     None,
@@ -1182,46 +1242,34 @@ mod navigation_tests;
 #[cfg(test)]
 mod integration_tests;
 
+/// Where the cursor's ray meets the focal plane.
 #[cfg(test)]
-mod parity_tests;
+fn focal_plane_hit(state: &ViewState, frame: &AxisFrame, viewport_xy: Vec2) -> Option<Vec3> {
+    viewport_to_plane(
+        state,
+        frame,
+        viewport_xy,
+        state.focal_point_vec3(frame),
+        state.forward_world(frame),
+    )
+}
 
-/// The view direction nearest `forward` among the cube of views' 26 (its
-/// faces, edges and corners), and the up to keep with it: `vertical` made
-/// square to it, or for a view along `vertical` the axis nearest `up`.
-fn nearest_view(forward: Vec3, up: Vec3, vertical: Vec3) -> (Vec3, Vec3) {
-    let mut best = (f32::MIN, Vec3::NEG_Z);
-    for x in -1..=1 {
-        for y in -1..=1 {
-            for z in -1..=1 {
-                let d = Vec3::new(x as f32, y as f32, z as f32);
-                if d == Vec3::ZERO {
-                    continue;
-                }
-                let d = d.normalize();
-                let along = d.dot(forward);
-                if along > best.0 {
-                    best = (along, d);
-                }
-            }
-        }
-    }
-    let direction = best.1;
-    let square = vertical - direction * vertical.dot(direction);
-    let up = if square.length_squared() > 1e-6 {
-        square.normalize()
-    } else {
-        [
-            Vec3::X,
-            Vec3::NEG_X,
-            Vec3::Y,
-            Vec3::NEG_Y,
-            Vec3::Z,
-            Vec3::NEG_Z,
-        ]
-        .into_iter()
-        .filter(|a| a.dot(direction).abs() < 1e-6)
-        .max_by(|a, b| a.dot(up).total_cmp(&b.dot(up)))
-        .unwrap_or(Vec3::Y)
-    };
-    (direction, up)
+/// Where the cursor's ray, by the shared helpers the benches use, meets the
+/// plane through `plane_origin` square to `plane_normal`.
+fn viewport_to_plane(
+    state: &ViewState,
+    frame: &AxisFrame,
+    viewport_xy: Vec2,
+    plane_origin: Vec3,
+    plane_normal: Vec3,
+) -> Option<Vec3> {
+    let (w, h) = state.viewport_size;
+    core_document::runtime::viewport_to_plane(
+        state.view_projection(frame).to_cols_array_2d(),
+        (0, 0, w, h),
+        (viewport_xy.x, viewport_xy.y),
+        plane_origin.to_array(),
+        plane_normal.to_array(),
+    )
+    .map(Vec3::from_array)
 }

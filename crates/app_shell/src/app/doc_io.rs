@@ -1239,12 +1239,10 @@ impl PrintCadApp {
         self.session.selection.tree = Some(TreeItemId::DocumentRoot);
         if let Some((mn, mx)) = document_imported_aabb(&self.session.document) {
             let (center, radius) = aabb_fit_center_radius(mn, mx);
-            self.session.view.camera.reset_to_fit(
-                center,
-                radius,
-                Some((mn, mx)),
-                &self.user_settings.camera,
-            );
+            self.session
+                .view
+                .camera
+                .reset_to_fit(center, radius, &self.user_settings.camera);
         }
         self.session.journal.reset(&mut self.session.document);
         self.session

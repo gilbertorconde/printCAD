@@ -5,7 +5,9 @@ use glam::{DVec3, Vec2, Vec3};
 use settings::{CameraSettings, OrbitYawAxis, ProjectionMode};
 use winit::event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 
-use super::{CameraController, CameraPointerResult, core};
+use viewport_camera::focal_view::{hold, ops};
+
+use super::{CameraController, CameraPointerResult};
 
 fn button(
     camera: &mut CameraController,
@@ -73,7 +75,7 @@ fn shared_projection_and_rays_match_vulkan_for_every_axis_preset() {
                 ..Default::default()
             };
             let camera = start(&settings, 1.0);
-            let shared = core::camera(&camera.state, &camera.axes, DVec3::ZERO);
+            let shared = hold::camera(&camera.state, &camera.frame, DVec3::ZERO);
             for pointer in [
                 Vec2::new(123.0, 97.0),
                 Vec2::new(400.0, 300.0),
@@ -109,9 +111,9 @@ fn pointer_holds_are_partition_independent_and_freeze_the_picked_anchor() {
                     };
                     let mut direct = start(&settings, 1.0);
                     let mut split = start(&settings, 1.0);
-                    let anchor = super::zoom_cursor::intersect_focal_plane_world(
+                    let anchor = super::focal_plane_hit(
                         &direct.state,
-                        &direct.axes,
+                        &direct.frame,
                         Vec2::new(300.0, 220.0),
                     )
                     .unwrap();
@@ -237,7 +239,7 @@ fn world_up_orbit_stops_at_poles_without_flipping_or_accumulating_roll() {
                 None,
             );
             let (forward, _) = camera.view_basis();
-            assert!((forward.dot(camera.axes.vertical().vector()).abs() - 1.0).abs() < 0.00001);
+            assert!((forward.dot(camera.frame.vertical).abs() - 1.0).abs() < 0.00001);
             assert!(camera.state.orientation.is_normalized());
             // Returning to the press restores the exact frame even after a full turn.
             moved(&mut camera, &settings, Vec2::new(300.0, 220.0), None);
@@ -289,7 +291,7 @@ fn fit_keeps_the_whole_sphere_in_portrait_landscape_and_large_models() {
         for size in [(400, 1200), (1200, 400), (800, 600)] {
             for radius in [5.0, 10_000.0] {
                 let mut camera = CameraController::new(&settings, size);
-                camera.reset_to_fit(Vec3::new(5.0, -20.0, 12.0), radius, None, &settings);
+                camera.reset_to_fit(Vec3::new(5.0, -20.0, 12.0), radius, &settings);
                 for index in 0..512 {
                     let y = 1.0 - 2.0 * (index as f32 + 0.5) / 512.0;
                     let r = (1.0 - y * y).sqrt();
@@ -363,8 +365,8 @@ fn roll_is_press_relative_in_both_projections_and_at_full_turn_boundaries() {
                     Vec2::new(300.0 + angle / 0.01, 220.0),
                     None,
                 );
-                let expected_up = glam::Quat::from_axis_angle(forward, angle)
-                    * (before * camera.axes.vertical().vector());
+                let expected_up =
+                    glam::Quat::from_axis_angle(forward, angle) * (before * camera.frame.vertical);
                 assert!(camera.view_basis().1.distance(expected_up) < 0.00001);
                 moved(&mut camera, &settings, Vec2::new(300.0, 220.0), None);
                 assert_eq!(camera.state.orientation, before);
@@ -389,7 +391,7 @@ fn pole_boundary_samples_are_continuous_in_both_directions() {
         };
         for sign in [-1.0, 1.0] {
             let mut camera = start(&settings, 1.0);
-            let up = camera.axes.vertical().vector();
+            let up = camera.frame.vertical;
             let elevation = (-camera.view_basis().0).dot(up).asin();
             let boundary = (sign * std::f32::consts::FRAC_PI_2 - elevation) / 0.005;
             button(&mut camera, &settings, MouseButton::Middle, true, None);
@@ -477,7 +479,7 @@ fn fly_to_fit_turns_to_the_view_and_frames_the_sphere() {
         assert!(home.is_animating());
         home.update(60.0, &settings);
         let mut fitted = start(&settings, 1.0);
-        fitted.reset_to_fit(center, radius, None, &settings);
+        fitted.reset_to_fit(center, radius, &settings);
         assert!(home.state.orientation.dot(fitted.state.orientation).abs() > 0.99999);
         assert!(home.state.eye.distance(fitted.state.eye) < 1e-3);
 
@@ -546,8 +548,13 @@ fn shift_right_click_snaps_to_the_nearest_standard_or_diagonal_view() {
             Vec2::new(0.0, -300.0),
         ] {
             let mut camera = start(&settings, 1.0);
-            super::ops::orbit_pixels(&mut camera.state, &camera.axes, drift, &settings);
-            super::ops::roll_pixels(&mut camera.state, &camera.axes, drift.x);
+            ops::orbit_pixels(
+                &mut camera.state,
+                &camera.frame,
+                drift,
+                &settings.view_settings(),
+            );
+            ops::roll_pixels(&mut camera.state, &camera.frame, drift.x);
             let (before, _) = camera.view_basis();
             let nearest = cube
                 .iter()

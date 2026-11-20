@@ -1769,7 +1769,7 @@ mod tests {
     fn a_preview_past_the_bodies_widens_the_clip_planes() {
         let settings = settings::CameraSettings::default();
         let mut camera = crate::camera::CameraController::new(&settings, (800, 600));
-        camera.reset_to_fit(Vec3::ZERO, 10.0, None, &settings);
+        camera.reset_to_fit(Vec3::ZERO, 10.0, &settings);
         camera.set_scene_bounds(Some((Vec3::splat(-5.0), Vec3::splat(5.0))));
         camera.apply_auto_clip_planes(&settings);
         let (forward, _) = camera.view_basis();
