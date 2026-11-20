@@ -158,10 +158,11 @@ pub struct Document {
     workbench_storage: HashMap<String, WorkbenchStorage>,
     /// References to external files stored in the .prtcad archive.
     assets: HashMap<Uuid, AssetReference>,
-    /// Tessellated meshes for imported geometry, keyed by body id.
-    /// Stored alongside the document so reload doesn't require re-tessellation.
-    #[serde(default)]
-    imported_meshes: HashMap<BodyId, ImportedGeometry>,
+    /// What the builds found (`derived.rs`): derived on each replica, never
+    /// an op. Its bodies' meshes are written under `imported_meshes`, so a
+    /// reload needs no re-tessellation; the rest of it is not saved.
+    #[serde(rename = "imported_meshes", default, with = "derived::saved_meshes")]
+    derived: Derived,
     /// Imported STEP hierarchy (assemblies/parts/instances).
     #[serde(default)]
     imported_objects: HashMap<Uuid, ImportedObjectNode>,
@@ -195,13 +196,6 @@ pub struct Document {
     /// from JSON because the bytes live as separate entries in the tar archive.
     #[serde(skip)]
     asset_blobs: HashMap<Uuid, std::sync::Arc<Vec<u8>>>,
-    /// Bodies' shape snapshots (ogeom native text), saved as
-    /// `brep/<body>.bin` beside the JSON rather than in it.
-    #[serde(skip)]
-    imported_brep_blobs: HashMap<BodyId, std::sync::Arc<Vec<u8>>>,
-    /// Per-face RGB snapshot parallel to [`Self::imported_brep_blobs`] face order.
-    #[serde(skip)]
-    imported_brep_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
     /// Bodies' base solids: the shape a body's feature history starts
     /// from, kept from what an import, a mesh conversion or a repair made
     /// of the body, apart from what its features build and draw. Set and
@@ -219,11 +213,6 @@ pub struct Document {
     /// The base solids' face colours, saved as `brep/<body>.base.colors`.
     #[serde(skip)]
     base_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
-    /// The meshes of placed bodies in their own frame, beside the placed
-    /// copies in `imported_meshes`, with their bounds. Derived: rebuilt from
-    /// the placed copy on load.
-    #[serde(skip)]
-    local_meshes: HashMap<BodyId, LocalGeometry>,
     /// A PNG preview of the model, written as the container's first entry
     /// (`thumbnail.png`) so a file browser reads it without unpacking the
     /// rest. Derived state: set by the saving client, never an op.
@@ -262,10 +251,6 @@ pub struct Document {
     /// another (`content_stamp`).
     #[serde(skip)]
     lineage: Lineage,
-    /// What the builds found: derived on each replica, never an op
-    /// (`derived.rs`).
-    #[serde(skip)]
-    derived: Derived,
     /// True while a [`DerivedMut`] handle is out: recording an op then is
     /// a bug, which debug builds assert.
     #[serde(skip)]
@@ -340,7 +325,6 @@ impl Document {
             copy_arrays: Vec::new(),
             workbench_storage: HashMap::new(),
             assets: HashMap::new(),
-            imported_meshes: HashMap::new(),
             imported_objects: HashMap::new(),
             imported_object_roots: Vec::new(),
             display_unit: Unit::default(),
@@ -350,15 +334,12 @@ impl Document {
             notes_numbered: 0,
             history: Vec::new(),
             asset_blobs: HashMap::new(),
-            imported_brep_blobs: HashMap::new(),
-            imported_brep_face_colors: HashMap::new(),
             base_solids: HashMap::new(),
             mesh_starts: HashMap::new(),
             base_brep_blobs: HashMap::new(),
             base_face_colors: HashMap::new(),
             thumbnail: None,
             written_by: None,
-            local_meshes: HashMap::new(),
             imported_body_to_object: HashMap::new(),
             mutation_seq: 0,
             pending_ops: op::OpBuffer::default(),
@@ -1034,18 +1015,6 @@ impl Document {
         self.body(body).map(|b| b.placement).unwrap_or_default()
     }
 
-    /// A body's geometry as its kernel shape has it, in the body's own
-    /// frame: the mesh and its bounds before the body's placement. The
-    /// scene's copy (`imported_geometry`) is placed.
-    pub fn local_geometry(&self, body: BodyId) -> Option<LocalGeometry> {
-        if let Some(local) = self.local_meshes.get(&body) {
-            return Some(local.clone());
-        }
-        self.imported_meshes
-            .get(&body)
-            .map(|g| (Arc::clone(&g.mesh), g.bounds_mm))
-    }
-
     /// After a load: the placed bodies' own meshes, from the placed copies
     /// the file holds.
     fn recover_local_meshes(&mut self) {
@@ -1056,10 +1025,12 @@ impl Document {
             .map(|b| (b.id, b.placement))
             .collect();
         for (body, placement) in placed {
-            if let Some(geometry) = self.imported_meshes.get(&body) {
+            if let Some(geometry) = self.derived.imported_meshes.get(&body) {
                 let local = placement.inverse().mesh(&geometry.mesh);
                 let bounds = local.bounds();
-                self.local_meshes.insert(body, (Arc::new(local), bounds));
+                self.derived
+                    .local_meshes
+                    .insert(body, (Arc::new(local), bounds));
             }
         }
     }
@@ -1068,20 +1039,22 @@ impl Document {
     /// changed: the local copy is kept beside it while the body is placed.
     fn place_geometry(&mut self, body: BodyId) {
         let placement = self.body_placement(body);
-        let Some((local, local_bounds)) = self.local_geometry(body) else {
+        let Some((local, local_bounds)) = self.derived().local_geometry(body) else {
             return;
         };
-        let Some(geometry) = self.imported_meshes.get_mut(&body) else {
+        let Some(geometry) = self.derived.imported_meshes.get_mut(&body) else {
             return;
         };
         if placement.is_identity() {
             geometry.mesh = local;
             geometry.bounds_mm = local_bounds;
-            self.local_meshes.remove(&body);
+            self.derived.local_meshes.remove(&body);
         } else {
             geometry.mesh = Arc::new(placement.mesh(&local));
             geometry.bounds_mm = local_bounds.map(|b| placement.bounds(b));
-            self.local_meshes.insert(body, (local, local_bounds));
+            self.derived
+                .local_meshes
+                .insert(body, (local, local_bounds));
         }
         geometry.revision = geometry.revision.saturating_add(1);
     }
@@ -1342,7 +1315,7 @@ impl Document {
                 .feature_tree
                 .all_nodes()
                 .any(|(_, n)| n.body == Some(body.id))
-            && !self.imported_meshes.contains_key(&body.id)
+            && !self.derived.imported_meshes.contains_key(&body.id)
             && !self.base_solids.contains_key(&body.id)
     }
 
@@ -1377,10 +1350,10 @@ impl Document {
             self.feature_tree.remove_node(fid);
             self.derived.clear_status(fid);
         }
-        self.imported_meshes.remove(&id);
-        self.local_meshes.remove(&id);
-        self.imported_brep_blobs.remove(&id);
-        self.imported_brep_face_colors.remove(&id);
+        self.derived.imported_meshes.remove(&id);
+        self.derived.local_meshes.remove(&id);
+        self.derived.imported_brep_blobs.remove(&id);
+        self.derived.imported_brep_face_colors.remove(&id);
         self.base_solids.remove(&id);
         self.mesh_starts.remove(&id);
         self.derived.mesh_results.remove(&id);

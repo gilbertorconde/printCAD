@@ -235,7 +235,7 @@ pub(crate) fn invalidate_owned(document: &mut Document, package: &PackageInfo, b
                 .all_nodes()
                 .any(|(_, n)| n.body == Some(body));
             if !any && !document.body_solid_is_imported(body) {
-                document.remove_imported_geometry(body);
+                document.derived_mut().remove_imported_geometry(body);
             }
         }
     }
@@ -886,7 +886,7 @@ impl BenchFeatures for WasmWorkbench {
         node: &FeatureNode,
     ) -> Option<core_document::PassiveGeometry> {
         let body = node.body?;
-        let revision = document.imported_geometry(body)?.revision;
+        let revision = document.derived().imported_geometry(body)?.revision;
         let mut inner = self.inner();
         let threads = self.plan_threads(&mut inner, document, body);
         let feature = id.0.to_string();
@@ -894,7 +894,7 @@ impl BenchFeatures for WasmWorkbench {
             return None;
         }
         if threads.drawn.as_ref().is_none_or(|(r, _)| *r != revision) {
-            let (mesh, _) = document.local_geometry(body)?;
+            let (mesh, _) = document.derived().local_geometry(body)?;
             let mut drawn: HashMap<String, kernel_api::TriMesh> = HashMap::new();
             for thread in &threads.declared {
                 let helix = crate::geometry::thread_helix(&mesh, thread);
@@ -1393,7 +1393,7 @@ impl BenchOutput for WasmWorkbench {
         let Some(body) = node.body else {
             return Vec::new();
         };
-        let Some((mesh, _)) = document.local_geometry(body) else {
+        let Some((mesh, _)) = document.derived().local_geometry(body) else {
             return Vec::new();
         };
         let mut inner = self.inner();

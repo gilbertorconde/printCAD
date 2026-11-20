@@ -130,6 +130,7 @@ pub fn key(document: &Document, s: &Shadow) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     document
+        .derived()
         .imported_geometry(s.scan)
         .map(|g| g.revision)
         .hash(&mut h);
@@ -152,7 +153,7 @@ pub fn make(document: &Document, kernel: &dyn KernelQueries, s: &Shadow) -> Made
         error: Some(error),
         ..Made::default()
     };
-    let Some((mesh, _)) = document.local_geometry(s.scan) else {
+    let Some((mesh, _)) = document.derived().local_geometry(s.scan) else {
         return failed("the scan has no mesh".into());
     };
     let (Some(n), Some(x)) = (unit(s.normal.into()), unit(s.x_axis.into())) else {

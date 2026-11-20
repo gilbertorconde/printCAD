@@ -343,7 +343,7 @@ impl DocumentSession {
     /// `body` was built again: the picks on it are found on its new mesh
     /// (`Selection::follow_shape`), the pointer's hovers on it let go.
     pub fn shape_rebuilt(&mut self, body: BodyId) {
-        match self.document.imported_geometry(body) {
+        match self.document.derived().imported_geometry(body) {
             Some(geometry) => self.selection.follow_shape(body, &geometry.mesh),
             None => self.selection.drop_shape_picks(body),
         }
@@ -823,6 +823,7 @@ mod tests {
             session.journal.reset(&mut session.document);
             let mesh = session
                 .document
+                .derived()
                 .imported_geometry(body)
                 .unwrap()
                 .mesh

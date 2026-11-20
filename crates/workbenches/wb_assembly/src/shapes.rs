@@ -87,7 +87,7 @@ pub fn face_triangles(mesh: &TriMesh, near: [f32; 3]) -> Option<Vec<[f32; 3]>> {
 /// fixed end was picked on, from that body's mesh in its own frame.
 pub fn take_shape(document: &core_document::Document, joint: &mut crate::JointFeature) {
     let near = joint.fixed.parts().0.as_vec3().to_array();
-    let Some((mesh, _)) = document.local_geometry(joint.other_body) else {
+    let Some((mesh, _)) = document.derived().local_geometry(joint.other_body) else {
         return;
     };
     joint.shape = match joint.kind {

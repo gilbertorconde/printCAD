@@ -361,7 +361,12 @@ impl PrintCadApp {
                     .find(|b| b.name.contains(which.as_str())),
             }
             .map(|b| (b.id, b.name.clone()))
-            && self.session.document.imported_geometry(body.0).is_some()
+            && self
+                .session
+                .document
+                .derived()
+                .imported_geometry(body.0)
+                .is_some()
         {
             self.bench.select_fired = true;
             let row = match self.session.document.imported_object_for_body(body.0) {
@@ -402,7 +407,12 @@ impl PrintCadApp {
                 .iter()
                 .find(|b| b.name.contains(which.as_str()))
                 .map(|b| b.id)
-            && self.session.document.imported_geometry(body).is_some()
+            && self
+                .session
+                .document
+                .derived()
+                .imported_geometry(body)
+                .is_some()
             && !std::mem::replace(&mut self.bench.isolate_fired, true)
         {
             self.session.document.set_isolation(Some(vec![body]));
@@ -414,7 +424,12 @@ impl PrintCadApp {
         if !self.bench.note_fired
             && let Some(number) = hooks.note
             && let Some((body, note)) = self.session.document.note_by_number(number)
-            && self.session.document.imported_geometry(body).is_some()
+            && self
+                .session
+                .document
+                .derived()
+                .imported_geometry(body)
+                .is_some()
         {
             let id = note.id;
             self.bench.note_fired = true;
@@ -585,7 +600,12 @@ impl PrintCadApp {
         if !self.bench.task_fired
             && let Some(which) = &hooks.task
             && let Some(body) = self.session.document.bodies().first().map(|b| b.id)
-            && self.session.document.imported_geometry(body).is_some()
+            && self
+                .session
+                .document
+                .derived()
+                .imported_geometry(body)
+                .is_some()
             && let Some(gfx) = self.gfx.as_mut()
         {
             self.bench.task_fired = true;
@@ -623,6 +643,7 @@ impl PrintCadApp {
             let broken: Vec<_> = self
                 .session
                 .document
+                .derived()
                 .imported_geometries()
                 .filter(|(_, g)| g.health.as_ref().is_some_and(|h| h.is_broken()))
                 .map(|(body, _)| *body)
@@ -676,12 +697,13 @@ impl PrintCadApp {
         // logged once the rebuild has had its turn.
         if let Some((fx, fy)) = hooks.click
             && self.bench.click_frames <= BENCH_REPORT_FRAME
-            && self
-                .session
-                .document
-                .bodies()
-                .first()
-                .is_some_and(|b| self.session.document.imported_geometry(b.id).is_some())
+            && self.session.document.bodies().first().is_some_and(|b| {
+                self.session
+                    .document
+                    .derived()
+                    .imported_geometry(b.id)
+                    .is_some()
+            })
         {
             self.bench.click_frames += 1;
             self.redraw_needed = true;
@@ -754,12 +776,13 @@ impl PrintCadApp {
         // name left whole.
         if !self.bench.section_fired
             && let Some(spec) = &hooks.section
-            && self
-                .session
-                .document
-                .bodies()
-                .first()
-                .is_some_and(|b| self.session.document.imported_geometry(b.id).is_some())
+            && self.session.document.bodies().first().is_some_and(|b| {
+                self.session
+                    .document
+                    .derived()
+                    .imported_geometry(b.id)
+                    .is_some()
+            })
             && (hooks.click.is_none() || self.bench.click_frames > BENCH_CLICK_FRAME)
         {
             self.bench.section_fired = true;

@@ -25,7 +25,7 @@ pub struct Replaced {
 
 /// The new body's faces as anchors could take them, in its own frame.
 fn anchors_of(document: &Document, body: BodyId) -> Vec<Anchor> {
-    let Some((mesh, _)) = document.local_geometry(body) else {
+    let Some((mesh, _)) = document.derived().local_geometry(body) else {
         return Vec::new();
     };
     mesh.face_surfaces

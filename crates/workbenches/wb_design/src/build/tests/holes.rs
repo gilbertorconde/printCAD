@@ -292,7 +292,7 @@ fn a_cosmetic_thread_through_all_stops_where_the_hole_leaves_the_solid() {
         }
     };
     for bored in [true, false] {
-        doc.set_imported_geometry(body, plate(bored));
+        doc.derived_mut().set_imported_geometry(body, plate(bored));
         for thread_depth in [0.0, 30.0] {
             let lines = cosmetic_thread_lines(&doc, Some(body), &hole(thread_depth));
             assert!(!lines.positions.is_empty());

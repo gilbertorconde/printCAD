@@ -1583,7 +1583,8 @@ mod tests {
             face_names: vec![11, 12],
             ..Default::default()
         };
-        doc.set_imported_geometry(body, crate::test_support::geometry(mesh));
+        doc.derived_mut()
+            .set_imported_geometry(body, crate::test_support::geometry(mesh));
         let run = |doc: &mut core_document::Document, id: &str, args: Value| {
             run(doc, &registry, id, args)
         };

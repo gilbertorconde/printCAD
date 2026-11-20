@@ -1,17 +1,24 @@
 //! A document's derived build state: what its builds found, kept per
-//! replica and never recorded as an op.
+//! replica and never recorded as an op: the bodies' meshes, shape
+//! snapshots and face colours, each feature's errors and warnings, the
+//! answers to its probes and projections, size limits, mesh build
+//! results, cosmetic threads and feature solids.
 //!
 //! [`Derived`] holds it and answers the reads (`Document::derived`);
 //! [`DerivedMut`] writes it (`Document::derived_mut`). Neither is a way
 //! to edit the document: a user edit goes through a `Document` mutator,
 //! which records exactly one op, and nothing reached through
 //! `derived_mut` records one (debug builds assert it). The replicated
-//! projection leaves all of it out, and `Document::clone` keeps it.
+//! projection leaves all of it out, and `Document::clone` keeps it (a
+//! save snapshot is a clone). Only the bodies' meshes are saved, under
+//! the document's `imported_meshes` key, beside the snapshots and colours
+//! the container keeps as entries of their own.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::feature::{BodyId, FeatureId};
-use crate::{Document, ImportedGeometry, rebuild, threads};
+use crate::{Document, ImportedGeometry, LocalGeometry, rebuild, threads};
 
 /// What the last build said of one feature. Derived on each replica.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -38,6 +45,18 @@ static NO_REFUSAL: kernel_api::EdgeRefusal = kernel_api::EdgeRefusal {
 /// A document's derived build state. See the module notes.
 #[derive(Debug, Clone, Default)]
 pub struct Derived {
+    /// Each body's mesh as the scene draws and picks it: placed where the
+    /// body sits. Saved with the document (`saved_meshes`).
+    pub(crate) imported_meshes: HashMap<BodyId, ImportedGeometry>,
+    /// The meshes of placed bodies in their own frame, beside the placed
+    /// copies in `imported_meshes`, with their bounds: rebuilt from the
+    /// placed copy on load.
+    pub(crate) local_meshes: HashMap<BodyId, LocalGeometry>,
+    /// Bodies' shape snapshots (ogeom native text), saved as
+    /// `brep/<body>.bin` beside the JSON rather than in it.
+    pub(crate) imported_brep_blobs: HashMap<BodyId, Arc<Vec<u8>>>,
+    /// Per-face RGB snapshot parallel to `imported_brep_blobs` face order.
+    pub(crate) imported_brep_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
     /// Each feature's errors and warnings from its last build.
     pub(crate) status: HashMap<FeatureId, BuildStatus>,
     /// What each feature was last built against from outside its own
@@ -76,6 +95,47 @@ pub struct Derived {
 }
 
 impl Derived {
+    /// A body's mesh as the scene draws and picks it, placed where the
+    /// body sits.
+    pub fn imported_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
+        self.imported_meshes.get(&body)
+    }
+
+    /// Every body's mesh, placed.
+    pub fn imported_geometries(&self) -> impl Iterator<Item = (&BodyId, &ImportedGeometry)> {
+        self.imported_meshes.iter()
+    }
+
+    /// A body's geometry as its kernel shape has it, in the body's own
+    /// frame: the mesh and its bounds before the body's placement. The
+    /// scene's copy (`imported_geometry`) is placed.
+    pub fn local_geometry(&self, body: BodyId) -> Option<LocalGeometry> {
+        if let Some(local) = self.local_meshes.get(&body) {
+            return Some(local.clone());
+        }
+        self.imported_meshes
+            .get(&body)
+            .map(|g| (Arc::clone(&g.mesh), g.bounds_mm))
+    }
+
+    /// A body's shape snapshot.
+    pub fn imported_brep_blob(&self, body: BodyId) -> Option<&[u8]> {
+        self.imported_brep_blobs.get(&body).map(|v| v.as_slice())
+    }
+
+    /// Shared handle to a body's shape snapshot; cloning is a refcount
+    /// bump, so this is the cheap way to hand the blob to a worker thread.
+    pub fn imported_brep_blob_arc(&self, body: BodyId) -> Option<Arc<Vec<u8>>> {
+        self.imported_brep_blobs.get(&body).cloned()
+    }
+
+    /// The colour of each face of a body's shape snapshot, in its order.
+    pub fn imported_brep_face_colors(&self, body: BodyId) -> Option<&[[f32; 3]]> {
+        self.imported_brep_face_colors
+            .get(&body)
+            .map(|v| v.as_slice())
+    }
+
     /// What the last build said of `feature`, when it said anything.
     pub fn status(&self, feature: FeatureId) -> Option<&BuildStatus> {
         self.status.get(&feature)
@@ -349,6 +409,67 @@ impl<'a> DerivedMut<'a> {
         }
     }
 
+    /// Store a body's geometry, given in the body's own frame; the scene's
+    /// copy is placed where the body sits, and the body's linked copies
+    /// take it. The geometry's `revision` is overwritten with the next one
+    /// the document hands out, so a renderer tells a replaced mesh from
+    /// last frame's with a cheap comparison. Marks the document edited
+    /// (a build's caller puts back its clean state).
+    pub fn set_imported_geometry(&mut self, body: BodyId, geometry: ImportedGeometry) {
+        self.doc.set_imported_geometry(body, geometry);
+    }
+
+    /// Drop a body's built or imported geometry (mesh, shape snapshot,
+    /// face colours): its history builds no solid.
+    pub fn remove_imported_geometry(&mut self, body: BodyId) {
+        self.doc.remove_imported_geometry(body);
+    }
+
+    /// Store a body's shape snapshot and face colours (in memory until
+    /// save). An empty snapshot is no shape, as a mesh body has none: it
+    /// clears the body's snapshot rather than storing one that describes
+    /// nothing.
+    pub fn set_imported_brep_data(
+        &mut self,
+        body: BodyId,
+        brep_blob: Vec<u8>,
+        face_colors: Vec<[f32; 3]>,
+    ) {
+        self.doc
+            .set_imported_brep_data(body, brep_blob, face_colors);
+    }
+
+    /// Replace the body's base solid with what a repair (or another
+    /// derivation of the same op) made of it, in the body's own frame.
+    pub fn set_base_solid(
+        &mut self,
+        body: BodyId,
+        geometry: ImportedGeometry,
+        brep_blob: Vec<u8>,
+        face_colors: Vec<[f32; 3]>,
+    ) {
+        self.doc
+            .set_base_solid(body, geometry, brep_blob, face_colors);
+    }
+
+    /// Give a linked part its shape as read from its file: the mesh in its
+    /// own frame, the snapshot and its face colours. Not an edit.
+    pub fn set_linked_geometry(
+        &mut self,
+        body: BodyId,
+        geometry: ImportedGeometry,
+        blob: Option<Arc<Vec<u8>>>,
+        colors: Option<Vec<[f32; 3]>>,
+    ) {
+        self.doc.set_linked_geometry(body, geometry, blob, colors);
+    }
+
+    /// A mirrored copy's snapshot, as the kernel made it from `from` (the
+    /// source's snapshot then): kept when the source still has that one.
+    pub fn set_mirrored_shape(&mut self, copy: BodyId, from: &Arc<Vec<u8>>, blob: Vec<u8>) -> bool {
+        self.doc.set_mirrored_shape(copy, from, blob)
+    }
+
     /// Land a mesh history's derived shape, measurements and feature errors.
     pub fn store_mesh_build(
         &mut self,
@@ -414,5 +535,27 @@ impl std::ops::DerefMut for DerivedMut<'_> {
 impl Drop for DerivedMut<'_> {
     fn drop(&mut self) {
         self.doc.deriving = false;
+    }
+}
+
+/// Writes [`Derived`] as the bodies' meshes alone, under the document's
+/// `imported_meshes` key, and reads it back from them: what a reload
+/// needs without tessellating again. The rest is derived again.
+pub(crate) mod saved_meshes {
+    use std::collections::HashMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::Derived;
+
+    pub fn serialize<S: Serializer>(derived: &Derived, serializer: S) -> Result<S::Ok, S::Error> {
+        derived.imported_meshes.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Derived, D::Error> {
+        Ok(Derived {
+            imported_meshes: HashMap::deserialize(deserializer)?,
+            ..Derived::default()
+        })
     }
 }

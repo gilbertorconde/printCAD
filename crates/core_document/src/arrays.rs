@@ -381,6 +381,7 @@ impl Document {
     pub fn spacing_clear_of(&self, body: BodyId, direction: [f32; 3]) -> f32 {
         let d = Vec3::from_array(direction).normalize_or_zero().abs();
         let extent = self
+            .derived()
             .imported_geometry(body)
             .and_then(|g| g.bounds())
             .map_or(0.0, |(lo, hi)| {

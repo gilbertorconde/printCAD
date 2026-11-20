@@ -372,6 +372,7 @@ pub(crate) fn document_command(
             let body = a.body(document, "body")?;
             let index = a.number("face")? as i64;
             let mesh = document
+                .derived()
                 .imported_geometry(body)
                 .map(|g| std::sync::Arc::clone(&g.mesh))
                 .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
@@ -396,6 +397,7 @@ pub(crate) fn document_command(
                 .ok_or_else(|| CommandError::failed("that body cannot be copied"))?;
             // Beside the original, clear of it along X.
             let width = document
+                .derived()
                 .imported_geometry(body)
                 .and_then(|g| g.bounds())
                 .map_or(10.0, |(lo, hi)| hi[0] - lo[0]);
@@ -619,9 +621,13 @@ pub(crate) fn document_command(
                 Some(_) => return Err(CommandError::bad("frame", "must be world or body")),
             };
             let mesh = if in_body {
-                document.local_geometry(body).map(|(mesh, _)| mesh)
+                document
+                    .derived()
+                    .local_geometry(body)
+                    .map(|(mesh, _)| mesh)
             } else {
                 document
+                    .derived()
                     .imported_geometry(body)
                     .map(|g| std::sync::Arc::clone(&g.mesh))
             }
@@ -635,12 +641,16 @@ pub(crate) fn document_command(
         "doc.measure" => {
             let body = a.body(document, "body")?;
             let (min, max) = document
+                .derived()
                 .imported_geometry(body)
                 .and_then(|g| g.bounds())
                 .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
-            let blob = document.imported_brep_blob_arc(body).ok_or_else(|| {
-                CommandError::failed("the body is a mesh; it has no solid to measure")
-            })?;
+            let blob = document
+                .derived()
+                .imported_brep_blob_arc(body)
+                .ok_or_else(|| {
+                    CommandError::failed("the body is a mesh; it has no solid to measure")
+                })?;
             let props = kernel_ogeom::OgeomKernel::new()
                 .physical_properties(&blob)
                 .map_err(|e| CommandError::failed(e.to_string()))?;
@@ -1181,6 +1191,7 @@ fn print_rest_arg(
                 .and_then(|i| u32::try_from(i).ok())
                 .ok_or_else(|| CommandError::bad("print_on", SAYS))?;
             let (mesh, _) = document
+                .derived()
                 .local_geometry(body)
                 .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
             if !mesh.faces.contains(&index) {
@@ -1254,6 +1265,7 @@ fn textures_arg(
         .and_then(Value::as_array)
         .ok_or_else(|| CommandError::bad("textures", "must be a list"))?;
     let mesh = document
+        .derived()
         .imported_geometry(body)
         .map(|g| std::sync::Arc::clone(&g.mesh));
     list.iter()

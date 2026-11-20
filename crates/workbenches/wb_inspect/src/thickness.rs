@@ -59,6 +59,7 @@ pub struct Inputs {
 /// What `t` is read from in `document` now.
 pub fn inputs(document: &Document, t: &WallThickness) -> Result<Inputs, String> {
     let (mesh, _) = document
+        .derived()
         .local_geometry(t.body)
         .ok_or("the body has no geometry")?;
     if mesh.normals.len() != mesh.positions.len() {
@@ -68,6 +69,7 @@ pub fn inputs(document: &Document, t: &WallThickness) -> Result<Inputs, String> 
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         document
+            .derived()
             .imported_geometry(t.body)
             .map(|g| g.revision)
             .hash(&mut h);
@@ -75,7 +77,7 @@ pub fn inputs(document: &Document, t: &WallThickness) -> Result<Inputs, String> 
         h.finish()
     };
     Ok(Inputs {
-        shape: document.imported_brep_blob_arc(t.body),
+        shape: document.derived().imported_brep_blob_arc(t.body),
         mesh,
         key,
     })

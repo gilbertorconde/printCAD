@@ -81,8 +81,9 @@ type Shape = (
 /// `body` of `source` as a linked part's shape: its own mesh, snapshot and
 /// face colours.
 fn shape_of(source: &Document, body: BodyId) -> Option<Shape> {
-    let (mesh, bounds) = source.local_geometry(body)?;
+    let (mesh, bounds) = source.derived().local_geometry(body)?;
     let health = source
+        .derived()
         .imported_geometry(body)
         .and_then(|g| g.health.clone());
     Some((
@@ -96,8 +97,9 @@ fn shape_of(source: &Document, body: BodyId) -> Option<Shape> {
             face_colors_path: None,
             health,
         },
-        source.imported_brep_blob_arc(body),
+        source.derived().imported_brep_blob_arc(body),
         source
+            .derived()
             .imported_brep_face_colors(body)
             .map(<[[f32; 3]]>::to_vec),
     ))
@@ -211,6 +213,7 @@ impl PrintCadApp {
                 self.session.document.set_body_placement(id, body.placement);
                 self.session
                     .document
+                    .derived_mut()
                     .set_linked_geometry(id, geometry, blob, colors);
                 count += 1;
             }
@@ -235,6 +238,7 @@ impl PrintCadApp {
                 Some((geometry, blob, colors)) => {
                     self.session
                         .document
+                        .derived_mut()
                         .set_linked_geometry(body, geometry, blob, colors);
                 }
                 None => {

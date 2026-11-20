@@ -271,7 +271,7 @@ pub fn candidate(
         }
         "inertia" => {
             ctx.kernel?;
-            ctx.document.imported_brep_blob(body)?;
+            ctx.document.derived().imported_brep_blob(body)?;
             DatumAttachment::Inertia {
                 centre: [0.0; 3],
                 axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -390,7 +390,7 @@ pub fn settle(
     if !probes.is_empty() {
         let solid = ctx
             .kernel
-            .zip(ctx.document.imported_brep_blob(body))
+            .zip(ctx.document.derived().imported_brep_blob(body))
             .filter(|_| !ctx.document.is_mesh_body(body));
         match solid {
             Some((kernel, blob)) => {

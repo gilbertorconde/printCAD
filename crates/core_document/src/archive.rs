@@ -62,11 +62,13 @@ impl Document {
             .map(|bytes| bytes.len() as u64)
             .sum();
         let breps: u64 = self
+            .derived
             .imported_brep_blobs
             .values()
             .map(|bytes| bytes.len() as u64)
             .sum();
         let colors: u64 = self
+            .derived
             .imported_brep_face_colors
             .values()
             .map(|colors| colors.len() as u64 * 4)
@@ -322,6 +324,7 @@ impl Document {
         // Meshes kept as entries of their own; a document saved before
         // carries them in its JSON.
         for geom in doc
+            .derived
             .imported_meshes
             .values_mut()
             .chain(doc.base_solids.values_mut())
@@ -353,12 +356,13 @@ impl Document {
         // unreadable, so it is dropped with a clear log line rather than
         // failing later with a parse error (the body's mesh still loads;
         // re-importing the source restores the solid).
-        for (body_id, geom) in &doc.imported_meshes {
+        for (body_id, geom) in &doc.derived.imported_meshes {
             if let Some(ref brep_path) = geom.brep_blob_path
                 && let Some(bytes) = blobs_by_path.remove(brep_path)
             {
                 if bytes.starts_with(b"ogeom") {
-                    doc.imported_brep_blobs
+                    doc.derived
+                        .imported_brep_blobs
                         .insert(*body_id, std::sync::Arc::new(bytes));
                 } else {
                     tracing::warn!(
@@ -372,7 +376,9 @@ impl Document {
                 && let Some(bytes) = blobs_by_path.remove(col_path)
                 && let Some(parsed) = decode_face_colors_blob(&bytes)
             {
-                doc.imported_brep_face_colors.insert(*body_id, parsed);
+                doc.derived
+                    .imported_brep_face_colors
+                    .insert(*body_id, parsed);
             }
         }
         for (body_id, geom) in &doc.base_solids {
@@ -466,8 +472,8 @@ impl Document {
             report(packed);
         }
 
-        for (body_id, geom) in &doc.imported_meshes {
-            if !doc.imported_brep_blobs.contains_key(body_id) {
+        for (body_id, geom) in &doc.derived.imported_meshes {
+            if !doc.derived.imported_brep_blobs.contains_key(body_id) {
                 continue;
             }
             let Some(brep_path) = geom.brep_blob_path.as_ref() else {
@@ -476,10 +482,10 @@ impl Document {
             let Some(colors_path) = geom.face_colors_path.as_ref() else {
                 continue;
             };
-            let Some(brep_bytes) = doc.imported_brep_blobs.get(body_id) else {
+            let Some(brep_bytes) = doc.derived.imported_brep_blobs.get(body_id) else {
                 continue;
             };
-            let Some(colors) = doc.imported_brep_face_colors.get(body_id) else {
+            let Some(colors) = doc.derived.imported_brep_face_colors.get(body_id) else {
                 continue;
             };
             let colors_bytes = encode_face_colors_blob(colors);
@@ -502,6 +508,7 @@ impl Document {
         }
         // Meshes, each an entry of its own.
         for geom in doc
+            .derived
             .imported_meshes
             .values()
             .chain(doc.base_solids.values())
@@ -561,7 +568,7 @@ impl Document {
             .filter(|b| b.copy_of.is_some() || b.link.is_some())
             .map(|b| b.id)
             .collect();
-        for (body_id, geom) in doc.imported_meshes.iter_mut() {
+        for (body_id, geom) in doc.derived.imported_meshes.iter_mut() {
             // A linked copy's shape is its source's, and a linked part's its
             // file's, derived again on load.
             if copies.contains(body_id) {
@@ -571,7 +578,7 @@ impl Document {
                 continue;
             }
             geom.mesh_path = Some(format!("mesh/{}.bin", body_id.0));
-            if doc.imported_brep_blobs.contains_key(body_id) {
+            if doc.derived.imported_brep_blobs.contains_key(body_id) {
                 geom.brep_blob_path = Some(format!("brep/{}.bin", body_id.0));
                 geom.face_colors_path = Some(format!("brep/{}.colors", body_id.0));
             }

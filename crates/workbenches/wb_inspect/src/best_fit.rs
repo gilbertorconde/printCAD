@@ -34,11 +34,11 @@ pub(crate) struct FitKey {
 
 impl FitKey {
     pub fn of(document: &Document, scan: BodyId, reference: BodyId) -> Self {
-        let mesh = |b| document.local_geometry(b).map(|(mesh, _)| mesh);
+        let mesh = |b| document.derived().local_geometry(b).map(|(mesh, _)| mesh);
         Self {
             scan: mesh(scan),
             reference: mesh(reference),
-            reference_shape: document.imported_brep_blob_arc(reference),
+            reference_shape: document.derived().imported_brep_blob_arc(reference),
             scan_at: document.body_placement(scan),
             reference_at: document.body_placement(reference),
         }

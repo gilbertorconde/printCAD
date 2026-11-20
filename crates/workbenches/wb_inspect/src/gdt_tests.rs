@@ -42,7 +42,7 @@ fn scanned_hole_position_bonus_and_offset_runout_reach_the_report() {
         regions.push(("plane", start..start + 4));
     }
     let count = mesh.positions.len();
-    document.set_imported_geometry(
+    document.derived_mut().set_imported_geometry(
         scan,
         ImportedGeometry {
             mesh: Arc::new(mesh),
@@ -59,7 +59,12 @@ fn scanned_hole_position_bonus_and_offset_runout_reach_the_report() {
     let mut ctx = core_document::testing::ctx(&mut document);
     ctx.kernel = Some(&kernel_ogeom::QUERIES);
     let mut ids = Vec::new();
-    let revision = ctx.document.imported_geometry(scan).unwrap().revision;
+    let revision = ctx
+        .document
+        .derived()
+        .imported_geometry(scan)
+        .unwrap()
+        .revision;
     for (kind, region) in regions {
         ctx.marking = Some(MarkedSurface {
             body: scan,

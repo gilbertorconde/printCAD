@@ -1250,7 +1250,7 @@ fn feature_tooltip(
 /// A scan row's tip: what it is and how dense, from its mesh.
 fn scan_tip(document: &Document, body: BodyId) -> String {
     let mut tip = "A scan: the measured part inspection and mesh editing work on".to_string();
-    if let Some(mesh) = document.imported_geometry(body).map(|g| &g.mesh) {
+    if let Some(mesh) = document.derived().imported_geometry(body).map(|g| &g.mesh) {
         let facts = crate::app::scans::mesh_facts(mesh);
         tip.push_str(&format!(
             "\n{} triangles, {} points, {:.3} mm between points (median)",
@@ -1736,7 +1736,8 @@ mod tests {
                 broken: broken_count,
                 ..Default::default()
             };
-            doc.set_imported_geometry(body, imported(asset, Some(health)));
+            doc.derived_mut()
+                .set_imported_geometry(body, imported(asset, Some(health)));
         }
         let root = Uuid::new_v4();
         let (broken_leaf, sound_leaf) = (Uuid::new_v4(), Uuid::new_v4());
@@ -1805,7 +1806,8 @@ mod tests {
             ),
             b"solid".to_vec(),
         );
-        doc.set_imported_geometry(mesh, imported(asset, None));
+        doc.derived_mut()
+            .set_imported_geometry(mesh, imported(asset, None));
         let row = |doc: &Document| {
             let tree = self::tree(doc);
             let node = body_row(&tree, mesh);
@@ -1829,12 +1831,14 @@ mod tests {
 
         // The solid lands with its curved areas as facets: the row says so
         // and offers the refine, once.
-        doc.set_imported_brep_data(mesh, b"ogeom".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(mesh, b"ogeom".to_vec(), Vec::new());
         let health = kernel_api::ShapeHealth {
             faceted: true,
             ..Default::default()
         };
-        doc.set_imported_geometry(mesh, imported(asset, Some(health)));
+        doc.derived_mut()
+            .set_imported_geometry(mesh, imported(asset, Some(health)));
         let faceted = |doc: &Document| {
             let tree = self::tree(doc);
             let node = body_row(&tree, mesh);

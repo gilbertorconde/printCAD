@@ -225,7 +225,7 @@ impl PrintCadApp {
     /// Whether `body`'s own shape hides the world point `at` of `note`
     /// from the view.
     pub(crate) fn hidden_by_part(&self, note: NoteId, body: BodyId, at: [f32; 3]) -> bool {
-        let Some(geometry) = self.session.document.imported_geometry(body) else {
+        let Some(geometry) = self.session.document.derived().imported_geometry(body) else {
             return false;
         };
         self.session.drawn.note_occlusions.hidden(
@@ -351,7 +351,11 @@ pub(crate) fn note_json(document: &Document, body: BodyId, note: &Note) -> Value
         "done": note.resolved,
         "from_file": note.from_file,
     });
-    let Some(geometry) = document.imported_geometry(body).filter(|_| !placed.lost) else {
+    let Some(geometry) = document
+        .derived()
+        .imported_geometry(body)
+        .filter(|_| !placed.lost)
+    else {
         return out;
     };
     let mesh = &geometry.mesh;

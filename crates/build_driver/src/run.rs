@@ -242,7 +242,7 @@ fn mirror_copies(document: &mut Document, notes: &mut Vec<String>) {
             plane.normal.map(f64::from),
         ) {
             Ok(blob) => {
-                document.set_mirrored_shape(body, &from, blob);
+                document.derived_mut().set_mirrored_shape(body, &from, blob);
             }
             Err(error) => {
                 let name = document

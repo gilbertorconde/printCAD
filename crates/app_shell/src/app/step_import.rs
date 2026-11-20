@@ -297,9 +297,11 @@ impl PrintCadApp {
                     match result {
                         // A source that changed meanwhile asks again.
                         Ok(blob) => {
-                            self.session
-                                .document
-                                .set_mirrored_shape(BodyId(body_id), &from, blob);
+                            self.session.document.derived_mut().set_mirrored_shape(
+                                BodyId(body_id),
+                                &from,
+                                blob,
+                            );
                         }
                         Err(error) => {
                             self.session.jobs.mirrors_failed.insert(body_id, from);
@@ -410,12 +412,12 @@ impl PrintCadApp {
         }
         let count = bodies.len();
         for (body, body_id) in bodies.into_iter().zip(&route.body_ids) {
-            self.session.document.set_imported_brep_data(
+            self.session.document.derived_mut().set_imported_brep_data(
                 *body_id,
                 body.brep_blob,
                 body.face_colors.clone(),
             );
-            self.session.document.set_imported_geometry(
+            self.session.document.derived_mut().set_imported_geometry(
                 *body_id,
                 ImportedGeometry {
                     mesh: Arc::new(body.mesh),
@@ -614,7 +616,7 @@ pub(crate) fn land_import(
     // auto-unit pick below is not confused by the bodies the import adds.
     let was_fresh_document = document.bodies().is_empty()
         && !document.assets().any(|_| true)
-        && document.imported_geometries().next().is_none();
+        && document.derived().imported_geometries().next().is_none();
 
     let ImportedModel {
         bodies: imported_bodies,
@@ -846,8 +848,12 @@ pub(crate) fn land_import(
         .iter()
         .any(|b| !b.brep_blob.is_empty() && b.mesh.positions.is_empty());
     for (body, body_id) in imported_bodies.into_iter().zip(&body_ids_by_import_index) {
-        document.set_imported_brep_data(*body_id, body.brep_blob, body.face_colors.clone());
-        document.set_imported_geometry(
+        document.derived_mut().set_imported_brep_data(
+            *body_id,
+            body.brep_blob,
+            body.face_colors.clone(),
+        );
+        document.derived_mut().set_imported_geometry(
             *body_id,
             ImportedGeometry {
                 mesh: Arc::new(body.mesh),

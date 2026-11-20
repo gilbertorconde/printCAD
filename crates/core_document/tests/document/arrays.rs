@@ -22,8 +22,10 @@ fn row(spacing: f32) -> ArrayPattern {
 /// A body with a shape and a snapshot.
 fn part(doc: &mut Document) -> BodyId {
     let body = doc.create_body(Some("Peg".into()));
-    doc.set_imported_geometry(body, geometry(triangle()));
-    doc.set_imported_brep_data(body, b"ogeom peg".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_geometry(body, geometry(triangle()));
+    doc.derived_mut()
+        .set_imported_brep_data(body, b"ogeom peg".to_vec(), Vec::new());
     body
 }
 
@@ -33,7 +35,13 @@ fn corners(doc: &Document, array: core_document::ArrayId) -> Vec<[f32; 3]> {
         .unwrap()
         .instances
         .iter()
-        .map(|i| doc.imported_geometry(i.body).unwrap().mesh.positions[0])
+        .map(|i| {
+            doc.derived()
+                .imported_geometry(i.body)
+                .unwrap()
+                .mesh
+                .positions[0]
+        })
         .collect()
 }
 
@@ -51,7 +59,7 @@ fn a_row_places_its_copies_along_the_direction_and_follows_the_source() {
     for i in &a.instances {
         assert_eq!(doc.copy_source(i.body), Some(source));
         assert_eq!(
-            doc.imported_brep_blob(i.body),
+            doc.derived().imported_brep_blob(i.body),
             Some(&b"ogeom peg"[..]),
             "one shape, which the parts list counts as one part"
         );
@@ -137,7 +145,7 @@ fn a_new_count_is_one_op_and_one_undo_step() {
             .unwrap()
             .instances
             .iter()
-            .all(|i| doc.imported_geometry(i.body).is_some()),
+            .all(|i| doc.derived().imported_geometry(i.body).is_some()),
         "each copy made again takes the source's shape"
     );
 }
@@ -278,7 +286,12 @@ fn a_path_array_places_copies_at_its_stations_turned_when_aligned_and_replays() 
     assert!(close(corners(&live, array)[1], [-10.0, 0.0, 0.0]));
     let mesh = |doc: &Document, i: usize| {
         let body = doc.copy_array(array).unwrap().instances[i].body;
-        doc.imported_geometry(body).unwrap().mesh.positions.clone()
+        doc.derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions
+            .clone()
     };
     assert!(
         close(mesh(&live, 0)[1], [1.0, 10.0, 0.0]),
@@ -321,7 +334,13 @@ fn a_component_array_copies_every_body_together_and_skips_whole_occurrences() {
     let second = live.copy_array(array).unwrap().instances[1].clone();
     assert_eq!(second.members.len(), 1);
     let cap_copy = second.members[0].body;
-    let drawn = |doc: &Document, body| doc.imported_geometry(body).unwrap().mesh.positions[0];
+    let drawn = |doc: &Document, body| {
+        doc.derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions[0]
+    };
     assert!(
         close(drawn(&live, cap_copy), [40.0, 0.0, 5.0]),
         "the cap's own offset kept"

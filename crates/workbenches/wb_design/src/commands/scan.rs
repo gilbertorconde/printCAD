@@ -30,6 +30,7 @@ pub(crate) fn scan_symmetry(
     }
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let kernel = ctx

@@ -223,6 +223,7 @@ impl PrintCadApp {
         let mut imported_meshes: Vec<BodySubmission> = self
             .session
             .document
+            .derived()
             .imported_geometries()
             .filter(|(body_id, _)| {
                 self.session
@@ -457,7 +458,7 @@ impl PrintCadApp {
                 .textured
                 .get(&body)
                 .is_some_and(|p| p.made.is_some());
-            if let Some(geometry) = self.session.document.imported_geometry(body)
+            if let Some(geometry) = self.session.document.derived().imported_geometry(body)
                 && !textured
             {
                 self.session
@@ -751,6 +752,7 @@ impl PrintCadApp {
             .and_then(|id| {
                 self.session
                     .document
+                    .derived()
                     .imported_geometry(core_document::BodyId(id))
             })
         {
@@ -784,7 +786,7 @@ impl PrintCadApp {
             if self.session.builds.previews.contains_key(&id) {
                 continue;
             }
-            let Some(geometry) = self.session.document.imported_geometry(id) else {
+            let Some(geometry) = self.session.document.derived().imported_geometry(id) else {
                 continue;
             };
             let (hi, lo) = body.as_u64_pair();
@@ -814,7 +816,7 @@ impl PrintCadApp {
         if let Some(body) = self.tree_hovered_body()
             && self.session.selection.body != Some(body.0)
             && !self.session.builds.previews.contains_key(&body)
-            && let Some(geometry) = self.session.document.imported_geometry(body)
+            && let Some(geometry) = self.session.document.derived().imported_geometry(body)
         {
             let (hi, lo) = body.0.as_u64_pair();
             overlay_bodies.push((self.overlay_ids.tree_hover, body.0));

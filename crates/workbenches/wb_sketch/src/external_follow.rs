@@ -33,6 +33,7 @@ pub(super) fn project_source_in(
     let kernel = kernel.ok_or("no kernel to project with")?;
     let body = BodyId(source.body);
     let brep = document
+        .derived()
         .imported_brep_blob(body)
         .ok_or("that body has no solid shape")?;
     // The kernel works in the body's own frame: the plane goes there too,
@@ -95,7 +96,7 @@ fn outline_point_near(
     point: [f64; 3],
     takes: impl Fn([kernel_api::TopoName; 2]) -> bool,
 ) -> Option<([f64; 3], [kernel_api::TopoName; 2])> {
-    let (mesh, _) = document.local_geometry(body)?;
+    let (mesh, _) = document.derived().local_geometry(body)?;
     let at = glam::DVec3::from_array(point);
     let position = |i: u32| glam::Vec3::from_array(mesh.positions[i as usize]).as_dvec3();
     let mut best: Option<(f64, glam::DVec3, [kernel_api::TopoName; 2])> = None;
@@ -135,6 +136,7 @@ pub(super) fn projection_key(
     format!("{source:?} {plane:?}").hash(&mut hasher);
     let body = BodyId(source.body);
     document
+        .derived()
         .imported_geometry(body)
         .map(|g| g.revision)
         .hash(&mut hasher);
@@ -205,6 +207,7 @@ pub(super) fn external_stamp(document: &core_document::Document, id: FeatureId) 
     for body in bodies {
         let body = BodyId(body);
         document
+            .derived()
             .imported_geometry(body)
             .map(|g| g.revision)
             .hash(&mut hasher);

@@ -767,7 +767,7 @@ impl BenchBuild for AssemblyWorkbench {
             let Some(body) = body.filter(|_| name != 0) else {
                 continue;
             };
-            let Some((mesh, _)) = document.local_geometry(body) else {
+            let Some((mesh, _)) = document.derived().local_geometry(body) else {
                 continue;
             };
             let Some(surface) = mesh

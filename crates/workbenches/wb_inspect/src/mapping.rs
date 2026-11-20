@@ -16,7 +16,7 @@ pub(crate) fn compare_pair(ctx: &WorkbenchRuntimeContext) -> Option<(BodyId, Bod
         .bodies()
         .iter()
         .map(|b| b.id)
-        .filter(|b| document.imported_geometry(*b).is_some())
+        .filter(|b| document.derived().imported_geometry(*b).is_some())
         .collect();
     let is_scan = |b: BodyId| document.body_scan(b).is_some();
     let selected = ctx
@@ -97,7 +97,7 @@ pub(crate) fn longest_side(mesh: &kernel_api::TriMesh) -> f64 {
 pub(crate) fn thickness_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
     ctx.selected_body_id
         .map(BodyId)
-        .filter(|b| ctx.document.local_geometry(*b).is_some())
+        .filter(|b| ctx.document.derived().local_geometry(*b).is_some())
 }
 
 /// Keep a wall-thickness map of `t.body` and read it at once.
@@ -157,6 +157,7 @@ pub(crate) fn add_overhang(
     let (id, o, values) = maps::add(ctx, maps, o)?;
     let mesh = ctx
         .document
+        .derived()
         .imported_geometry(o.body)
         .map(|g| std::sync::Arc::clone(&g.mesh))
         .ok_or("the body has no geometry to read")?;
@@ -177,11 +178,12 @@ pub(crate) fn element_map_inputs(
     m: &element_map::ElementMap,
 ) -> Option<(std::sync::Arc<kernel_api::TriMesh>, Element, u64)> {
     let e = element_at(document, m.element)?;
-    let (mesh, _) = document.local_geometry(m.scan)?;
+    let (mesh, _) = document.derived().local_geometry(m.scan)?;
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         document
+            .derived()
             .imported_geometry(m.scan)
             .map(|g| g.revision)
             .hash(&mut h);

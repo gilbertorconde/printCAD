@@ -70,6 +70,7 @@ fn padded_tube(host: &mut Benches) -> core_document::BodyId {
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
     let built = chain(&ops);
     host.document
+        .derived_mut()
         .set_imported_brep_data(body, built.brep_blob, Vec::new());
     body
 }

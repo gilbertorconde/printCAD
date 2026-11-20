@@ -53,6 +53,7 @@ fn edge_inputs(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
             for other in others {
                 other.hash(&mut hasher);
                 document
+                    .derived()
                     .imported_geometry(other)
                     .map(|g| g.revision)
                     .hash(&mut hasher);
@@ -408,6 +409,7 @@ pub fn op_of(
         } => {
             let scan = scan.ok_or("name the scan to keep faces on")?;
             let (mesh, _) = document
+                .derived()
                 .local_geometry(scan)
                 .ok_or("the scan has no mesh")?;
             let to = into_frame(document, body, scan);
@@ -441,6 +443,7 @@ pub fn op_of(
         } => {
             let scan = scan.ok_or("name the scan to fit")?;
             let (mesh, _) = document
+                .derived()
                 .local_geometry(scan)
                 .ok_or("the scan has no mesh")?;
             let to = into_frame(document, body, scan);
@@ -664,6 +667,7 @@ pub fn sources(
                     );
                 }
                 let brep = document
+                    .derived()
                     .imported_brep_blob(*other)
                     .ok_or("the body its edge is on has no shape yet")?
                     .to_vec();

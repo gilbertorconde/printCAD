@@ -27,10 +27,11 @@ pub(crate) fn call(
     let body = body_id(text)?;
     let document = &*ctx.document;
     let brep = document
+        .derived()
         .imported_brep_blob(body)
         .ok_or_else(|| format!("body {text} has no solid shape"))?;
     let placement = document.body_placement(body);
-    let mesh = document.imported_geometry(body).map(|g| &*g.mesh);
+    let mesh = document.derived().imported_geometry(body).map(|g| &*g.mesh);
     let point = |p: [f64; 3]| placement.point(p.map(|v| v as f32));
     let direction = |d: [f64; 3]| placement.direction(d.map(|v| v as f32));
     let local = |p: [f32; 3]| placement.inverse().point(p).map(f64::from);

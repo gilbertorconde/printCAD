@@ -654,10 +654,13 @@ fn print_rests(
         .iter()
         .filter(|(body, index)| {
             layout.parts.iter().any(|(b, _)| b == body)
-                && document.local_geometry(*body).is_some_and(|(mesh, _)| {
-                    let key = core_document::FaceKey::of(&mesh, *index);
-                    doc_render::print_layout::face_normal(&mesh, key).is_some()
-                })
+                && document
+                    .derived()
+                    .local_geometry(*body)
+                    .is_some_and(|(mesh, _)| {
+                        let key = core_document::FaceKey::of(&mesh, *index);
+                        doc_render::print_layout::face_normal(&mesh, key).is_some()
+                    })
         })
         .copied()
         .collect();
@@ -1578,7 +1581,7 @@ fn frame_of(document: &Document, frame: Frame) -> Option<(glam::Quat, glam::Vec3
 /// Where `pivot` is for `body`, in the world.
 fn pivot_of(document: &Document, body: BodyId, pivot: Pivot) -> glam::Vec3 {
     let origin = document.body_placement(body).offset();
-    let mesh = document.imported_geometry(body).map(|g| &g.mesh);
+    let mesh = document.derived().imported_geometry(body).map(|g| &g.mesh);
     match pivot {
         Pivot::Origin => origin,
         Pivot::BoxCentre => mesh
@@ -2130,7 +2133,8 @@ mod tests {
         cube.faces = (0..6).flat_map(|f| [f, f]).collect();
         let cube = std::sync::Arc::new(cube);
         for body in [post, other] {
-            doc.set_imported_geometry(body, crate::test_support::geometry(cube.clone()));
+            doc.derived_mut()
+                .set_imported_geometry(body, crate::test_support::geometry(cube.clone()));
         }
         let layout = doc_render::print_layout::Layout {
             parts: vec![(post, "Post".into())],

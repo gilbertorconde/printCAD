@@ -438,6 +438,7 @@ fn a_body_is_one_history_its_patterns_repeat_chosen_features_and_a_frozen_solid_
     let volume = |name: &str| {
         let blob = project
             .document
+            .derived()
             .imported_brep_blob(body(name).body)
             .unwrap();
         let mut kernel = kernel_ogeom::OgeomKernel::new();

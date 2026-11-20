@@ -22,7 +22,7 @@ const PIECE_CORNER: kernel_api::PointMatch = kernel_api::PointMatch::Grid { per_
 /// where they share a corner. A body whose mesh is one piece has one
 /// solid; the kernel says exactly when the body is separated.
 pub(crate) fn drawn_pieces(document: &Document, body: BodyId) -> usize {
-    let Some((mesh, _)) = document.local_geometry(body) else {
+    let Some((mesh, _)) = document.derived().local_geometry(body) else {
         return 0;
     };
     let mut corner: std::collections::HashMap<[i64; 3], usize> = Default::default();
@@ -70,6 +70,7 @@ pub(crate) fn separate_body(
     let name = entry.name.clone();
     let blob = ctx
         .document
+        .derived()
         .imported_brep_blob(source)
         .ok_or("the body has no solid to separate yet; build it first")?;
     let kernel = ctx
@@ -147,7 +148,7 @@ mod tests {
                 indices,
                 ..Default::default()
             };
-            doc.set_imported_geometry(
+            doc.derived_mut().set_imported_geometry(
                 body,
                 core_document::ImportedGeometry {
                     mesh: std::sync::Arc::new(mesh),

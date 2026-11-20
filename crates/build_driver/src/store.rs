@@ -44,7 +44,7 @@ pub fn begin(document: &mut Document, job: RebuildJob) -> Begun {
             }
             if plan.ops.is_empty() {
                 if !document.body_solid_is_imported(body) {
-                    document.remove_imported_geometry(body);
+                    document.derived_mut().remove_imported_geometry(body);
                 }
                 (Next::Emptied, refused)
             } else {
@@ -95,8 +95,10 @@ pub fn store_answers(
 pub fn store_solid(document: &mut Document, body: BodyId, result: SolidBuildResult) {
     let edited = document.metadata().dirty();
     let bounds_mm = result.bounds_mm;
-    document.set_imported_brep_data(body, result.brep_blob, Vec::new());
-    document.set_imported_geometry(
+    document
+        .derived_mut()
+        .set_imported_brep_data(body, result.brep_blob, Vec::new());
+    document.derived_mut().set_imported_geometry(
         body,
         ImportedGeometry {
             mesh: std::sync::Arc::new(result.mesh),
@@ -132,7 +134,7 @@ pub fn record_failure(document: &mut Document, failure: &BuildFailure) {
 /// shape left from before would be stale. An imported solid stays.
 pub fn clear_unbuilt(document: &mut Document, body: BodyId) {
     if !document.body_solid_is_imported(body) {
-        document.remove_imported_geometry(body);
+        document.derived_mut().remove_imported_geometry(body);
     }
 }
 
@@ -195,17 +197,23 @@ pub fn land_shape(
         if document.stand_in_due(body) != Some(asset) {
             return Landed::Dropped;
         }
-        document.set_imported_geometry(body, geometry);
-        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+        document.derived_mut().set_imported_geometry(body, geometry);
+        document
+            .derived_mut()
+            .set_imported_brep_data(body, read.brep_blob, read.face_colors);
         return Landed::StandIn;
     }
     if document.has_base_solid(body) {
-        document.set_base_solid(body, geometry, read.brep_blob, read.face_colors);
+        document
+            .derived_mut()
+            .set_base_solid(body, geometry, read.brep_blob, read.face_colors);
         // Its features build again on the new base.
         registry.invalidate_body(document, body);
     } else {
-        document.set_imported_geometry(body, geometry);
-        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+        document.derived_mut().set_imported_geometry(body, geometry);
+        document
+            .derived_mut()
+            .set_imported_brep_data(body, read.brep_blob, read.face_colors);
     }
     Landed::Shape
 }

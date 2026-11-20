@@ -37,6 +37,7 @@ pub(crate) fn recognize_holes(
     }
     let blob = ctx
         .document
+        .derived()
         .imported_brep_blob(body)
         .ok_or("the body has no solid yet; build it first")?
         .to_vec();

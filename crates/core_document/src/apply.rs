@@ -481,10 +481,10 @@ impl Document {
                     entry.link = Some(link.clone());
                 }
                 // Read again from the file as it stands now.
-                self.imported_meshes.remove(id);
-                self.local_meshes.remove(id);
-                self.imported_brep_blobs.remove(id);
-                self.imported_brep_face_colors.remove(id);
+                self.derived.imported_meshes.remove(id);
+                self.derived.local_meshes.remove(id);
+                self.derived.imported_brep_blobs.remove(id);
+                self.derived.imported_brep_face_colors.remove(id);
                 self.link_stale.remove(id);
                 self.refresh_copies_of(*id);
             }
@@ -848,10 +848,11 @@ impl Document {
     }
 
     /// The state that must converge across replicas: the serialized document
-    /// minus per-replica derivations: dirty flags, recompute errors,
-    /// revision history, and the imported-geometry sidecars, whose meshes
-    /// are re-derived from asset bytes on each replica. Determinism tests
-    /// compare projections, not raw serializations.
+    /// minus per-replica derivations: dirty flags, revision history, and
+    /// the derived build state as a whole (written under
+    /// `imported_meshes`: the bodies' meshes, re-derived from asset bytes
+    /// and builds on each replica). Determinism tests compare projections,
+    /// not raw serializations.
     pub fn replicated_projection(&self) -> serde_json::Value {
         let mut value = serde_json::to_value(self).expect("document serializes");
         fn strip_key_recursively(value: &mut serde_json::Value, key: &str) {

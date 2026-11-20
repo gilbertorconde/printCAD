@@ -71,11 +71,14 @@ fn print_entries(
     use core_document::PrintRest;
     let rest = document.body_print_rest(body);
     let flat = face.filter(|index| {
-        document.local_geometry(body).is_some_and(|(mesh, _)| {
-            let key = core_document::FaceKey::of(&mesh, *index);
-            rest != Some(PrintRest::Face(key))
-                && doc_render::print_layout::face_normal(&mesh, key).is_some()
-        })
+        document
+            .derived()
+            .local_geometry(body)
+            .is_some_and(|(mesh, _)| {
+                let key = core_document::FaceKey::of(&mesh, *index);
+                rest != Some(PrintRest::Face(key))
+                    && doc_render::print_layout::face_normal(&mesh, key).is_some()
+            })
     });
     let mut picked = None;
     if let Some(index) = flat

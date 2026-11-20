@@ -261,7 +261,7 @@ pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part
     };
     let mut parts: Vec<(u64, Part)> = Vec::new();
     for body in document.bodies() {
-        let local = document.local_geometry(body.id);
+        let local = document.derived().local_geometry(body.id);
         let size_mm = local
             .as_ref()
             .and_then(|(mesh, bounds)| bounds.or_else(|| mesh.bounds()))
@@ -269,7 +269,7 @@ pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part
         // The same shape is the same snapshot, or failing one the same
         // triangles; a body with neither is a part of its own.
         let mut hasher = DefaultHasher::new();
-        match (document.imported_brep_blob(body.id), &local) {
+        match (document.derived().imported_brep_blob(body.id), &local) {
             (Some(blob), _) => blob.hash(&mut hasher),
             (None, Some((mesh, _))) if !mesh.positions.is_empty() => {
                 for p in &mesh.positions {
@@ -383,7 +383,7 @@ impl Volumes {
     pub fn fill(&self, document: &Document, parts: &mut [Part]) {
         for part in parts {
             part.volume_mm3 = part.bodies.first().and_then(|b| {
-                let revision = document.imported_geometry(*b)?.revision;
+                let revision = document.derived().imported_geometry(*b)?.revision;
                 self.known
                     .get(b)
                     .filter(|(r, _)| *r == revision)
@@ -403,7 +403,7 @@ impl Volumes {
             .iter()
             .filter_map(|part| {
                 let body = *part.bodies.first()?;
-                let geometry = document.imported_geometry(body)?;
+                let geometry = document.derived().imported_geometry(body)?;
                 if self
                     .known
                     .get(&body)
@@ -411,10 +411,11 @@ impl Volumes {
                 {
                     return None;
                 }
-                let source = match document.imported_brep_blob_arc(body) {
+                let source = match document.derived().imported_brep_blob_arc(body) {
                     Some(blob) => Source::Solid(blob),
                     None => Source::Known(
                         document
+                            .derived()
                             .local_geometry(body)
                             .map(|(mesh, _)| mesh_volume_mm3(&mesh))
                             .filter(|v| *v > 0.0),
@@ -646,7 +647,11 @@ mod tests {
             (lid, "lid"),
             (base, "base"),
         ] {
-            document.set_imported_brep_data(body, shape.as_bytes().to_vec(), Vec::new());
+            document.derived_mut().set_imported_brep_data(
+                body,
+                shape.as_bytes().to_vec(),
+                Vec::new(),
+            );
         }
         let top = document.create_component("Top".into(), None).unwrap();
         document.set_body_component(bolt, Some(top)).unwrap();
@@ -690,9 +695,15 @@ mod tests {
         let a = document.create_body(Some("Bolt".into()));
         let b = document.create_body(Some("Bolt 2".into()));
         let c = document.create_body(Some("Bracket, left".into()));
-        document.set_imported_brep_data(a, b"bolt".to_vec(), Vec::new());
-        document.set_imported_brep_data(b, b"bolt".to_vec(), Vec::new());
-        document.set_imported_brep_data(c, b"bracket".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(a, b"bolt".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(b, b"bolt".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(c, b"bracket".to_vec(), Vec::new());
         let parts = parts_list(&document, &[]);
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].name, "Bolt");
@@ -711,8 +722,12 @@ mod tests {
         let mut document = Document::new("t");
         let a = document.create_body(Some("Zeta".into()));
         let b = document.create_body(Some("Alpha".into()));
-        document.set_imported_brep_data(a, b"z".to_vec(), Vec::new());
-        document.set_imported_brep_data(b, b"a".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(a, b"z".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(b, b"a".to_vec(), Vec::new());
         let mut table = PartsTable {
             columns: vec!["Supplier".into()],
             ..PartsTable::default()
@@ -752,8 +767,12 @@ mod tests {
         let mut document = Document::new("t");
         let screw = document.create_body(Some("Screw".into()));
         let bracket = document.create_body(Some("Bracket".into()));
-        document.set_imported_brep_data(screw, b"screw".to_vec(), Vec::new());
-        document.set_imported_brep_data(bracket, b"bracket".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(screw, b"screw".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(bracket, b"bracket".to_vec(), Vec::new());
         let screw_kind = WorkbenchId::from("acme.hardware.screw");
         document.add_feature_of_kind(
             screw_kind.clone(),
@@ -814,8 +833,12 @@ mod tests {
     fn an_array_counts_its_occurrences_as_one_part() {
         let mut document = Document::new("t");
         let peg = document.create_body(Some("Peg".into()));
-        document.set_imported_geometry(peg, imported(cube(5.0), None));
-        document.set_imported_brep_data(peg, b"peg".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_geometry(peg, imported(cube(5.0), None));
+        document
+            .derived_mut()
+            .set_imported_brep_data(peg, b"peg".to_vec(), Vec::new());
         let row = core_document::ArrayPattern::Linear {
             direction: [1.0, 0.0, 0.0],
             spacing: 10.0,
@@ -850,7 +873,9 @@ mod tests {
         let a = document.create_body(Some("Cube".into()));
         let b = document.create_body(Some("Steel cube".into()));
         for (body, size) in [(a, 10.0), (b, 20.0)] {
-            document.set_imported_geometry(body, imported(cube(size), None));
+            document
+                .derived_mut()
+                .set_imported_geometry(body, imported(cube(size), None));
         }
         document.set_body_material(
             b,
@@ -895,7 +920,9 @@ mod tests {
     fn a_part_lists_its_threads_by_designation() {
         let mut document = Document::new("t");
         let plate = document.create_body(Some("Plate".into()));
-        document.set_imported_brep_data(plate, b"plate".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(plate, b"plate".to_vec(), Vec::new());
         let thread = |designation: &str| core_document::ThreadCallout {
             feature: FeatureId::new(),
             body: plate,

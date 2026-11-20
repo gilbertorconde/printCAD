@@ -189,7 +189,7 @@ impl Analysis {
         kernel: Option<&dyn KernelQueries>,
         palette: &SketchPalette,
     ) -> Option<(Arc<TriMesh>, u64)> {
-        let placed = document.imported_geometry(self.body)?;
+        let placed = document.derived().imported_geometry(self.body)?;
         let key = (
             placed.revision,
             Arc::as_ptr(&placed.mesh) as usize,
@@ -205,8 +205,8 @@ impl Analysis {
         let (mesh, range) = match self.display {
             Display::Zebra { stripes, axis } => (zebra(world, stripes, axis, palette), None),
             Display::Curvature { measure, limit } => {
-                let (local, _) = document.local_geometry(self.body)?;
-                let brep = document.imported_brep_blob(self.body)?;
+                let (local, _) = document.derived().local_geometry(self.body)?;
+                let brep = document.derived().imported_brep_blob(self.body)?;
                 let values = curvature_values(&local, brep, kernel?, measure)?;
                 let range = spread(&values);
                 let limit = if limit > 0.0 {

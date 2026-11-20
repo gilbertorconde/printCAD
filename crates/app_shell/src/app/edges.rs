@@ -122,7 +122,7 @@ impl PrintCadApp {
         };
         let document = &self.session.document;
         let mut best: Option<(SegmentHit, Uuid, &TriMesh)> = None;
-        for (body_id, geometry) in document.imported_geometries() {
+        for (body_id, geometry) in document.derived().imported_geometries() {
             if !document.imported_body_effective_visible(*body_id)
                 || !document.body_selectable(*body_id)
             {
@@ -189,7 +189,11 @@ impl PrintCadApp {
 
     /// A line body of the given edges of a body, for drawing over the scene.
     pub(crate) fn edge_outline_mesh(&self, body: Uuid, edges: &[u32]) -> Option<TriMesh> {
-        let geometry = self.session.document.imported_geometry(BodyId(body))?;
+        let geometry = self
+            .session
+            .document
+            .derived()
+            .imported_geometry(BodyId(body))?;
         let mesh = &geometry.mesh;
         let mut out = TriMesh::default();
         for (segment, pair) in mesh.edges.chunks(2).enumerate() {
@@ -222,7 +226,7 @@ impl PrintCadApp {
         else {
             return Vec::new();
         };
-        let Some(geometry) = self.session.document.imported_geometry(body) else {
+        let Some(geometry) = self.session.document.derived().imported_geometry(body) else {
             return Vec::new();
         };
         let points: Vec<[f32; 3]> = self
@@ -250,6 +254,7 @@ impl PrintCadApp {
         let geometry = self
             .session
             .document
+            .derived()
             .imported_geometry(core_document::BodyId(hit.body))?;
         let cursor = Vec2::new(cx, cy);
         let camera = &self.session.view.camera;
@@ -561,6 +566,7 @@ pub(crate) fn highlight_submission(
     let revision = app
         .session
         .document
+        .derived()
         .imported_geometry(BodyId(body))
         .map(|g| g.revision)?;
     let mesh = app.edge_outline_mesh(body, edges)?;

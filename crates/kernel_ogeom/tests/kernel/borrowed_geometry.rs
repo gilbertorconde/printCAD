@@ -321,7 +321,8 @@ fn a_borrowed_face_is_the_face_a_pad_in_another_body_stops_on() {
     for job in jobs {
         let plan = job.plan.unwrap();
         let result = chain(&plan.ops);
-        doc.set_imported_brep_data(job.body, result.brep_blob, Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(job.body, result.brep_blob, Vec::new());
     }
     assert_close(body_volume(&doc, b), 100.0 * 38.0, "follows A");
 

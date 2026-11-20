@@ -11,7 +11,7 @@ pub type LocalGeometry = (Arc<TriMesh>, Option<([f32; 3], [f32; 3])>);
 /// frames without forcing a triangle-data clone every frame, and a `revision`
 /// counter lets the GPU mesh cache cheaply detect when the geometry has been
 /// reassigned without inspecting triangle data. The counter is bumped by
-/// [`Document::set_imported_geometry`].
+/// [`DerivedMut::set_imported_geometry`](crate::DerivedMut::set_imported_geometry).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedGeometry {
     /// Triangulated representation ready for the viewport. An archive keeps
@@ -25,9 +25,10 @@ pub struct ImportedGeometry {
     /// Optional reference back to the source asset (e.g. STEP file).
     #[serde(default)]
     pub source_asset: Option<Uuid>,
-    /// Monotonic counter bumped every time [`Document::set_imported_geometry`]
-    /// replaces the mesh for this body. Renderers compare against their cached
-    /// revision to know when GPU buffers need to be re-uploaded.
+    /// Monotonic counter bumped every time
+    /// [`DerivedMut::set_imported_geometry`](crate::DerivedMut::set_imported_geometry)
+    /// replaces the mesh for this body. Renderers compare against their
+    /// cached revision to know when GPU buffers need to be re-uploaded.
     #[serde(default)]
     pub revision: u64,
     /// Axis-aligned bounds in millimetres (e.g. from raw BRep before tessellation).
@@ -172,8 +173,9 @@ impl Document {
     /// with the next revision the document hands out, so renderers can
     /// distinguish "this is the same mesh as last frame" from "this body's
     /// mesh has been replaced" with a cheap u64 comparison.
-    pub fn set_imported_geometry(&mut self, body: BodyId, mut geometry: ImportedGeometry) {
+    pub(crate) fn set_imported_geometry(&mut self, body: BodyId, mut geometry: ImportedGeometry) {
         let next_revision = self
+            .derived
             .imported_meshes
             .get(&body)
             .map(|prev| prev.revision.saturating_add(1))
@@ -181,8 +183,8 @@ impl Document {
             .max(self.derived.next_geometry_revision);
         self.derived.next_geometry_revision = next_revision.saturating_add(1);
         geometry.revision = next_revision;
-        self.local_meshes.remove(&body);
-        self.imported_meshes.insert(body, geometry);
+        self.derived.local_meshes.remove(&body);
+        self.derived.imported_meshes.insert(body, geometry);
         if !self.body_placement(body).is_identity() {
             self.place_geometry(body);
         }
@@ -192,11 +194,11 @@ impl Document {
 
     /// Drop a body's computed/imported geometry (mesh, BRep snapshot,
     /// face colours). Used when a body's history builds no solid.
-    pub fn remove_imported_geometry(&mut self, body: BodyId) {
-        let removed = self.imported_meshes.remove(&body).is_some();
-        self.local_meshes.remove(&body);
-        self.imported_brep_blobs.remove(&body);
-        self.imported_brep_face_colors.remove(&body);
+    pub(crate) fn remove_imported_geometry(&mut self, body: BodyId) {
+        let removed = self.derived.imported_meshes.remove(&body).is_some();
+        self.derived.local_meshes.remove(&body);
+        self.derived.imported_brep_blobs.remove(&body);
+        self.derived.imported_brep_face_colors.remove(&body);
         self.refresh_copies_of(body);
         if removed {
             self.mark_dirty();
@@ -206,38 +208,25 @@ impl Document {
     /// Store BRep binary + face colour snapshot for a body (in-memory until save).
     /// An empty snapshot is no shape, as a mesh body has none: it clears the
     /// body's snapshot rather than storing one that describes nothing.
-    pub fn set_imported_brep_data(
+    pub(crate) fn set_imported_brep_data(
         &mut self,
         body: BodyId,
         brep_blob: Vec<u8>,
         face_colors: Vec<[f32; 3]>,
     ) {
         if brep_blob.is_empty() {
-            self.imported_brep_blobs.remove(&body);
-            self.imported_brep_face_colors.remove(&body);
+            self.derived.imported_brep_blobs.remove(&body);
+            self.derived.imported_brep_face_colors.remove(&body);
         } else {
-            self.imported_brep_blobs
+            self.derived
+                .imported_brep_blobs
                 .insert(body, std::sync::Arc::new(brep_blob));
-            self.imported_brep_face_colors.insert(body, face_colors);
+            self.derived
+                .imported_brep_face_colors
+                .insert(body, face_colors);
         }
         self.refresh_copies_of(body);
         self.mark_dirty();
-    }
-
-    pub fn imported_brep_blob(&self, body: BodyId) -> Option<&[u8]> {
-        self.imported_brep_blobs.get(&body).map(|v| v.as_slice())
-    }
-
-    /// Shared handle to a body's BRep snapshot; cloning is a refcount bump,
-    /// so this is the cheap way to hand the blob to a worker thread.
-    pub fn imported_brep_blob_arc(&self, body: BodyId) -> Option<std::sync::Arc<Vec<u8>>> {
-        self.imported_brep_blobs.get(&body).cloned()
-    }
-
-    pub fn imported_brep_face_colors(&self, body: BodyId) -> Option<&[[f32; 3]]> {
-        self.imported_brep_face_colors
-            .get(&body)
-            .map(|v| v.as_slice())
     }
 
     /// Whether this body's solid came from an import rather than from a
@@ -252,16 +241,14 @@ impl Document {
         // A stand-in shows in place of a build: the body still builds.
         self.copy_source(body).is_some()
             || self.body(body).is_some_and(|b| b.link.is_some())
-            || self.imported_geometry(body).is_some_and(|geometry| {
-                geometry
-                    .source_asset
-                    .is_some_and(|asset| !self.is_stand_in(body, asset))
-            })
-    }
-
-    /// Look up tessellated geometry for a body.
-    pub fn imported_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
-        self.imported_meshes.get(&body)
+            || self
+                .derived()
+                .imported_geometry(body)
+                .is_some_and(|geometry| {
+                    geometry
+                        .source_asset
+                        .is_some_and(|asset| !self.is_stand_in(body, asset))
+                })
     }
 
     /// The feature of `body` that made its face named `name`: the one whose
@@ -272,7 +259,7 @@ impl Document {
         if name == 0 || self.body_solid_is_imported(body) {
             return None;
         }
-        let mesh = &self.imported_geometry(body)?.mesh;
+        let mesh = &self.derived().imported_geometry(body)?.mesh;
         let face = mesh.face_names.iter().position(|n| *n == name)?;
         let maker = *mesh.face_makers.get(face).filter(|m| **m != 0)?;
         self.feature_tree
@@ -280,11 +267,6 @@ impl Document {
             .filter(|(_, n)| n.body == Some(body))
             .map(|(id, _)| *id)
             .find(|id| kernel_api::naming::name_of_id(id.0.as_bytes()) == maker)
-    }
-
-    /// Iterate over all imported geometries currently stored on the document.
-    pub fn imported_geometries(&self) -> impl Iterator<Item = (&BodyId, &ImportedGeometry)> {
-        self.imported_meshes.iter()
     }
 
     /// Replace imported object hierarchy with the supplied nodes.

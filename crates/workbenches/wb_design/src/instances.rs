@@ -73,7 +73,7 @@ pub(crate) fn occurrences_of(
         }
         Some(kernel) => asked_once(document, body, feature, || {
             kernel
-                .pattern_transforms(document.imported_brep_blob(body), &steps)
+                .pattern_transforms(document.derived().imported_brep_blob(body), &steps)
                 .ok()
         }),
         None => None,
@@ -114,7 +114,10 @@ fn asked_once(
     let key = (
         feature,
         document.content_stamp(),
-        document.imported_geometry(body).map_or(0, |g| g.revision),
+        document
+            .derived()
+            .imported_geometry(body)
+            .map_or(0, |g| g.revision),
     );
     if let Some(answer) = KEPT.with_borrow(|kept| {
         kept.as_ref()

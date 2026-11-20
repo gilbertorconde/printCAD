@@ -260,7 +260,7 @@ fn bores_seen(
         .iter()
         .flat_map(|source| bores_of(document, body, features, *source, seen))
         .collect();
-    let solid = document.local_geometry(body);
+    let solid = document.derived().local_geometry(body);
     copies
         .iter()
         .zip(0u32..)
@@ -377,7 +377,7 @@ fn thread_lines(
     if radius <= 0.0 || pitch <= 0.0 {
         return mesh;
     }
-    let solid = body.and_then(|b| document.local_geometry(b));
+    let solid = body.and_then(|b| document.derived().local_geometry(b));
     let (u, v) = (bores.across, cross3(into, bores.across));
     let turn = if bores.left_handed { -1.0 } else { 1.0 };
     for mouth in bores.mouths {

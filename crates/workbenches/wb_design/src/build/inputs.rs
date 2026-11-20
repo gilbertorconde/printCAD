@@ -346,6 +346,7 @@ fn tool_inputs(document: &Document, body: BodyId, tool: BodyId) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     document
+        .derived()
         .imported_geometry(tool)
         .map(|g| g.revision)
         .hash(&mut hasher);

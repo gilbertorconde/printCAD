@@ -481,6 +481,7 @@ impl PrintCadApp {
         let Some(geometry) = self
             .session
             .document
+            .derived()
             .imported_geometry(core_document::BodyId(body))
         else {
             return;
@@ -538,6 +539,7 @@ impl PrintCadApp {
             let Some(geometry) = self
                 .session
                 .document
+                .derived()
                 .imported_geometry(core_document::BodyId(body))
             else {
                 continue;
@@ -613,6 +615,7 @@ fn caught_in<P: Fn(Vec3) -> Option<Vec2>>(
             .unwrap_or(usize::MAX)
     };
     let mut caught: Vec<(Uuid, Vec<u32>)> = document
+        .derived()
         .imported_geometries()
         .filter(|(id, _)| {
             document.imported_body_effective_visible(**id)
@@ -802,7 +805,9 @@ mod tests {
                 p[0] += dx;
             }
             let body = document.create_body(Some(name.into()));
-            document.set_imported_geometry(body, crate::test_support::geometry(mesh));
+            document
+                .derived_mut()
+                .set_imported_geometry(body, crate::test_support::geometry(mesh));
             bodies.push(body.0);
         }
         document.set_body_visible(core_document::BodyId(bodies[2]), false);

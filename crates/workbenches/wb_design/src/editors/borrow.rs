@@ -110,7 +110,7 @@ pub(super) fn borrow_editor(
         .document
         .bodies()
         .iter()
-        .filter(|b| b.id != body && ctx.document.imported_brep_blob(b.id).is_some())
+        .filter(|b| b.id != body && ctx.document.derived().imported_brep_blob(b.id).is_some())
         .map(|b| b.id)
         .collect();
     let mut options_shown: Vec<String> = sketches.iter().map(|(_, n)| n.clone()).collect();

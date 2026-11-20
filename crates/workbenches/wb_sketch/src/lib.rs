@@ -2775,7 +2775,7 @@ mod scan_section {
             core_document::AssetType::Stl,
             serde_json::Value::Null,
         ));
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             scan,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(kernel_api::TriMesh {

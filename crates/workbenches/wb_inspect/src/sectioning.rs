@@ -13,11 +13,12 @@ fn section_inputs(
     id: core_document::FeatureId,
 ) -> Option<(section::Section, std::sync::Arc<kernel_api::TriMesh>, u64)> {
     let s = document.feature_as::<section::Section>(id)?;
-    let (mesh, _) = document.local_geometry(s.scan)?;
+    let (mesh, _) = document.derived().local_geometry(s.scan)?;
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         document
+            .derived()
             .imported_geometry(s.scan)
             .map(|g| g.revision)
             .hash(&mut h);
@@ -100,6 +101,7 @@ pub(crate) fn section_plane(
     }
     let scan = scan.ok_or_else(|| CommandError::bad("scan", "or an element is needed"))?;
     let (mesh, _) = document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::bad("scan", "has no mesh"))?;
     let (lo, hi) = mesh

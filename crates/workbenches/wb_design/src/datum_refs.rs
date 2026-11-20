@@ -676,7 +676,8 @@ mod tests {
     fn with_solid() -> (Document, BodyId) {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        doc.set_imported_brep_data(body, b"cylinder".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"cylinder".to_vec(), Vec::new());
         (doc, body)
     }
 

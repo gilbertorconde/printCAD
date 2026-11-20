@@ -60,7 +60,10 @@ pub(crate) fn handle(
 ) -> Option<Handle> {
     let row = document.copy_array(array)?;
     let first = row.instances.first()?;
-    let (lo, hi) = document.imported_geometry(first.body)?.bounds_mm?;
+    let (lo, hi) = document
+        .derived()
+        .imported_geometry(first.body)?
+        .bounds_mm?;
     let middle = (Vec3::from_array(lo) + Vec3::from_array(hi)) * 0.5;
     let way = Vec3::from_array(direction).normalize_or_zero();
     let to_screen = |p: Vec3| camera.world_to_viewport(p).map(|(x, y)| Vec2::new(x, y));

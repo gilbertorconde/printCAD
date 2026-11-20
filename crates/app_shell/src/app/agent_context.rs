@@ -515,7 +515,7 @@ impl PrintCadApp {
                     // Whether the body has a shape built, solid or surfaces
                     // (doc.measure gives a volume for solids only), and
                     // whether it is a mesh taking no features.
-                    "built": document.imported_geometry(b.id).is_some(),
+                    "built": document.derived().imported_geometry(b.id).is_some(),
                     "mesh": document.is_mesh_body(b.id),
                 })
             })

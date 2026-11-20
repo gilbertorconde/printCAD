@@ -42,7 +42,8 @@ fn datum(shape: DatumShape, attachment: DatumAttachment) -> DatumFeature {
 /// of `body`'s solid.
 fn settle(registry: &DocumentService, doc: &mut Document, body: BodyId) -> ([f32; 3], [f32; 3]) {
     settle_as_host(registry, doc);
-    doc.imported_geometry(body)
+    doc.derived()
+        .imported_geometry(body)
         .and_then(|g| g.bounds_mm)
         .expect("the body has a solid")
 }
@@ -322,7 +323,7 @@ fn picked_face(
     point: [f32; 3],
     normal: [f32; 3],
 ) -> core_document::FaceRef {
-    let mesh = &doc.imported_geometry(body).expect("a solid").mesh;
+    let mesh = &doc.derived().imported_geometry(body).expect("a solid").mesh;
     let dot = |a: [f32; 3], b: [f32; 3]| (0..3).map(|i| a[i] * b[i]).sum::<f32>();
     let id = mesh
         .face_surfaces
@@ -343,7 +344,7 @@ fn picked_face(
 
 /// The heights of the flat faces of `body`'s mesh that face up.
 fn upward_floors(doc: &Document, body: BodyId) -> Vec<f32> {
-    let mesh = &doc.imported_geometry(body).unwrap().mesh;
+    let mesh = &doc.derived().imported_geometry(body).unwrap().mesh;
     let mut heights: Vec<f32> = mesh
         .face_surfaces
         .iter()

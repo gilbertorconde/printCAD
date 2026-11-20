@@ -234,14 +234,14 @@ impl Document {
     pub fn links_awaiting_geometry(&self) -> Vec<(BodyId, FileLink)> {
         self.bodies
             .iter()
-            .filter(|b| !self.imported_meshes.contains_key(&b.id))
+            .filter(|b| !self.derived.imported_meshes.contains_key(&b.id))
             .filter_map(|b| Some((b.id, b.link.clone()?)))
             .collect()
     }
 
     /// Give a linked part its shape as read from its file: the mesh in its
     /// own frame, the snapshot and its face colours. Derived state: no op.
-    pub fn set_linked_geometry(
+    pub(crate) fn set_linked_geometry(
         &mut self,
         body: BodyId,
         geometry: ImportedGeometry,
@@ -250,18 +250,18 @@ impl Document {
     ) {
         match blob {
             Some(blob) => {
-                self.imported_brep_blobs.insert(body, blob);
+                self.derived.imported_brep_blobs.insert(body, blob);
             }
             None => {
-                self.imported_brep_blobs.remove(&body);
+                self.derived.imported_brep_blobs.remove(&body);
             }
         }
         match colors {
             Some(colors) => {
-                self.imported_brep_face_colors.insert(body, colors);
+                self.derived.imported_brep_face_colors.insert(body, colors);
             }
             None => {
-                self.imported_brep_face_colors.remove(&body);
+                self.derived.imported_brep_face_colors.remove(&body);
             }
         }
         let dirty = self.metadata.dirty;
@@ -306,11 +306,11 @@ impl Document {
             return;
         };
         let mirror = self.body(copy).and_then(|b| b.mirror);
-        let Some((mesh, bounds)) = self.local_geometry(source) else {
-            self.imported_meshes.remove(&copy);
-            self.local_meshes.remove(&copy);
-            self.imported_brep_blobs.remove(&copy);
-            self.imported_brep_face_colors.remove(&copy);
+        let Some((mesh, bounds)) = self.derived().local_geometry(source) else {
+            self.derived.imported_meshes.remove(&copy);
+            self.derived.local_meshes.remove(&copy);
+            self.derived.imported_brep_blobs.remove(&copy);
+            self.derived.imported_brep_face_colors.remove(&copy);
             return;
         };
         let (mesh, bounds) = match mirror {
@@ -321,7 +321,7 @@ impl Document {
             }
             None => (mesh, bounds),
         };
-        let from = self.imported_meshes.get(&source);
+        let from = self.derived.imported_meshes.get(&source);
         let geometry = ImportedGeometry {
             mesh,
             source_asset: from.and_then(|g| g.source_asset),
@@ -334,31 +334,32 @@ impl Document {
         };
         // A mirror's snapshot is the kernel's, derived by the host; until
         // then it has none.
-        match self.imported_brep_blobs.get(&source).cloned() {
+        match self.derived.imported_brep_blobs.get(&source).cloned() {
             Some(blob) if mirror.is_none() => {
-                self.imported_brep_blobs.insert(copy, blob);
+                self.derived.imported_brep_blobs.insert(copy, blob);
             }
             _ => {
-                self.imported_brep_blobs.remove(&copy);
+                self.derived.imported_brep_blobs.remove(&copy);
             }
         }
-        match self.imported_brep_face_colors.get(&source).cloned() {
+        match self.derived.imported_brep_face_colors.get(&source).cloned() {
             Some(colors) => {
-                self.imported_brep_face_colors.insert(copy, colors);
+                self.derived.imported_brep_face_colors.insert(copy, colors);
             }
             None => {
-                self.imported_brep_face_colors.remove(&copy);
+                self.derived.imported_brep_face_colors.remove(&copy);
             }
         }
         let next_revision = self
+            .derived
             .imported_meshes
             .get(&copy)
             .map(|prev| prev.revision.saturating_add(1))
             .unwrap_or(0)
             .max(self.derived.next_geometry_revision);
         self.derived.next_geometry_revision = next_revision.saturating_add(1);
-        self.local_meshes.remove(&copy);
-        self.imported_meshes.insert(
+        self.derived.local_meshes.remove(&copy);
+        self.derived.imported_meshes.insert(
             copy,
             ImportedGeometry {
                 revision: next_revision,
@@ -378,10 +379,14 @@ impl Document {
             .iter()
             .filter_map(|b| {
                 let (source, plane) = (b.copy_of?, b.mirror?);
-                if self.imported_brep_blobs.contains_key(&b.id) {
+                if self.derived.imported_brep_blobs.contains_key(&b.id) {
                     return None;
                 }
-                Some((b.id, self.imported_brep_blobs.get(&source)?.clone(), plane))
+                Some((
+                    b.id,
+                    self.derived.imported_brep_blobs.get(&source)?.clone(),
+                    plane,
+                ))
             })
             .collect()
     }
@@ -389,7 +394,7 @@ impl Document {
     /// A mirrored copy's snapshot, as the kernel made it from `from` (the
     /// source's snapshot then): kept when the source still has that one.
     /// Derived state: no op.
-    pub fn set_mirrored_shape(
+    pub(crate) fn set_mirrored_shape(
         &mut self,
         copy: BodyId,
         from: &std::sync::Arc<Vec<u8>>,
@@ -398,19 +403,20 @@ impl Document {
         let Some(source) = self.copy_source(copy) else {
             return false;
         };
-        let current = self.imported_brep_blobs.get(&source);
+        let current = self.derived.imported_brep_blobs.get(&source);
         if !current.is_some_and(|c| std::sync::Arc::ptr_eq(c, from)) {
             return false;
         }
-        let colors = self.imported_brep_face_colors.get(&source).cloned();
-        self.imported_brep_blobs
+        let colors = self.derived.imported_brep_face_colors.get(&source).cloned();
+        self.derived
+            .imported_brep_blobs
             .insert(copy, std::sync::Arc::new(blob));
         match colors {
             Some(colors) => {
-                self.imported_brep_face_colors.insert(copy, colors);
+                self.derived.imported_brep_face_colors.insert(copy, colors);
             }
             None => {
-                self.imported_brep_face_colors.remove(&copy);
+                self.derived.imported_brep_face_colors.remove(&copy);
             }
         }
         true

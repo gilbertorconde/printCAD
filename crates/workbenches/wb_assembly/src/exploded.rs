@@ -196,7 +196,7 @@ pub fn view_of(document: &Document, id: FeatureId) -> Option<ExplodedView> {
 
 /// The middle of `body`'s box where `placement` puts it.
 pub fn centre(document: &Document, body: BodyId, placement: &BodyPlacement) -> Option<[f32; 3]> {
-    let (mesh, bounds) = document.local_geometry(body)?;
+    let (mesh, bounds) = document.derived().local_geometry(body)?;
     let (lo, hi) = bounds.or_else(|| mesh.bounds())?;
     let middle = (Vec3::from_array(lo) + Vec3::from_array(hi)) * 0.5;
     Some(placement.point(middle.to_array()))

@@ -62,6 +62,7 @@ pub(crate) fn measure(
 ) -> Result<CentreLine, String> {
     let blob = ctx
         .document
+        .derived()
         .imported_brep_blob(body)
         .ok_or("the body has no solid yet")?;
     let kernel = ctx.kernel.ok_or("no kernel to measure with")?;

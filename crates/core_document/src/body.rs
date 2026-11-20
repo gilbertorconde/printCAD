@@ -472,7 +472,11 @@ impl Document {
     /// the body's colour again), kept under the face's name so it follows
     /// the face through a rebuild. Returns false for a face the body lacks.
     pub fn color_face(&mut self, body: BodyId, index: u32, color: Option<[f32; 3]>) -> bool {
-        let Some(mesh) = self.imported_geometry(body).map(|g| Arc::clone(&g.mesh)) else {
+        let Some(mesh) = self
+            .derived()
+            .imported_geometry(body)
+            .map(|g| Arc::clone(&g.mesh))
+        else {
             return false;
         };
         if !mesh.faces.contains(&index) {
@@ -495,7 +499,7 @@ impl Document {
 
     /// The colour face `index` of `body` has of its own, if any.
     pub fn face_color(&self, body: BodyId, index: u32) -> Option<[f32; 3]> {
-        let mesh = &self.imported_geometry(body)?.mesh;
+        let mesh = &self.derived().imported_geometry(body)?.mesh;
         self.body(body)?
             .face_colors
             .iter()

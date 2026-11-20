@@ -22,7 +22,7 @@ fn imported_box() -> (Document, BodyId, [f32; 3], [f32; 3]) {
     let body = document.create_body(Some("Box".into()));
     let mesh = std::sync::Arc::new(imported.mesh.clone());
     let (lo, hi) = mesh.bounds().unwrap();
-    document.set_imported_geometry(
+    document.derived_mut().set_imported_geometry(
         body,
         ImportedGeometry {
             bounds_mm: mesh.bounds(),
@@ -36,7 +36,9 @@ fn imported_box() -> (Document, BodyId, [f32; 3], [f32; 3]) {
             health: None,
         },
     );
-    document.set_imported_brep_data(body, imported.brep_blob.clone(), Vec::new());
+    document
+        .derived_mut()
+        .set_imported_brep_data(body, imported.brep_blob.clone(), Vec::new());
     (document, body, lo, hi)
 }
 
@@ -115,7 +117,7 @@ fn the_base_goes_last_and_takes_the_body_back_to_its_import() {
         host.document.body_solid_is_imported(body),
         "the imported box again"
     );
-    assert!(host.document.imported_brep_blob(body).is_some());
+    assert!(host.document.derived().imported_brep_blob(body).is_some());
 }
 
 #[test]
@@ -292,7 +294,7 @@ fn recognized_holes_rebuild_the_solid_and_take_new_sizes() {
     let mut document = Document::new("holed");
     let part = document.create_body(Some("Holed".into()));
     let mesh = std::sync::Arc::new(holed.mesh.clone());
-    document.set_imported_geometry(
+    document.derived_mut().set_imported_geometry(
         part,
         ImportedGeometry {
             bounds_mm: mesh.bounds(),
@@ -305,7 +307,9 @@ fn recognized_holes_rebuild_the_solid_and_take_new_sizes() {
             health: None,
         },
     );
-    document.set_imported_brep_data(part, holed.brep_blob.clone(), Vec::new());
+    document
+        .derived_mut()
+        .set_imported_brep_data(part, holed.brep_blob.clone(), Vec::new());
     let mut host = benches(document);
     let out = ScriptEngine::new().run_script(
         &format!(
@@ -504,7 +508,7 @@ fn pad_into_converted_part(
     let body = document.create_body(Some("Part".into()));
     let mesh = std::sync::Arc::new(solid.mesh.clone());
     let (_, hi) = mesh.bounds().unwrap();
-    document.set_imported_geometry(
+    document.derived_mut().set_imported_geometry(
         body,
         ImportedGeometry {
             bounds_mm: mesh.bounds(),
@@ -517,7 +521,9 @@ fn pad_into_converted_part(
             health: None,
         },
     );
-    document.set_imported_brep_data(body, solid.brep_blob.clone(), Vec::new());
+    document
+        .derived_mut()
+        .set_imported_brep_data(body, solid.brep_blob.clone(), Vec::new());
 
     // The part's top face: its small tab at the left end.
     let top = hi[2];
@@ -593,7 +599,11 @@ fn a_pad_out_through_a_converted_solid_s_bottom_fuses() {
 fn a_face_s_edges_come_in_around_it() {
     use kernel_api::KernelQueries;
     let (document, body, lo, hi) = imported_box();
-    let brep = document.imported_brep_blob(body).unwrap().to_vec();
+    let brep = document
+        .derived()
+        .imported_brep_blob(body)
+        .unwrap()
+        .to_vec();
     let centre = [
         f64::from(lo[0] + hi[0]) / 2.0,
         f64::from(lo[1] + hi[1]) / 2.0,

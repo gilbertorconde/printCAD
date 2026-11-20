@@ -54,7 +54,7 @@ pub(crate) fn nearest(
         if !ctx.document.imported_body_effective_visible(body.id) {
             continue;
         }
-        let Some(geometry) = ctx.document.imported_geometry(body.id) else {
+        let Some(geometry) = ctx.document.derived().imported_geometry(body.id) else {
             continue;
         };
         for (face, surface) in geometry.mesh.face_surfaces.iter().enumerate() {
@@ -103,7 +103,7 @@ thread_local! {
 
 /// The snapped face, lit: its triangles drawn see-through over it.
 pub(crate) fn lit(ctx: &WorkbenchRuntimeContext, snap: &Snap) -> Option<OverlayMesh> {
-    let mesh = &ctx.document.imported_geometry(snap.body)?.mesh;
+    let mesh = &ctx.document.derived().imported_geometry(snap.body)?.mesh;
     let (lit, revision) = LIT.with(|cached| {
         if let Some((from, face, lit, revision)) = &*cached.borrow()
             && std::ptr::eq(from.as_ptr(), std::sync::Arc::as_ptr(mesh))

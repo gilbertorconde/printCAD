@@ -276,7 +276,12 @@ fn follows_its_radius(radii: &[f64], text: &str) {
         (host, body)
     };
     let measure = |document: &Document, body: BodyId| {
-        measured(&document.imported_brep_blob_arc(body).expect("a solid"))
+        measured(
+            &document
+                .derived()
+                .imported_brep_blob_arc(body)
+                .expect("a solid"),
+        )
     };
     let mut failures = Vec::new();
     for &now in radii {

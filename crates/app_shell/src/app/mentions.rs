@@ -562,7 +562,7 @@ mod tests {
             face_names: vec![10],
             ..Default::default()
         };
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             body,
             crate::test_support::geometry(std::sync::Arc::new(mesh.clone())),
         );
@@ -605,7 +605,8 @@ mod tests {
 
         let bytes = doc.save_to_bytes(core_document::Compression::None).unwrap();
         let mut back = Document::load_from_bytes(bytes).unwrap();
-        back.set_imported_geometry(body, doc.imported_geometry(body).unwrap().clone());
+        back.derived_mut()
+            .set_imported_geometry(body, doc.derived().imported_geometry(body).unwrap().clone());
         for (document, from_file) in [(&doc, false), (&back, true)] {
             let mut fields = Map::new();
             note_fields(document, asked.unwrap(), &mut fields).expect("there");

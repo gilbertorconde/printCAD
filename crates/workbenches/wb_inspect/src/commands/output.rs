@@ -71,6 +71,7 @@ fn compensation_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -
     }
     let (ref_mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(reference)
         .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
     let (lo, hi) = ref_mesh

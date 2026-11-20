@@ -653,7 +653,7 @@ fn a_fillet_found_by_position_carries_a_warning() {
         let node = doc.get_feature_meta(round).unwrap();
         let error = doc.derived().error(round);
         assert!(error.is_none(), "{error:?}");
-        assert!(doc.imported_geometry(body).is_some(), "built");
+        assert!(doc.derived().imported_geometry(body).is_some(), "built");
         registry.feature_warning(doc, None, round, node)
     };
     let said = warned(&mut doc).expect("warned");
@@ -1004,7 +1004,8 @@ fn a_pad_starting_on_a_face_follows_the_face() {
     }
     doc.add_in(body, "Boss", boss);
     let top = |doc: &Document| {
-        doc.imported_geometry(body)
+        doc.derived()
+            .imported_geometry(body)
             .and_then(|g| g.bounds_mm)
             .expect("a solid")
             .1[2]
@@ -1099,6 +1100,7 @@ fn features_placed_by_a_picked_face_follow_it() {
     };
     let measure = |doc: &Document, body: BodyId| {
         let bounds = doc
+            .derived()
             .imported_geometry(body)
             .and_then(|g| g.bounds_mm)
             .expect("a solid");
@@ -3080,7 +3082,8 @@ fn an_intersection_reference_is_where_a_face_crosses_the_sketch_plane() {
     };
     let mut doc = Document::new("t");
     let body = doc.create_body(None);
-    doc.set_imported_brep_data(body, cube(10.0), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(body, cube(10.0), Vec::new());
     // Upright through the box's middle: x across, z up.
     let plane = sketch_model::sketch::SketchPlane::from_frame(
         [0.0, 5.0, 0.0],
@@ -3133,7 +3136,8 @@ fn an_intersection_reference_is_where_a_face_crosses_the_sketch_plane() {
     assert!(sketch_model::profile::extract_wires(&sketch_now).is_err());
 
     // The box grows: opening the sketch again brings the line up to it.
-    doc.set_imported_brep_data(body, cube(16.0), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(body, cube(16.0), Vec::new());
     let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
     ctx.kernel = Some(&kernel_ogeom::QUERIES);
     ctx.active_document_object = Some(sketch);
@@ -4489,7 +4493,7 @@ fn a_counting_projected_edge_follows_its_pad_without_the_sketch_opened() {
     doc.derived_mut().mark_feature_stale(wall);
     settle_as_host(&registry, &mut doc);
     let height = |doc: &Document| {
-        let (min, max) = mesh_bounds(&doc.imported_geometry(other).unwrap().mesh);
+        let (min, max) = mesh_bounds(&doc.derived().imported_geometry(other).unwrap().mesh);
         max[2] - min[2]
     };
     assert!((height(&doc) - 10.0).abs() < 1e-3, "{}", height(&doc));
@@ -4834,7 +4838,7 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
         (volume - (50.0 * 40.0 * 15.0 - 20.0 * 40.0 * 3.0)).abs() < 1e-3,
         "{volume}"
     );
-    let (min, max) = mesh_bounds(&doc.imported_geometry(body).unwrap().mesh);
+    let (min, max) = mesh_bounds(&doc.derived().imported_geometry(body).unwrap().mesh);
     assert!(
         (max[0] - 50.0).abs() < 1e-3 && (max[2] - 15.0).abs() < 1e-3,
         "{min:?} {max:?}"
@@ -5052,7 +5056,11 @@ fn separated_pieces_each_keep_one_piece_and_add_up() {
     doc.add_in(plate, "Pocket", extrude("Pocket", slot, through));
     wb_design::mark_all_design_features_dirty(&mut doc);
     settle(&mut doc);
-    let blob = doc.imported_brep_blob(plate).expect("built").to_vec();
+    let blob = doc
+        .derived()
+        .imported_brep_blob(plate)
+        .expect("built")
+        .to_vec();
     let points = kernel_ogeom::QUERIES.solid_pieces(&blob).unwrap();
     assert_eq!(points.len(), 2, "{points:?}");
     let pieces: Vec<BodyId> = points
@@ -5071,7 +5079,11 @@ fn separated_pieces_each_keep_one_piece_and_add_up() {
     volumes.sort_by(f64::total_cmp);
     assert!((volumes[0] - 1000.0).abs() < 1e-3, "{volumes:?}");
     assert!((volumes[1] - 2800.0).abs() < 1e-3, "{volumes:?}");
-    let one = doc.imported_brep_blob(pieces[0]).unwrap().to_vec();
+    let one = doc
+        .derived()
+        .imported_brep_blob(pieces[0])
+        .unwrap()
+        .to_vec();
     assert_eq!(kernel_ogeom::QUERIES.solid_pieces(&one).unwrap().len(), 1);
 }
 
@@ -5229,7 +5241,7 @@ fn a_face_answers_the_feature_that_made_it() {
         .unwrap();
     doc.mark_feature_dirty(block_pad);
     super::common::settle_as_host(&super::common::registry(), &mut doc);
-    let mesh = doc.imported_geometry(body).unwrap().mesh.clone();
+    let mesh = doc.derived().imported_geometry(body).unwrap().mesh.clone();
     // The face of the triangle whose middle is at height `z`, inside the
     // pocket's square or outside it.
     let name_at = |z: f32, inside: bool| {

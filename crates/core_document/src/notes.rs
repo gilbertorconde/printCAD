@@ -410,7 +410,7 @@ impl Document {
         want: NoteWant,
     ) -> Note {
         let placement = self.body_placement(body);
-        let local = self.local_geometry(body);
+        let local = self.derived().local_geometry(body);
         let mesh = local.as_ref().map(|(mesh, _)| mesh.as_ref());
         let bounds = local
             .as_ref()
@@ -458,7 +458,7 @@ impl Document {
     /// document: on its face or edge as the body is built now, where the
     /// body sits.
     pub fn note_placed(&self, body: BodyId, note: &Note) -> NotePlaced {
-        let local = self.local_geometry(body);
+        let local = self.derived().local_geometry(body);
         let placed = note.placed(local.as_ref().map(|(mesh, _)| mesh.as_ref()));
         let placement = self.body_placement(body);
         NotePlaced {

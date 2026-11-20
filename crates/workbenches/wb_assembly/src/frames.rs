@@ -70,7 +70,7 @@ pub(crate) fn explode(
         .iter()
         .filter(|(body, _)| ctx.document.imported_body_effective_visible(*body))
         .filter_map(|(body, placement)| {
-            let (mesh, bounds) = ctx.document.local_geometry(*body)?;
+            let (mesh, bounds) = ctx.document.derived().local_geometry(*body)?;
             let (lo, hi) = bounds.or_else(|| mesh.bounds())?;
             let middle = (glam::Vec3::from_array(lo) + glam::Vec3::from_array(hi)) * 0.5;
             let centre = glam::Vec3::from_array(placement.point(middle.to_array()));

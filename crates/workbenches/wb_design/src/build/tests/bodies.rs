@@ -31,7 +31,8 @@ fn a_boolean_with_two_tools_rebuilds_once() {
     let tools: Vec<BodyId> = (0..2)
         .map(|_| {
             let tool = doc.create_body(None);
-            doc.set_imported_geometry(tool, bare_geometry(None));
+            doc.derived_mut()
+                .set_imported_geometry(tool, bare_geometry(None));
             tool
         })
         .collect();

@@ -27,9 +27,11 @@ pub struct Inputs {
 /// What `scan` is measured from against `body` in `document` now.
 pub fn inputs(document: &Document, scan: BodyId, body: BodyId) -> Result<Inputs, String> {
     let (mesh, _) = document
+        .derived()
         .local_geometry(scan)
         .ok_or("the scan has no mesh")?;
     let solid = document
+        .derived()
         .imported_brep_blob_arc(body)
         .ok_or("the body has no solid yet")?;
     let to = document
@@ -52,7 +54,7 @@ pub fn inputs(document: &Document, scan: BodyId, body: BodyId) -> Result<Inputs,
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        let revision = |b| document.imported_geometry(b).map(|g| g.revision);
+        let revision = |b| document.derived().imported_geometry(b).map(|g| g.revision);
         (scan, body, revision(scan), revision(body)).hash(&mut h);
         format!("{:?}", to.rows()).hash(&mut h);
         h.finish()

@@ -593,8 +593,10 @@ fn a_package_sections_its_rod_reads_its_faces_and_threads_it() {
             .tags(&tags),
         )
         .expect("the rod builds");
-    document.set_imported_brep_data(body, built.brep_blob, Vec::new());
-    document.set_imported_geometry(
+    document
+        .derived_mut()
+        .set_imported_brep_data(body, built.brep_blob, Vec::new());
+    document.derived_mut().set_imported_geometry(
         body,
         core_document::ImportedGeometry {
             mesh: std::sync::Arc::new(built.mesh),
@@ -1588,7 +1590,7 @@ fn a_bench_removes_the_body_it_made_but_not_one_holding_anothers_feature() {
         ),
         b"ISO-10303-21;".to_vec(),
     );
-    document.set_imported_geometry(
+    document.derived_mut().set_imported_geometry(
         imported,
         core_document::ImportedGeometry {
             mesh: Default::default(),

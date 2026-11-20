@@ -122,7 +122,7 @@ impl DesignWorkbench {
     /// first (`take_base`).
     fn can_take_base(ctx: &WorkbenchRuntimeContext, body: BodyId) -> bool {
         ctx.document.body_solid_is_imported(body)
-            && ctx.document.imported_brep_blob(body).is_some()
+            && ctx.document.derived().imported_brep_blob(body).is_some()
             && ctx.document.copy_source(body).is_none()
             && !ctx.document.body(body).is_some_and(|b| b.link.is_some())
     }

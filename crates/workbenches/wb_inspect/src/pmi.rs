@@ -165,7 +165,7 @@ fn datum_label(mut index: usize) -> String {
 /// the reference's; radial features are probed on their walls, not axes.
 fn probes(document: &Document, element: &Element) -> Vec<[f64; 3]> {
     let mut points = Vec::new();
-    if let Some((mesh, _)) = document.local_geometry(element.scan) {
+    if let Some((mesh, _)) = document.derived().local_geometry(element.scan) {
         let count = vertices(&element.region).count();
         points.extend(
             vertices(&element.region)
@@ -252,7 +252,7 @@ mod tests {
         let mut doc = Document::new("Inspection");
         let reference = doc.create_body(Some("Reference".into()));
         let scan = doc.create_body(Some("Scan".into()));
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             scan,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(kernel_api::TriMesh {

@@ -81,7 +81,7 @@ impl Inputs {
     fn new(document: &Document, t: &Tolerance) -> Result<Self, String> {
         validate(t)?;
         let e = crate::element_at(document, t.element).ok_or("the element is gone")?;
-        let scan = document.local_geometry(e.scan);
+        let scan = document.derived().local_geometry(e.scan);
         let get = |id| {
             let other = crate::element_at(document, id).ok_or("a referenced element is gone")?;
             if other.scan != e.scan {
@@ -169,6 +169,7 @@ impl Inputs {
                 )
                 .map_err(|e| e.to_string())?;
                 let mesh = document
+                    .derived()
                     .local_geometry(c.reference)
                     .ok_or("reference has no geometry")?
                     .0;
@@ -189,6 +190,7 @@ impl Inputs {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         format!("{t:?}{e:?}{datums:?}{opposed:?}{section:?}{bonus:?}{shifts:?}{nominal:?}{reference_frame:?}").hash(&mut h);
         document
+            .derived()
             .imported_geometry(e.scan)
             .map(|g| g.revision)
             .hash(&mut h);
@@ -416,6 +418,7 @@ fn nominal_frame(document: &Document, id: FeatureId, datums: &[Element]) -> Resu
     .map_err(|e| e.to_string())?;
     let input = crate::compare::inputs(document, &c)?;
     let mesh = document
+        .derived()
         .local_geometry(c.reference)
         .ok_or("reference has no geometry")?
         .0;

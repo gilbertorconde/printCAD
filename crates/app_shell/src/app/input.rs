@@ -847,6 +847,7 @@ impl PrintCadApp {
         let mesh = self.session.hover.body.and_then(|body| {
             self.session
                 .document
+                .derived()
                 .imported_geometry(core_document::BodyId(body))
         });
         let pick = datum.or_else(|| {
@@ -990,8 +991,8 @@ impl PrintCadApp {
         let [(a, part_a, pa), (b, part_b, pb)] = gap_operands(picks)?;
         let document = &self.session.document;
         let (Some(first), Some(second)) = (
-            document.imported_brep_blob_arc(a),
-            document.imported_brep_blob_arc(b),
+            document.derived().imported_brep_blob_arc(a),
+            document.derived().imported_brep_blob_arc(b),
         ) else {
             return None;
         };
@@ -1100,7 +1101,7 @@ impl PrintCadApp {
         let document = &self.session.document;
         // Each face's nearest crossing: (distance, body, face, triangle).
         let mut crossings: Vec<(f32, Uuid, u32, u32)> = Vec::new();
-        for (body, geometry) in document.imported_geometries() {
+        for (body, geometry) in document.derived().imported_geometries() {
             if !document.imported_body_effective_visible(*body)
                 || !document.body_selectable(*body)
                 || document.is_mesh_body(*body)
@@ -1153,6 +1154,7 @@ impl PrintCadApp {
                     .body(id)
                     .map_or_else(|| "Body".to_string(), |b| b.name.clone());
                 let kind = document
+                    .derived()
                     .imported_geometry(id)
                     .and_then(|g| g.mesh.face_surfaces.get(face as usize).copied())
                     .map_or("face", surface_word);
@@ -1174,7 +1176,7 @@ impl PrintCadApp {
     /// Select the face of `body` its mesh's `triangle` lies on, as a plain
     /// click on it would: Select other's choice.
     pub(crate) fn select_other(&mut self, body: core_document::BodyId, triangle: u32) {
-        let Some(geometry) = self.session.document.imported_geometry(body) else {
+        let Some(geometry) = self.session.document.derived().imported_geometry(body) else {
             return;
         };
         let mesh = std::sync::Arc::clone(&geometry.mesh);
@@ -1273,6 +1275,7 @@ impl PrintCadApp {
                 && let Some(geometry) = self
                     .session
                     .document
+                    .derived()
                     .imported_geometry(core_document::BodyId(hit.body))
             {
                 let mesh = &geometry.mesh;
@@ -1464,6 +1467,7 @@ impl PrintCadApp {
         let geometry = self
             .session
             .document
+            .derived()
             .imported_geometry(core_document::BodyId(body))?;
         let (id, submesh) = face_submesh(
             &geometry.mesh,
@@ -1642,6 +1646,7 @@ impl PrintCadApp {
         let geometry = self
             .session
             .document
+            .derived()
             .imported_geometry(core_document::BodyId(body))?;
         face_ref_at_pick(
             &geometry.mesh,
@@ -1659,6 +1664,7 @@ impl PrintCadApp {
         let geometry = self
             .session
             .document
+            .derived()
             .imported_geometry(core_document::BodyId(body))?;
         let pick = self.hovered_triangle_of(body);
         if pick.is_none_or(|p| p.revision != geometry.revision)

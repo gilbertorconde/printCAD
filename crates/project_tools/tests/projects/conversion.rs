@@ -25,7 +25,7 @@ fn what_cannot_be_rebuilt_comes_in_as_its_saved_shape_where_the_file_has_it() {
             .shape(source.object(name).unwrap().shape_file("Shape").unwrap())
             .unwrap();
         let frame = project_tools::document_import::parent_placement(&source, name).unwrap();
-        let geometry = project.document.imported_geometry(body).unwrap();
+        let geometry = project.document.derived().imported_geometry(body).unwrap();
         let parity =
             project_tools::parity::compare_shape(saved, frame, geometry.bounds_mm, 0).unwrap();
         assert!(parity.bounds_match(), "{name}: {parity:?}");
@@ -72,7 +72,10 @@ fn missing_and_cyclic_dependencies_reject_only_their_consumers_once_in_either_or
             let loaded = Document::load_from_bytes(bytes).unwrap();
             for name in ["Disc", "PartBox", "PartCylinder", "Cut", "Recess"] {
                 let body = project.objects[name].body().unwrap();
-                assert!(loaded.imported_brep_blob(body).is_some(), "{name}");
+                assert!(
+                    loaded.derived().imported_brep_blob(body).is_some(),
+                    "{name}"
+                );
             }
         }
     }

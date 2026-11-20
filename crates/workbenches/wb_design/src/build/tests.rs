@@ -127,11 +127,13 @@ fn add_sketch(doc: &mut Document, body: BodyId, sketch: Sketch) -> FeatureId {
 fn only_an_imported_solid_stops_a_rebuild_from_features() {
     let (mut doc, body, sketch_id) = doc_with_body_sketch();
     let pad_id = add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
-    doc.set_imported_geometry(body, bare_geometry(None));
+    doc.derived_mut()
+        .set_imported_geometry(body, bare_geometry(None));
     assert!(!doc.body_solid_is_imported(body));
     assert!(body_build_ops(&doc, body).is_ok(), "rebuilds normally");
 
-    doc.set_imported_geometry(body, bare_geometry(Some(uuid::Uuid::new_v4())));
+    doc.derived_mut()
+        .set_imported_geometry(body, bare_geometry(Some(uuid::Uuid::new_v4())));
     let err = body_build_ops(&doc, body).expect_err("the import has no history to rebuild");
     assert_eq!(err.feature, Some(pad_id));
     assert!(err.message.contains("import"), "{}", err.message);
@@ -318,10 +320,11 @@ fn invalidating_a_body_restarts_its_history_and_leaves_clearing_to_the_registry(
     assert!(doc.get_feature_meta(pad_id).unwrap().dirty);
 
     doc.remove_feature(pad_id).unwrap();
-    doc.set_imported_geometry(body, bare_geometry(None));
+    doc.derived_mut()
+        .set_imported_geometry(body, bare_geometry(None));
     invalidate_body(&mut doc, body);
     assert!(
-        doc.imported_geometry(body).is_some(),
+        doc.derived().imported_geometry(body).is_some(),
         "another bench's features may build it: the registry clears it"
     );
 }

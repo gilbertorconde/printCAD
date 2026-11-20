@@ -61,6 +61,7 @@ pub fn read_round(
         return Err("that body is not a scan".into());
     }
     let (mesh, _) = document
+        .derived()
         .local_geometry(scan)
         .ok_or("the scan has no mesh")?;
     let placement = document.body_placement(scan);
@@ -298,6 +299,7 @@ pub fn read_thread(
         return Err("that body is not a scan".into());
     }
     let (mesh, _) = document
+        .derived()
         .local_geometry(scan)
         .ok_or("the scan has no mesh")?;
     let placement = document.body_placement(scan);

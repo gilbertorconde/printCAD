@@ -184,7 +184,8 @@ pub fn edge_names(
 /// The volume of the solid `body` holds.
 pub fn body_volume(doc: &Document, body: BodyId) -> f64 {
     volume(
-        &doc.imported_brep_blob_arc(body)
+        &doc.derived()
+            .imported_brep_blob_arc(body)
             .expect("the body has a solid"),
     )
 }
@@ -223,8 +224,9 @@ pub fn registry() -> DocumentService {
 
 /// Store a built solid on `body` as the host does.
 pub fn store_solid(doc: &mut Document, body: BodyId, result: SolidBuildResult) {
-    doc.set_imported_brep_data(body, result.brep_blob, Vec::new());
-    doc.set_imported_geometry(
+    doc.derived_mut()
+        .set_imported_brep_data(body, result.brep_blob, Vec::new());
+    doc.derived_mut().set_imported_geometry(
         body,
         ImportedGeometry {
             mesh: std::sync::Arc::new(result.mesh),

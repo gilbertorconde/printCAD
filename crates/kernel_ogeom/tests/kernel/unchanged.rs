@@ -63,7 +63,7 @@ fn warned(doc: &mut Document, body: BodyId, feature: FeatureId) -> Option<String
     let registry = registry();
     wb_design::mark_all_design_features_dirty(doc);
     settle_as_host(&registry, doc);
-    assert!(doc.imported_geometry(body).is_some(), "built");
+    assert!(doc.derived().imported_geometry(body).is_some(), "built");
     let node = doc.get_feature_meta(feature).unwrap();
     let error = doc.derived().error(feature);
     assert!(error.is_none(), "{error:?}");

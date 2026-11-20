@@ -325,8 +325,10 @@ fn read_asset(
 }
 
 fn store(document: &mut Document, body: BodyId, (geometry, blob): (ImportedGeometry, Vec<u8>)) {
-    document.set_imported_geometry(body, geometry);
-    document.set_imported_brep_data(body, blob, Vec::new());
+    document.derived_mut().set_imported_geometry(body, geometry);
+    document
+        .derived_mut()
+        .set_imported_brep_data(body, blob, Vec::new());
 }
 
 pub fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
