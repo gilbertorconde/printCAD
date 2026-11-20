@@ -2,8 +2,12 @@
 
 Design's Hole (Shift+H, with a sketch selected on a body that has a
 solid) drills at every circle centre and lone point of the sketch,
-construction geometry left out. It starts as a custom 5 mm hole, 10 mm
-deep, drilled against the sketch's normal; **Reversed** drills the other
+construction geometry left out. With no sketch selected and a flat face
+of the solid clicked, it drills where you clicked, from a hidden sketch
+of its own on that face; add points to that sketch for more holes. It starts as a custom hole the size of
+the sketch's circles (the most common size when they differ, which the
+log says; 5 mm for a sketch of points alone), 10 mm deep, drilled
+against the sketch's normal; **Reversed** drills the other
 way. The task panel sets the rows below; a script sets the same fields
 by name (`pc.design.hole`, `pc.design.set`).
 
@@ -120,6 +124,42 @@ ISO metric thread; [PRINTING.md](PRINTING.md#nut-traps) has the sizes,
 the clearance, the depth and the side it sits on. A hole sized otherwise
 takes a nut trap of its own size.
 
+## For printing
+
+The **Printing** section shapes a hole for the printer.
+
+**Shape** is the bore's outline across its axis:
+
+- **Round:** a plain circle.
+- **Teardrop:** the circle with a point on its upper side, for a hole
+  that prints lying down. The point's sides are tangent to the circle and
+  lean the **Point angle** (45° by default) from the way it **Points
+  to**, so its roof prints as two slopes rather than an overhang.
+- **Flat top:** the teardrop cut off flat at the circle's top: a short
+  bridge between the slopes, with the bore no taller than round.
+
+The point faces the body's +Z, the build direction, unless you choose
+another axis. The shape is the drill's, and a counterbore's, spotface's or
+counterdrill's bore takes it too; a countersink and a drill point stay
+round. A hole drilled along its up direction has no side for a point, and
+says so. A mirror or a pattern turns the point with the copy.
+
+**Bridge layer** leaves a thin layer (0.2 mm by default, a layer or two)
+across the hole at the floor of its counterbore, spotface, countersink or
+counterdrill. Printed with the cut facing down, the cut's floor is then
+one bridge across its whole width rather than a ring hanging round the
+hole. Drill the layer out after printing. A hole with no cut has no floor
+to bridge, and says so.
+
+```lua
+pc.design.hole{sketch = s, diameter = 5, through_all = true, shape = "Teardrop"}
+pc.design.hole{sketch = s, diameter = 3.4, through_all = true, bridge = 0.2,
+  cut = {Counterbore = {diameter = 6.5, depth = 3.4}}}
+```
+
+`shape` is `"Round"`, `"Teardrop"` or `"FlatTop"`, or a table for more:
+`shape = {FlatTop = {angle_deg = 40, up = {0, 1, 0}}}`.
+
 ## Your own cuts
 
 Cuts you use often go in `hole_cuts.json` in the application's
@@ -170,7 +210,8 @@ depth = 3, across_flats = 7, turn_deg = 30, standard = "Din934"}`, each
 field left out taking its usual value.
 `start = {offset = 2, at = plane}` starts it 2 mm in from a datum plane
 or a sketch; `start = {face = {point = {x, y, z}, normal = {0, 0, 1}}}`
-from a face.
+from a face. `face_point = {x, y, z}` and `face_normal` in place of
+`sketch` place one hole on a flat face at that point.
 
 ## Holes already in a solid
 

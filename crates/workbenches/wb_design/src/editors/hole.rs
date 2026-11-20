@@ -6,7 +6,9 @@ use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 
 use super::extrude::start_rows;
 use super::{Formulas, choice_shown, deg_drag, mm_drag, sketch_combo};
-use crate::feature::{DesignFeature, DrillPoint, HoleCut, HoleFit, NutSide, NutTrap, ThreadSpec};
+use crate::feature::{
+    DesignFeature, DrillPoint, HoleCut, HoleFit, HoleShape, NutSide, NutTrap, ThreadSpec,
+};
 use crate::form::Form;
 use crate::hole_tables::{NutStandard, ScrewSeat, ThreadStandard, user_cut_profiles};
 
@@ -51,6 +53,8 @@ pub(super) fn hole_editor(
         nut_trap,
         reversed,
         start,
+        shape,
+        bridge,
     } = feature
     else {
         return false;
@@ -416,6 +420,16 @@ pub(super) fn hole_editor(
         changed |= nut_trap_editor(f, fx, nut_trap, nominal, *through_all);
         changed
     });
+    let summary = match (shape.point(), *bridge) {
+        (None, None) => "round".to_string(),
+        (None, Some(layer)) => format!("{layer:.2} mm bridge"),
+        (Some(_), None) => shape.label().to_lowercase(),
+        (Some(_), Some(layer)) => format!("{}, {layer:.2} mm bridge", shape.label().to_lowercase()),
+    };
+    let open = !matches!(shape, HoleShape::Round) || bridge.is_some();
+    changed |= f.section("Printing", &summary, open, |f| {
+        print_editor(f, fx, shape, bridge)
+    });
     let summary = match (*reversed, start.moves()) {
         (false, false) => "on the profile",
         (true, false) => "reversed",
@@ -540,6 +554,93 @@ fn nut_trap_editor(
         Err(why) => why,
     };
     summary_line(f, &text);
+    changed
+}
+
+/// The ways a teardrop's point may face, in the body's frame, by name.
+const UP_DIRECTIONS: [([f32; 3], &str); 6] = [
+    ([0.0, 0.0, 1.0], "+Z (build direction)"),
+    ([0.0, 0.0, -1.0], "-Z"),
+    ([1.0, 0.0, 0.0], "+X"),
+    ([-1.0, 0.0, 0.0], "-X"),
+    ([0.0, 1.0, 0.0], "+Y"),
+    ([0.0, -1.0, 0.0], "-Y"),
+];
+
+/// The printing rows: the bore's outline (round, teardrop, flat top),
+/// its point's angle and the way it faces, and a bridge layer under the
+/// hole's cut.
+fn print_editor(
+    f: &mut Form,
+    fx: &mut Formulas,
+    shape: &mut HoleShape,
+    bridge: &mut Option<f32>,
+) -> bool {
+    let mut changed = false;
+    let at = HoleShape::ALL
+        .iter()
+        .position(|s| std::mem::discriminant(s) == std::mem::discriminant(shape));
+    let names = HoleShape::ALL
+        .iter()
+        .map(|s| s.label().to_string())
+        .collect();
+    if let Some(i) = choice_shown(f, "Shape", shape.label().to_string(), names, at) {
+        // A point keeps its angle and up direction across the two shapes.
+        *shape = match (HoleShape::ALL[i], shape.point()) {
+            (HoleShape::Teardrop { .. }, Some((angle_deg, up))) => {
+                HoleShape::Teardrop { angle_deg, up }
+            }
+            (HoleShape::FlatTop { .. }, Some((angle_deg, up))) => {
+                HoleShape::FlatTop { angle_deg, up }
+            }
+            (other, _) => other,
+        };
+        changed = true;
+    }
+    if let Some((mut angle, mut way)) = shape.point() {
+        let teardrop = matches!(shape, HoleShape::Teardrop { .. });
+        let name = if teardrop {
+            "teardrop_angle"
+        } else {
+            "flat_top_angle"
+        };
+        changed |= deg_drag(f, fx, &mut angle, ("Point angle:", name), 10.0..=80.0);
+        let shown = UP_DIRECTIONS
+            .iter()
+            .find(|(v, _)| *v == way)
+            .map_or("Custom", |(_, label)| label)
+            .to_string();
+        let names = UP_DIRECTIONS.iter().map(|(_, l)| l.to_string()).collect();
+        let at = UP_DIRECTIONS.iter().position(|(v, _)| *v == way);
+        if let Some(i) = choice_shown(f, "Points to", shown, names, at) {
+            way = UP_DIRECTIONS[i].0;
+            changed = true;
+        }
+        *shape = if teardrop {
+            HoleShape::Teardrop {
+                angle_deg: angle,
+                up: way,
+            }
+        } else {
+            HoleShape::FlatTop {
+                angle_deg: angle,
+                up: way,
+            }
+        };
+    }
+    let mut on = bridge.is_some();
+    if f.check(
+        &mut on,
+        "Bridge layer",
+        "Leave a thin layer across the hole at the floor of its cut, so the floor prints as a \
+         bridge; drill it out after printing",
+    ) {
+        *bridge = on.then_some(0.2);
+        changed = true;
+    }
+    if let Some(layer) = bridge {
+        changed |= mm_drag(f, fx, layer, ("Layer:", "bridge"));
+    }
     changed
 }
 

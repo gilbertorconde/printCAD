@@ -394,9 +394,15 @@ assert(math.abs(volume - (1000 - math.pi * 9 * 10)) < 1e-3, volume)
 
 ## design.hole
 
-It drills at every circle's centre and every point of its sketch; the circles'
-sizes are ignored, the hole's own `diameter` (5 mm when left out) is what it
-drills.
+It drills at every circle's centre and every point of its sketch, its own
+`diameter` across. Left out, the diameter is the sketch's circles': the most
+common size when they differ (the larger of equally common ones, and the log
+says so), or 5 mm for a sketch of points alone.
+
+Given no sketch, `face_point` and `face_normal` place one hole on a flat face
+where the point is: it drills from a hidden sketch of its own on that face, a
+point at the place, and starts on the face. More places are points added to
+that sketch.
 
 It drills against the sketch's normal, `depth` deep (10 mm) or `through_all =
 true`. A sketch on the bottom of a pad drills away from the material and
@@ -412,6 +418,12 @@ mouth, sized from the ISO 4032 nut of its metric `thread` with 0.3 mm
 clearance; give a table for more: `{side = "Bottom", clearance, depth,
 across_flats, turn_deg, standard = "Din934"}`. At the bottom it ends where a
 hole with a `depth` ends; through all, it is refused.
+
+For printing, `shape = "Teardrop"` or `"FlatTop"` gives a hole lying across
+the build direction a point toward the body's +Z (`{Teardrop = {angle_deg,
+up}}` for another angle or way), and `bridge = 0.2` leaves a layer that thick
+across the hole at the floor of its counterbore or countersink, to drill out
+after printing.
 
 See also: `sketch.circle`, `design.pocket`
 
@@ -474,6 +486,38 @@ end
 assert(bores == 2)
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (40 * 20 - 2 * math.pi * 9) * 4) < 1e-3, volume)
+```
+
+### A hole placed on a face, with no sketch
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+pc.design.hole{body = body, face_point = {6, 8, 5}, face_normal = {0, 0, 1},
+  diameter = 4, through_all = true}
+assert(#pc.doc.rebuild() == 0, "the hole builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (400 - math.pi * 4) * 5) < 1e-3, volume)
+```
+
+### A teardrop hole through a block, lying across the build direction
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+local at = pc.sketch.new{body = body, plane = "XZ"}
+pc.sketch.point{sketch = at, x = 5, y = 5}
+pc.design.hole{sketch = at, diameter = 4, through_all = true, shape = "Teardrop"}
+assert(#pc.doc.rebuild() == 0, "the teardrop builds")
+-- The circle, and the 45° point's kite less the sector it covers.
+local r = 2
+local section = math.pi * r * r + r * r - r * r * math.pi / 4
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1000 - section * 10)) < 1e-3, volume)
 ```
 
 ## design.fillet, design.chamfer

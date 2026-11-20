@@ -3820,7 +3820,7 @@ assert(pc.doc.feature{id = gear}.fields.generator == nil, "a plain sketch")
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.pad")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -3857,7 +3857,7 @@ assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.max[1] - 10) < 1e-6)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.pocket")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -3893,7 +3893,7 @@ assert(#pc.doc.faces{body = body} == 10, "six faces and four walls")
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.revolve")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -3926,7 +3926,7 @@ assert(math.abs(volume - math.pi * (15 ^ 2 - 10 ^ 2) * 20) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.groove")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -3960,7 +3960,7 @@ assert(math.abs(volume - (math.pi * 100 * 20 - math.pi * (100 - 64) * 4)) < 1e-3
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.loft")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -3995,7 +3995,7 @@ assert(#pc.doc.faces{body = body} == 6)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.subtractive_loft")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4032,7 +4032,7 @@ assert(math.abs(volume - (4000 - math.pi * 25 * 6 / 3)) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.pipe")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4068,7 +4068,7 @@ assert(math.abs(volume - math.pi * 4 * 35) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.subtractive_pipe")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4106,7 +4106,7 @@ assert(math.abs(volume - (2000 - math.pi * 4 * 20 / 2)) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.helix")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4137,7 +4137,7 @@ assert(math.abs(volume - 4 * 2 * math.pi * 10 / 4) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.subtractive_helix")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4173,7 +4173,7 @@ assert(math.abs(volume - (math.pi * 100 * 10 - cut)) < 1e-2, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.primitive")` list every one, with its kind, default and forms
@@ -4207,7 +4207,7 @@ assert(math.abs(m.max[3] - 11) < 1e-6, "the post stands on the box")
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.subtractive_primitive")` list every one, with its kind, default and forms
@@ -4242,7 +4242,7 @@ assert(math.abs(volume - (1000 - math.pi * 9 * 10)) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.hole")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4250,10 +4250,12 @@ assert(math.abs(volume - (1000 - math.pi * 9 * 10)) < 1e-3, volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- It drills at every circle's centre and every point of its sketch; the circles' sizes are ignored, the hole's own `diameter` (5 mm when left out) is what it drills.
+- It drills at every circle's centre and every point of its sketch, its own `diameter` across. Left out, the diameter is the sketch's circles': the most common size when they differ (the larger of equally common ones, and the log says so), or 5 mm for a sketch of points alone.
+- Given no sketch, `face_point` and `face_normal` place one hole on a flat face where the point is: it drills from a hidden sketch of its own on that face, a point at the place, and starts on the face. More places are points added to that sketch.
 - It drills against the sketch's normal, `depth` deep (10 mm) or `through_all = true`. A sketch on the bottom of a pad drills away from the material and removes nothing, without an error; `reversed = true` turns it.
 - Counterbores, countersinks and threads are fields too (`cut`, `threaded`, `thread`): `describe` and `help("design.hole")` list every field with its forms, docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` shows a hole's fields.
 - `nut_trap = true` cuts a hexagonal pocket for a captive nut at the hole's mouth, sized from the ISO 4032 nut of its metric `thread` with 0.3 mm clearance; give a table for more: `{side = "Bottom", clearance, depth, across_flats, turn_deg, standard = "Din934"}`. At the bottom it ends where a hole with a `depth` ends; through all, it is refused.
+- For printing, `shape = "Teardrop"` or `"FlatTop"` gives a hole lying across the build direction a point toward the body's +Z (`{Teardrop = {angle_deg, up}}` for another angle or way), and `bridge = 0.2` leaves a layer that thick across the hole at the floor of its counterbore or countersink, to drill out after printing.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.circle`, `pc.design.pocket`.
 
@@ -4279,7 +4281,7 @@ assert(math.abs(volume - (30 * 20 * 6 - bore * 3.3 - hex * 2.7)) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.fillet")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4318,7 +4320,7 @@ assert(math.abs(volume - want) < 0.01, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.chamfer")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4355,7 +4357,7 @@ assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.draft")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4391,7 +4393,7 @@ assert(math.abs(m.volume - (2000 + lean * 10 / 2 * 10)) < 1e-3, m.volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.thickness")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4423,7 +4425,7 @@ assert(math.abs(volume - (2000 - 18 * 8 * 9)) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.delete_faces")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4457,7 +4459,7 @@ assert(#pc.doc.faces{body = body} == 6)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.offset_faces")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4493,7 +4495,7 @@ assert(math.abs(volume - (1000 - math.pi * 9 * 5)) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.scale_body")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4527,7 +4529,7 @@ assert(math.abs(m.max[1] - 30) < 1e-6 and math.abs(m.max[2] - 10) < 1e-6)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.offset_solid")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4564,7 +4566,7 @@ assert(math.abs(x - 8) < 1e-6 and math.abs(pc.doc.measure{body = body}.volume - 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.move_faces")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4598,7 +4600,7 @@ assert(math.abs(m.max[3] - (10 + 10 * math.tan(math.rad(10)))) < 1e-4, m.max[3])
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.project")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4637,7 +4639,7 @@ assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.1 * added, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.text")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4669,7 +4671,7 @@ assert(m.volume > 40 * 20 * 10, "material added")
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.mirror")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4705,7 +4707,7 @@ assert(math.abs(volume - (1000 + 2 * 36)) < 1e-6, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.linear_pattern")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4753,7 +4755,7 @@ assert(math.abs(volume - (30 * 10 - 2 * math.pi * 4) * 4) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.polar_pattern")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4790,7 +4792,7 @@ assert(math.abs(volume - (math.pi * 400 - 6 * math.pi * 4) * 3) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.circular_pattern")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4833,7 +4835,7 @@ assert(math.abs(volume - (math.pi * 900 - 12 * math.pi * 4) * 3) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.point_pattern")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4874,7 +4876,7 @@ assert(math.abs(volume - (1200 - 4 * math.pi * 2.25) * 4) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.path_pattern")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4920,7 +4922,7 @@ assert(math.abs(volume - (6400 - 5 * math.pi * 4) * 4) < 1e-3, volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.scaled")` list every one, with its kind, default and forms
 - Returns the feature's id
@@ -4958,7 +4960,7 @@ assert(math.abs(m.volume - 9625) < 1e-3, m.volume)
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
-- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.boolean")` list every one, with its kind, default and forms
 - Returns the feature's id

@@ -498,6 +498,15 @@ impl DesignWorkbench {
                 (*sketch, *wrap, *radius) = (made, curved, r);
                 Some(made)
             }
+            // A hole placed on a face drills from a sketch of its own.
+            DesignFeature::Hole { sketch, start, .. } if sketch.0.is_nil() => {
+                let face = start
+                    .face
+                    .ok_or("a hole needs a sketch or a face to drill on")?;
+                let made = hole_sketch(ctx, body, &face)?;
+                *sketch = made;
+                Some(made)
+            }
             _ => None,
         };
         if let Err(why) = edit(&mut feature) {
@@ -505,6 +514,20 @@ impl DesignWorkbench {
                 let _ = ctx.document.remove_feature(own);
             }
             return Err(why);
+        }
+        if let DesignFeature::Hole {
+            sketch,
+            diameter,
+            thread: None,
+            ..
+        } = &feature
+            && let Some((most, true)) = crate::tools::hole_diameter_of(ctx, *sketch)
+            && *diameter == most
+        {
+            ctx.log_info(format!(
+                "The sketch's circles are not all one size; the hole drills {most} mm, the most \
+                 common of them"
+            ));
         }
         let repaired = profile_repair::close_profile(ctx.document, &feature);
         if let Some(repair) = &repaired {
@@ -535,6 +558,39 @@ impl DesignWorkbench {
         ctx.log_info(format!("Created {name}"));
         Ok(CreatedFeature { id, repaired })
     }
+}
+
+/// The hidden sketch a hole placed on `face` drills from: on the face's
+/// plane, in the frame every sketch on that plane shares, one point where
+/// the face was picked. More places are points added to it.
+fn hole_sketch(
+    ctx: &mut WorkbenchRuntimeContext,
+    body: BodyId,
+    face: &FacePick,
+) -> Result<FeatureId, String> {
+    use wb_sketch::sketch::{GeometryElement, Point, Sketch, SketchPlane, Vec2D};
+    let picked = face.point.map(f64::from);
+    let plane = SketchPlane::from_face(picked, face.normal.map(f64::from));
+    let along = |axis: [f64; 3]| {
+        (0..3)
+            .map(|k| (picked[k] - plane.origin[k]) * axis[k])
+            .sum()
+    };
+    let name = DesignWorkbench::next_feature_name(ctx, "HoleSketch");
+    let mut sketch = Sketch::new(name.clone());
+    sketch.plane = plane;
+    let at = Vec2D::new(along(plane.x_axis), along(plane.y_axis));
+    sketch.add_geometry(GeometryElement::Point(Point::new(at)));
+    let id = ctx
+        .document
+        .add_feature_in_body(
+            wb_sketch::SketchFeature::new(sketch, plane),
+            name,
+            Some(body),
+        )
+        .map_err(|e| e.to_string())?;
+    ctx.document.set_feature_visible(id, false);
+    Ok(id)
 }
 
 /// What a feature command gives beside the selection a tool reads.

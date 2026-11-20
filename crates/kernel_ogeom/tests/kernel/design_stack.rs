@@ -1501,6 +1501,8 @@ fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> DesignFeature {
         point_in_depth: false,
         taper_deg: 0.0,
         nut_trap: None,
+        shape: Default::default(),
+        bridge: None,
         reversed: false,
     }
 }
@@ -5357,4 +5359,105 @@ mod heavy {
             "the groove takes some of the wall, not all of it: {threaded} (tapped {tapped})"
         );
     }
+}
+/// A 10 mm cube with a hole 4 mm across through it from its front face
+/// at mid height, lying across the build direction, shaped `shape`; its
+/// volume once built, the solid checked sound.
+fn cube_with_lying_hole(shape: wb_design::HoleShape) -> f64 {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let base = doc.add_in(
+        body,
+        "base",
+        rect_at(SketchPlane::xy(), 0.0, 0.0, 10.0, 10.0),
+    );
+    doc.add_in(body, "Pad", pad(base, 10.0));
+    // On the front plane the sketch's y is world Z and its normal -Y: the
+    // hole drills +Y through the cube.
+    let mut front = Sketch::new("front");
+    front.plane = SketchPlane::xz();
+    front.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 5.0))));
+    let at = doc.add_in(body, "front", SketchFeature::new(front, SketchPlane::xz()));
+    let lying = edited(plain_hole(at, 4.0, 10.0), |f| {
+        if let DesignFeature::Hole {
+            through_all,
+            shape: own,
+            ..
+        } = f
+        {
+            *through_all = true;
+            *own = shape;
+        }
+    });
+    doc.add_in(body, "Hole", lying);
+    let built = built(&doc, body);
+    assert!(
+        is_sound(&built.0.brep_blob),
+        "{shape:?} builds a sound solid"
+    );
+    let (lo, hi) = built.bounds();
+    assert!((hi[2] - lo[2] - 10.0).abs() < 1e-3, "the cube kept");
+    built.volume()
+}
+
+/// A teardrop's section is the circle, the triangle of its point and the
+/// tangents less the sector between the tangents; a flat top is that less
+/// the tip above the circle's top.
+#[test]
+fn a_teardrop_and_a_flat_top_take_their_sections_closed_form() {
+    let r = 2.0f64;
+    for angle in [45.0f32, 30.0] {
+        let lean = f64::from(angle).to_radians();
+        let up = [0.0, 0.0, 1.0];
+        let point = r * r / lean.tan() - r * r * (PI - 2.0 * lean) / 2.0;
+        let teardrop = PI * r * r + point;
+        let got = cube_with_lying_hole(wb_design::HoleShape::Teardrop {
+            angle_deg: angle,
+            up,
+        });
+        assert_near(1000.0 - got, teardrop * 10.0, 1e-6, "teardrop taken");
+
+        let tip = r / lean.sin() - r;
+        let flat_top = teardrop - tip * tip * lean.tan();
+        let got = cube_with_lying_hole(wb_design::HoleShape::FlatTop {
+            angle_deg: angle,
+            up,
+        });
+        assert_near(1000.0 - got, flat_top * 10.0, 1e-6, "flat top taken");
+    }
+}
+
+/// A counterbored hole through a plate 6 thick with a 0.2 mm bridge layer:
+/// the bore 2 deep, the layer left across the hole under it, the drill
+/// through the rest.
+#[test]
+fn a_bridge_layer_is_left_across_the_hole_under_its_counterbore() {
+    let (mut doc, body, rect_id) = setup(30.0, 20.0);
+    doc.add_in(body, "Pad", pad(rect_id, 6.0));
+    let top_face = SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
+    let mut holes = Sketch::new("holes");
+    holes.plane = top_face;
+    holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(15.0, 10.0))));
+    let holes_id = doc.add_in(body, "holes", SketchFeature::new(holes, top_face));
+    let bridged = edited(plain_hole(holes_id, 3.4, 6.0), |f| {
+        if let DesignFeature::Hole {
+            through_all,
+            cut,
+            bridge,
+            ..
+        } = f
+        {
+            *through_all = true;
+            *cut = wb_design::HoleCut::Counterbore {
+                diameter: 6.0,
+                depth: 2.0,
+            };
+            *bridge = Some(0.2);
+        }
+    });
+    doc.add_in(body, "Hole", bridged);
+    let built = built(&doc, body);
+    assert!(is_sound(&built.0.brep_blob));
+    let want = 30.0 * 20.0 * 6.0 - PI * 9.0 * 2.0 - PI * 1.7 * 1.7 * (6.0 - 2.2);
+    assert_near(built.volume(), want, 1e-6, "the layer left");
 }

@@ -623,3 +623,202 @@ fn a_hole_starts_where_its_start_says() {
     assert!((start_z(&doc, &hole) - 5.0).abs() < 1e-9);
     assert!(hole.dependencies().contains(&lifted));
 }
+/// The segments of the drill's outline round the first centre: the first
+/// op's first wire.
+fn drill_outline(ops: &[SolidOp]) -> Vec<ProfileSegment> {
+    let SolidOp::Sweep { profile, .. } = &ops[0] else {
+        panic!("the drill is a sweep: {:?}", ops[0]);
+    };
+    profile.wires[0].segments.clone()
+}
+
+/// The points an outline runs through, its arcs' middles among them.
+fn outline_points(segments: &[ProfileSegment]) -> Vec<[f64; 2]> {
+    segments
+        .iter()
+        .flat_map(|s| match s {
+            ProfileSegment::Line { start, end } => vec![*start, *end],
+            ProfileSegment::Arc { start, mid, end } => vec![*start, *mid, *end],
+            other => panic!("a print outline is lines and arcs: {other:?}"),
+        })
+        .collect()
+}
+
+/// A hole 2 mm across at (5, 4) of a sketch standing on the front plane,
+/// so it drills across the build direction, shaped `shape`; its ops.
+fn lying_hole(shape: crate::feature::HoleShape) -> Result<Vec<SolidOp>, String> {
+    let (mut doc, body, base_sketch) = doc_with_body_sketch();
+    add(&mut doc, body, pad(base_sketch, 10.0), "Pad");
+    let mut sketch = Sketch::new("front");
+    sketch.plane = wb_sketch::sketch::SketchPlane::xz();
+    sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 4.0))));
+    let at = add_sketch(&mut doc, body, sketch);
+    let lying = hole(at, |h| {
+        *h.diameter = 2.0;
+        *h.through_all = true;
+        *h.shape = shape;
+    });
+    hole_ops(&doc, &lying)
+}
+
+/// A teardrop's point stands toward the body's +Z, its sides leaning the
+/// angle from it and tangent to the circle; a flat top cuts the point off
+/// at the circle's top.
+#[test]
+fn a_teardrop_points_up_the_build_direction() {
+    use crate::feature::HoleShape;
+    let up = [0.0, 0.0, 1.0];
+    let (centre, r) = ([5.0, 4.0], 1.0f64);
+    for angle in [45.0f32, 30.0] {
+        let theta = f64::from(angle).to_radians();
+        let ops = lying_hole(HoleShape::Teardrop {
+            angle_deg: angle,
+            up,
+        })
+        .unwrap();
+        let points = outline_points(&drill_outline(&ops));
+        // The point: r / sin θ above the centre, on the sketch's y (world Z).
+        let apex = [centre[0], centre[1] + r / theta.sin()];
+        assert!(
+            points
+                .iter()
+                .any(|p| (p[0] - apex[0]).hypot(p[1] - apex[1]) < 1e-9),
+            "{angle}°: {points:?}"
+        );
+        // Every other point lies on the circle, none above the tangents.
+        for p in points.iter().filter(|p| (p[1] - apex[1]).abs() > 1e-9) {
+            let off = (p[0] - centre[0]).hypot(p[1] - centre[1]);
+            assert!((off - r).abs() < 1e-9, "{angle}°: {p:?} off the circle");
+            assert!(p[1] - centre[1] <= r * theta.sin() + 1e-9, "{p:?}");
+        }
+
+        let ops = lying_hole(HoleShape::FlatTop {
+            angle_deg: angle,
+            up,
+        })
+        .unwrap();
+        let points = outline_points(&drill_outline(&ops));
+        let top = points.iter().map(|p| p[1]).fold(f64::MIN, f64::max);
+        assert!((top - (centre[1] + r)).abs() < 1e-9, "{angle}°: flat at r");
+        let flat: Vec<_> = points
+            .iter()
+            .filter(|p| (p[1] - top).abs() < 1e-9)
+            .map(|p| p[0] - centre[0])
+            .collect();
+        // Half the flat: where the sides cross the circle's top line.
+        let half = (r / theta.sin() - r) * theta.tan();
+        assert!(
+            flat.iter().any(|x| (x - half).abs() < 1e-9)
+                && flat.iter().any(|x| (x + half).abs() < 1e-9),
+            "{angle}°: {flat:?} against ±{half}"
+        );
+    }
+}
+
+/// A teardrop drilled along its own up direction has no side to point
+/// to, and says so.
+#[test]
+fn a_teardrop_along_its_up_direction_is_refused() {
+    let (mut doc, body, base_sketch) = doc_with_body_sketch();
+    add(&mut doc, body, pad(base_sketch, 10.0), "Pad");
+    let at = points_sketch(&mut doc, body, &[(5.0, 2.5)]);
+    let upright = hole(at, |h| {
+        *h.shape = crate::feature::HoleShape::Teardrop {
+            angle_deg: 45.0,
+            up: [0.0, 0.0, 1.0],
+        };
+    });
+    let refused = hole_ops(&doc, &upright).unwrap_err();
+    assert!(refused.contains("up"), "{refused}");
+}
+
+/// A bridge layer leaves the drill out of the first `floor + layer` of
+/// the hole, the cut's floor and the layer under it: the drill starts
+/// there and runs the rest of the depth. A hole with no cut has no floor
+/// to bridge, and says so.
+#[test]
+fn a_bridge_layer_starts_the_drill_below_the_cuts_floor() {
+    let (mut doc, body, base_sketch) = doc_with_body_sketch();
+    add(&mut doc, body, pad(base_sketch, 10.0), "Pad");
+    let at = points_sketch(&mut doc, body, &[(5.0, 2.5)]);
+    let bridged = |cut: HoleCut| {
+        hole(at, |h| {
+            *h.depth = 8.0;
+            *h.cut = cut;
+            *h.bridge = Some(0.2);
+        })
+    };
+    // The drill's start along the hole, and how far it runs from there.
+    let drill = |feature: &DesignFeature| {
+        let ops = hole_ops(&doc, feature).unwrap();
+        let SolidOp::Sweep { profile, .. } = &ops[0] else {
+            panic!("the drill is a sweep");
+        };
+        // The sketch stands on z 0, drilled down -Z.
+        (-profile.plane.origin[2], extrude_distance(&ops[0]))
+    };
+    let (start, run) = drill(&bridged(HoleCut::Counterbore {
+        diameter: 6.0,
+        depth: 2.0,
+    }));
+    assert!((start - 2.2).abs() < 1e-6, "{start}");
+    assert!((run - 5.8).abs() < 1e-6, "{run}");
+    // A 90° countersink 6 across over a 3 mm hole ends 1.5 down.
+    let (start, _) = drill(&bridged(HoleCut::Countersink {
+        diameter: 6.0,
+        angle_deg: 90.0,
+    }));
+    assert!((start - 1.7).abs() < 1e-6, "{start}");
+    // A counterdrill's floor is the foot of its cone: 2 + (3 - 1.5) / tan 45°.
+    let (start, _) = drill(&bridged(HoleCut::Counterdrill {
+        diameter: 6.0,
+        depth: 2.0,
+        angle_deg: 90.0,
+    }));
+    assert!((start - 3.7).abs() < 1e-6, "{start}");
+
+    let refused = hole_ops(&doc, &bridged(HoleCut::None)).unwrap_err();
+    assert!(refused.contains("bridge"), "{refused}");
+}
+
+/// A hole saved before its print shape and bridge read as round and
+/// open; a script names a shape alone for its usual angle facing +Z.
+#[test]
+fn a_hole_without_print_fields_reads_round_and_a_shape_reads_by_name() {
+    use crate::feature::HoleShape;
+    let (mut doc, body, _) = doc_with_body_sketch();
+    let at = points_sketch(&mut doc, body, &[(1.0, 1.0)]);
+    let mut json = serde_json::to_value(hole(at, |_| {})).unwrap();
+    let fields = json["Hole"].as_object_mut().unwrap();
+    assert!(fields.remove("shape").is_some() && fields.remove("bridge").is_some());
+    let old: DesignFeature = serde_json::from_value(json.clone()).unwrap();
+    let DesignFeature::Hole { shape, bridge, .. } = old else {
+        panic!("a hole");
+    };
+    assert_eq!((shape, bridge), (HoleShape::Round, None));
+
+    json["Hole"]["shape"] = serde_json::json!("Teardrop");
+    let named: DesignFeature = serde_json::from_value(json.clone()).unwrap();
+    assert!(matches!(
+        named,
+        DesignFeature::Hole {
+            shape: HoleShape::Teardrop {
+                angle_deg: 45.0,
+                up: [0.0, 0.0, 1.0]
+            },
+            ..
+        }
+    ));
+    json["Hole"]["shape"] = serde_json::json!({"FlatTop": {"angle_deg": 40.0}});
+    let given: DesignFeature = serde_json::from_value(json).unwrap();
+    assert!(matches!(
+        given,
+        DesignFeature::Hole {
+            shape: HoleShape::FlatTop {
+                angle_deg: 40.0,
+                ..
+            },
+            ..
+        }
+    ));
+}

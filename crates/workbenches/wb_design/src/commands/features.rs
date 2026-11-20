@@ -395,7 +395,7 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
                 ParamKind::List,
                 "A face it takes as the viewport's picked face (a thickness's \
                  opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a \
-                 pocket given no sketch): a point of it, {x, y, z}, in the body's own frame",
+                 pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame",
             )
             .optional(
                 "face_normal",

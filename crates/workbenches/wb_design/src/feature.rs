@@ -1521,6 +1521,109 @@ pub enum DrillPoint {
     },
 }
 
+/// A hole's outline across its axis: round, or with a point on the side
+/// that faces up as it prints, so a hole lying across the build direction
+/// prints its roof as two slopes rather than an overhang.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
+pub enum HoleShape {
+    #[default]
+    Round,
+    /// A teardrop: the circle and a point toward `up`, whose sides lean
+    /// `angle_deg` from it (45° when none is given), tangent to the
+    /// circle.
+    Teardrop {
+        #[serde(default = "overhang_angle")]
+        #[walk(angle("teardrop_angle", "Teardrop angle"))]
+        angle_deg: f32,
+        /// The way the point faces, in the body's frame: its +Z, the
+        /// build direction, when none is given.
+        #[serde(default = "z_axis")]
+        #[walk(setting)]
+        up: [f32; 3],
+    },
+    /// The teardrop with its point cut off flat at the circle's top, so
+    /// the roof is a short bridge between the two slopes.
+    FlatTop {
+        #[serde(default = "overhang_angle")]
+        #[walk(angle("flat_top_angle", "Flat top angle"))]
+        angle_deg: f32,
+        #[serde(default = "z_axis")]
+        #[walk(setting)]
+        up: [f32; 3],
+    },
+}
+
+impl HoleShape {
+    /// The shapes the panel offers, at their usual angle and facing +Z.
+    pub const ALL: [HoleShape; 3] = [
+        HoleShape::Round,
+        HoleShape::Teardrop {
+            angle_deg: 45.0,
+            up: [0.0, 0.0, 1.0],
+        },
+        HoleShape::FlatTop {
+            angle_deg: 45.0,
+            up: [0.0, 0.0, 1.0],
+        },
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            HoleShape::Round => "Round",
+            HoleShape::Teardrop { .. } => "Teardrop",
+            HoleShape::FlatTop { .. } => "Flat top",
+        }
+    }
+
+    /// The point's lean and the way it faces; `None` for a round hole.
+    pub fn point(&self) -> Option<(f32, [f32; 3])> {
+        match *self {
+            HoleShape::Round => None,
+            HoleShape::Teardrop { angle_deg, up } | HoleShape::FlatTop { angle_deg, up } => {
+                Some((angle_deg, up))
+            }
+        }
+    }
+}
+
+/// A hole's shape as a script may give it: whole, or by its name alone
+/// for its usual angle facing +Z.
+pub(crate) fn hole_shape_or_name<'de, D>(deserializer: D) -> Result<HoleShape, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Given {
+        Shape(HoleShape),
+        Name(String),
+    }
+    match Given::deserialize(deserializer)? {
+        Given::Shape(shape) => Ok(shape),
+        Given::Name(name) => HoleShape::ALL
+            .into_iter()
+            .find(|s| shape_name(s) == name)
+            .ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "no hole shape `{name}`; it is Round, Teardrop or FlatTop"
+                ))
+            }),
+    }
+}
+
+/// A shape's name as serde writes its variant.
+fn shape_name(shape: &HoleShape) -> &'static str {
+    match shape {
+        HoleShape::Round => "Round",
+        HoleShape::Teardrop { .. } => "Teardrop",
+        HoleShape::FlatTop { .. } => "FlatTop",
+    }
+}
+
+fn overhang_angle() -> f32 {
+    45.0
+}
+
 fn z_axis() -> [f32; 3] {
     [0.0, 0.0, 1.0]
 }
@@ -2105,6 +2208,16 @@ pub enum DesignFeature {
         /// Where it starts drilling, when not on its sketch's plane.
         #[serde(default)]
         start: HoleStart,
+        /// The bore's outline across its axis: round, or a teardrop or
+        /// flat top for a hole printed lying down.
+        #[serde(default, deserialize_with = "hole_shape_or_name")]
+        shape: HoleShape,
+        /// A sacrificial layer this many mm thick left across the hole at
+        /// the floor of its cut, so the cut's floor prints as a bridge;
+        /// drilled out after printing. `None` leaves the hole open.
+        #[serde(default)]
+        #[walk(length("bridge", "Bridge layer"))]
+        bridge: Option<f32>,
         #[serde(default)]
         #[walk(setting)]
         reversed: bool,
