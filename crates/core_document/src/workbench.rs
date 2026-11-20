@@ -11,6 +11,9 @@ use crate::rebuild::RebuildJob;
 use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 use crate::{Document, FeatureId};
 
+mod output;
+pub use output::BenchOutput;
+
 mod commands;
 pub use commands::BenchCommands;
 
@@ -837,7 +840,7 @@ impl<T: Default + Send + 'static> TabSlot for T {
 /// the view) is a drawing-side trait of a host that draws, which reaches
 /// the bench as `dyn Any` through the registry's drawing side
 /// ([`crate::DocumentService::set_drawing_side`]).
-pub trait Workbench: std::any::Any + Send + BenchCommands {
+pub trait Workbench: std::any::Any + Send + BenchCommands + BenchOutput {
     /// Returns metadata describing this workbench.
     fn descriptor(&self) -> WorkbenchDescriptor;
 
@@ -895,26 +898,6 @@ pub trait Workbench: std::any::Any + Send + BenchCommands {
         _node: &FeatureNode,
     ) -> Option<PassiveGeometry> {
         None
-    }
-
-    /// The semantic annotations describing `body`, with face probes in
-    /// world coordinates. Asked of every bench, whichever is active.
-    fn semantic_pmi(&self, _document: &Document, _body: BodyId) -> crate::SemanticPmi {
-        crate::SemanticPmi::default()
-    }
-
-    /// The cosmetic threads an owned feature declares: each bore it
-    /// threads without cutting the thread, with its designation, in its
-    /// body's frame. Asked as the document evaluates, of `document`'s
-    /// evaluated values; the parts list, the annotations and export read
-    /// the answers (`Document::cosmetic_threads`).
-    fn cosmetic_threads(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-        _node: &FeatureNode,
-    ) -> Vec<crate::ThreadCallout> {
-        Vec::new()
     }
 
     /// The curves and points an owned feature lays out, for what is
@@ -1146,13 +1129,6 @@ pub trait Workbench: std::any::Any + Send + BenchCommands {
         PropertyHints::default()
     }
 
-    /// What this bench has to report of the document, for a printed report
-    /// document: a title, lines of summary, tables of text, and the bodies
-    /// to picture. `None` when it has nothing to report.
-    fn report(&self, _document: &Document) -> Option<BenchReport> {
-        None
-    }
-
     /// The mesh histories this bench keeps on mesh bodies, as they stand:
     /// asked each frame, built by the host from each body's mesh start
     /// when a plan changes.
@@ -1358,26 +1334,6 @@ pub trait Workbench: std::any::Any + Send + BenchCommands {
         if let Some(slot) = self.tab_state() {
             slot.put_back(state);
         }
-    }
-
-    /// Bodies that are not made (bought parts): an export of every
-    /// visible body and what goes to the slicer leave them out.
-    /// `bought_kinds` are the feature kinds every bench declares bought
-    /// (`WorkbenchDescriptor::bought_kinds`).
-    fn not_printed(&self, _document: &Document, _bought_kinds: &[WorkbenchId]) -> Vec<BodyId> {
-        Vec::new()
-    }
-
-    /// The parts to print and how many of each, for a print layout: each
-    /// part the bodies of one shape, the first the one printed. `None`
-    /// from a bench that keeps no parts list; the first bench to answer
-    /// is the one the host lays out.
-    fn print_parts(
-        &self,
-        _document: &Document,
-        _bought_kinds: &[WorkbenchId],
-    ) -> Option<Vec<PrintPart>> {
-        None
     }
 
     /// Features of other bodies that act on `body` (a joint holding

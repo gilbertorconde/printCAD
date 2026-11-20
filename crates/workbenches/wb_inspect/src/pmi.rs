@@ -245,7 +245,7 @@ fn probes(document: &Document, element: &Element) -> Vec<[f64; 3]> {
 mod tests {
     use super::*;
     use crate::element::Fitted;
-    use core_document::{BodyPlacement, Workbench};
+    use core_document::{BenchOutput, BodyPlacement};
 
     #[test]
     fn reference_pmi_uses_ordered_datums_and_world_probes() {

@@ -65,8 +65,8 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BenchCommands, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope,
-    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    BenchCommands, BenchOutput, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem,
+    MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
     WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
@@ -2082,6 +2082,8 @@ impl Workbench for SketchWorkbench {
         self.tab.picture_edges.running()
     }
 }
+
+impl BenchOutput for SketchWorkbench {}
 
 impl BenchCommands for SketchWorkbench {
     fn run_command(

@@ -8,11 +8,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BenchCommands, BodyId, Chord, CommandArgs, CommandError, CommandResult,
-    CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem,
-    MenuScope, OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark,
-    ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    ActionDescriptor, BenchCommands, BenchOutput, BodyId, Chord, CommandArgs, CommandError,
+    CommandResult, CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode, InputResult,
+    MarkKind, MenuItem, MenuScope, OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel,
+    ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior, ToolDescriptor,
+    ToolHint, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 use serde::de::DeserializeOwned;
 
@@ -809,42 +810,6 @@ impl Workbench for WasmWorkbench {
         });
     }
 
-    /// The threads the body's plan declares for the feature with a
-    /// designation, each where its round face starts and down its axis.
-    fn cosmetic_threads(
-        &self,
-        document: &Document,
-        id: FeatureId,
-        node: &FeatureNode,
-    ) -> Vec<core_document::ThreadCallout> {
-        let Some(body) = node.body else {
-            return Vec::new();
-        };
-        let Some((mesh, _)) = document.local_geometry(body) else {
-            return Vec::new();
-        };
-        let mut inner = self.inner();
-        let threads = self.plan_threads(&mut inner, document, body);
-        let feature = id.0.to_string();
-        threads
-            .declared
-            .iter()
-            .filter(|t| t.feature == feature)
-            .filter_map(|thread| {
-                let designation = thread.designation.clone()?;
-                let face = crate::geometry::thread_face(&mesh, thread)?;
-                Some(core_document::ThreadCallout {
-                    feature: id,
-                    body,
-                    designation,
-                    mouth: face.start.as_dvec3().to_array(),
-                    axis: face.into.as_dvec3().to_array(),
-                    radius: f64::from(face.radius),
-                })
-            })
-            .collect()
-    }
-
     /// The cosmetic threads the body's plan declares for the feature, each
     /// a helix over its round face.
     fn passive_geometry(
@@ -1403,6 +1368,44 @@ impl Workbench for WasmWorkbench {
             invalidate_owned(ctx.document, &self.package, body);
         }
         removed
+    }
+}
+
+impl BenchOutput for WasmWorkbench {
+    /// The threads the body's plan declares for the feature with a
+    /// designation, each where its round face starts and down its axis.
+    fn cosmetic_threads(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &FeatureNode,
+    ) -> Vec<core_document::ThreadCallout> {
+        let Some(body) = node.body else {
+            return Vec::new();
+        };
+        let Some((mesh, _)) = document.local_geometry(body) else {
+            return Vec::new();
+        };
+        let mut inner = self.inner();
+        let threads = self.plan_threads(&mut inner, document, body);
+        let feature = id.0.to_string();
+        threads
+            .declared
+            .iter()
+            .filter(|t| t.feature == feature)
+            .filter_map(|thread| {
+                let designation = thread.designation.clone()?;
+                let face = crate::geometry::thread_face(&mesh, thread)?;
+                Some(core_document::ThreadCallout {
+                    feature: id,
+                    body,
+                    designation,
+                    mouth: face.start.as_dvec3().to_array(),
+                    axis: face.into.as_dvec3().to_array(),
+                    radius: f64::from(face.radius),
+                })
+            })
+            .collect()
     }
 }
 

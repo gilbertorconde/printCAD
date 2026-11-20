@@ -2292,7 +2292,9 @@ fn radial_page(ui: &mut Ui, state: &mut PreferencesState, registry: &DocumentSer
 #[cfg(test)]
 mod rail {
     use super::*;
-    use core_document::{BenchCommands, Workbench, WorkbenchContext, WorkbenchDescriptor};
+    use core_document::{
+        BenchCommands, BenchOutput, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    };
 
     struct Bench(&'static str, &'static str, bool);
 
@@ -2305,6 +2307,8 @@ mod rail {
         }
         fn configure(&self, _context: &mut WorkbenchContext) {}
     }
+
+    impl BenchOutput for Bench {}
 
     impl BenchCommands for Bench {}
 

@@ -78,8 +78,8 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BenchCommands, BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope,
-    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
+    BenchCommands, BenchOutput, BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem,
+    MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
     WorkbenchRuntimeContext, base_tool_id,
 };
 use features::datum_icon;
@@ -416,17 +416,6 @@ impl Workbench for DesignWorkbench {
         node.read::<DesignFeature>()?.sketch()
     }
 
-    /// A hole with a cosmetic thread threads each of its bores; a mirror
-    /// or a pattern each copy of them it keeps.
-    fn cosmetic_threads(
-        &self,
-        document: &Document,
-        id: FeatureId,
-        node: &core_document::FeatureNode,
-    ) -> Vec<core_document::ThreadCallout> {
-        self.threads_of(document, id, node)
-    }
-
     /// A borrow draws what it lends where its body sits, in the palette's
     /// external colour: the sketch's curves, or the outlines of the faces
     /// and edges.
@@ -682,6 +671,19 @@ impl Workbench for DesignWorkbench {
                 "tool_body",
             ],
         }
+    }
+}
+
+impl BenchOutput for DesignWorkbench {
+    /// A hole with a cosmetic thread threads each of its bores; a mirror
+    /// or a pattern each copy of them it keeps.
+    fn cosmetic_threads(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Vec<core_document::ThreadCallout> {
+        self.threads_of(document, id, node)
     }
 }
 

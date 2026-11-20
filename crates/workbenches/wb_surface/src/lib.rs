@@ -31,9 +31,9 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BenchCommands, BodyId, CommandArgs, CommandResult, Document, FeatureId, FeatureInfo,
-    HostRequest, InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
+    BenchCommands, BenchOutput, BodyId, CommandArgs, CommandResult, Document, FeatureId,
+    FeatureInfo, HostRequest, InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
@@ -950,6 +950,8 @@ impl Workbench for SurfaceWorkbench {
         Some(&mut self.tab)
     }
 }
+
+impl BenchOutput for SurfaceWorkbench {}
 
 impl BenchCommands for SurfaceWorkbench {
     fn run_command(

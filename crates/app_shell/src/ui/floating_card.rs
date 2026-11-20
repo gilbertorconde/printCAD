@@ -370,7 +370,7 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{BenchCommands, Workbench, WorkbenchContext};
+    use core_document::{BenchCommands, BenchOutput, Workbench, WorkbenchContext};
 
     /// A bench offering `card`, if any, as its floating card.
     struct Bench {
@@ -392,6 +392,8 @@ mod tests {
             self.card.clone()
         }
     }
+
+    impl BenchOutput for Bench {}
 
     impl BenchCommands for Bench {}
 

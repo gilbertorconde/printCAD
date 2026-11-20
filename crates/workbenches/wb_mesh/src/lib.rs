@@ -639,6 +639,8 @@ impl core_document::Workbench for MeshWorkbench {
     }
 }
 
+impl core_document::BenchOutput for MeshWorkbench {}
+
 impl core_document::BenchCommands for MeshWorkbench {
     fn run_command(
         &mut self,

@@ -46,8 +46,8 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BenchCommands, BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest,
-    InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    BenchCommands, BenchOutput, BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode,
+    HostRequest, InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
@@ -617,33 +617,6 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
-    /// Bought parts are not made: exports of the model and the slicer
-    /// leave them out.
-    fn not_printed(
-        &self,
-        document: &core_document::Document,
-        bought_kinds: &[core_document::WorkbenchId],
-    ) -> Vec<BodyId> {
-        parts::bought_bodies(document, bought_kinds)
-    }
-
-    fn print_parts(
-        &self,
-        document: &core_document::Document,
-        bought_kinds: &[core_document::WorkbenchId],
-    ) -> Option<Vec<core_document::PrintPart>> {
-        Some(
-            parts::parts_list(document, bought_kinds)
-                .into_iter()
-                .map(|part| core_document::PrintPart {
-                    name: part.name,
-                    bodies: part.bodies,
-                    count: part.print,
-                })
-                .collect(),
-        )
-    }
-
     fn menu_items(
         &self,
         scope: &core_document::MenuScope,
@@ -842,6 +815,35 @@ impl Workbench for AssemblyWorkbench {
         self.tab.measuring = None;
         self.put_back_explosion(ctx);
         self.tab.task = None;
+    }
+}
+
+impl BenchOutput for AssemblyWorkbench {
+    /// Bought parts are not made: exports of the model and the slicer
+    /// leave them out.
+    fn not_printed(
+        &self,
+        document: &core_document::Document,
+        bought_kinds: &[core_document::WorkbenchId],
+    ) -> Vec<BodyId> {
+        parts::bought_bodies(document, bought_kinds)
+    }
+
+    fn print_parts(
+        &self,
+        document: &core_document::Document,
+        bought_kinds: &[core_document::WorkbenchId],
+    ) -> Option<Vec<core_document::PrintPart>> {
+        Some(
+            parts::parts_list(document, bought_kinds)
+                .into_iter()
+                .map(|part| core_document::PrintPart {
+                    name: part.name,
+                    bodies: part.bodies,
+                    count: part.print,
+                })
+                .collect(),
+        )
     }
 }
 

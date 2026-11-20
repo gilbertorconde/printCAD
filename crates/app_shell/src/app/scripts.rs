@@ -1722,6 +1722,8 @@ mod tests {
         }
     }
 
+    impl core_document::BenchOutput for Counted {}
+
     impl core_document::BenchCommands for Counted {
         fn run_command(
             &mut self,

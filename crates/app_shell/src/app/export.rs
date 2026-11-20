@@ -1554,6 +1554,9 @@ mod tests {
                 core_document::WorkbenchDescriptor::new("test.pmi", "PMI", "")
             }
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
+        }
+
+        impl core_document::BenchOutput for Bench {
             fn semantic_pmi(
                 &self,
                 _: &core_document::Document,
@@ -1638,6 +1641,9 @@ mod tests {
                 core_document::WorkbenchDescriptor::new("test.bought", "Bought", "")
             }
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
+        }
+
+        impl core_document::BenchOutput for Bought {
             fn not_printed(
                 &self,
                 document: &core_document::Document,
