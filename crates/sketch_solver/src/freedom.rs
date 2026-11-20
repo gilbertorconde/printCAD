@@ -2,7 +2,6 @@
 
 use crate::compile::compile_system;
 use crate::problem::{ConicKind, Geometry, Problem};
-use crate::solve::{jacobian_rank, rank_jacobian};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -40,7 +39,7 @@ pub fn estimate(problem: &Problem) -> Freedom {
     let rank = if sys.specs.is_empty() || sys.free.is_empty() {
         0
     } else {
-        jacobian_rank(rank_jacobian(&sys), problem.settings.rank_tolerance)
+        crate::sparse::rank(&sys, problem.settings.rank_tolerance)
     };
     Freedom {
         free_variables,
@@ -70,7 +69,7 @@ pub fn locked(problem: &Problem) -> Locked {
         var_locked[j] = false;
     }
     if !sys.free.is_empty() && !sys.specs.is_empty() {
-        let columns = determined_columns(rank_jacobian(&sys), problem.settings.rank_tolerance);
+        let columns = crate::sparse::determined(&sys, problem.settings.rank_tolerance);
         for (&j, held) in sys.free.iter().zip(columns) {
             var_locked[j] = held;
         }
@@ -107,16 +106,12 @@ pub fn locked(problem: &Problem) -> Locked {
 
 /// For each column of `m`, whether it lies outside the null space: no
 /// direction the rows leave free moves it. Gauss-Jordan elimination with
-/// partial pivoting; a pivot column is determined when its row holds
-/// nothing in any non-pivot column, and a non-pivot column never is.
-fn determined_columns(mut m: Vec<Vec<f64>>, rank_tolerance: f64) -> Vec<bool> {
+/// partial pivoting, a pivot at or below `tol` taken for zero; a pivot
+/// column is determined when its row holds nothing in any non-pivot
+/// column, and a non-pivot column never is.
+pub(crate) fn determined_within(mut m: Vec<Vec<f64>>, tol: f64, rank_tolerance: f64) -> Vec<bool> {
     let rows = m.len();
     let cols = m.first().map_or(0, Vec::len);
-    let max_abs = m.iter().flatten().fold(0.0_f64, |acc, v| acc.max(v.abs()));
-    if rows == 0 || cols == 0 || max_abs == 0.0 || !max_abs.is_finite() {
-        return vec![false; cols];
-    }
-    let tol = max_abs * rank_tolerance;
     let mut pivots: Vec<(usize, usize)> = Vec::new();
     let mut row = 0;
     for col in 0..cols {
@@ -168,13 +163,13 @@ fn determined_columns(mut m: Vec<Vec<f64>>, rank_tolerance: f64) -> Vec<bool> {
 
 #[cfg(test)]
 mod locked_tests {
-    use super::determined_columns;
+    use super::determined_within;
 
     #[test]
     fn a_column_the_rows_pin_is_determined_and_a_coupled_one_is_not() {
         // x0 is pinned; x1 and x2 only move together (x1 - x2 = 0), so
         // neither is determined.
         let m = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, -1.0]];
-        assert_eq!(determined_columns(m, 1e-9), vec![true, false, false]);
+        assert_eq!(determined_within(m, 1e-9, 1e-9), vec![true, false, false]);
     }
 }

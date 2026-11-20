@@ -11,6 +11,10 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
 
 - `sketch_solver`: standalone std-only sketch mathematics: ordered typed
   `problem`, semantic `compile`, `curves`, `spline`, `residual`, LM `solve`,
+  `sparse` (the Jacobian by blocks of the variables equations join: each
+  residual's `reads` names its variables; differences, the LM step, rank
+  and held variables all worked out per block, so a residual kind must
+  list every variable it reads, which `sparse`'s tests check per kind),
   rank/DoF `freedom` and `diagnosis`, `soft` (measured points settling
   what the constraints leave free); optional serde. Its complete directory
   can be copied to another consumer without workspace inheritance.

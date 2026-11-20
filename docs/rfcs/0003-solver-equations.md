@@ -95,6 +95,16 @@ Internal hidden rows are counted separately below.
   LM damping `1e-3` initially, 25 retries, diagonal+mean damping floor
   `1e-12`, limits `[1e-12,1e12]`, step cap `100*scale`. Numerical rank uses
   `1e-8`. Default convergence is `1e-9*max(1,|x|∞)`.
+- The Jacobian is block diagonal: free variables are grouped into blocks
+  of those the equations join (`sparse::Blocks`), each residual naming the
+  variables it reads. A column is differenced by evaluating only the
+  equations that read it, which gives the same numbers as differencing
+  the whole system. The damped normal equations are solved block by block
+  (the mean diagonal taken over all free variables, the step capped as a
+  whole), and rank and determined variables are summed over the blocks,
+  every pivot held to the whole matrix's threshold (its largest entry
+  times the rank tolerance). A variable no equation reads has no column
+  in any block: its step is zero and it is never determined.
 - Solver inputs promote f32 geometry to f64. Initial ellipse minor radius
   and pitch direction normalize in f32; storage and axis/focus renaming
   also use f32. Independent f64 inputs must not imitate application

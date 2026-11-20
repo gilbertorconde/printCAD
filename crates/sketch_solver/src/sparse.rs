@@ -3,10 +3,15 @@
 //! of geometry no equation joins, so the Jacobian is block diagonal once
 //! its columns are grouped by the equations linking them. A block is the
 //! equations and the movable variables one cluster holds: its columns are
-//! differenced by evaluating its own equations alone, which gives the
-//! numbers differencing the whole system would (the same equation at the
-//! same probe), at the cost of the equations each variable reaches
-//! rather than all of them for every variable.
+//! differenced by evaluating its own equations alone, and the normal
+//! equations, the step, the rank and which variables are determined are
+//! all worked out block by block. Each block stays a dense matrix: a
+//! cluster is small, and a large one is no worse off than the whole
+//! system was.
+//!
+//! The differences are the ones the whole system's would be (the same
+//! equation at the same probe), and a block's elimination sees the same
+//! pivots: the other blocks' rows are zero in its columns.
 
 use crate::compile::System;
 
@@ -175,14 +180,60 @@ impl Blocks {
     }
 }
 
+/// The largest magnitude in the blocks, or `None` when it is zero or not
+/// finite (no rank to read).
+pub(crate) fn largest(jac: &[Matrix]) -> Option<f64> {
+    let max_abs = jac
+        .iter()
+        .flatten()
+        .flatten()
+        .fold(0.0_f64, |acc, v| acc.max(v.abs()));
+    (max_abs != 0.0 && max_abs.is_finite()).then_some(max_abs)
+}
+
+/// The numerical rank of `sys`'s Jacobian at its values (with stacked
+/// points held apart parted, see [`crate::solve::part_coincident_ends`]):
+/// the sum of its blocks' ranks, every pivot held to the whole matrix's
+/// threshold.
+pub fn rank(sys: &System, rank_tolerance: f64) -> usize {
+    let blocks = Blocks::of(sys);
+    let jac = blocks.jacobian(sys, &crate::solve::part_coincident_ends(sys));
+    let Some(max_abs) = largest(&jac) else {
+        return 0;
+    };
+    let tol = max_abs * rank_tolerance;
+    jac.into_iter()
+        .map(|m| crate::solve::rank_within(m, tol))
+        .sum()
+}
+
+/// For each movable variable of `sys` (in `free`'s order), whether no
+/// direction its equations leave free moves it, block by block; a
+/// variable no equation reads never is.
+pub fn determined(sys: &System, rank_tolerance: f64) -> Vec<bool> {
+    let blocks = Blocks::of(sys);
+    let jac = blocks.jacobian(sys, &crate::solve::part_coincident_ends(sys));
+    let mut out = vec![false; sys.free.len()];
+    let Some(max_abs) = largest(&jac) else {
+        return out;
+    };
+    for (block, m) in blocks.blocks.iter().zip(jac) {
+        let held = crate::freedom::determined_within(m, max_abs * rank_tolerance, rank_tolerance);
+        for (&column, held) in block.columns.iter().zip(held) {
+            out[column] = held;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Matrix;
+    use super::{Blocks, Matrix, determined, rank};
     use crate::compile::System;
     use crate::curves::CurveVars;
     use crate::problem::Settings;
     use crate::residual::{CurveShape, Offset, ResidualSpec as R, Tangent};
-    use crate::solve::{eval_residuals, jacobian, part_coincident_ends};
+    use crate::solve::{eval_residuals, jacobian, jacobian_rank, part_coincident_ends};
 
     /// A fixed-seed generator, so every run draws the same systems.
     struct Rng(u64);
@@ -620,6 +671,88 @@ mod tests {
                     one.specs[0]
                 );
             }
+        }
+    }
+
+    /// Clusters of a few equations each over points of their own, some
+    /// repeated (a redundant row), some joined to the one before.
+    fn clusters(rng: &mut Rng) -> System {
+        let clusters = 2 + rng.below(5);
+        let mut vars = Vec::new();
+        let mut specs = Vec::new();
+        for k in 0..clusters {
+            let first = vars.len();
+            for _ in 0..4 {
+                vars.extend([rng.within(-5.0, 5.0), rng.within(-5.0, 5.0)]);
+            }
+            vars.push(rng.within(0.5, 2.0));
+            let radius = first + 8;
+            for _ in 0..1 + rng.below(4) {
+                let p = rng.points(first, 4, 3);
+                let spec = match rng.below(6) {
+                    0 => R::Horizontal { s: p[0], e: p[1] },
+                    1 => R::Distance {
+                        p1: p[0],
+                        p2: p[1],
+                        d: 2.0,
+                    },
+                    2 => R::PointOnLine {
+                        p: p[0],
+                        s: p[1],
+                        e: p[2],
+                    },
+                    3 => R::PointOnCircle {
+                        p: p[0],
+                        c: p[1],
+                        r: radius,
+                    },
+                    4 => R::FixedPoint {
+                        p: p[0],
+                        x: 0.0,
+                        y: 1.0,
+                    },
+                    _ => R::Parallel {
+                        s1: p[0],
+                        e1: p[1],
+                        s2: p[1],
+                        e2: p[2],
+                    },
+                };
+                if rng.below(4) == 0 {
+                    specs.push(spec.clone());
+                }
+                specs.push(spec);
+            }
+            if k > 0 && rng.below(3) == 0 {
+                specs.push(R::Coincident {
+                    p1: first,
+                    p2: first - 9,
+                });
+            }
+        }
+        let free = (0..vars.len()).filter(|_| rng.below(6) != 0).collect();
+        system(vars, free, specs)
+    }
+
+    #[test]
+    fn blocks_rank_and_hold_as_the_whole_matrix_does() {
+        let mut rng = Rng(0x0b10c5);
+        let tolerance = Settings::default().rank_tolerance;
+        for _ in 0..200 {
+            let sys = clusters(&mut rng);
+            let whole = reference(&sys, &part_coincident_ends(&sys));
+            assert_eq!(
+                rank(&sys, tolerance),
+                jacobian_rank(whole.clone(), tolerance)
+            );
+            let max_abs = whole.iter().flatten().fold(0.0_f64, |m, v| m.max(v.abs()));
+            let held = if max_abs > 0.0 {
+                crate::freedom::determined_within(whole, max_abs * tolerance, tolerance)
+            } else {
+                vec![false; sys.free.len()]
+            };
+            assert_eq!(determined(&sys, tolerance), held);
+            assert!(Blocks::of(&sys).blocks.len() <= sys.free.len());
         }
     }
 }
