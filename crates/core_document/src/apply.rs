@@ -603,6 +603,7 @@ impl Document {
                 hidden,
                 suppressed,
             } => {
+                let seq = self.feature_tree.unclaimed_seq(*id, *seq);
                 self.feature_tree.add_node(FeatureNode {
                     id: *id,
                     workbench_id: workbench_id.clone(),
@@ -612,7 +613,7 @@ impl Document {
                     suppressed: *suppressed,
                     dirty: false,
                     created_at: *created_at,
-                    seq: *seq,
+                    seq,
                     error: None,
                     refused_edges: Default::default(),
                     warning: None,
@@ -698,9 +699,10 @@ impl Document {
                 let Some(from) = self.feature_tree.get_node(*id).map(|n| n.body) else {
                     return;
                 };
+                let seq = self.feature_tree.unclaimed_seq(*id, *seq);
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
                     node.body = *body;
-                    node.seq = *seq;
+                    node.seq = seq;
                 }
                 // Both histories change: rebuild every feature of either.
                 let touched: Vec<FeatureId> = self

@@ -231,7 +231,8 @@ hacks, no silently degraded feature). Instead:
 - Serde compatibility: new fields on persisted types (features, sketch) take
   `#[serde(default)]` so old `.prtcad` files keep loading.
 - A `.prtcad`'s meshes are entries of their own (`mesh/<uuid>.bin`,
-  MessagePack; `ImportedGeometry::mesh_path`), the JSON carrying an empty
+  MessagePack with field names, older bare arrays read by `mesh_entry`;
+  `ImportedGeometry::mesh_path`), the JSON carrying an empty
   mesh in their place (`MESHES_APART` while it is written), since a large
   assembly's meshes as JSON text passed what one buffer may hold on a
   32-bit target; a document whose JSON holds them still loads. A plain

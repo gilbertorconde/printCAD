@@ -275,6 +275,19 @@ impl FeatureTree {
             .map_or(0, |m| m + 1)
     }
 
+    /// `seq` for feature `id` when no other feature holds it, the next
+    /// number when one does. Two editors inserting at once both take the
+    /// same next number; every replica applies their inserts in the
+    /// server's order, so the one ordered later moves after the other on
+    /// all of them.
+    pub fn unclaimed_seq(&self, id: FeatureId, seq: u64) -> u64 {
+        let taken = self
+            .features
+            .iter()
+            .any(|(other, node)| *other != id && node.seq == seq);
+        if taken { self.next_seq() } else { seq }
+    }
+
     /// Add a feature node to the tree: a root unless dependencies were
     /// already recorded for its id.
     pub fn add_node(&mut self, node: FeatureNode) -> FeatureId {

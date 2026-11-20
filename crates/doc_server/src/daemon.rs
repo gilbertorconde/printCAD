@@ -14,12 +14,22 @@
 //! relayed is opaque bytes or op envelopes, so daemon and app can be
 //! versions apart and still cooperate. The daemon exits when its last
 //! client disconnects.
+//!
+//! Each client's queue holds at most `queue_limit` messages it has not been
+//! written yet; a client that falls further behind is disconnected, and
+//! rejoins by opening the document again (the file and the tail).
+//!
+//! The log marks what the file holds: each batch's lines carry the batch's
+//! id, and every save (and every time the log gets its home) adds a line
+//! naming the batches still unsaved. A daemon that starts where one died
+//! reads its document from `<socket>.home` and its unsaved tail from the
+//! log, so a client joining it still gets the edits nobody saved.
 
 use local_ipc::{Listener as UnixListener, Stream as UnixStream};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 
@@ -29,8 +39,13 @@ use core_document::server::{ClientMessage, SERVER_PROTOCOL_VERSION, ServerMessag
 use crate::file_io::write_atomically;
 use crate::framing::{read_frame, write_frame};
 
+/// How many messages a client may have queued and unwritten before it is
+/// disconnected, unless the daemon is started with another
+/// `--queue-limit`. A client's reader takes frames off its socket as they
+/// come, so only a client that has stopped altogether falls this far behind.
+pub const DEFAULT_QUEUE_LIMIT: usize = 4096;
+
 /// The document's shared state: who is connected and the order of edits.
-#[derive(Default)]
 struct Hub {
     state: Mutex<State>,
     /// Held across a read or write of the document's file and the change
@@ -38,6 +53,7 @@ struct Hub {
     /// save and the tail it leaves, describe one moment. Taken before
     /// `state`, never after.
     file: Mutex<()>,
+    queue_limit: usize,
 }
 
 #[derive(Default)]
@@ -51,44 +67,119 @@ struct State {
 }
 
 struct Client {
+    actor: uuid::Uuid,
     /// Everything this client is to hear, written in order by its writer
-    /// thread.
-    outbox: Sender<ServerMessage>,
+    /// thread; the flag says whether the message counts in `behind`.
+    outbox: Sender<(ServerMessage, bool)>,
+    /// Counted messages queued and not yet written.
+    behind: Arc<AtomicUsize>,
+    /// The socket, shut to disconnect a client that fell behind.
+    socket: UnixStream,
     /// Batches this client has sent.
     batches: u64,
 }
 
+impl Client {
+    /// Queue `message`; false once the client is too far behind to keep.
+    fn send(&self, message: ServerMessage, limit: usize) -> bool {
+        let behind = self.behind.fetch_add(1, Ordering::AcqRel) + 1;
+        let _ = self.outbox.send((message, true));
+        behind <= limit
+    }
+
+    /// Queue a reply to the client's own request, which it asked for and
+    /// so never counts against it: the file and tail an open sends.
+    fn reply(&self, message: ServerMessage) {
+        let _ = self.outbox.send((message, false));
+    }
+}
+
 struct Logged {
     seq: u64,
+    /// The batch's id in the op log.
+    id: uuid::Uuid,
     actor: uuid::Uuid,
-    /// The connection that sent it, and which of its batches it was.
-    client: u64,
+    /// The connection that sent it, and which of its batches it was;
+    /// `None` for a batch read back from the log, which no connection
+    /// here sent and every client holds (from the file and tail it opened,
+    /// or from before the daemon restarted), so any save takes it.
+    client: Option<u64>,
     batch: u64,
     ops: Vec<DocumentOp>,
 }
 
 impl State {
     /// Queue `message` for every client but `except`.
-    fn tell_others(&self, except: u64, message: impl Fn() -> ServerMessage) {
+    fn tell_others(&mut self, except: u64, limit: usize, message: impl Fn() -> ServerMessage) {
+        let mut stalled = Vec::new();
         for (id, client) in &self.clients {
-            if *id != except {
-                let _ = client.outbox.send(message());
+            if *id != except && !client.send(message(), limit) {
+                stalled.push(*id);
             }
+        }
+        self.disconnect(stalled, limit);
+    }
+
+    fn tell(&mut self, id: u64, limit: usize, message: ServerMessage) {
+        if let Some(client) = self.clients.get(&id)
+            && !client.send(message, limit)
+        {
+            self.disconnect(vec![id], limit);
         }
     }
 
-    fn tell(&self, id: u64, message: ServerMessage) {
+    fn reply(&self, id: u64, message: ServerMessage) {
         if let Some(client) = self.clients.get(&id) {
-            let _ = client.outbox.send(message);
+            client.reply(message);
         }
     }
 
     /// Tell every client how many *other* editors it currently has.
-    fn announce_peers(&self) {
+    fn announce_peers(&mut self, limit: usize) {
         let peers = self.clients.len().saturating_sub(1) as u32;
-        for client in self.clients.values() {
-            let _ = client.outbox.send(ServerMessage::Peers { peers });
+        let stalled: Vec<u64> = self
+            .clients
+            .iter()
+            .filter(|(_, client)| !client.send(ServerMessage::Peers { peers }, limit))
+            .map(|(id, _)| *id)
+            .collect();
+        self.disconnect(stalled, limit);
+    }
+
+    /// Let `id` go: out of the document's clients, its peers told.
+    fn leave(&mut self, id: u64, limit: usize) {
+        if let Some(client) = self.clients.remove(&id) {
+            let actor = client.actor;
+            self.announce_peers(limit);
+            self.tell_others(id, limit, || ServerMessage::PresenceGone { actor });
         }
+    }
+
+    /// Disconnect clients too far behind: their sockets shut, which ends
+    /// their writer and reader threads, and they leave. A client that
+    /// reconnects opens the document again and gets the file and the tail.
+    fn disconnect(&mut self, stalled: Vec<u64>, limit: usize) {
+        for id in stalled {
+            if let Some(client) = self.clients.get(&id) {
+                tracing::warn!(
+                    actor = %client.actor,
+                    limit,
+                    "a client fell too far behind; disconnecting it"
+                );
+                let _ = client.socket.shutdown(std::net::Shutdown::Both);
+                self.leave(id, limit);
+            }
+        }
+    }
+
+    /// The ids of the batches still unsaved, for the log's mark; an empty
+    /// batch has no lines in the log and changes nothing, so it is left out.
+    fn unsaved(&self) -> Vec<uuid::Uuid> {
+        self.tail
+            .iter()
+            .filter(|logged| !logged.ops.is_empty())
+            .map(|logged| logged.id)
+            .collect()
     }
 }
 
@@ -121,28 +212,49 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
         }
     };
 
+    let Ok(socket) = stream.try_clone() else {
+        return;
+    };
     // The writer: one thread per client drains its queue onto the socket.
     // A failed write shuts the socket, which ends the reader below too.
-    let (outbox, queue) = channel::<ServerMessage>();
+    let (outbox, queue) = channel::<(ServerMessage, bool)>();
+    let behind = Arc::new(AtomicUsize::new(0));
+    let written = Arc::clone(&behind);
     let mut writer = stream;
     std::thread::spawn(move || {
-        for message in queue {
+        for (message, counted) in queue {
             if write_frame(&mut writer, &message).is_err() {
                 let _ = writer.shutdown(std::net::Shutdown::Both);
                 return;
             }
+            if counted {
+                written.fetch_sub(1, Ordering::AcqRel);
+            }
         }
     });
 
+    let limit = hub.queue_limit;
     let peers_at_join = {
         let mut state = lock(&hub.state);
         let peers = state.clients.len() as u32;
-        let _ = outbox.send(ServerMessage::HelloOk {
-            protocol: SERVER_PROTOCOL_VERSION,
-            peers,
-        });
-        state.clients.insert(id, Client { outbox, batches: 0 });
-        state.announce_peers();
+        let _ = outbox.send((
+            ServerMessage::HelloOk {
+                protocol: SERVER_PROTOCOL_VERSION,
+                peers,
+            },
+            false,
+        ));
+        state.clients.insert(
+            id,
+            Client {
+                actor,
+                outbox,
+                behind,
+                socket,
+                batches: 0,
+            },
+        );
+        state.announce_peers(limit);
         peers
     };
     tracing::info!(%actor, peers = peers_at_join, "client joined");
@@ -156,7 +268,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
             ClientMessage::Ops(ops) => order_batch(hub, id, actor, ops),
             ClientMessage::Presence(state) => {
                 // Now-state, not history: relayed, never logged.
-                lock(&hub.state).tell_others(id, || ServerMessage::PresencePeer {
+                lock(&hub.state).tell_others(id, limit, || ServerMessage::PresencePeer {
                     actor,
                     state: state.clone(),
                 });
@@ -194,13 +306,14 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                         // others' batches this client had applied and its
                         // own sent before the snapshot. The rest, sent
                         // while it was packed, is still unsaved.
-                        state.tail.retain(|logged| {
-                            if logged.client == id {
+                        state.tail.retain(|logged| match logged.client {
+                            Some(client) if client == id => {
                                 sent_batches.is_some_and(|sent| logged.batch >= sent)
-                            } else {
-                                seen_seq.is_some_and(|seen| logged.seq > seen)
                             }
+                            Some(_) => seen_seq.is_some_and(|seen| logged.seq > seen),
+                            None => false,
                         });
+                        mark_unsaved(&state.unsaved(), Some(&path));
                         ServerMessage::SaveCompleted { path, at_seq }
                     }
                     Err(err) => ServerMessage::SaveFailed {
@@ -208,7 +321,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                         error: err.to_string(),
                     },
                 };
-                state.tell(id, reply);
+                state.tell(id, limit, reply);
             }
             ClientMessage::OpenDocument { path, token } => {
                 let _file = lock(&hub.file);
@@ -216,15 +329,17 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                 let state = lock(&hub.state);
                 match read {
                     Ok(bytes) => {
-                        set_oplog_home(&path);
+                        if set_oplog_home(&path) {
+                            mark_unsaved(&state.unsaved(), Some(&path));
+                        }
                         // The file is the saved past; the tail is the
                         // unsaved present. Queued together under the lock
                         // that orders batches: every batch heard before
                         // `Opened` is in one of them, every one after is
                         // newer than both.
-                        state.tell(id, ServerMessage::Opened { token, path, bytes });
+                        state.reply(id, ServerMessage::Opened { token, path, bytes });
                         for logged in &state.tail {
-                            state.tell(
+                            state.reply(
                                 id,
                                 ServerMessage::Ops {
                                     actor: logged.actor,
@@ -234,7 +349,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                             );
                         }
                     }
-                    Err(err) => state.tell(
+                    Err(err) => state.reply(
                         id,
                         ServerMessage::OpenFailed {
                             token,
@@ -247,11 +362,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
         }
     }
 
-    let mut state = lock(&hub.state);
-    state.clients.remove(&id);
-    state.announce_peers();
-    state.tell_others(id, || ServerMessage::PresenceGone { actor });
-    drop(state);
+    lock(&hub.state).leave(id, limit);
     tracing::info!(%actor, "client left");
 }
 
@@ -269,28 +380,37 @@ fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, ops: Vec<DocumentOp>) {
         }
         None => return,
     };
-    if let Err(err) = append_ops(actor, &ops) {
+    let batch_id = uuid::Uuid::new_v4();
+    if let Err(err) = append_ops(actor, batch_id, &ops) {
         tracing::error!("op log append failed: {err}");
     }
-    for (peer, client) in &state.clients {
-        let message = if *peer == id {
-            ServerMessage::Acked { seq }
-        } else {
-            ServerMessage::Ops {
-                actor,
-                seq,
-                ops: ops.clone(),
-            }
-        };
-        let _ = client.outbox.send(message);
-    }
+    let limit = hub.queue_limit;
+    let stalled: Vec<u64> = state
+        .clients
+        .iter()
+        .filter(|(peer, client)| {
+            let message = if **peer == id {
+                ServerMessage::Acked { seq }
+            } else {
+                ServerMessage::Ops {
+                    actor,
+                    seq,
+                    ops: ops.clone(),
+                }
+            };
+            !client.send(message, limit)
+        })
+        .map(|(peer, _)| *peer)
+        .collect();
     state.tail.push(Logged {
         seq,
+        id: batch_id,
         actor,
-        client: id,
+        client: Some(id),
         batch,
         ops,
     });
+    state.disconnect(stalled, limit);
 }
 // The op log lives beside the document once we know where the document is.
 // Before the first save/open of a session it accumulates in the unhomed log.
@@ -331,12 +451,14 @@ fn document_oplog(document: &Path) -> PathBuf {
     }
 }
 
-fn set_oplog_home(document: &Path) {
+/// Home the op log beside `document`; true when it moved there now.
+fn set_oplog_home(document: &Path) -> bool {
     let home = document_oplog(document);
     let mut slot = lock(&OPLOG_PATH);
     if slot.as_deref() == Some(home.as_path()) {
-        return;
+        return false;
     }
+    remember_home(document);
     // Ops recorded before the document had a file live in the unhomed log;
     // carry them over so the document's history starts at its beginning,
     // not at its first save.
@@ -379,6 +501,7 @@ fn set_oplog_home(document: &Path) {
         }
     }
     *slot = Some(home);
+    true
 }
 
 fn oplog_path() -> PathBuf {
@@ -395,7 +518,11 @@ const BLOB_EXTRACT_THRESHOLD: usize = 256 * 1024;
 /// kept (`.oplog.jsonl.1`).
 const OPLOG_ROTATE_BYTES: u64 = 64 * 1024 * 1024;
 
-fn append_ops(actor: uuid::Uuid, ops: &[core_document::op::DocumentOp]) -> std::io::Result<()> {
+fn append_ops(
+    actor: uuid::Uuid,
+    batch: uuid::Uuid,
+    ops: &[core_document::op::DocumentOp],
+) -> std::io::Result<()> {
     let _guard = lock(&OPLOG_WRITE);
     let path = oplog_path();
     if let Some(parent) = path.parent() {
@@ -420,6 +547,7 @@ fn append_ops(actor: uuid::Uuid, ops: &[core_document::op::DocumentOp]) -> std::
         let envelope = serde_json::json!({
             "v": core_document::op::OP_PROTOCOL_VERSION,
             "actor": actor,
+            "batch": batch,
             "op": value,
         });
         let line = serde_json::to_string(&envelope)
@@ -481,19 +609,247 @@ fn truncate_oplog() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Run the daemon on `socket`: accept clients, serve each on its own
-/// thread, exit when the last one leaves.
+/// Where this daemon notes its document's path once it has one:
+/// `<socket>.home`, read by the next daemon on the socket if this one dies.
+static HOME_NOTE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn remember_home(document: &Path) {
+    let Some(note) = lock(&HOME_NOTE).clone() else {
+        return;
+    };
+    match serde_json::to_vec(document) {
+        Ok(text) => {
+            if let Err(err) = write_atomically(&note, &text) {
+                tracing::warn!("the document's path was not noted for a restart: {err}");
+            }
+        }
+        Err(err) => tracing::warn!("the document's path cannot be noted for a restart: {err}"),
+    }
+}
+
+/// The document a daemon that died on this socket was serving.
+fn noted_home(note: &Path) -> Option<PathBuf> {
+    let text = std::fs::read(note).ok()?;
+    serde_json::from_slice(&text).ok()
+}
+
+/// What identifies the file a save left: its length and when it was
+/// written. A mark whose file has changed since describes another file.
+fn file_stamp(document: &Path) -> Option<serde_json::Value> {
+    let meta = std::fs::metadata(document).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some(serde_json::json!({
+        "len": meta.len(),
+        "modified_ns": u64::try_from(modified.as_nanos()).ok()?,
+    }))
+}
+
+/// Add a mark to the log: the batches still unsaved (every batch logged
+/// before this line and not named here is in the file), with the file's
+/// stamp.
+fn mark_unsaved(unsaved: &[uuid::Uuid], document: Option<&Path>) {
+    let _guard = lock(&OPLOG_WRITE);
+    let path = oplog_path();
+    let mark = serde_json::json!({
+        "v": core_document::op::OP_PROTOCOL_VERSION,
+        "unsaved": unsaved,
+        "file": document.and_then(file_stamp),
+    });
+    let written = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| writeln!(file, "{mark}"));
+    if let Err(err) = written {
+        tracing::error!("the op log's unsaved mark was not written: {err}");
+    }
+}
+
+/// A batch read back from the log.
+struct Restored {
+    id: uuid::Uuid,
+    actor: uuid::Uuid,
+    ops: Vec<DocumentOp>,
+}
+
+/// The batches `log` holds that `document` does not: those its last mark
+/// names, then every batch after it (every batch, before any mark). None
+/// when the log cannot say: a line no batch id names where the tail would
+/// be (a daemon that marks nothing wrote it, so a save may have taken
+/// it), a file changed since the mark, a batch it names that the log no
+/// longer holds (rotated out of both generations), a blob or an op that
+/// does not read. The previous generation is read first, so a tail the
+/// log rotated over once is still found.
+fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
+    let mut lines = Vec::new();
+    for generation in [log.with_extension("jsonl.1"), log.to_path_buf()] {
+        if let Ok(text) = std::fs::read_to_string(&generation) {
+            lines.extend(
+                text.lines()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok()),
+            );
+        }
+    }
+    let mark = lines.iter().rposition(|line| line.get("unsaved").is_some());
+    let (listed, after) = match mark {
+        Some(at) => {
+            let mark = &lines[at];
+            if !mark["file"].is_null() && Some(&mark["file"]) != file_stamp(document).as_ref() {
+                tracing::warn!("the document changed since its log was marked; no unsaved tail");
+                return None;
+            }
+            let listed: std::collections::HashSet<String> = mark["unsaved"]
+                .as_array()?
+                .iter()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect();
+            (listed, at + 1)
+        }
+        None => (Default::default(), 0),
+    };
+    let blob_dir = log.with_extension("blobs");
+    let mut tail: Vec<Restored> = Vec::new();
+    let mut found = std::collections::HashSet::new();
+    for (at, line) in lines.iter().enumerate() {
+        if line.get("op").is_none() {
+            continue;
+        }
+        let batch = line["batch"].as_str();
+        let wanted = at >= after || batch.is_some_and(|id| listed.contains(id));
+        if !wanted {
+            continue;
+        }
+        if at < after {
+            found.extend(batch.map(str::to_owned));
+        }
+        let Some(batch) = batch.and_then(|id| id.parse::<uuid::Uuid>().ok()) else {
+            tracing::warn!(
+                "the op log holds edits of no batch past its last mark; no unsaved tail"
+            );
+            return None;
+        };
+        let mut op = line["op"].clone();
+        if !inline_blobs(&mut op, &blob_dir) {
+            tracing::warn!("a blob the op log names is missing; no unsaved tail");
+            return None;
+        }
+        let op: DocumentOp = match serde_json::from_value(op) {
+            Ok(op) => op,
+            Err(err) => {
+                tracing::warn!(
+                    "an unsaved edit in the op log does not read ({err}); no unsaved tail"
+                );
+                return None;
+            }
+        };
+        match tail.last_mut() {
+            Some(last) if last.id == batch => last.ops.push(op),
+            _ => tail.push(Restored {
+                id: batch,
+                actor: line["actor"]
+                    .as_str()
+                    .and_then(|actor| actor.parse().ok())
+                    .unwrap_or_default(),
+                ops: vec![op],
+            }),
+        }
+    }
+    if found.len() < listed.len() {
+        tracing::warn!("unsaved edits the op log names are gone from it; no unsaved tail");
+        return None;
+    }
+    Some(tail)
+}
+
+/// Put back the payloads `extract_blobs` moved to the blob store; false
+/// when one is missing.
+fn inline_blobs(value: &mut serde_json::Value, blob_dir: &Path) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.iter_mut().all(|(key, child)| {
+            if key == "bytes"
+                && let serde_json::Value::String(text) = child
+                && let Some(hash) = text.strip_prefix("blob:sha256:")
+            {
+                use base64::Engine as _;
+                return match std::fs::read(blob_dir.join(hash)) {
+                    Ok(bytes) => {
+                        *text = base64::engine::general_purpose::STANDARD.encode(bytes);
+                        true
+                    }
+                    Err(_) => false,
+                };
+            }
+            inline_blobs(child, blob_dir)
+        }),
+        serde_json::Value::Array(items) => {
+            items.iter_mut().all(|child| inline_blobs(child, blob_dir))
+        }
+        _ => true,
+    }
+}
+
+/// Pick up where a daemon that died on this socket left off: its
+/// document's log home and the unsaved tail the log holds, numbered from
+/// the start of this daemon's order.
+fn resume(state: &mut State, note: &Path) {
+    let Some(document) = noted_home(note) else {
+        return;
+    };
+    if !document.is_file() {
+        return;
+    }
+    let tail = restore_tail(&document_oplog(&document), &document).unwrap_or_default();
+    for batch in tail {
+        state.seq += 1;
+        state.tail.push(Logged {
+            seq: state.seq,
+            id: batch.id,
+            actor: batch.actor,
+            client: None,
+            batch: 0,
+            ops: batch.ops,
+        });
+    }
+    set_oplog_home(&document);
+    mark_unsaved(&state.unsaved(), Some(&document));
+    tracing::info!(
+        document = %document.display(),
+        unsaved = state.tail.len(),
+        "resumed a document whose daemon stopped"
+    );
+}
+
+/// Run the daemon on `socket` with the default queue limit.
 pub fn run(socket: &Path) -> std::io::Result<()> {
+    run_with(socket, DEFAULT_QUEUE_LIMIT)
+}
+
+/// Run the daemon on `socket`: accept clients, serve each on its own
+/// thread, exit when the last one leaves. A client with more than
+/// `queue_limit` messages unwritten is disconnected.
+pub fn run_with(socket: &Path, queue_limit: usize) -> std::io::Result<()> {
     if let Some(parent) = socket.parent() {
         std::fs::create_dir_all(parent)?;
     }
     claim_unhomed_oplog(socket);
+    let note = socket.with_extension("home");
+    let mut state = State::default();
+    resume(&mut state, &note);
+    *lock(&HOME_NOTE) = Some(note.clone());
     // A stale socket from a dead daemon would make bind fail forever.
     let _ = std::fs::remove_file(socket);
     let listener = UnixListener::bind(socket)?;
     tracing::info!(socket = %socket.display(), "printcad-serverd listening");
 
-    let hub = Arc::new(Hub::default());
+    let hub = Arc::new(Hub {
+        state: Mutex::new(state),
+        file: Mutex::new(()),
+        queue_limit,
+    });
     let live = Arc::new(AtomicU64::new(0));
     let ids = AtomicU64::new(0);
     // The first drop-to-zero ends the daemon.
@@ -520,6 +876,12 @@ pub fn run(socket: &Path) -> std::io::Result<()> {
 
     // Block until the last client leaves.
     let _ = exit_rx.recv();
+    // Everyone has gone, and the unsaved edits with them: the next daemon
+    // on this document starts from its file alone.
+    if lock(&OPLOG_PATH).is_some() {
+        mark_unsaved(&[], None);
+    }
+    let _ = std::fs::remove_file(&note);
     let _ = std::fs::remove_file(socket);
     tracing::info!("last client disconnected; printcad-serverd exiting");
     Ok(())
@@ -557,5 +919,74 @@ mod tests {
             crate::socket_path_for(path),
             crate::runtime_dir().join(format!("{:016x}.sock", crate::path_key(path)))
         );
+    }
+
+    /// The tail read back is what the last mark leaves unsaved plus what
+    /// follows it; lines from a daemon that marks nothing are never taken
+    /// for unsaved, and past the mark they make the tail unknown.
+    #[test]
+    fn the_tail_read_back_is_what_the_last_mark_leaves_unsaved() {
+        let dir = std::env::temp_dir().join(format!("printcad_tail_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let document = dir.join("model.prtcad");
+        std::fs::write(&document, b"saved").expect("file");
+        let log = document_oplog(&document);
+
+        let mut doc = core_document::Document::new("Log");
+        let mut op = |name: &str| {
+            doc.set_name(name);
+            serde_json::to_value(&doc.take_pending_ops()[0]).expect("op")
+        };
+        let actor = uuid::Uuid::new_v4();
+        let [saved, kept, after] = [0, 1, 2].map(|_| uuid::Uuid::new_v4());
+        let line = |batch: Option<uuid::Uuid>, op: serde_json::Value| {
+            let mut line = serde_json::json!({"v": 1, "actor": actor, "op": op});
+            if let Some(batch) = batch {
+                line["batch"] = serde_json::json!(batch);
+            }
+            line.to_string()
+        };
+        let mark = serde_json::json!({
+            "v": 1,
+            "unsaved": [kept],
+            "file": file_stamp(&document),
+        });
+        let lines = [
+            line(None, op("from a daemon that marks nothing")),
+            line(Some(saved), op("saved")),
+            line(Some(kept), op("kept")),
+            mark.to_string(),
+            line(Some(after), op("after")),
+        ];
+        std::fs::write(&log, lines.join("\n") + "\n").expect("log");
+        let names = |tail: Vec<Restored>| -> Vec<(uuid::Uuid, String)> {
+            tail.into_iter()
+                .map(|batch| match &batch.ops[0] {
+                    DocumentOp::SetDocumentName { name } => (batch.id, name.clone()),
+                    other => panic!("unexpected {other:?}"),
+                })
+                .collect()
+        };
+        let tail = restore_tail(&log, &document).expect("a tail");
+        assert_eq!(
+            names(tail),
+            [(kept, "kept".to_string()), (after, "after".to_string())]
+        );
+
+        let unmarked = line(None, op("unmarked, after the mark"));
+        std::fs::write(&log, lines.join("\n") + "\n" + &unmarked + "\n").expect("log");
+        assert!(restore_tail(&log, &document).is_none());
+
+        std::fs::write(&log, lines[3..].join("\n") + "\n").expect("log");
+        assert!(
+            restore_tail(&log, &document).is_none(),
+            "a batch the mark names rotated out"
+        );
+
+        std::fs::write(&log, lines.join("\n") + "\n").expect("log");
+        std::fs::write(&document, b"saved elsewhere").expect("file");
+        assert!(restore_tail(&log, &document).is_none(), "the file changed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -67,6 +67,16 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   import) makes it apply over them instead and return false. The
   `Replica` harness in `tests/daemon.rs` drives clients the way the app
   does (`settle` waits for acks, `catch_up` for a sequence number).
+  Each log line carries its batch's id; every save, homing and last
+  leave appends a mark (`{"unsaved": [ids], "file": stamp}`), and a
+  daemon started on a socket whose `<socket>.home` names a document reads
+  the tail back from the log (`restore_tail`: the last mark's ids plus
+  what follows; a line without an id there, or a changed file, means no
+  tail). A client with more than `--queue-limit` (default 4096) unwritten
+  messages is disconnected; an open's file and tail never count. An
+  `AddFeature` or `SetFeatureBody` whose `seq` another feature holds takes
+  the next one (`FeatureTree::unclaimed_seq`), so concurrent inserts end
+  distinct in the server's order.
 - `doc_render`: what the app draws and lays out from a document with no
   window, linking neither the GPU, the window nor egui, so its tests and
   the save worker run without them: `thumbnail` (the CPU renderer: a

@@ -214,5 +214,17 @@ file plus the edits made since it was saved. A save leaves on the server
 the edits that its file does not hold yet, so a copy opened afterwards
 still gets them.
 
+The operation log marks, at every save, which edits the file does not hold
+yet. A server that starts after one stopped without warning reads those
+edits back, so a copy opened then still gets them. When every copy has
+closed the document, its unsaved edits are gone with them, and the next
+server starts from the file. A copy that stops taking the server's
+messages is disconnected once thousands are waiting for it; opening the
+document again gives it the file and the unsaved edits.
+
+When two copies add a feature at the same time, both take the same place
+at the end of the history; the one the server ordered later moves after
+the other on every copy.
+
 If the server cannot start, the application writes the file directly and
 logs a warning.
