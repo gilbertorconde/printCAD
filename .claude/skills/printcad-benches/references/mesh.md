@@ -15,7 +15,13 @@
   start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
   `mesh.offset`, `mesh.reduce`, `mesh.boolean`, `mesh.thicken`,
-  `mesh.inspect`, `mesh.result` and `mesh.set`. `solids.rs`: Boolean
+  `mesh.inspect`, `mesh.result` and `mesh.set`. `pieces.rs`: Split into
+  bodies (`mesh.split`): the drawn mesh's pieces (corners at one point
+  joined, as `inspect` counts them), each a new mesh body through
+  `Document::create_mesh_body` (op `CreateMeshBody`, the mesh packed in
+  the op and its asset carrying no bytes, undone by `RemoveBody`, which
+  takes the asset made for the body with it), the source's placement and
+  look copied and the source hidden. `solids.rs`: Boolean
   (`MeshOp::Boolean`, its operand a `kernel_api::MeshOperand` snapshot
   taken when the step is made: a body's solid as native text with its
   placement, or the bounded solid a feature's owner offers through

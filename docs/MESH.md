@@ -98,6 +98,20 @@ A step that cannot run (a delete with nothing in its region, a filter
 that would remove every piece) shows its error on its row. The scan keeps
 the mesh from before it.
 
+## Split into bodies
+
+**Split into bodies** turns a mesh body made of several loose pieces
+(parts scanned together, a plate of prints) into one mesh body per piece.
+A piece is the triangles joined where they share a corner, as
+`pc.mesh.inspect` counts its pieces. It splits the mesh as the body draws
+it now, its steps applied. Each new body is named after the one split and
+numbered ("Scan 1", "Scan 2", ...), stands where it stood and takes its
+placement, look, material and scan setting; the body split is hidden,
+its history kept. A new body's mesh is its own, so its history starts
+there. It is one step of undo: undoing it gives back the one body. A mesh
+of one piece has nothing to split and is refused.
+`pc.mesh.split{scan = s}` answers the new bodies.
+
 ## Deviation of the edit
 
 **Deviation of the edit** colours the scan by how far its edits moved its

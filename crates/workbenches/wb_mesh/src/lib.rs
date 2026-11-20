@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 mod commands;
+mod pieces;
 mod solids;
 mod steps;
 mod task;
@@ -33,6 +34,7 @@ const DELETE: &str = "mesh.delete";
 const FLIP: &str = "mesh.flip";
 const CUT: &str = "mesh.cut";
 const INSPECT: &str = "mesh.inspect";
+const SPLIT: &str = "mesh.split";
 const DEVIATION: &str = "mesh.deviation";
 
 /// One step of a mesh body's history.
@@ -402,6 +404,7 @@ impl core_document::Workbench for MeshWorkbench {
             (DELETE, "Delete marked", "delete"),
             (FLIP, "Flip normals", "sketch-reorient"),
             (CUT, "Cut by plane", "cut"),
+            (SPLIT, "Split into bodies", "separate-pieces"),
         ]
         .into_iter()
         .chain(steps::TOOLS)
@@ -518,8 +521,8 @@ impl core_document::Workbench for MeshWorkbench {
                     .current_marking()
                     .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
             }
-            ISLANDS | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset" | "mesh.reduce"
-            | "mesh.boolean" | "mesh.thicken" => mesh && self.tab.task.is_none(),
+            ISLANDS | FLIP | CUT | SPLIT | "mesh.fill" | "mesh.smooth" | "mesh.offset"
+            | "mesh.reduce" | "mesh.boolean" | "mesh.thicken" => mesh && self.tab.task.is_none(),
             DEVIATION => true,
             _ => false,
         }
@@ -587,6 +590,10 @@ impl core_document::Workbench for MeshWorkbench {
             self.tab.deviation = !self.tab.deviation;
             return InputResult::consumed();
         }
+        if let (WorkbenchInputEvent::ToolActivated, Some(SPLIT)) = (event, active_tool) {
+            self.split_selected(ctx);
+            return InputResult::consumed();
+        }
         if let (
             WorkbenchInputEvent::ToolActivated,
             Some(
@@ -636,6 +643,28 @@ impl bench_panel::BenchUi for MeshWorkbench {
 }
 
 impl MeshWorkbench {
+    /// The toolbar's Split into bodies on the selected mesh body: recorded
+    /// as the call and one step of undo.
+    fn split_selected(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if self.tab.task.is_some() {
+            return;
+        }
+        let Some(body) = ctx.selected_body_id.map(BodyId) else {
+            return;
+        };
+        match pieces::split(ctx, body) {
+            Ok(made) => {
+                let args = core_document::command::object(json!({"scan": body.0.to_string()}));
+                ctx.record(SPLIT, args, pieces::answer(&made));
+                ctx.request(core_document::HostRequest::JournalLabel(
+                    "Split into bodies".into(),
+                ));
+                ctx.log_info(format!("Split into {} bodies", made.len()));
+            }
+            Err(why) => ctx.log_warn(format!("Split into bodies: {why}")),
+        }
+    }
+
     fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
         let (true, Some(kernel)) = (self.tab.deviation, ctx.kernel) else {
             return Vec::new();
@@ -986,6 +1015,147 @@ mod tests {
         assert!((read["max"].as_f64().unwrap() - 0.2).abs() < 1e-6);
         assert!((read["added"].as_f64().unwrap() - 0.5).abs() < 1e-12);
         assert!((read["rms"].as_f64().unwrap() - (0.05f64 / 3.0).sqrt()).abs() < 1e-6);
+    }
+
+    /// A closed box from `lo` to `hi`, wound outward, its corners its own.
+    fn cube(lo: [f32; 3], hi: [f32; 3]) -> TriMesh {
+        let positions = (0..8)
+            .map(|i| std::array::from_fn(|k| if i >> k & 1 == 1 { hi[k] } else { lo[k] }))
+            .collect();
+        TriMesh {
+            positions,
+            indices: vec![
+                0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2,
+                4, 6, 1, 3, 5, 3, 7, 5,
+            ],
+            ..TriMesh::default()
+        }
+    }
+
+    /// Two cubes in one mesh body split into two mesh bodies holding a
+    /// cube each, named after it, placed and drawn as it was and shown
+    /// in its place; a peer applying the ops sees the same, a save keeps
+    /// them, and one undo gives the one body back.
+    #[test]
+    fn two_cubes_in_one_mesh_split_into_two_bodies() {
+        let mut both = cube([0.; 3], [10.; 3]);
+        let small = cube([20., 0., 0.], [25., 5., 5.]);
+        both.indices.extend(
+            small
+                .indices
+                .iter()
+                .map(|i| i + both.positions.len() as u32),
+        );
+        both.positions.extend(small.positions);
+        assert!((inspect(&both)["volume"].as_f64().unwrap() - 1125.0).abs() < 1e-6);
+        let mut doc = Document::new("split");
+        let body = doc.create_body(Some("Scan".into()));
+        let asset = doc.add_asset(core_document::AssetReference::new(
+            "assets/scan.stl",
+            core_document::AssetType::Stl,
+            json!({}),
+        ));
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: Arc::new(both),
+                mesh_path: None,
+                source_asset: Some(asset),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let placement = core_document::BodyPlacement {
+            translation: [1.0, 2.0, 3.0],
+            ..Default::default()
+        };
+        doc.set_body_placement(body, placement);
+        doc.set_body_shading(body, core_document::Shading::Sharp);
+        doc.set_body_scan(body, Some(core_document::ScanInfo::default()));
+        doc.take_pending_ops();
+        let mut peer = doc.clone();
+        let mut journal = core_document::history::OpJournal::new(16);
+        journal.note(&mut doc);
+        let before = doc.replicated_projection();
+
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
+        let args = core_document::command::object(json!({"scan": body.0.to_string()}));
+        let answer = MeshWorkbench::default()
+            .run_command(SPLIT, &args, &mut ctx)
+            .unwrap();
+        let made: Vec<BodyId> = answer["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| BodyId(uuid::Uuid::parse_str(b.as_str().unwrap()).unwrap()))
+            .collect();
+        let pieces = |doc: &Document| -> Vec<(String, f64, bool)> {
+            made.iter()
+                .map(|b| {
+                    let entry = doc.body(*b).expect("the piece's body");
+                    assert!(doc.is_mesh_body(*b));
+                    assert_eq!(entry.placement, placement);
+                    assert_eq!(entry.shading, core_document::Shading::Sharp);
+                    assert!(entry.scan.is_some());
+                    let (mesh, _) = doc.local_geometry(*b).expect("the piece's mesh");
+                    let read = inspect(&mesh);
+                    assert_eq!(
+                        (read["pieces"].clone(), read["open_edges"].clone()),
+                        (json!(1), json!(0))
+                    );
+                    (
+                        entry.name.clone(),
+                        read["volume"].as_f64().unwrap(),
+                        !entry.hidden,
+                    )
+                })
+                .collect()
+        };
+        let want = [
+            ("Scan 1".to_string(), 1000.0, true),
+            ("Scan 2".to_string(), 125.0, true),
+        ];
+        let close = |got: Vec<(String, f64, bool)>| {
+            assert_eq!(got.len(), want.len(), "{got:?}");
+            for (g, w) in got.iter().zip(&want) {
+                assert!(
+                    g.0 == w.0 && (g.1 - w.1).abs() < 1e-6 && g.2 == w.2,
+                    "{got:?}"
+                );
+            }
+        };
+        close(pieces(&doc));
+        assert!(doc.body(body).unwrap().hidden, "the body split is hidden");
+
+        for op in doc.take_pending_ops() {
+            peer.apply_op(&op);
+        }
+        close(pieces(&peer));
+        let saved = doc.save_to_bytes(core_document::Compression::None).unwrap();
+        close(pieces(&Document::load_from_bytes(saved).unwrap()));
+
+        journal.note(&mut doc);
+        assert!(journal.undo(&mut doc).is_some());
+        assert_eq!(
+            doc.replicated_projection(),
+            before,
+            "undo gives the one body back"
+        );
+        assert!(made.iter().all(|b| doc.body(*b).is_none()));
+        assert!(journal.redo(&mut doc).is_some());
+        close(pieces(&doc));
+
+        // A mesh of one piece has nothing to split.
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
+        let one = core_document::command::object(json!({"scan": made[0].0.to_string()}));
+        assert!(
+            MeshWorkbench::default()
+                .run_command(SPLIT, &one, &mut ctx)
+                .is_err()
+        );
     }
 
     /// A delete takes the marking only while the scan still has the mesh

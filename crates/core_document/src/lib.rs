@@ -1543,6 +1543,10 @@ impl Document {
         self.mesh_results.remove(&id);
         self.base_brep_blobs.remove(&id);
         self.base_face_colors.remove(&id);
+        // A mesh asset made for this body alone goes with it.
+        let own = serde_json::json!(id.0);
+        self.assets
+            .retain(|_, asset| asset.metadata.get(shapes::MESH_OF) != Some(&own));
         // Its copies have no shape to take any more.
         self.refresh_copies_of(id);
     }
