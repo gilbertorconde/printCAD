@@ -739,3 +739,114 @@ impl Problem {
         self.geometry.iter().find(|g| g.id() == id)
     }
 }
+
+/// A problem whose geometry is looked up by id through a map made once,
+/// for a pass that looks up many: the element a lookup answers is the
+/// first one its id names, as [`Problem::get_geometry`]'s is. It reads
+/// as the problem it views for everything else.
+pub(crate) struct Indexed<'a> {
+    problem: &'a Problem,
+    places: IdMap<ItemReference, usize>,
+}
+
+impl<'a> Indexed<'a> {
+    pub(crate) fn new(problem: &'a Problem) -> Self {
+        let mut places = IdMap::with_capacity_and_hasher(problem.geometry.len(), IdHash);
+        for (i, g) in problem.geometry.iter().enumerate() {
+            places.entry(g.id()).or_insert(i);
+        }
+        Self { problem, places }
+    }
+
+    pub(crate) fn get_geometry(&self, id: impl Into<ItemReference>) -> Option<&'a Geometry> {
+        self.problem.geometry.get(*self.places.get(&id.into())?)
+    }
+
+    pub(crate) fn point_position(&self, id: PointReference) -> Option<Vector> {
+        if id == PointReference::Origin {
+            return Some(Vector { x: 0.0, y: 0.0 });
+        }
+        match self.get_geometry(id)? {
+            Geometry::Point(p) => Some(p.position),
+            _ => None,
+        }
+    }
+}
+
+impl std::ops::Deref for Indexed<'_> {
+    type Target = Problem;
+
+    fn deref(&self) -> &Problem {
+        self.problem
+    }
+}
+
+/// A map keyed by ids, hashed by [`IdHash`].
+pub type IdMap<K, V> = std::collections::HashMap<K, V, IdHash>;
+/// A set of ids, hashed by [`IdHash`].
+pub type IdSet<K> = std::collections::HashSet<K, IdHash>;
+
+/// Hashing for the solver's own maps of ids: a multiply and rotate over
+/// each word, the same for every map and run. Ids are drawn at random or
+/// counted, so their bits need no further mixing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IdHash;
+
+impl std::hash::BuildHasher for IdHash {
+    type Hasher = IdHasher;
+
+    fn build_hasher(&self) -> IdHasher {
+        IdHasher(0)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct IdHasher(u64);
+
+impl IdHasher {
+    const K: u64 = 0xf135_7aea_2e62_a9c5;
+
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(26) ^ word).wrapping_mul(Self::K);
+    }
+}
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        // The table picks buckets by the low bits: fold the high ones in.
+        self.0 ^ (self.0 >> 29)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_u8(&mut self, i: u8) {
+        self.add(u64::from(i));
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.add(u64::from(i));
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+
+    fn write_u128(&mut self, i: u128) {
+        self.add(i as u64);
+        self.add((i >> 64) as u64);
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+
+    fn write_isize(&mut self, i: isize) {
+        self.add(i as u64);
+    }
+}

@@ -60,9 +60,29 @@ impl SketchWorkbench {
         {
             return set.clone();
         }
-        let set = std::sync::Arc::new(solver::locked_elements(sketch));
+        let set = if solver::diagnosable(sketch) {
+            solver::locked_elements(sketch, Some(&self.settled(sketch)))
+        } else {
+            Default::default()
+        };
+        let set = std::sync::Arc::new(set);
         *self.tab.locked.borrow_mut() = Some((sketch.clone(), set.clone()));
         set
+    }
+
+    /// [`solver::settle`] of `sketch`, worked out again only when `sketch`
+    /// differs from the one the kept answer was solved from other than in
+    /// where its labels sit: the diagnosis and the locked elements of one
+    /// sketch share one solve.
+    fn settled(&self, sketch: &Sketch) -> std::sync::Arc<solver::Settled> {
+        if let Some((at, settled)) = self.tab.settled.borrow().as_ref()
+            && at.eq_but_labels(sketch)
+        {
+            return settled.clone();
+        }
+        let settled = std::sync::Arc::new(solver::settle(sketch));
+        *self.tab.settled.borrow_mut() = Some((sketch.clone(), settled.clone()));
+        settled
     }
 
     /// [`solver::dof_estimate`] of `sketch`, worked out again only when
@@ -82,11 +102,14 @@ impl SketchWorkbench {
         dof
     }
 
-    /// [`solver::diagnose`] of `sketch`; on a sketch too large to analyse,
-    /// whose diagnosis is its freedom alone, the kept estimate.
+    /// [`solver::diagnose`] of `sketch`, from the kept settled sketch and
+    /// estimate; on a sketch too large to analyse, whose diagnosis is its
+    /// freedom alone, the kept estimate.
     pub(crate) fn diagnose(&self, sketch: &Sketch) -> solver::Diagnosis {
         if solver::diagnosable(sketch) {
-            return solver::diagnose(sketch);
+            let settled = (sketch.soft.is_empty()).then(|| self.settled(sketch));
+            let dof = self.freedom(sketch);
+            return solver::diagnose_with(sketch, settled.as_deref(), Some(dof));
         }
         solver::Diagnosis {
             dof: self.freedom(sketch),
@@ -291,6 +314,48 @@ mod tests {
         let mut draft = sketch;
         fix(&mut draft, b, 5.0);
         assert_eq!(*wb.locked_elements(&draft), [a, b].into());
+    }
+
+    /// The diagnosis and the locked elements of one sketch come from one
+    /// solve of it, kept, and answer what each works out alone: a
+    /// planted outcome read back was not solved again.
+    #[test]
+    fn the_diagnosis_and_the_locked_elements_share_one_solve() {
+        let mut sketch = Sketch::new("s");
+        let [a, b, c] = [0.0, 5.0, 9.0]
+            .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
+        let ab = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        let position = Vec2D::new(0.0, 1.0);
+        sketch.add_constraint(ConstraintKind::FixedPoint { point: a, position });
+        // Said twice: one of them is redundant.
+        sketch.add_constraint(ConstraintKind::Horizontal { element: ab });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: ab });
+        sketch.add_constraint(ConstraintKind::Length {
+            line: ab,
+            length: 6.0,
+        });
+        let mut doc = Document::new("t");
+        let feature = SketchFeature::new(sketch.clone(), SketchPlane::xy());
+        let id = doc.add_feature(feature, "s".into()).unwrap();
+        let mut wb = SketchWorkbench::default();
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        wb.on_frame(0.016, &mut ctx);
+        let diagnosis = wb.diagnose(&sketch);
+        assert_eq!(diagnosis, solver::diagnose(&sketch));
+        assert_eq!(diagnosis.redundant.len(), 2);
+        assert_eq!(
+            *wb.locked_elements(&sketch),
+            solver::locked_elements(&sketch, None)
+        );
+        assert!(wb.locked_elements(&sketch).contains(&b));
+        let planted = crate::SolveOutcome::NotConverged { residual: 1.0 };
+        let mut settled = (*wb.tab.settled.borrow().as_ref().unwrap().1).clone();
+        settled.outcome = planted;
+        wb.tab.settled.borrow_mut().as_mut().unwrap().1 = std::sync::Arc::new(settled);
+        assert!(!wb.diagnose(&sketch).conflicting.is_empty());
     }
 
     /// A sketch too large to analyse is diagnosed by the kept estimate.

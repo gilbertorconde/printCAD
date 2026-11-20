@@ -1,10 +1,9 @@
 //! Validation at the public semantic boundary.
 
 use crate::problem::{
-    ConstraintId, CurveReference, Geometry, GroupReference, ItemReference, PointReference, Problem,
-    Relation,
+    ConstraintId, CurveReference, Geometry, GroupReference, IdSet, Indexed, ItemReference,
+    PointReference, Problem, Relation,
 };
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -54,8 +53,8 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
             "iteration or damping bounds".to_owned(),
         ));
     }
-    let mut geometry_ids = HashSet::new();
-    let mut constraint_ids = HashSet::new();
+    let mut geometry_ids = IdSet::default();
+    let mut constraint_ids = IdSet::default();
     for g in &problem.geometry {
         if !geometry_ids.insert(g.id()) {
             return Err(InputError::DuplicateGeometry(g.id()));
@@ -137,11 +136,12 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
             return Err(InputError::MissingReference(id));
         }
     }
+    let indexed = Indexed::new(problem);
     for c in &problem.constraints {
         if !constraint_ids.insert(c.id) {
             return Err(InputError::DuplicateConstraint(c.id));
         }
-        validate_constraint(problem, c)?;
+        check_constraint(&indexed, c)?;
     }
     Ok(())
 }
@@ -150,6 +150,13 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
 /// supplied geometry. Geometry and settings must be validated separately.
 pub fn validate_constraint(
     problem: &Problem,
+    constraint: &crate::problem::Constraint,
+) -> Result<(), InputError> {
+    check_constraint(&Indexed::new(problem), constraint)
+}
+
+fn check_constraint(
+    problem: &Indexed,
     constraint: &crate::problem::Constraint,
 ) -> Result<(), InputError> {
     for id in constraint.kind.references() {
@@ -166,7 +173,7 @@ pub fn validate_constraint(
 }
 
 fn validate_relation(
-    problem: &Problem,
+    problem: &Indexed,
     id: ConstraintId,
     relation: &Relation,
 ) -> Result<(), InputError> {
@@ -350,14 +357,14 @@ fn validate_relation(
 /// its reference holds exactly the members' points, radii and axes, each
 /// once and finite.
 fn group_valid(
-    problem: &Problem,
+    problem: &Indexed,
     elements: &[ItemReference],
     reference: &[GroupReference],
 ) -> bool {
-    let mut members = HashSet::new();
-    let mut points = HashSet::new();
-    let mut radii = HashSet::new();
-    let mut axes = HashSet::new();
+    let mut members = IdSet::default();
+    let mut points = IdSet::default();
+    let mut radii = IdSet::default();
+    let mut axes = IdSet::default();
     for &element in elements {
         if !members.insert(element) {
             return false;
@@ -384,7 +391,7 @@ fn group_valid(
     if members.is_empty() || points.contains(&PointReference::Origin) {
         return false;
     }
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::default();
     for entry in reference {
         let held = match *entry {
             GroupReference::Point { point, position } => {

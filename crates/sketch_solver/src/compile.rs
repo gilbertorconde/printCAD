@@ -1,10 +1,9 @@
 use crate::curves::{CurveVars, nearest_param, nearest_params};
 use crate::problem::{
-    Geometry as GeometryElement, Problem as Sketch, Relation as ConstraintKind, *,
+    Geometry as GeometryElement, Indexed as Sketch, Relation as ConstraintKind, *,
 };
 use crate::residual::{CurveShape, Offset, ResidualSpec, Tangent, segment_length};
 use crate::trace::EquationSource;
-use std::collections::{HashMap, HashSet};
 
 pub fn compile(problem: &Problem) -> Result<System, crate::input::InputError> {
     crate::input::validate(problem)?;
@@ -28,7 +27,7 @@ fn shared_end(sketch: &Sketch, a: CurveReference, b: CurveReference) -> Option<P
 /// of tangency, and the tangency is written there as at a shared end.
 fn held_end(
     sketch: &Sketch,
-    skip: &HashSet<ConstraintId>,
+    skip: &IdSet<ConstraintId>,
     line: CurveReference,
     round: CurveReference,
 ) -> Option<PointReference> {
@@ -86,15 +85,15 @@ pub struct System {
     /// here: it holds still and costs no degree of freedom.
     pub free: Vec<usize>,
     /// Point id -> index of its x variable (y is at index + 1).
-    pub point_vars: HashMap<PointReference, usize>,
+    pub point_vars: IdMap<PointReference, usize>,
     /// Circle/arc id -> index of its radius variable.
-    pub radius_vars: HashMap<CurveReference, usize>,
+    pub radius_vars: IdMap<CurveReference, usize>,
     /// Ellipse or conic id -> index of its three shape variables (see
     /// `CurveShape`), for the curves whose internal geometry is shown.
-    pub shape_vars: HashMap<CurveReference, usize>,
+    pub shape_vars: IdMap<CurveReference, usize>,
     /// Ellipse foci nothing but their curve holds: left out of the solve
     /// and placed from the solved shape after it.
-    pub derived_foci: HashSet<PointReference>,
+    pub derived_foci: IdSet<PointReference>,
     /// Resolved residuals (user constraints plus implicit arc consistency).
     pub specs: Vec<ResidualSpec>,
     /// Total residual dimension.
@@ -130,10 +129,15 @@ impl System {
 /// Compile an ordered problem, optionally excluding a diagnosis probe's
 /// constraint and including otherwise unconstrained arc endpoints for rank.
 #[doc(hidden)]
-pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_always: bool) -> System {
+pub fn compile_system(
+    problem: &Problem,
+    exclude: Option<ConstraintId>,
+    arcs_always: bool,
+) -> System {
+    let sketch = &Sketch::new(problem);
     let mut vars = Vec::new();
-    let mut point_vars = HashMap::new();
-    let mut radius_vars = HashMap::new();
+    let mut point_vars = IdMap::default();
+    let mut radius_vars = IdMap::default();
     // The origin and a tip along each axis, pinned where they belong. They
     // only join the system when a constraint points at them, and they bring
     // one residual per variable, so they cost no degree of freedom.
@@ -170,7 +174,7 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     };
     // An ellipse or conic showing internal geometry has its shape in the
     // system, so the geometry can size and turn it.
-    let shaped: HashSet<CurveReference> = sketch
+    let shaped: IdSet<CurveReference> = sketch
         .constraints
         .iter()
         .filter(|c| !skip.contains(&c.id))
@@ -190,7 +194,7 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             _ => Vec::new(),
         })
         .collect();
-    let mut shape_vars = HashMap::new();
+    let mut shape_vars = IdMap::default();
     for element in &sketch.geometry {
         match element {
             GeometryElement::Ellipse(e) if shaped.contains(&e.id.into()) => {
@@ -1172,7 +1176,11 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     }
 
     let residual_len = specs.iter().map(ResidualSpec::dim).sum();
-    let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
+    let mut held = vec![false; vars.len()];
+    for &i in &pinned {
+        held[i] = true;
+    }
+    let free: Vec<usize> = (0..vars.len()).filter(|&i| !held[i]).collect();
     System {
         origins,
         settings: sketch.settings,
@@ -1252,8 +1260,8 @@ enum ItemVars {
 fn conic_end_residuals(
     sketch: &Sketch,
     point_var: &impl Fn(PointReference) -> Option<usize>,
-    shape_vars: &HashMap<CurveReference, usize>,
-    rigid: &HashSet<CurveReference>,
+    shape_vars: &IdMap<CurveReference, usize>,
+    rigid: &IdSet<CurveReference>,
 ) -> Vec<(ResidualSpec, EquationSource)> {
     let mut specs = Vec::new();
     for element in &sketch.geometry {
@@ -1290,7 +1298,7 @@ fn conic_end_residuals(
 /// it has them, else where it is.
 fn curve_shape(
     sketch: &Sketch,
-    shape_vars: &HashMap<CurveReference, usize>,
+    shape_vars: &IdMap<CurveReference, usize>,
     id: CurveReference,
 ) -> CurveShape {
     if let Some(&k) = shape_vars.get(&id) {
@@ -1321,16 +1329,16 @@ fn curve_shape(
 /// drawn through the spline's own points and needs none.
 fn internal_residuals(
     sketch: &Sketch,
-    skip: &HashSet<ConstraintId>,
+    skip: &IdSet<ConstraintId>,
     point_var: &impl Fn(PointReference) -> Option<usize>,
-    shape_vars: &HashMap<CurveReference, usize>,
-    derived_foci: &HashSet<PointReference>,
+    shape_vars: &IdMap<CurveReference, usize>,
+    derived_foci: &IdSet<PointReference>,
 ) -> Vec<(ResidualSpec, EquationSource)> {
     let mut specs = Vec::new();
-    let mut placed: HashSet<PointReference> = HashSet::new();
+    let mut placed: IdSet<PointReference> = IdSet::default();
     type Focus = (PointReference, ConstraintId);
     type Foci = (usize, CurveShape, Option<Focus>, Option<Focus>);
-    let mut foci: HashMap<CurveReference, Foci> = HashMap::new();
+    let mut foci: IdMap<CurveReference, Foci> = IdMap::default();
     for constraint in &sketch.constraints {
         let ConstraintKind::InternalAlignment {
             element,
@@ -1444,10 +1452,10 @@ fn internal_residuals(
 /// names them, no curve runs through them, and they are not being dragged.
 fn derived_foci(
     sketch: &Sketch,
-    skip: &HashSet<ConstraintId>,
+    skip: &IdSet<ConstraintId>,
     held: &[PointReference],
-) -> HashSet<PointReference> {
-    let mut foci = std::collections::HashSet::new();
+) -> IdSet<PointReference> {
+    let mut foci = IdSet::default();
     for c in &sketch.constraints {
         if let ConstraintKind::InternalAlignment {
             element,
@@ -1491,14 +1499,14 @@ fn derived_foci(
 /// naming only one group's members: one that keeps under a rigid motion,
 /// and every orientation after the first, which turns the whole group and
 /// so sets the rest as its shape has them.
-fn skipped(sketch: &Sketch, exclude: Option<ConstraintId>) -> HashSet<ConstraintId> {
-    let groups: Vec<HashSet<ItemReference>> = sketch
+fn skipped(sketch: &Sketch, exclude: Option<ConstraintId>) -> IdSet<ConstraintId> {
+    let groups: Vec<IdSet<ItemReference>> = sketch
         .constraints
         .iter()
         .filter(|c| exclude != Some(c.id) && matches!(c.kind, ConstraintKind::Group { .. }))
         .map(|c| c.kind.references().into_iter().collect())
         .collect();
-    let mut skip: HashSet<ConstraintId> = exclude.into_iter().collect();
+    let mut skip: IdSet<ConstraintId> = exclude.into_iter().collect();
     if groups.is_empty() {
         return skip;
     }
@@ -1525,7 +1533,7 @@ fn skipped(sketch: &Sketch, exclude: Option<ConstraintId>) -> HashSet<Constraint
 }
 
 /// The circles, arcs, ellipses and conics a group holds.
-fn rigid_curves(sketch: &Sketch, skip: &HashSet<ConstraintId>) -> HashSet<CurveReference> {
+fn rigid_curves(sketch: &Sketch, skip: &IdSet<ConstraintId>) -> IdSet<CurveReference> {
     sketch
         .constraints
         .iter()

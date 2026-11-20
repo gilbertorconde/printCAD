@@ -564,6 +564,9 @@ struct Tab {
     /// The freedom the verdict reports while no diagnosis is cached, with
     /// the sketch it was worked out on.
     freedom: std::cell::RefCell<Option<(Sketch, i32)>>,
+    /// The open sketch solved from where it stands for its diagnosis and
+    /// its locked elements, with the sketch it was solved from.
+    settled: std::cell::RefCell<Option<(Sketch, std::sync::Arc<solver::Settled>)>>,
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
     sketch_picker: Option<SketchPicker>,

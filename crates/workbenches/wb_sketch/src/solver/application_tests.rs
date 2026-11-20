@@ -161,7 +161,7 @@ mod tests {
         let loose = add_line(&mut sketch, b, c);
         // A circle centred on the fixed point: locked only once its size is.
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(a, 3.0)));
-        let locked = locked_elements(&sketch);
+        let locked = locked_elements(&sketch, None);
         assert!(locked.contains(&held) && locked.contains(&a) && locked.contains(&b));
         assert!(!locked.contains(&loose) && !locked.contains(&c));
         assert!(!locked.contains(&circle), "its radius is still free");
@@ -169,7 +169,7 @@ mod tests {
             circle,
             radius: 3.0,
         });
-        assert!(locked_elements(&sketch).contains(&circle));
+        assert!(locked_elements(&sketch, None).contains(&circle));
     }
 
     /// A text is locked whole with its point and free whole without it:
@@ -193,7 +193,7 @@ mod tests {
             "no letter in the problem"
         );
         assert_eq!(dof_estimate(&sketch), 2, "the free text's point alone");
-        let locked = locked_elements(&sketch);
+        let locked = locked_elements(&sketch, None);
         assert!(
             held.elements.iter().all(|e| locked.contains(e)),
             "all of the held text"

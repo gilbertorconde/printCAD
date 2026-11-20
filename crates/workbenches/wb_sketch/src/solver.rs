@@ -230,19 +230,68 @@ pub struct Diagnosis {
     pub analyzed: bool,
 }
 
+/// A sketch solved from where it stands for an analysis of it, its
+/// diagnosis and the elements nothing left free can move: its texts'
+/// letters left out and not made again, its fitted splines not refitted,
+/// no freedom measured. It answers the same for every sketch equal to
+/// `sketch` but in where its labels sit.
+#[derive(Debug, Clone)]
+pub(crate) struct Settled {
+    pub sketch: Sketch,
+    pub outcome: SolveOutcome,
+}
+
+pub(crate) fn settle(sketch: &Sketch) -> Settled {
+    let mut solved = sketch.clone();
+    crate::text::strip(&mut solved);
+    let sys = build_system(&solved);
+    let iteration = iterate(&sys, solved.solver);
+    if iteration.outcome != SolveOutcome::NothingToSolve {
+        write_back(&mut solved, &sys, &iteration.values);
+    }
+    Settled {
+        sketch: solved,
+        outcome: iteration.outcome,
+    }
+}
+
 pub fn diagnose(sketch: &Sketch) -> Diagnosis {
+    diagnose_with(sketch, None, None)
+}
+
+/// [`diagnose`], given [`settle`] of `sketch` and its [`dof_estimate`]
+/// where the caller keeps them.
+pub(crate) fn diagnose_with(
+    sketch: &Sketch,
+    settled: Option<&Settled>,
+    dof: Option<i32>,
+) -> Diagnosis {
     let problem = adapter::prepare(sketch, &[]);
+    let dof = dof.unwrap_or_else(|| sketch_solver::freedom::estimate(&problem).degrees);
     if problem.constraints.len() > problem.settings.diagnosis_limit {
         return Diagnosis {
-            dof: sketch_solver::freedom::estimate(&problem).degrees,
+            dof,
             analyzed: false,
             ..Diagnosis::default()
         };
     }
-    let mut probe = sketch.clone();
-    let outcome = solve(&mut probe);
+    // Solved as `solve` solves it: settled, then its splines refitted and
+    // its letters made again; or with its measured points settling.
+    let (outcome, probe) = if sketch.soft.is_empty() {
+        let mut probe = match settled {
+            Some(settled) => settled.clone(),
+            None => settle(sketch),
+        };
+        crate::spline::refit_splines(&mut probe.sketch);
+        crate::text::refresh(&mut probe.sketch);
+        (probe.outcome, probe.sketch)
+    } else {
+        let mut probe = sketch.clone();
+        (solve(&mut probe), probe)
+    };
     let solved = adapter::prepare(&probe, &[]);
-    let result = sketch_solver::diagnosis::diagnose_at(&problem, to_core(outcome), &solved);
+    let result =
+        sketch_solver::diagnosis::diagnose_measured(&problem, to_core(outcome), &solved, dof);
     Diagnosis {
         dof: result.dof,
         analyzed: result.analyzed,
@@ -509,32 +558,34 @@ fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<U
         }
     }
 }
-/// The points the constraints leave free to move: each is nudged in turn
-/// and the sketch re-solved; a point the solver leaves where it was
-/// nudged has a degree of freedom in that direction. A sketch nothing
-/// pins down reports every point free, which is what its three rigid
-/// degrees of freedom mean.
 /// The elements nothing left free can move: a point fixed in both
 /// coordinates, a curve whose points are all fixed and whose own size
 /// (a radius, an ellipse's shape) is too. Worked out on the sketch as it
 /// solves, in one pass over the constraints' Jacobian. Empty for a sketch
-/// too large to analyse, as its diagnosis is.
-pub fn locked_elements(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
+/// too large to analyse, as its diagnosis is. `settled` is [`settle`] of
+/// `sketch` where the caller keeps it.
+pub(crate) fn locked_elements(
+    sketch: &Sketch,
+    settled: Option<&Settled>,
+) -> std::collections::HashSet<Uuid> {
     use sketch_solver::problem::{CurveReference, PointReference};
-    // Solved without its texts' letters, which the solver leaves out and
-    // which would only be made again after it.
-    // Too large is known before the solve, which would be wasted on it.
-    let mut solved = sketch.clone();
-    crate::text::strip(&mut solved);
     let too_large = |problem: &sketch_solver::problem::Problem| {
         problem.constraints.len() > problem.settings.diagnosis_limit
     };
-    if too_large(&adapter::prepare(&solved, &[])) {
-        return Default::default();
-    }
-    let sys = build_system(&solved);
-    solve_system(&mut solved, sys);
-    let problem = adapter::prepare(&solved, &[]);
+    // Settled: solved without its texts' letters, which the solver leaves
+    // out and which would only be made again after it. Too large is known
+    // before the solve, which would be wasted on it.
+    let owned;
+    let settled = match settled {
+        Some(settled) => settled,
+        None if !diagnosable(sketch) => return Default::default(),
+        None => {
+            owned = settle(sketch);
+            &owned
+        }
+    };
+    let solved = &settled.sketch;
+    let problem = adapter::prepare(solved, &[]);
     if too_large(&problem) {
         return Default::default();
     }
@@ -579,10 +630,34 @@ pub fn locked_elements(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
     locked
 }
 
+/// The points the constraints leave free to move: each is nudged in turn
+/// and the sketch re-solved; a point the solver leaves where it was
+/// nudged has a degree of freedom in that direction. A sketch nothing
+/// pins down reports every point free, which is what its three rigid
+/// degrees of freedom mean.
+///
+/// A point no equation reads, both its coordinates the solve's to move,
+/// is one the solve leaves wherever it is put: it is free without being
+/// nudged.
 pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
     const NUDGE: f64 = 0.25;
     let mut base = sketch.clone();
     solve(&mut base);
+    let sys = build_system(&base);
+    let mut unread = vec![false; sys.vars.len()];
+    for &j in &sys.free {
+        unread[j] = true;
+    }
+    let mut reads = Vec::new();
+    for spec in &sys.specs {
+        spec.reads(&mut reads);
+    }
+    for j in reads {
+        unread[j] = false;
+    }
+    let unread = |id: Uuid| {
+        (sys.point_vars.get(&adapter::point(id))).is_some_and(|&k| unread[k] && unread[k + 1])
+    };
     let points: Vec<(Uuid, Vec2D)> = base
         .geometry
         .iter()
@@ -593,6 +668,10 @@ pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
         .collect();
     let mut free = std::collections::HashSet::new();
     for (id, at) in points {
+        if unread(id) {
+            free.insert(id);
+            continue;
+        }
         for nudge in [Vec2D::new(NUDGE, 0.0), Vec2D::new(0.0, NUDGE)] {
             let mut probe = base.clone();
             for g in &mut probe.geometry {
