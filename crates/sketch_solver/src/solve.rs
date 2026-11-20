@@ -48,6 +48,12 @@ pub struct Iteration {
 /// on another branch of the equations, the sketch's mirror image, while a
 /// path of near steps stays on the branch the drawing is on.
 pub fn iterate(sys: &System, settings: Settings) -> Iteration {
+    iterate_in(sys, None, settings)
+}
+
+/// [`iterate`], given `sys`'s [`Blocks`] where the caller keeps them: they
+/// depend only on its equations and free variables, never on its values.
+pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settings) -> Iteration {
     let tolerance = if settings.tolerance > 0.0 {
         settings.tolerance
     } else {
@@ -63,9 +69,16 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
         };
     }
 
-    let blocks = Blocks::of(sys);
+    let owned;
+    let blocks = match blocks {
+        Some(blocks) => blocks,
+        None => {
+            owned = Blocks::of(sys);
+            &owned
+        }
+    };
     let start = part_coincident_ends(sys);
-    let direct = descend(sys, &blocks, start.clone(), settings, tolerance, None);
+    let direct = descend(sys, blocks, start.clone(), settings, tolerance, None);
     if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
@@ -74,7 +87,7 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
     if steps <= 1 {
         return direct;
     }
-    let mut followed = follow(sys, &blocks, start, settings, tolerance, steps);
+    let mut followed = follow(sys, blocks, start, settings, tolerance, steps);
     if !matches!(followed.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
@@ -205,6 +218,25 @@ pub(crate) fn part_coincident_ends(sys: &System) -> Vec<f64> {
     x
 }
 
+/// The damping after a rejected step, or `None` when it stays where it
+/// is (already the largest): the next retry would take the very step just
+/// rejected, from the same point, and be rejected again.
+pub(crate) fn raised(lambda: f64, settings: &Settings) -> Option<f64> {
+    let next = (lambda * 10.0).min(settings.lambda_max);
+    #[cfg(test)]
+    if RETRY_SATURATED.get() {
+        return Some(next);
+    }
+    (next != lambda).then_some(next)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Retry at the largest damping until the retries run out, as a test's
+    /// reference for what stopping there gives.
+    pub(crate) static RETRY_SATURATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
 /// to `offset` (zero when `None`).
 fn descend(
@@ -257,27 +289,34 @@ fn descend(
         }
         let mean_diag = diagonal.iter().sum::<f64>() / diagonal.len().max(1) as f64;
         let mut improved = false;
+        let mut dense = Dense::default();
         for _ in 0..settings.max_inner_retries {
             // Damped normal equations: (JᵀJ + λ·D) dx = -Jᵀr, with D the
             // diagonal of JᵀJ raised by its mean.
             let mut step = vec![0.0; sys.free.len()];
             let mut singular = false;
             for (block, (jtj, jtr)) in blocks.blocks.iter().zip(&normal) {
-                let mut a = jtj.clone();
-                for (i, row) in a.iter_mut().enumerate() {
-                    row[i] += lambda * (jtj[i][i] + mean_diag).max(settings.damping_floor);
+                dense.a.clear();
+                for (i, row) in jtj.iter().enumerate() {
+                    dense.a.extend_from_slice(row);
+                    let at = dense.a.len() - row.len() + i;
+                    dense.a[at] += lambda * (jtj[i][i] + mean_diag).max(settings.damping_floor);
                 }
-                let rhs: Vec<f64> = jtr.iter().map(|v| -v).collect();
-                let Some(dx) = solve_linear(a, rhs) else {
+                dense.b.clear();
+                dense.b.extend(jtr.iter().map(|v| -v));
+                if !dense.solve() {
                     singular = true;
                     break;
-                };
-                for (&column, dx) in block.columns.iter().zip(dx) {
+                }
+                for (&column, &dx) in block.columns.iter().zip(&dense.x) {
                     step[column] = dx;
                 }
             }
             if singular {
-                lambda = (lambda * 10.0).min(settings.lambda_max);
+                match raised(lambda, &settings) {
+                    Some(raised) => lambda = raised,
+                    None => break,
+                }
                 continue;
             }
             cap_step(&mut step, var_scale(&x), settings.maximum_step_scale);
@@ -296,7 +335,10 @@ fn descend(
                 improved = true;
                 break;
             }
-            lambda = (lambda * 10.0).min(settings.lambda_max);
+            match raised(lambda, &settings) {
+                Some(raised) => lambda = raised,
+                None => break,
+            }
         }
 
         if inf_norm(&r) < tolerance * var_scale(&x) {
@@ -362,50 +404,82 @@ fn normal_equations(jac: &[Vec<f64>], r: &[f64]) -> (Vec<Vec<f64>>, Vec<f64>) {
 
 /// Solve `a * x = b` with Gaussian elimination and partial pivoting.
 /// Returns `None` when the matrix is numerically singular.
-pub(crate) fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
-    let n = b.len();
-    for col in 0..n {
-        let mut pivot_row = col;
-        let mut pivot_val = a[col][col].abs();
-        for (row, row_vals) in a.iter().enumerate().skip(col + 1) {
-            let v = row_vals[col].abs();
-            if v > pivot_val {
-                pivot_val = v;
-                pivot_row = row;
-            }
-        }
-        if !pivot_val.is_finite() || pivot_val < 1e-300 {
-            return None;
-        }
-        a.swap(col, pivot_row);
-        b.swap(col, pivot_row);
-        let (upper, lower) = a.split_at_mut(col + 1);
-        let pivot_vals = &upper[col];
-        let pivot = pivot_vals[col];
-        let b_pivot = b[col];
-        for (offset, row_vals) in lower.iter_mut().enumerate() {
-            let factor = row_vals[col] / pivot;
-            if factor == 0.0 {
-                continue;
-            }
-            for (dst, src) in row_vals[col..].iter_mut().zip(&pivot_vals[col..]) {
-                *dst -= factor * src;
-            }
-            b[col + 1 + offset] -= factor * b_pivot;
-        }
+#[cfg(test)]
+pub(crate) fn solve_linear(a: Vec<Vec<f64>>, b: Vec<f64>) -> Option<Vec<f64>> {
+    let mut dense = Dense::default();
+    dense.a.extend(a.iter().flatten());
+    dense.b = b;
+    dense.solve().then_some(dense.x)
+}
+
+/// A square system `a x = b` solved by Gaussian elimination with partial
+/// pivoting, its buffers kept from one system to the next: `a` row-major,
+/// `x` the answer after [`Dense::solve`].
+#[derive(Default)]
+pub(crate) struct Dense {
+    pub a: Vec<f64>,
+    pub b: Vec<f64>,
+    pub x: Vec<f64>,
+}
+
+impl Dense {
+    /// Empty `n`×`n` matrix and right-hand side, every entry zero.
+    pub(crate) fn zeroed(&mut self, n: usize) {
+        self.a.clear();
+        self.a.resize(n * n, 0.0);
+        self.b.clear();
+        self.b.resize(n, 0.0);
     }
-    let mut x = vec![0.0; n];
-    for col in (0..n).rev() {
-        let mut sum = b[col];
-        for k in (col + 1)..n {
-            sum -= a[col][k] * x[k];
+
+    /// Solve in place, leaving `a` and `b` reduced. False when a pivot is
+    /// zero or not finite, or the answer is not finite.
+    pub(crate) fn solve(&mut self) -> bool {
+        let n = self.b.len();
+        let (a, b) = (&mut self.a, &mut self.b);
+        for col in 0..n {
+            let mut pivot_row = col;
+            let mut pivot_val = a[col * n + col].abs();
+            for row in col + 1..n {
+                let v = a[row * n + col].abs();
+                if v > pivot_val {
+                    pivot_val = v;
+                    pivot_row = row;
+                }
+            }
+            if !pivot_val.is_finite() || pivot_val < 1e-300 {
+                return false;
+            }
+            if pivot_row != col {
+                let (upper, lower) = a.split_at_mut(pivot_row * n);
+                upper[col * n..(col + 1) * n].swap_with_slice(&mut lower[..n]);
+                b.swap(col, pivot_row);
+            }
+            let (upper, lower) = a.split_at_mut((col + 1) * n);
+            let pivot_vals = &upper[col * n..];
+            let pivot = pivot_vals[col];
+            let b_pivot = b[col];
+            for (offset, row_vals) in lower.chunks_exact_mut(n).enumerate() {
+                let factor = row_vals[col] / pivot;
+                if factor == 0.0 {
+                    continue;
+                }
+                for (dst, src) in row_vals[col..].iter_mut().zip(&pivot_vals[col..]) {
+                    *dst -= factor * src;
+                }
+                b[col + 1 + offset] -= factor * b_pivot;
+            }
         }
-        x[col] = sum / a[col][col];
-    }
-    if x.iter().all(|v| v.is_finite()) {
-        Some(x)
-    } else {
-        None
+        self.x.clear();
+        self.x.resize(n, 0.0);
+        let x = &mut self.x;
+        for col in (0..n).rev() {
+            let mut sum = b[col];
+            for k in (col + 1)..n {
+                sum -= a[col * n + k] * x[k];
+            }
+            x[col] = sum / a[col * n + col];
+        }
+        x.iter().all(|v| v.is_finite())
     }
 }
 
@@ -500,4 +574,90 @@ pub fn probe_direct(sys: &System, settings: Settings) -> Iteration {
         CONVERGENCE_TOL,
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Dense;
+
+    /// Elimination over a matrix of rows, row swaps as row moves: the
+    /// reference the flat buffers are checked against.
+    fn by_rows(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+        let n = b.len();
+        for col in 0..n {
+            let mut pivot_row = col;
+            let mut pivot_val = a[col][col].abs();
+            for (row, vals) in a.iter().enumerate().skip(col + 1) {
+                if vals[col].abs() > pivot_val {
+                    pivot_val = vals[col].abs();
+                    pivot_row = row;
+                }
+            }
+            if !pivot_val.is_finite() || pivot_val < 1e-300 {
+                return None;
+            }
+            a.swap(col, pivot_row);
+            b.swap(col, pivot_row);
+            let pivot = a[col].clone();
+            for row in col + 1..n {
+                let factor = a[row][col] / pivot[col];
+                if factor == 0.0 {
+                    continue;
+                }
+                for (dst, src) in a[row][col..].iter_mut().zip(&pivot[col..]) {
+                    *dst -= factor * src;
+                }
+                b[row] -= factor * b[col];
+            }
+        }
+        let mut x = vec![0.0; n];
+        for col in (0..n).rev() {
+            let mut sum = b[col];
+            for k in col + 1..n {
+                sum -= a[col][k] * x[k];
+            }
+            x[col] = sum / a[col][col];
+        }
+        x.iter().all(|v| v.is_finite()).then_some(x)
+    }
+
+    #[test]
+    fn flat_elimination_matches_elimination_by_rows_to_the_bit() {
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut unit = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut dense = Dense::default();
+        let mut solved = 0;
+        for case in 0..400 {
+            let n = 1 + case % 9;
+            let mut rows: Vec<Vec<f64>> = (0..n)
+                .map(|_| (0..n).map(|_| unit() * 4.0 - 2.0).collect())
+                .collect();
+            // Some with a zero entry, a repeated row or a zero column, so
+            // eliminations are skipped and singular systems are met.
+            match case % 5 {
+                1 => rows[0][n - 1] = 0.0,
+                2 if n > 1 => rows[n - 1] = rows[0].clone(),
+                3 => rows.iter_mut().for_each(|r| r[0] = 0.0),
+                _ => {}
+            }
+            let b: Vec<f64> = (0..n).map(|_| unit() * 10.0 - 5.0).collect();
+            let expected = by_rows(rows.clone(), b.clone());
+            dense.a.clear();
+            dense.a.extend(rows.iter().flatten());
+            dense.b.clone_from(&b);
+            let got = dense.solve().then(|| dense.x.clone());
+            let bits = |v: &Option<Vec<f64>>| {
+                v.as_ref()
+                    .map(|v| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>())
+            };
+            assert_eq!(bits(&got), bits(&expected), "case {case}");
+            solved += usize::from(got.is_some());
+        }
+        assert!(solved > 200, "{solved}");
+    }
 }

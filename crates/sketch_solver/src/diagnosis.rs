@@ -94,10 +94,25 @@ pub fn diagnose_measured(
     };
     match outcome {
         SolveOutcome::NotConverged { .. } => {
+            // Each probe solves the sketch without one constraint: the
+            // system compiled once with its rows left out where that is
+            // all leaving it out changes, as for redundancy below, its
+            // element maps kept for the solve's continuation.
+            let full = compile_system(problem, None, false);
+            let local = Local::of(problem, &full);
             for c in &problem.constraints {
-                let mut without = problem.clone();
-                without.constraints.retain(|other| other.id != c.id);
-                let system = compile_system(&without, None, false);
+                let system = if local.holds(c) {
+                    let mut system = without(&full, c.id);
+                    system.point_vars.clone_from(&full.point_vars);
+                    system.radius_vars.clone_from(&full.radius_vars);
+                    system.shape_vars.clone_from(&full.shape_vars);
+                    system.derived_foci.clone_from(&full.derived_foci);
+                    system
+                } else {
+                    let mut without = problem.clone();
+                    without.constraints.retain(|other| other.id != c.id);
+                    compile_system(&without, None, false)
+                };
                 if matches!(
                     iterate(&system, problem.settings).outcome,
                     SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve
@@ -424,5 +439,107 @@ mod tests {
             redundant_sketches += usize::from(!expected.is_empty());
         }
         assert!(redundant_sketches > 60, "{redundant_sketches}");
+    }
+
+    /// Retries stopped once the damping is the largest give what retrying
+    /// at it until the retries run out gives, to the bit: solves and
+    /// diagnoses of sketches that converge and of ones that cannot, a
+    /// corner held at two places.
+    #[test]
+    fn retries_stopped_at_the_largest_damping_change_nothing() {
+        let both = |problem: &Problem| {
+            let sys = compile_system(problem, None, false);
+            let answer = iterate(&sys, problem.settings);
+            let bits: Vec<u64> = answer.values.iter().map(|x| x.to_bits()).collect();
+            (bits, format!("{:?}", answer.outcome), diagnose(problem))
+        };
+        let mut failing = 0;
+        for seed in 1..=12u64 {
+            let mut problem = drawn(seed * 7919);
+            // A low ceiling on the damping, so it is reached while steps still
+            // move the sketch.
+            if seed % 3 == 0 {
+                problem.settings.lambda_max = 1e-1;
+            }
+            if seed % 2 == 0 {
+                for (k, x) in [(1u128 << 60, 50.0), (1 << 61, -50.0)] {
+                    problem.constraints.push(Constraint {
+                        id: ConstraintId(k),
+                        kind: R::FixedPoint {
+                            point: PointReference::Point(PointId(2)),
+                            position: Vector { x, y: 50.0 },
+                        },
+                    });
+                }
+            }
+            let stopped = both(&problem);
+            crate::solve::RETRY_SATURATED.set(true);
+            let retried = both(&problem);
+            crate::solve::RETRY_SATURATED.set(false);
+            assert_eq!(stopped, retried, "seed {seed}");
+            failing += usize::from(stopped.1.starts_with("NotConverged"));
+        }
+        assert!(failing >= 5, "{failing}");
+    }
+
+    /// The constraints in conflict found by compiling the sketch again
+    /// without each one.
+    fn recompiled_conflicts(problem: &Problem) -> Vec<ConstraintId> {
+        (problem.constraints.iter())
+            .filter(|c| {
+                let mut without = problem.clone();
+                without.constraints.retain(|other| other.id != c.id);
+                let system = compile_system(&without, None, false);
+                matches!(
+                    iterate(&system, problem.settings).outcome,
+                    SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve
+                )
+            })
+            .map(|c| c.id)
+            .collect()
+    }
+
+    /// Probes that leave a constraint's rows out of the one compiled
+    /// system find the conflicts compiling without each constraint finds,
+    /// on sketches that cannot be solved: a corner held at two places, or
+    /// a side held to a second length.
+    #[test]
+    fn probes_by_rows_find_the_conflicts_recompiling_finds() {
+        let mut conflicted = 0;
+        for seed in 1..=12 {
+            let mut problem = drawn(seed * 7919);
+            let second = match problem.constraints.iter().find_map(|c| match c.kind {
+                R::Length { line, length } => Some((line, length)),
+                _ => None,
+            }) {
+                Some((line, length)) if seed % 2 == 0 => vec![R::Length {
+                    line,
+                    length: Length(length.0 + 1.0),
+                }],
+                _ => [7.0, -7.0]
+                    .map(|x| R::FixedPoint {
+                        point: PointReference::Point(PointId(2)),
+                        position: Vector { x, y: 3.0 },
+                    })
+                    .to_vec(),
+            };
+            for (k, kind) in second.into_iter().enumerate() {
+                problem.constraints.push(Constraint {
+                    id: ConstraintId((1 << 60) + k as u128),
+                    kind,
+                });
+            }
+            let outcome =
+                crate::solve::iterate(&compile_system(&problem, None, false), problem.settings)
+                    .outcome;
+            if !matches!(outcome, SolveOutcome::NotConverged { .. }) {
+                continue;
+            }
+            let diagnosis = diagnose_at(&problem, outcome, &problem);
+            let expected = recompiled_conflicts(&problem);
+            assert_eq!(diagnosis.conflicting, expected, "seed {seed}");
+            conflicted += usize::from(!expected.is_empty());
+        }
+        assert!(conflicted >= 3, "{conflicted}");
     }
 }
