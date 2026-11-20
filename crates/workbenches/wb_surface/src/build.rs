@@ -105,8 +105,8 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
     let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
     for body in bodies {
         for (feature, inputs) in edge_inputs(document, body) {
-            if document.built_against(feature) != Some(inputs) {
-                document.mark_feature_stale(feature);
+            if document.derived().built_against(feature) != Some(inputs) {
+                document.derived_mut().mark_feature_stale(feature);
             }
         }
     }
@@ -126,7 +126,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
                 document.clear_feature_dirty(*id);
             }
             for (feature, seen) in edge_inputs(document, body) {
-                document.note_built_against(feature, seen);
+                document.derived_mut().note_built_against(feature, seen);
             }
             RebuildJob {
                 body,

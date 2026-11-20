@@ -337,7 +337,7 @@ fn a_fill_feature_vents_a_plate_in_a_honeycomb() {
     );
     doc.mark_feature_dirty(fill);
     settle_as_host(&registry, &mut doc);
-    let error = &doc.get_feature_meta(fill).unwrap().error;
+    let error = doc.derived().error(fill);
     assert!(error.is_none(), "it builds: {error:?}");
     // Rows at y = 5, 11.9, 18.9 and 25.8; the even ones at x = 5 to 37,
     // five holes, the odd ones at 9 to 33, four.

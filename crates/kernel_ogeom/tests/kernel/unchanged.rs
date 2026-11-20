@@ -65,7 +65,8 @@ fn warned(doc: &mut Document, body: BodyId, feature: FeatureId) -> Option<String
     settle_as_host(&registry, doc);
     assert!(doc.imported_geometry(body).is_some(), "built");
     let node = doc.get_feature_meta(feature).unwrap();
-    assert!(node.error.is_none(), "{:?}", node.error);
+    let error = doc.derived().error(feature);
+    assert!(error.is_none(), "{error:?}");
     registry.feature_warning(doc, None, feature, node)
 }
 

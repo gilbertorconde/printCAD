@@ -524,8 +524,9 @@ impl PrintCadApp {
             .feature_tree()
             .all_nodes()
             .filter_map(|(id, n)| {
-                n.error
-                    .as_ref()
+                document
+                    .derived()
+                    .error(*id)
                     .map(|e| json!({"feature": id.0.to_string(), "name": n.name, "error": e}))
             })
             .collect();

@@ -651,7 +651,8 @@ fn a_fillet_found_by_position_carries_a_warning() {
     let warned = |doc: &mut Document| {
         settle_as_host(&registry, doc);
         let node = doc.get_feature_meta(round).unwrap();
-        assert!(node.error.is_none(), "{:?}", node.error);
+        let error = doc.derived().error(round);
+        assert!(error.is_none(), "{error:?}");
         assert!(doc.imported_geometry(body).is_some(), "built");
         registry.feature_warning(doc, None, round, node)
     };
@@ -710,7 +711,7 @@ fn a_variable_tilts_a_pad_s_custom_direction() {
         .unwrap();
     // A feature is built once marked stale, as the application marks a
     // new one.
-    doc.mark_feature_stale(pad_id);
+    doc.derived_mut().mark_feature_stale(pad_id);
 
     let depth = |doc: &mut Document| {
         let (min, max) = rebuilt_bounds(&registry, doc, body);
@@ -1134,7 +1135,8 @@ fn features_placed_by_a_picked_face_follow_it() {
     let mirror = doc.add_in(body, "Mirror", mirrored(block, MirrorPlane::Face(lost)));
     settle_as_host(&registry, &mut doc);
     let node = doc.get_feature_meta(mirror).unwrap();
-    assert!(node.error.is_none(), "{:?}", node.error);
+    let error = doc.derived().error(mirror);
+    assert!(error.is_none(), "{error:?}");
     let said = registry
         .feature_warning(&doc, None, mirror, node)
         .expect("warned");
@@ -1231,7 +1233,7 @@ fn a_boolean_follows_its_tool_body() {
     assert!(
         doc.feature_tree()
             .all_nodes()
-            .all(|(_, n)| n.error.is_none()),
+            .all(|(id, _)| doc.derived().error(*id).is_none()),
         "nothing failed on the way"
     );
 
@@ -4434,7 +4436,7 @@ fn a_counting_projected_edge_follows_its_pad_without_the_sketch_opened() {
     // standing upright, x across and z up, in a body of its own.
     let (mut doc, block, base) = setup(40.0, 10.0);
     let pad_id = doc.add_in(block, "Pad", pad(base, 10.0));
-    doc.mark_feature_stale(pad_id);
+    doc.derived_mut().mark_feature_stale(pad_id);
     settle_as_host(&registry, &mut doc);
     let other = doc.create_body(Some("Other".into()));
     let plane = sketch_model::sketch::SketchPlane::from_frame(
@@ -4484,7 +4486,7 @@ fn a_counting_projected_edge_follows_its_pad_without_the_sketch_opened() {
     }
     doc.set_feature(sketch_id, feature);
     let wall = doc.add_in(other, "Wall", pad(sketch_id, 2.0));
-    doc.mark_feature_stale(wall);
+    doc.derived_mut().mark_feature_stale(wall);
     settle_as_host(&registry, &mut doc);
     let height = |doc: &Document| {
         let (min, max) = mesh_bounds(&doc.imported_geometry(other).unwrap().mesh);
@@ -4737,7 +4739,7 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
     // A block 40 x 40, 10 high.
     let (mut doc, body, base) = setup(40.0, 40.0);
     let pad_id = doc.add_in(body, "Pad", pad(base, 10.0));
-    doc.mark_feature_stale(pad_id);
+    doc.derived_mut().mark_feature_stale(pad_id);
     settle_as_host(&registry, &mut doc);
 
     // A sketch on the top face, following it.
@@ -4793,7 +4795,7 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
     }
     doc.set_feature(sketch_id, feature);
     let pocket = doc.add_in(body, "Pocket", pocket(sketch_id, 3.0));
-    doc.mark_feature_stale(pocket);
+    doc.derived_mut().mark_feature_stale(pocket);
     let passes = settle_as_host(&registry, &mut doc);
     assert!(passes <= 4, "settled in {passes} passes");
     let volume = body_volume(&doc, body);
@@ -4895,7 +4897,8 @@ fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
         let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
         let err = try_chain(&ops).expect_err("the step's back edge fails");
         assert_eq!(err.edges.failing.len(), 1, "{}", err.message);
-        doc.set_feature_failure(fillet, err.message, err.edges);
+        doc.derived_mut()
+            .set_feature_failure(fillet, err.message, err.edges);
     };
     let edge_count = |doc: &Document| match DesignFeature::from_json(
         &doc.get_feature_meta(fillet).unwrap().data,

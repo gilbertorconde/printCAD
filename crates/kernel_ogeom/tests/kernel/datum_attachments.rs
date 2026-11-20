@@ -137,10 +137,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
         (max[1] - 11.0).abs() < 1e-3,
         "the pad followed the plane: {max:?}"
     );
-    assert!(
-        doc.get_feature_meta(tangent).unwrap().error.is_none(),
-        "the face was found"
-    );
+    assert!(doc.derived().error(tangent).is_none(), "the face was found");
 }
 
 /// A point at a rim's centre and a coordinate system on the centre of mass
@@ -200,7 +197,7 @@ fn centres_follow_the_solid_they_are_found_on() {
         "{:?}",
         frame_of(&doc, rim)
     );
-    assert!(doc.get_feature_meta(rim).unwrap().error.is_none());
+    assert!(doc.derived().error(rim).is_none());
 
     // Flatter: the centre of mass drops, and the axis of the least moment
     // turns from the cylinder's own to a diameter.
@@ -301,8 +298,8 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
     assert!(
         near(frame.origin, [1.0, 0.0, 10.0]),
         "followed: {frame:?} {:?} {:?}",
-        doc.get_feature_meta(axis).unwrap().error,
-        doc.probed_references(axis)
+        doc.derived().error(axis),
+        doc.derived().probed_references(axis)
     );
     let want = cylinder_volume + PI * (49.0 - 16.0) * 2.0;
     let got = body_volume(&doc, body);
@@ -444,7 +441,8 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
     settle(&registry, &mut doc, body);
     let warning = |doc: &Document| {
         let node = doc.get_feature_meta(id).unwrap();
-        assert!(node.error.is_none(), "{:?}", node.error);
+        let error = doc.derived().error(id);
+        assert!(error.is_none(), "{error:?}");
         registry.feature_warning(doc, None, id, node)
     };
     assert_eq!(warning(&doc), None);
@@ -689,7 +687,7 @@ fn a_midplane_stays_halfway_between_the_faces_it_was_made_from() {
     );
     assert!(near(frame.normal, [0.0, 0.0, 1.0]), "{frame:?}");
     assert!(
-        doc.get_feature_meta(middle).unwrap().error.is_none(),
+        doc.derived().error(middle).is_none(),
         "both faces were found"
     );
 }

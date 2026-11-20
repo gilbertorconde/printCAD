@@ -266,7 +266,7 @@ pub(crate) fn document_command(
                             "body": n.body.map(|b| b.0.to_string()),
                             "visible": n.visible,
                             "suppressed": n.suppressed,
-                            "error": n.error,
+                            "error": document.derived().error(n.id),
                             "warning": registry.feature_warning(document, None, n.id, n),
                         })
                     })
@@ -284,7 +284,7 @@ pub(crate) fn document_command(
                 "body": node.body.map(|b| b.0.to_string()),
                 "visible": node.visible,
                 "suppressed": node.suppressed,
-                "error": node.error,
+                "error": document.derived().error(node.id),
                 "warning": registry.feature_warning(document, None, node.id, node),
                 "fields": node.data,
                 "unset": unset_fields(&node.data),
@@ -1731,7 +1731,11 @@ pub(crate) fn rebuild_failures(document: &core_document::Document) -> Vec<Value>
     features_in_order(document, None)
         .into_iter()
         .filter_map(|n| {
-            let error = n.error.clone().or_else(|| document.formula_error(n.id))?;
+            let error = document
+                .derived()
+                .error(n.id)
+                .map(str::to_string)
+                .or_else(|| document.formula_error(n.id))?;
             Some(json!({"feature": n.id.0.to_string(), "name": n.name, "error": error}))
         })
         .collect()

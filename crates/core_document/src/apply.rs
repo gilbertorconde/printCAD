@@ -9,6 +9,7 @@ impl Document {
     /// op is ABOUT to change, so per-user undo can restore it later without
     /// ever snapshotting the document.
     pub(crate) fn record_and_apply(&mut self, operation: op::DocumentOp) {
+        debug_assert!(!self.deriving, "derived state recorded an op");
         let inverse = self.invert_op(&operation);
         if !self.history_suppressed {
             self.journal_pending.record(&operation, inverse.clone());
@@ -22,6 +23,7 @@ impl Document {
     /// hear an undo as ordinary ops), but never the journal, which is being
     /// walked, not written.
     pub(crate) fn apply_history_op(&mut self, operation: &op::DocumentOp) {
+        debug_assert!(!self.deriving, "derived state recorded an op");
         let inverse = self.invert_op(operation);
         self.apply_remote_op(operation);
         self.pending_ops.record(operation.clone(), inverse);
@@ -654,6 +656,7 @@ impl Document {
                 suppressed,
             } => {
                 let seq = self.feature_tree.unclaimed_seq(*id, *seq);
+                self.derived.clear_status(*id);
                 self.feature_tree.add_node(FeatureNode {
                     id: *id,
                     workbench_id: workbench_id.clone(),
@@ -664,10 +667,6 @@ impl Document {
                     dirty: false,
                     created_at: *created_at,
                     seq,
-                    error: None,
-                    refused_edges: Default::default(),
-                    warning: None,
-                    unchanged: None,
                     data: data.clone().into(),
                     data_revision: Default::default(),
                     formulas: formulas.clone(),
@@ -770,6 +769,7 @@ impl Document {
                     self.feature_tree.mark_dirty(dep);
                 }
                 self.feature_tree.remove_node(*id);
+                self.derived.clear_status(*id);
             }
             Op::AddAsset { asset, bytes } => {
                 self.assets.insert(asset.id, asset.clone());

@@ -1988,7 +1988,7 @@ impl BenchBuild for SketchWorkbench {
         let Ok(mut feature) = SketchFeature::from_json(values) else {
             return false;
         };
-        let built = document.projected_references(node.id);
+        let built = document.derived().projected_references(node.id);
         let groups: Vec<_> = crate::sketch::external_groups(&feature.sketch)
             .into_iter()
             .filter(|(source, _)| source.reference.is_none())

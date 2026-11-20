@@ -108,7 +108,7 @@ fn a_pad_starts_on_the_face_it_picks() {
     assert_eq!(plan.probes[0].probe.after_op, 1, "the solid before it");
     assert_eq!(plan.probes[0].probe.probe, face.probe());
 
-    doc.store_probe_answers(
+    doc.derived_mut().store_probe_answers(
         &plan.probes,
         &[Ok(kernel_api::ProbeAnswer::Face {
             point: [1.0, 1.0, 10.0],

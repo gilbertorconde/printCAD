@@ -26,7 +26,7 @@ pub(super) fn operand(
         .or_else(|| {
             ctx.selected_features
                 .iter()
-                .find(|id| document.feature_solid(**id).is_some())
+                .find(|id| document.derived().feature_solid(**id).is_some())
                 .map(|id| id.0)
         })
         .or_else(|| {
@@ -50,6 +50,7 @@ pub(super) fn operand(
         return Ok(MeshOperand::Shape { brep, transform });
     }
     let mut shape = document
+        .derived()
         .feature_solid(FeatureId(id))
         .cloned()
         .ok_or_else(|| {

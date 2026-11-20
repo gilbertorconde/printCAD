@@ -110,7 +110,7 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
             return pass;
         }
         for job in jobs {
-            doc.clear_body_feature_errors(job.body);
+            doc.derived_mut().clear_body_feature_errors(job.body);
             let Ok(mut plan) = job.plan else { continue };
             let result = loop {
                 if plan.ops.is_empty() {
@@ -134,15 +134,26 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
                     Ok(result) => break Some(result),
                     Err(e) => {
                         let feature = *plan.op_features.get(e.op_index).expect("an op's feature");
-                        doc.set_feature_failure(feature, e.message.clone(), e.edges.clone());
+                        doc.derived_mut().set_feature_failure(
+                            feature,
+                            e.message.clone(),
+                            e.edges.clone(),
+                        );
                         plan.keep_before_failure(e.op_index);
                     }
                 }
             };
             let Some(result) = result else { continue };
-            doc.store_build_warnings(&plan.op_features, &plan.probes, &plan.projections, &result);
-            doc.store_probe_answers(&plan.probes, &result.probes);
-            doc.store_projections(&plan.projections, &result.projections);
+            doc.derived_mut().store_build_warnings(
+                &plan.op_features,
+                &plan.probes,
+                &plan.projections,
+                &result,
+            );
+            doc.derived_mut()
+                .store_probe_answers(&plan.probes, &result.probes);
+            doc.derived_mut()
+                .store_projections(&plan.projections, &result.projections);
             store_solid(doc, job.body, result);
         }
     }

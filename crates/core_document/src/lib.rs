@@ -9,6 +9,7 @@ pub mod components;
 pub mod configurations;
 mod copies;
 pub mod datum;
+pub mod derived;
 pub mod describe;
 pub mod eigen;
 pub mod evaluate;
@@ -76,6 +77,7 @@ pub use datum::{
     DatumFrame, DatumShape, EdgeAnchor, EdgeSpot, FaceAnchor, FrameAnchor, LineAnchor, PlacedDatum,
     PlaneAnchor, PointAnchor, body_plane_in, datums_of_body,
 };
+pub use derived::{BuildStatus, Derived, DerivedMut};
 pub use evaluate::{Evaluation, Parameter, SlotValue};
 pub use feature::{
     BodyId, DataRevision, FeatureError, FeatureId, FeatureNode, FeatureOrigin, FeatureTree,
@@ -211,9 +213,6 @@ pub struct Document {
     /// cleared by the `SetMeshStart` op; saved as `mesh/<body>.start.bin`.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     mesh_starts: HashMap<BodyId, ImportedGeometry>,
-    /// Mesh build measurements and source vertices, keyed by the full plan.
-    #[serde(skip)]
-    mesh_results: HashMap<BodyId, rebuild::MeshResult>,
     /// The base solids' snapshots, saved as `brep/<body>.base.bin`.
     #[serde(skip)]
     base_brep_blobs: HashMap<BodyId, std::sync::Arc<Vec<u8>>>,
@@ -259,14 +258,18 @@ pub struct Document {
     /// worked out. Derived on each replica, never an op.
     #[serde(skip)]
     evaluated: Evaluated,
-    /// The next geometry revision handed out: revisions never repeat in a
-    /// document, even for a body whose geometry went and came back.
-    #[serde(skip)]
-    next_geometry_revision: u64,
     /// Which document value this is: every new, loaded or cloned one is
     /// another (`content_stamp`).
     #[serde(skip)]
     lineage: Lineage,
+    /// What the builds found: derived on each replica, never an op
+    /// (`derived.rs`).
+    #[serde(skip)]
+    derived: Derived,
+    /// True while a [`DerivedMut`] handle is out: recording an op then is
+    /// a bug, which debug builds assert.
+    #[serde(skip)]
+    deriving: bool,
     /// The bodies the configuration in effect leaves out, kept as the
     /// table changes.
     #[serde(skip)]
@@ -283,37 +286,6 @@ pub struct Document {
     /// View state of this replica, never an op and never saved.
     #[serde(skip)]
     isolated: Option<Vec<BodyId>>,
-    /// What each feature was last built against from outside its own
-    /// history (another body's solid, where it sat), as its bench sums it
-    /// up. Derived on each replica, never an op.
-    #[serde(skip)]
-    built_against: HashMap<FeatureId, u64>,
-    /// What the last build found of each feature's references on its
-    /// body's solid. Derived on each replica, never an op.
-    #[serde(skip)]
-    probed: HashMap<FeatureId, rebuild::ProbedReferences>,
-    /// What the last build projected for each feature from its body's
-    /// solid. Derived on each replica, never an op.
-    #[serde(skip)]
-    projected: HashMap<FeatureId, rebuild::ProjectedReferences>,
-    /// The largest size each previewed fillet or chamfer builds at, as its
-    /// last preview build found it. Derived on each replica, never an op.
-    #[serde(skip)]
-    size_limits: HashMap<FeatureId, kernel_api::SizeLimit>,
-    /// The cosmetic threads the features in the bodies' builds declare,
-    /// as the registry last worked them out. Derived on each replica,
-    /// never an op.
-    #[serde(skip)]
-    threads: Vec<threads::ThreadCallout>,
-    /// The geometry revision the threads were worked out at: a copy of a
-    /// threaded hole is threaded where the built solid shows its bore.
-    #[serde(skip)]
-    threads_at: Option<u64>,
-    /// The bounded solid each feature's owner offers
-    /// (`BenchFeatures::feature_solid`), in the document's frame: derived at
-    /// each evaluation, never an op.
-    #[serde(skip)]
-    feature_solids: HashMap<FeatureId, kernel_api::MeshOperand>,
 }
 
 /// Why a feature cannot move a step in its body's history.
@@ -382,7 +354,6 @@ impl Document {
             imported_brep_face_colors: HashMap::new(),
             base_solids: HashMap::new(),
             mesh_starts: HashMap::new(),
-            mesh_results: HashMap::new(),
             base_brep_blobs: HashMap::new(),
             base_face_colors: HashMap::new(),
             thumbnail: None,
@@ -394,19 +365,13 @@ impl Document {
             journal_pending: op::JournalBuffer::default(),
             history_suppressed: false,
             evaluated: Evaluated::default(),
-            next_geometry_revision: 0,
             lineage: Lineage::default(),
+            derived: Derived::default(),
+            deriving: false,
             left_out: Vec::new(),
             link_stale: Default::default(),
             link_missing: Default::default(),
             isolated: None,
-            built_against: HashMap::new(),
-            probed: HashMap::new(),
-            projected: HashMap::new(),
-            size_limits: HashMap::new(),
-            threads: Vec::new(),
-            threads_at: None,
-            feature_solids: HashMap::new(),
         }
     }
 
@@ -501,7 +466,7 @@ impl Document {
 
     /// See the `mutation_seq` field: bumped on every `mark_dirty`.
     pub fn mutation_seq(&self) -> u64 {
-        self.mutation_seq
+        self.mutation_seq.wrapping_add(self.derived.moved)
     }
 
     pub fn mark_clean(&mut self) {
@@ -785,12 +750,12 @@ impl Document {
     /// document value, no edit since and the formulas not worked out again.
     /// A cache of what features say keyed on it never goes stale.
     pub fn content_stamp(&self) -> (u64, u64, u64) {
-        (self.lineage.0, self.mutation_seq, self.evaluated.runs)
+        (self.lineage.0, self.mutation_seq(), self.evaluated.runs)
     }
 
     /// Whether the document changed since its formulas were worked out.
     pub fn needs_evaluation(&self) -> bool {
-        self.evaluated.at != Some(self.mutation_seq)
+        self.evaluated.at != Some(self.mutation_seq())
     }
 
     /// Take `evaluation` as what the formulas come to now. A feature whose
@@ -840,7 +805,7 @@ impl Document {
         }
         self.evaluated = Evaluated {
             evaluation,
-            at: Some(self.mutation_seq),
+            at: Some(self.mutation_seq()),
             runs: self.evaluated.runs.wrapping_add(1),
             moved,
         };
@@ -853,29 +818,6 @@ impl Document {
         if !self.evaluated.moved.contains(&id) {
             self.evaluated.moved.push(id);
         }
-    }
-
-    /// Every cosmetic thread the features in the bodies' builds declare
-    /// (`BenchOutput::cosmetic_threads`), as last evaluated.
-    pub fn cosmetic_threads(&self) -> &[threads::ThreadCallout] {
-        &self.threads
-    }
-
-    /// The cosmetic threads of `body`, in history order.
-    pub fn body_threads(&self, body: BodyId) -> impl Iterator<Item = &threads::ThreadCallout> {
-        self.threads.iter().filter(move |t| t.body == body)
-    }
-
-    /// Take `threads` as the document's cosmetic threads. Derived state:
-    /// records no op and marks nothing edited.
-    pub fn set_cosmetic_threads(&mut self, threads: Vec<threads::ThreadCallout>) {
-        self.threads = threads;
-        self.threads_at = Some(self.next_geometry_revision);
-    }
-
-    /// Whether a body's geometry changed since the threads were worked out.
-    pub fn cosmetic_threads_stale(&self) -> bool {
-        self.threads_at != Some(self.next_geometry_revision)
     }
 
     /// Whether feature `id` is in its body's build: not suppressed, and
@@ -1380,120 +1322,6 @@ impl Document {
         Ok(moving)
     }
 
-    /// Record (or clear) a recompute error on a feature. Derived state: no
-    /// dirty-marking, the error is display-only and refreshed every rebuild.
-    pub fn set_feature_error(&mut self, feature_id: FeatureId, error: Option<String>) {
-        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
-            node.error = error;
-            node.refused_edges = Default::default();
-        }
-    }
-
-    /// Record a recompute error with the edges of the refused fillet or
-    /// chamfer it comes from. Derived state, as
-    /// [`Self::set_feature_error`].
-    pub fn set_feature_failure(
-        &mut self,
-        feature_id: FeatureId,
-        error: String,
-        edges: kernel_api::EdgeRefusal,
-    ) {
-        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
-            node.error = Some(error);
-            node.refused_edges = edges;
-        }
-    }
-
-    /// Clear recompute errors and warnings on every feature of a body (a
-    /// rebuild is starting; its result will flag them again).
-    pub fn clear_body_feature_errors(&mut self, body: BodyId) {
-        let ids: Vec<FeatureId> = self
-            .feature_tree
-            .all_nodes()
-            .filter(|(_, n)| n.body == Some(body))
-            .map(|(id, _)| *id)
-            .collect();
-        for id in ids {
-            self.set_feature_error(id, None);
-            if let Some(node) = self.feature_tree.get_node_mut(id) {
-                node.warning = None;
-                node.unchanged = None;
-            }
-        }
-    }
-
-    /// Keep a build's warnings on the features they are about: an op's on
-    /// the feature `op_features` names for it, a probe's or projection's
-    /// on the feature that asked it (a datum on a face, a sketch on one or
-    /// taking its edges). Several on one feature are joined; one saying the
-    /// feature changed nothing is kept apart, as `FeatureNode::unchanged`.
-    /// Derived state, as [`Self::set_feature_error`].
-    pub fn store_build_warnings(
-        &mut self,
-        op_features: &[FeatureId],
-        probes: &[rebuild::PlanProbe],
-        projections: &[rebuild::PlanProjection],
-        result: &kernel_api::SolidBuildResult,
-    ) {
-        let owner = |features: Vec<FeatureId>, warnings: &[kernel_api::OpWarning]| {
-            warnings
-                .iter()
-                .filter_map(|w| Some((*features.get(w.op_index)?, w.clone())))
-                .collect::<Vec<_>>()
-        };
-        let warned = [
-            owner(op_features.to_vec(), &result.warnings),
-            owner(
-                probes.iter().map(|p| p.feature).collect(),
-                &result.probe_warnings,
-            ),
-            owner(
-                projections.iter().map(|p| p.feature).collect(),
-                &result.projection_warnings,
-            ),
-        ];
-        for (id, warning) in warned.into_iter().flatten() {
-            if warning.unchanged {
-                if let Some(node) = self.feature_tree.get_node_mut(id) {
-                    node.unchanged = Some(warning.message.clone());
-                }
-            } else {
-                self.add_feature_warning(id, &warning.message);
-            }
-        }
-    }
-
-    /// Keep the largest size the build of `op_features` found for its
-    /// previewed fillet or chamfer, under the feature it belongs to.
-    pub fn store_size_limit(
-        &mut self,
-        op_features: &[FeatureId],
-        result: &kernel_api::SolidBuildResult,
-    ) {
-        if let Some(limit) = result.size_limit
-            && let Some(feature) = op_features.get(limit.op_index)
-        {
-            self.size_limits.insert(*feature, limit);
-        }
-    }
-
-    /// The largest size `feature`'s last preview build found it builds at,
-    /// with the key of the op it was found for.
-    pub fn size_limit(&self, feature: FeatureId) -> Option<&kernel_api::SizeLimit> {
-        self.size_limits.get(&feature)
-    }
-
-    /// Add `message` to what `id` is warned of, once.
-    fn add_feature_warning(&mut self, id: FeatureId, message: &str) {
-        if let Some(node) = self.feature_tree.get_node_mut(id) {
-            node.warning = Some(match node.warning.take() {
-                Some(kept) if kept.contains(message) => kept,
-                Some(kept) => format!("{kept}; {message}"),
-                None => message.to_string(),
-            });
-        }
-    }
-
     /// Remove a feature node. Features that depended on it are marked dirty
     /// so their owners can react to the missing input.
     pub fn remove_feature(&mut self, feature_id: FeatureId) -> DocumentResult<()> {
@@ -1547,6 +1375,7 @@ impl Document {
             .collect();
         for fid in orphaned {
             self.feature_tree.remove_node(fid);
+            self.derived.clear_status(fid);
         }
         self.imported_meshes.remove(&id);
         self.local_meshes.remove(&id);
@@ -1554,7 +1383,7 @@ impl Document {
         self.imported_brep_face_colors.remove(&id);
         self.base_solids.remove(&id);
         self.mesh_starts.remove(&id);
-        self.mesh_results.remove(&id);
+        self.derived.mesh_results.remove(&id);
         self.base_brep_blobs.remove(&id);
         self.base_face_colors.remove(&id);
         // A mesh asset made for this body alone goes with it.
@@ -1656,89 +1485,16 @@ impl Document {
         self.assets.values()
     }
 
-    /// What `feature` was last built against from outside its own history,
-    /// as noted by [`Self::note_built_against`].
-    pub fn built_against(&self, feature: FeatureId) -> Option<u64> {
-        self.built_against.get(&feature).copied()
+    /// What the builds found: errors, warnings, answers and the rest of the
+    /// derived build state.
+    pub fn derived(&self) -> &Derived {
+        &self.derived
     }
 
-    /// Note what `feature` is being built against now (a summary its bench
-    /// computes, such as another body's geometry revision and placement),
-    /// so a later change to it can be told. Derived state: no op.
-    pub fn note_built_against(&mut self, feature: FeatureId, inputs: u64) {
-        self.built_against.insert(feature, inputs);
-    }
-
-    /// What the last build found of `feature`'s references on its body's
-    /// solid.
-    pub fn probed_references(&self, feature: FeatureId) -> Option<&rebuild::ProbedReferences> {
-        self.probed.get(&feature)
-    }
-
-    /// Keep what a build found of `feature`'s references. Derived state:
-    /// no op, and the document is not marked edited; when it differs from
-    /// what was kept, the formulas and what follows from them are worked
-    /// out again.
-    pub fn set_probed_references(
-        &mut self,
-        feature: FeatureId,
-        references: rebuild::ProbedReferences,
-    ) {
-        if self.probed.get(&feature) != Some(&references) {
-            self.probed.insert(feature, references);
-            self.mutation_seq = self.mutation_seq.wrapping_add(1);
-        }
-    }
-
-    /// Keep what a build found of its features' references (`answers` to
-    /// `asked`, in order). A feature whose reference was not found carries
-    /// the reason as its error, and keeps its references as they were.
-    pub fn store_probe_answers(
-        &mut self,
-        asked: &[rebuild::PlanProbe],
-        answers: &[Result<kernel_api::ProbeAnswer, String>],
-    ) {
-        for (feature, references) in rebuild::sort_answers(asked, answers) {
-            if let Some(Err(e)) = references.answers.iter().find(|a| a.is_err()) {
-                self.set_feature_error(
-                    feature,
-                    Some(format!("what it stands on is not found: {e}")),
-                );
-            }
-            self.set_probed_references(feature, references);
-        }
-    }
-
-    /// What the last build projected for `feature` from its body's solid.
-    pub fn projected_references(
-        &self,
-        feature: FeatureId,
-    ) -> Option<&rebuild::ProjectedReferences> {
-        self.projected.get(&feature)
-    }
-
-    /// Keep what a build projected for its features (`answers` to `asked`,
-    /// in order). Derived state: no op, and the document is not marked
-    /// edited; when it differs from what was kept, the formulas and what
-    /// follows from them are worked out again. A projection that failed
-    /// stays with its reason, for the feature to report.
-    pub fn store_projections(
-        &mut self,
-        asked: &[rebuild::PlanProjection],
-        answers: &[Result<Vec<kernel_api::ProjectedEdge>, String>],
-    ) {
-        for (feature, references) in rebuild::sort_projections(asked, answers) {
-            if self.projected.get(&feature) != Some(&references) {
-                self.projected.insert(feature, references);
-                self.mutation_seq = self.mutation_seq.wrapping_add(1);
-            }
-        }
-    }
-
-    /// Mark `feature` for rebuilding because something it is built from
-    /// moved, without marking the document edited.
-    pub fn mark_feature_stale(&mut self, feature: FeatureId) {
-        self.feature_tree.mark_dirty(feature);
+    /// The handle that writes the derived build state. Nothing done through
+    /// it is an edit or records an op.
+    pub fn derived_mut(&mut self) -> DerivedMut<'_> {
+        DerivedMut::new(self)
     }
 }
 

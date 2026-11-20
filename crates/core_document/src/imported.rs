@@ -178,8 +178,8 @@ impl Document {
             .get(&body)
             .map(|prev| prev.revision.saturating_add(1))
             .unwrap_or(0)
-            .max(self.next_geometry_revision);
-        self.next_geometry_revision = next_revision.saturating_add(1);
+            .max(self.derived.next_geometry_revision);
+        self.derived.next_geometry_revision = next_revision.saturating_add(1);
         geometry.revision = next_revision;
         self.local_meshes.remove(&body);
         self.imported_meshes.insert(body, geometry);

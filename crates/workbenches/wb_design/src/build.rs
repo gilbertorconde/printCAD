@@ -148,20 +148,20 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
     let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
     for body in &bodies {
         for (feature, inputs) in boolean_inputs(document, *body) {
-            if document.built_against(feature) != Some(inputs) {
-                document.mark_feature_stale(feature);
+            if document.derived().built_against(feature) != Some(inputs) {
+                document.derived_mut().mark_feature_stale(feature);
             }
         }
         // A datum whose references changed asks them of the solid again.
         let asked_anew = following_datums(document, *body)
             .into_iter()
-            .any(|(datum, asks)| document.built_against(datum) != Some(asks));
+            .any(|(datum, asks)| document.derived().built_against(datum) != Some(asks));
         if asked_anew && let Some(first) = design_feature_ids(document, *body).first() {
-            document.mark_feature_stale(*first);
+            document.derived_mut().mark_feature_stale(*first);
         }
         for (feature, inputs) in borrow_inputs(document, *body) {
-            if document.built_against(feature) != Some(inputs) {
-                document.mark_feature_stale(feature);
+            if document.derived().built_against(feature) != Some(inputs) {
+                document.derived_mut().mark_feature_stale(feature);
             }
         }
     }
@@ -188,14 +188,14 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
                 document.clear_feature_dirty(*id);
             }
             for (feature, seen) in boolean_inputs(document, body) {
-                document.note_built_against(feature, seen);
+                document.derived_mut().note_built_against(feature, seen);
             }
             for (datum, asks) in following_datums(document, body) {
-                document.note_built_against(datum, asks);
+                document.derived_mut().note_built_against(datum, asks);
             }
             answer_lent_faces(document, body);
             for (feature, seen) in borrow_inputs(document, body) {
-                document.note_built_against(feature, seen);
+                document.derived_mut().note_built_against(feature, seen);
             }
             let plan = body_plan(document, body).map(|mut plan| {
                 plan.probes = datum_probes(document, body, &plan);

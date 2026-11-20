@@ -213,7 +213,7 @@ pub(super) fn external_stamp(document: &core_document::Document, id: FeatureId) 
     if sources.values().any(|s| s.reference.is_some()) {
         document.mutation_seq().hash(&mut hasher);
     }
-    format!("{:?}", document.projected_references(id)).hash(&mut hasher);
+    format!("{:?}", document.derived().projected_references(id)).hash(&mut hasher);
     Some(hasher.finish())
 }
 
@@ -230,7 +230,7 @@ pub(super) fn lost_external_elements(
     };
     let plane = placed_plane(&feature.plane, &sketch_placement(document, id));
     let own_body = document.get_feature_meta(id).and_then(|n| n.body);
-    let built = document.projected_references(id);
+    let built = document.derived().projected_references(id);
     crate::sketch::external_groups(&feature.sketch)
         .into_iter()
         .filter(|(source, _)| {

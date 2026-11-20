@@ -285,8 +285,9 @@ fn region(
             .mesh_plans(ctx.document)
             .into_iter()
             .find(|p| p.body == body);
-        let vertices = if let Some(sources) =
-            plan.as_ref().and_then(|p| ctx.document.mesh_sources(p))
+        let vertices = if let Some(sources) = plan
+            .as_ref()
+            .and_then(|p| ctx.document.derived().mesh_sources(p))
         {
             if sources
                 .iter()
@@ -923,7 +924,7 @@ mod tests {
             }
             let plan = wb.mesh_plans(ctx.document).remove(0);
             ctx.document.take_pending_ops();
-            ctx.document.store_mesh_build(
+            ctx.document.derived_mut().store_mesh_build(
                 plan.clone(),
                 kernel_api::MeshChainAnswer {
                     mesh: mesh.clone(),

@@ -216,6 +216,7 @@ fn a_patterned_cosmetic_thread_is_called_out_on_every_copy() {
     let copies = doc.add_in(body, "Pattern", pattern(Vec::new()));
     settle_as_host(&registry, &mut doc);
     let mut mouths: Vec<f64> = doc
+        .derived()
         .cosmetic_threads()
         .iter()
         .map(|c| {
@@ -231,7 +232,11 @@ fn a_patterned_cosmetic_thread_is_called_out_on_every_copy() {
     doc.set_feature(copies, pattern(vec![2]));
     doc.mark_feature_dirty(copies);
     settle_as_host(&registry, &mut doc);
-    assert_eq!(doc.cosmetic_threads().len(), 2, "the skipped copy has none");
+    assert_eq!(
+        doc.derived().cosmetic_threads().len(),
+        2,
+        "the skipped copy has none"
+    );
 }
 
 /// Threads cut along their whole length (many turns, long builds): run
@@ -384,7 +389,7 @@ mod heavy {
         );
         let thread = doc.add_in(body, "Thread", thread_feature(r as f32, "M6", false));
         settle_as_host(&registry, &mut doc);
-        let error = &doc.get_feature_meta(thread).unwrap().error;
+        let error = doc.derived().error(thread);
         assert!(error.is_none(), "it builds: {error:?}");
         let removed = PI * r * r * h - body_volume(&doc, body);
         let want = groove_volume(r, &metric(1.0), true, h);
@@ -392,14 +397,14 @@ mod heavy {
             (removed - want).abs() < want * 0.01,
             "removed {removed}, want {want}"
         );
-        assert!(doc.cosmetic_threads().is_empty());
+        assert!(doc.derived().cosmetic_threads().is_empty());
 
         doc.update_feature_data(thread, thread_feature(r as f32, "M6", true).to_json())
             .unwrap();
         doc.mark_feature_dirty(thread);
         settle_as_host(&registry, &mut doc);
         assert!((body_volume(&doc, body) - PI * r * r * h).abs() < 1e-6);
-        let callouts = doc.cosmetic_threads();
+        let callouts = doc.derived().cosmetic_threads();
         assert_eq!(callouts.len(), 1, "{callouts:?}");
         let callout = &callouts[0];
         assert_eq!(callout.designation, "M6");

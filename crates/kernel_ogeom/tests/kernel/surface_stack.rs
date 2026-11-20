@@ -299,7 +299,8 @@ fn a_held_edge_whose_name_is_lost_is_warned_of_on_its_step() {
         assert!(host.document.imported_geometry(other).is_some(), "built");
         let warning = |id| {
             let node = host.document.get_feature_meta(id).unwrap();
-            assert!(node.error.is_none(), "{:?}", node.error);
+            let error = host.document.derived().error(id);
+            assert!(error.is_none(), "{error:?}");
             host.registry
                 .feature_warning(&host.document, None, id, node)
         };

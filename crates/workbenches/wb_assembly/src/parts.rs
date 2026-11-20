@@ -299,7 +299,7 @@ pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part
                     density: body.material.as_ref().map_or(0.0, |m| m.density),
                     volume_mm3: None,
                     threads: core_document::threads::count_by_designation(
-                        document.body_threads(body.id),
+                        document.derived().body_threads(body.id),
                     ),
                 },
             )),
@@ -904,7 +904,9 @@ mod tests {
             axis: [0.0, 0.0, -1.0],
             radius: 2.5,
         };
-        document.set_cosmetic_threads(vec![thread("M6"), thread("M4"), thread("M6")]);
+        document
+            .derived_mut()
+            .set_cosmetic_threads(vec![thread("M6"), thread("M4"), thread("M6")]);
         let parts = parts_list(&document, &[]);
         assert_eq!(parts[0].threads_text(), "2 × M6 thread, M4 thread");
         let csv = parts_csv(&parts, &[]);

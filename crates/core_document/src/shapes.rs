@@ -80,69 +80,13 @@ impl Document {
         Some(id)
     }
 
-    /// The bounded solid a feature offers a mesh boolean, in the
-    /// document's frame.
-    pub fn feature_solid(&self, id: FeatureId) -> Option<&kernel_api::MeshOperand> {
-        self.feature_solids.get(&id)
-    }
-
     /// The mesh a mesh body's history builds from, in its own frame.
     pub fn mesh_start(&self, body: BodyId) -> Option<&ImportedGeometry> {
         self.mesh_starts.get(&body)
     }
 
-    /// Measurements only while the complete history prefix still agrees.
-    pub fn mesh_steps(&self, plan: &MeshPlan) -> Option<&[kernel_api::MeshStep]> {
-        let built = self.mesh_results.get(&plan.body)?;
-        (&built.plan == plan).then_some(&built.steps)
-    }
-
-    /// Start vertices behind the displayed mesh of this exact plan.
-    pub fn mesh_sources(&self, plan: &MeshPlan) -> Option<&[Option<u32>]> {
-        let built = self.mesh_results.get(&plan.body)?;
-        (&built.plan == plan).then_some(&built.sources)
-    }
-
-    /// Land a mesh history's derived shape, measurements and feature errors.
-    pub fn store_mesh_build(&mut self, plan: MeshPlan, answer: kernel_api::MeshChainAnswer) {
-        let Some(start) = self.mesh_start(plan.body).cloned() else {
-            return;
-        };
-        for (k, id) in plan.features.iter().enumerate() {
-            let error = answer.failed.as_ref().and_then(|(failed, why)| {
-                if k == *failed {
-                    Some(why.clone())
-                } else if k > *failed {
-                    Some("not built: an earlier mesh step failed".into())
-                } else {
-                    None
-                }
-            });
-            self.set_feature_error(*id, error);
-        }
-        let bounds_mm = answer.mesh.bounds();
-        let body = plan.body;
-        self.mesh_results.insert(
-            body,
-            rebuild::MeshResult {
-                plan,
-                steps: answer.steps,
-                sources: answer.sources,
-            },
-        );
-        self.set_imported_geometry(
-            body,
-            ImportedGeometry {
-                mesh: std::sync::Arc::new(answer.mesh),
-                bounds_mm,
-                mesh_path: None,
-                ..start
-            },
-        );
-    }
-
     pub(crate) fn apply_set_mesh_start(&mut self, body: BodyId, on: bool) {
-        self.mesh_results.remove(&body);
+        self.derived.mesh_results.remove(&body);
         if on {
             let Some(mut kept) = self.imported_meshes.get(&body).cloned() else {
                 return;
@@ -346,10 +290,7 @@ impl Document {
     pub fn stand_in_due(&self, body: BodyId) -> Option<Uuid> {
         let stand_in = self.body(body)?.stand_in?;
         let tip = self.body_tip(body)?;
-        let failed = self
-            .feature_tree
-            .get_node(stand_in.feature)
-            .is_some_and(|n| n.error.is_some());
+        let failed = self.derived.error(stand_in.feature).is_some();
         let shown = self
             .imported_geometry(body)
             .is_some_and(|g| g.source_asset == Some(stand_in.asset));

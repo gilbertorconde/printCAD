@@ -696,8 +696,8 @@ fn a_package_sections_its_rod_reads_its_faces_and_threads_it() {
     // Its designation reaches the document, at the top of the side and
     // down the rod, in the body's frame.
     registry.evaluate(&mut document);
-    let [thread] = document.cosmetic_threads() else {
-        panic!("{:?}", document.cosmetic_threads());
+    let [thread] = document.derived().cosmetic_threads() else {
+        panic!("{:?}", document.derived().cosmetic_threads());
     };
     assert_eq!((thread.feature, thread.body), (feature, body));
     assert_eq!(thread.label(), "M10 thread");

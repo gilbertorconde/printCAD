@@ -441,8 +441,9 @@ impl SurfaceWorkbench {
                 });
             let error = ctx
                 .document
-                .get_feature_meta(task.feature)
-                .and_then(|n| n.error.clone());
+                .derived()
+                .error(task.feature)
+                .map(str::to_string);
             panel::editor(
                 form,
                 ctx.document,

@@ -1222,7 +1222,12 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
 
 /// A feature row's tooltip: what the feature is ("Hole · M6 thread") when
 /// its bench says more than the family, the family, then its state.
-fn feature_tooltip(node: &FeatureNode, info: &FeatureInfo, after_tip: bool) -> String {
+fn feature_tooltip(
+    node: &FeatureNode,
+    error: Option<&str>,
+    info: &FeatureInfo,
+    after_tip: bool,
+) -> String {
     let mut parts = Vec::new();
     if info.kind_label != info.family_label {
         parts.push(info.kind_label.clone());
@@ -1236,7 +1241,7 @@ fn feature_tooltip(node: &FeatureNode, info: &FeatureInfo, after_tip: bool) -> S
     if after_tip {
         parts.push("After the tip: excluded from the build".into());
     }
-    if let Some(error) = &node.error {
+    if let Some(error) = error {
         parts.push(format!("Error: {error}"));
     }
     parts.join("\n")
@@ -1641,8 +1646,10 @@ mod tests {
         let failed = add(&mut doc, "Failed", Vec::new());
         let reader = add(&mut doc, "Reader", vec![failed]);
         let later = add(&mut doc, "Later", Vec::new());
-        doc.set_feature_error(failed, Some("the cut misses the solid".into()));
-        doc.set_feature_error(later, Some("not built: `Failed` before it fails".into()));
+        doc.derived_mut()
+            .set_feature_error(failed, Some("the cut misses the solid".into()));
+        doc.derived_mut()
+            .set_feature_error(later, Some("not built: `Failed` before it fails".into()));
         let mut registry = DocumentService::default();
         registry.register_workbench(Box::new(Bench)).unwrap();
         let tree = DocumentTree::build(&doc, &registry);

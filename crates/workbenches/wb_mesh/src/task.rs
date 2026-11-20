@@ -121,6 +121,7 @@ impl MeshWorkbench {
                 .ok_or_else(|| CommandError::failed("the step is after the tip"))?;
             let report = ctx
                 .document
+                .derived()
                 .mesh_steps(&plan)
                 .and_then(|steps| steps.get(index))
                 .ok_or_else(|| {
@@ -309,7 +310,7 @@ impl MeshWorkbench {
             .into_iter()
             .find(|p| p.body == f.scan);
         if let Some(plan) = plan {
-            let steps = ctx.document.mesh_steps(&plan);
+            let steps = ctx.document.derived().mesh_steps(&plan);
             let rows = plan
                 .features
                 .iter()
@@ -385,13 +386,9 @@ impl MeshWorkbench {
                 }
             }
         }
-        if let Some(error) = ctx
-            .document
-            .get_feature_meta(t.id)
-            .and_then(|n| n.error.as_ref())
-        {
+        if let Some(error) = ctx.document.derived().error(t.id) {
             out.push(Widget::Text {
-                text: error.clone(),
+                text: error.to_string(),
                 mono: false,
             });
         }

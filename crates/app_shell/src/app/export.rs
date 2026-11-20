@@ -122,7 +122,7 @@ fn body_notes(document: &core_document::Document, body: core_document::BodyId) -
                 faces: note.face.map(|_| at.map(f64::from)).into_iter().collect(),
             }
         });
-    let threads = document.body_threads(body).map(|thread| {
+    let threads = document.derived().body_threads(body).map(|thread| {
         let (at, label) = thread.leader();
         ExportNote {
             body: 0,
@@ -1540,14 +1540,15 @@ mod tests {
                 glam::Vec3::new(100.0, 0.0, 0.0),
             ),
         );
-        doc.set_cosmetic_threads(vec![core_document::ThreadCallout {
-            feature: core_document::FeatureId::new(),
-            body,
-            designation: "M6".into(),
-            mouth: [5.0, 5.0, 10.0],
-            axis: [0.0, 0.0, -1.0],
-            radius: 2.5,
-        }]);
+        doc.derived_mut()
+            .set_cosmetic_threads(vec![core_document::ThreadCallout {
+                feature: core_document::FeatureId::new(),
+                body,
+                designation: "M6".into(),
+                mouth: [5.0, 5.0, 10.0],
+                axis: [0.0, 0.0, -1.0],
+                radius: 2.5,
+            }]);
         struct Bench;
         impl core_document::Workbench for Bench {
             fn descriptor(&self) -> core_document::WorkbenchDescriptor {
@@ -1605,7 +1606,7 @@ mod tests {
         let text = String::from_utf8(exported.bytes).unwrap();
         assert!(text.contains("FLATNESS_TOLERANCE("));
         assert!(text.contains("DRAUGHTING_CALLOUT('M6 thread'"), "{text}");
-        let (at, _) = doc.cosmetic_threads()[0].leader();
+        let (at, _) = doc.derived().cosmetic_threads()[0].leader();
         let rim = format!("({:?},", f64::from(at[0]) + 100.0);
         let list = text
             .lines()

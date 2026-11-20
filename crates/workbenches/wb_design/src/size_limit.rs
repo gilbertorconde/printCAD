@@ -44,6 +44,7 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
     };
     let key = crate::build::edge_op(&part).ok()??.size_limit_key()?;
     let limit = document
+        .derived()
         .size_limit(feature)
         .filter(|limit| limit.key == key);
     // Two distances each stop where their own face runs out.

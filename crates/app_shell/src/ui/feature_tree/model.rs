@@ -310,15 +310,24 @@ pub(super) fn build_feature_node(
         id: TreeItemId::Feature(node.id),
         label: node.name.clone(),
         detail: Some(info.family_label.clone()),
-        tooltip: Some(feature_tooltip(node, &info, after_tip)),
+        tooltip: Some(feature_tooltip(
+            node,
+            document.derived().error(node.id),
+            &info,
+            after_tip,
+        )),
         dirty: node.dirty,
         visible: node.visible,
         suppressed: node.suppressed,
-        error: node.error.clone().or_else(|| {
-            unclaimed
-                .then(|| FeatureInfo::missing_package(node))
-                .flatten()
-        }),
+        error: document
+            .derived()
+            .error(node.id)
+            .map(str::to_string)
+            .or_else(|| {
+                unclaimed
+                    .then(|| FeatureInfo::missing_package(node))
+                    .flatten()
+            }),
         warning: registry.feature_warning(document, Some(&kernel_ogeom::QUERIES), node.id, node),
         defect: false,
         repairable: Vec::new(),
@@ -794,21 +803,18 @@ pub(super) fn mark_problems(nodes: &mut [TreeNode], document: &Document) {
         };
         node.problem = match node.id {
             TreeItemId::Feature(id) => {
-                let own = document.get_feature_meta(id).and_then(|f| f.error.clone());
+                let own = document.derived().error(id).map(str::to_string);
                 let failed_input = || {
                     document
                         .feature_tree()
                         .dependencies(id)
                         .into_iter()
-                        .filter_map(|dep| document.get_feature_meta(dep))
-                        .find(|dep| dep.error.is_some())
-                        .map(|dep| {
-                            format!(
-                                "It reads {}, which fails: {}",
-                                dep.name,
-                                dep.error.as_deref().unwrap_or_default()
-                            )
+                        .filter_map(|dep| {
+                            let error = document.derived().error(dep)?;
+                            Some((document.get_feature_meta(dep)?, error))
                         })
+                        .next()
+                        .map(|(dep, error)| format!("It reads {}, which fails: {error}", dep.name))
                 };
                 match (&node.error, own) {
                     (Some(why), None) => problem("Needs package", Note::Error, why),

@@ -735,7 +735,7 @@ impl PrintCadApp {
                             id,
                             node.name,
                             node.dirty,
-                            node.error,
+                            self.session.document.derived().error(*id),
                         );
                     }
                 }

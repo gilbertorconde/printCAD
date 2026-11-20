@@ -397,7 +397,10 @@ impl PrintCadApp {
         self.session.builds.preview_feature = editing;
         if let Some(feature) = editing {
             // Built again, this time with its preview.
-            self.session.document.mark_feature_stale(feature);
+            self.session
+                .document
+                .derived_mut()
+                .mark_feature_stale(feature);
         }
     }
 

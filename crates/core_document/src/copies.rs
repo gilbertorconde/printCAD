@@ -355,8 +355,8 @@ impl Document {
             .get(&copy)
             .map(|prev| prev.revision.saturating_add(1))
             .unwrap_or(0)
-            .max(self.next_geometry_revision);
-        self.next_geometry_revision = next_revision.saturating_add(1);
+            .max(self.derived.next_geometry_revision);
+        self.derived.next_geometry_revision = next_revision.saturating_add(1);
         self.local_meshes.remove(&copy);
         self.imported_meshes.insert(
             copy,

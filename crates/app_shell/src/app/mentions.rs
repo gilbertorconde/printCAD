@@ -381,7 +381,7 @@ impl PrintCadApp {
                                 "name": n.name,
                                 "kind": crate::app::scripts::kind_of(&self.registry, n),
                             });
-                            if let Some(error) = &n.error {
+                            if let Some(error) = document.derived().error(n.id) {
                                 f["error"] = json!(error);
                             }
                             f

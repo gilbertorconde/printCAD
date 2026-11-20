@@ -24,8 +24,9 @@ pub(crate) fn sharp_count(document: &Document, id: FeatureId) -> usize {
     let Some(node) = document.get_feature_meta(id) else {
         return 0;
     };
-    let refused = &node.refused_edges;
-    if node.dirty || node.error.is_none() || refused.failing.len() >= refused.request.len() {
+    let built = document.derived();
+    let refused = built.refused_edges(id);
+    if node.dirty || built.error(id).is_none() || refused.failing.len() >= refused.request.len() {
         return 0;
     }
     refused.failing.len()
@@ -87,8 +88,8 @@ pub(crate) fn leave_sharp(
     }
     let node = ctx.document.get_feature_meta(id).ok_or("no such feature")?;
     let feature = DesignFeature::from_json(&node.data).map_err(|e| e.to_string())?;
-    let changed =
-        without_failing(&feature, &node.refused_edges).ok_or("the feature takes no edges")?;
+    let changed = without_failing(&feature, ctx.document.derived().refused_edges(id))
+        .ok_or("the feature takes no edges")?;
     let data = changed.to_json();
     ctx.document
         .update_feature_data(id, data.clone())
@@ -148,7 +149,8 @@ impl DesignWorkbench {
         let placement = ctx.document.body_placement(body);
         let color = ctx.sketch_palette.conflict;
         let mut lines = Vec::new();
-        for (i, edge) in node.refused_edges.failing.iter().enumerate() {
+        let refused = ctx.document.derived().refused_edges(node.id);
+        for (i, edge) in refused.failing.iter().enumerate() {
             let width = if self.tab.hovered_failing == Some(i) {
                 LIT_WIDTH
             } else {
@@ -192,7 +194,11 @@ fn shrunk(size: f32, share: f64) -> f32 {
 /// all its edges, while its sizes are set by hand (no formula binds them).
 pub(crate) fn largest_size(document: &Document, id: FeatureId) -> Option<f32> {
     let node = document.get_feature_meta(id)?;
-    let share = node.refused_edges.fits.filter(|_| !node.dirty)?;
+    let share = document
+        .derived()
+        .refused_edges(id)
+        .fits
+        .filter(|_| !node.dirty)?;
     let feature = DesignFeature::from_json(&node.data).ok()?;
     let keys: &[&str] = match feature {
         DesignFeature::Fillet { .. } => &["radius"],
@@ -212,7 +218,7 @@ pub(crate) fn largest_size(document: &Document, id: FeatureId) -> Option<f32> {
 pub(crate) fn use_largest(ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> Result<f32, String> {
     let size = largest_size(ctx.document, id).ok_or("no smaller size fits all its edges")?;
     let node = ctx.document.get_feature_meta(id).ok_or("no such feature")?;
-    let share = node.refused_edges.fits.unwrap_or(1.0);
+    let share = ctx.document.derived().refused_edges(id).fits.unwrap_or(1.0);
     let mut feature = DesignFeature::from_json(&node.data).map_err(|e| e.to_string())?;
     let mut args = CommandArgs::new();
     args.insert("feature".into(), json!(id.0.to_string()));

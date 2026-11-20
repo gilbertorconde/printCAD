@@ -216,7 +216,7 @@ fn read_shapes(
 /// Build every mesh body's history that changed.
 fn build_meshes(document: &mut Document, registry: &DocumentService) {
     for plan in registry.mesh_build_plans(document) {
-        if document.mesh_steps(&plan).is_some() {
+        if document.derived().mesh_steps(&plan).is_some() {
             continue;
         }
         let Some(start) = document.mesh_start(plan.body) else {

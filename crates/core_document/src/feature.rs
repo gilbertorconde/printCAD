@@ -100,24 +100,6 @@ pub struct FeatureNode {
     /// ties order nondeterministically.
     #[serde(default)]
     pub seq: u64,
-    /// Last recompute error for this feature. Derived state: set by the
-    /// recompute driver, never persisted.
-    #[serde(skip)]
-    pub error: Option<String>,
-    /// The edges of a refused fillet or chamfer, with the error. Derived
-    /// state, as `error` is.
-    #[serde(skip)]
-    pub refused_edges: kernel_api::EdgeRefusal,
-    /// What the last build that took it says of it: a reference found by
-    /// position because its name was lost. Derived state, as `error` is.
-    #[serde(skip)]
-    pub warning: Option<String>,
-    /// The last build found it, a feature that adds or removes material,
-    /// left the solid as it was: what it did not do and why that may be
-    /// (`OpWarning::unchanged`), its kind to be put before it. Derived
-    /// state, as `error` is.
-    #[serde(skip)]
-    pub unchanged: Option<String>,
     /// Type-erased feature data (serialized JSON), shared with the ops
     /// that wrote it and the inverses that restore it.
     pub data: std::sync::Arc<serde_json::Value>,
@@ -244,10 +226,6 @@ impl FeatureNode {
                 .unwrap()
                 .as_millis() as i64,
             seq: 0,
-            error: None,
-            refused_edges: Default::default(),
-            warning: None,
-            unchanged: None,
             data: feature.to_json().into(),
             data_revision: DataRevision::default(),
             formulas: Default::default(),
@@ -527,10 +505,6 @@ mod tests {
             dirty: false,
             created_at: 0,
             seq: 0,
-            error: None,
-            refused_edges: Default::default(),
-            warning: None,
-            unchanged: None,
             data: Default::default(),
             data_revision: DataRevision::default(),
             formulas: Default::default(),

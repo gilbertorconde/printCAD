@@ -873,7 +873,7 @@ fn side_handles(
         return None;
     }
     let key = crate::build::edge_op(part).ok()??.size_limit_key()?;
-    let limit = maker.document.size_limit(maker.feature)?;
+    let limit = maker.document.derived().size_limit(maker.feature)?;
     let sides = (limit.key == key).then_some(limit.sides?)?;
     let origin = maker.world64(sides.at);
     let handles = pointers
