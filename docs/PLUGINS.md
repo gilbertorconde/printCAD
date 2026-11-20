@@ -96,13 +96,14 @@ printcad-bench-sdk = "0.1"
 ```
 
 To build against a printCAD checkout instead, say while trying a change
-to the SDK, patch the three crates to its folders:
+to the SDK, patch the four crates to its folders:
 
 ```toml
 [patch.crates-io]
 printcad-bench-sdk = { path = "../printCAD/sdk/printcad-bench-sdk" }
 printcad-bench-api = { path = "../printCAD/crates/bench_api" }
 printcad-kernel-api = { path = "../printCAD/crates/kernel_api" }
+printcad-panel-api = { path = "../printCAD/crates/panel_api" }
 ```
 
 ```rust
@@ -182,8 +183,8 @@ package moves to it by changing its dependency and its manifest's `api`,
 and a printCAD of 0.2 does not load packages of 0.1.
 
 The SDK is published from the printCAD repository: a tag `sdk-vX.Y.Z`
-publishes `printcad-kernel-api`, `printcad-bench-api` and
-`printcad-bench-sdk`, all at X.Y.Z.
+publishes `printcad-kernel-api`, `printcad-panel-api`, `printcad-bench-api`
+and `printcad-bench-sdk`, all at X.Y.Z.
 From 0.1.5 each crate asks for the same release of the crates beneath it,
 so `cargo update -p printcad-bench-sdk` brings the contract crates its code
 was written against. With 0.1.4, update all three together.

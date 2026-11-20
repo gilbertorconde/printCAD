@@ -72,8 +72,10 @@ are in the skill the index below names.
 - Foundations: `sketch_solver`, `image_edges`, `metrology` (std-only maths),
   `viewport_camera`, `transform_gizmo`, `axes`, `feature_walk`, `local_ipc`,
   `project_archive`, `ui_kit` (design system), `kernel_api` (pure data
-  contract: `TriMesh`, `ProfileWire`, `SolidOp`, `ChainError`).
-- Services: `bench_api` (package contract, wasm32-wasip2), `surface_texture`,
+  contract: `TriMesh`, `ProfileWire`, `SolidOp`, `ChainError`), `panel_api`
+  (declared panel widgets, `FloatingCard`, `PanelEvent`; re-exported by
+  `bench_api`).
+- Services: `bench_api` (package contract, wasm32-wasip2),
   `kernel_ogeom` (the only crate on ogeom), `render_wgpu` (data-only:
   `FrameSubmission` in, pixels out), `settings`, `agents` (agent client, MCP).
 - `core_document`: `Document` (feature tree DAG, bodies with `tip`, tar
@@ -82,7 +84,8 @@ are in the skill the index below names.
   `sketch_model` (the f64 sketch, `SketchFeature`, solving, profiles and
   regions, text layout, generated profiles; no egui).
 - On the document: `doc_server` (`printcad-serverd`), `doc_render` (CPU
-  thumbnails, PDF, print layout), `scripting` (Lua), benches `wb_sketch`,
+  thumbnails, PDF, print layout), `scripting` (Lua), `surface_texture`
+  (pressing the body's `core_document::texture` into a mesh), benches `wb_sketch`,
   `wb_assembly`, `wb_inspect`, `wb_mesh`, `wb_wasm` (packages); then
   `wb_design`, `wb_surface` on `sketch_model`; then `bench_fixtures`,
   `project_tools`; the `workbenches` facade; `app_shell` (`printcad`).
