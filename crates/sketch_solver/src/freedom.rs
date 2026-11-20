@@ -58,8 +58,8 @@ pub fn estimate(problem: &Problem) -> Freedom {
 /// point it is drawn through is in `points`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Locked {
-    pub points: std::collections::HashSet<crate::problem::PointReference>,
-    pub curves: std::collections::HashSet<crate::problem::CurveReference>,
+    pub points: crate::problem::IdSet<crate::problem::PointReference>,
+    pub curves: crate::problem::IdSet<crate::problem::CurveReference>,
 }
 
 pub fn locked(problem: &Problem) -> Locked {

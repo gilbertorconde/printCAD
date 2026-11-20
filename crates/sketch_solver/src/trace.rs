@@ -85,9 +85,7 @@ pub fn snapshot(problem: &Problem, system: &System) -> CompiledTrace {
     }
 }
 
-fn sorted<Id: Ord + Copy>(
-    values: &std::collections::HashMap<Id, usize>,
-) -> Vec<(Id, VariableIndex)> {
+fn sorted<Id: Ord + Copy>(values: &crate::problem::IdMap<Id, usize>) -> Vec<(Id, VariableIndex)> {
     let mut result: Vec<_> = values
         .iter()
         .map(|(id, index)| (*id, VariableIndex(*index)))

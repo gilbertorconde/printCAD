@@ -1,10 +1,9 @@
 //! Validation at the public semantic boundary.
 
 use crate::problem::{
-    ConstraintId, CurveReference, Geometry, GroupReference, Indexed, ItemReference, PointReference,
-    Problem, Relation,
+    ConstraintId, CurveReference, Geometry, GroupReference, IdSet, Indexed, ItemReference,
+    PointReference, Problem, Relation,
 };
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -54,8 +53,8 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
             "iteration or damping bounds".to_owned(),
         ));
     }
-    let mut geometry_ids = HashSet::new();
-    let mut constraint_ids = HashSet::new();
+    let mut geometry_ids = IdSet::default();
+    let mut constraint_ids = IdSet::default();
     for g in &problem.geometry {
         if !geometry_ids.insert(g.id()) {
             return Err(InputError::DuplicateGeometry(g.id()));
@@ -362,10 +361,10 @@ fn group_valid(
     elements: &[ItemReference],
     reference: &[GroupReference],
 ) -> bool {
-    let mut members = HashSet::new();
-    let mut points = HashSet::new();
-    let mut radii = HashSet::new();
-    let mut axes = HashSet::new();
+    let mut members = IdSet::default();
+    let mut points = IdSet::default();
+    let mut radii = IdSet::default();
+    let mut axes = IdSet::default();
     for &element in elements {
         if !members.insert(element) {
             return false;
@@ -392,7 +391,7 @@ fn group_valid(
     if members.is_empty() || points.contains(&PointReference::Origin) {
         return false;
     }
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::default();
     for entry in reference {
         let held = match *entry {
             GroupReference::Point { point, position } => {
