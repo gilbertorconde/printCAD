@@ -940,14 +940,19 @@ impl SketchWorkbench {
                 _ => None,
             })
             .collect();
-        let weighted = self.tab.selected.iter().find_map(|id| {
-            sketch.geometry.iter().find_map(|g| match g {
-                sketch::GeometryElement::BSpline(b) if b.control_points.contains(id) => {
-                    Some((b.id, *id))
-                }
-                _ => None,
+        // Each control point with the first spline that weighs on it.
+        let mut weighing: std::collections::HashMap<Uuid, Uuid> = Default::default();
+        for g in sketch.geometry.iter().rev() {
+            if let sketch::GeometryElement::BSpline(b) = g {
+                weighing.extend(b.control_points.iter().map(|p| (*p, b.id)));
+            }
+        }
+        let weighted = (!weighing.is_empty())
+            .then(|| {
+                (self.tab.selected.iter())
+                    .find_map(|id| weighing.get(id).map(|spline| (*spline, *id)))
             })
-        });
+            .flatten();
         if splines.len() != 1 && weighted.is_none() {
             return (None, None);
         }
