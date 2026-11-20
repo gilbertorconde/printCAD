@@ -155,7 +155,7 @@ impl Document {
             Op::AddFeature { id, .. } => Op::RemoveFeature { id: *id },
             Op::UpdateFeatureData { id, .. } => Op::UpdateFeatureData {
                 id: *id,
-                data: self.feature_tree.get_node(*id)?.data.clone(),
+                data: self.feature_tree.get_node(*id)?.data.clone().into(),
             },
             Op::RenameFeature { id, .. } => Op::RenameFeature {
                 id: *id,
@@ -605,7 +605,7 @@ impl Document {
             }
             Op::UpdateFeatureData { id, data } => {
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
-                    node.data = data.clone();
+                    node.data = serde_json::Value::clone(data);
                     node.data_revision = Default::default();
                 }
             }

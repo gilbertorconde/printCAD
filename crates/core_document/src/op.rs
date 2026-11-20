@@ -301,10 +301,12 @@ pub enum DocumentOp {
     },
     /// Whole-payload feature write (sketch edits, panel editors). Consecutive
     /// updates to the same feature coalesce in the outbox: nothing observes
-    /// the intermediate states, so the final payload is the op.
+    /// the intermediate states, so the final payload is the op. The payload
+    /// is shared: the journal's copy of the op and the outbox's are one
+    /// value, written on the wire as the value itself.
     UpdateFeatureData {
         id: FeatureId,
-        data: serde_json::Value,
+        data: std::sync::Arc<serde_json::Value>,
     },
     RenameFeature {
         id: FeatureId,
@@ -541,7 +543,7 @@ mod tests {
     fn update(id: FeatureId, n: u64) -> DocumentOp {
         DocumentOp::UpdateFeatureData {
             id,
-            data: serde_json::json!({ "n": n }),
+            data: serde_json::json!({ "n": n }).into(),
         }
     }
 

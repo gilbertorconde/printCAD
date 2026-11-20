@@ -905,7 +905,10 @@ impl Document {
         if self.feature_tree.get_node(id).is_none() {
             return Err(DocumentError::FeatureNotFound(id));
         }
-        self.record_and_apply(op::DocumentOp::UpdateFeatureData { id, data });
+        self.record_and_apply(op::DocumentOp::UpdateFeatureData {
+            id,
+            data: data.into(),
+        });
         Ok(())
     }
 
@@ -969,7 +972,7 @@ impl Document {
             if let Some(data) = kept {
                 self.record_and_apply(op::DocumentOp::UpdateFeatureData {
                     id: feature_id,
-                    data,
+                    data: data.into(),
                 });
             }
             self.record_and_apply(op::DocumentOp::SetFeatureFormula {
