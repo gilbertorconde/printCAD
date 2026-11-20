@@ -1,5 +1,6 @@
 use crate::compile::System;
 use crate::problem::Settings;
+use crate::sparse::Blocks;
 
 pub fn solve(problem: &crate::problem::Problem) -> Result<Iteration, crate::input::InputError> {
     let compiled = crate::compile::compile(problem)?;
@@ -317,25 +318,13 @@ pub fn eval_residuals(sys: &System, x: &[f64]) -> Vec<f64> {
     out
 }
 
-/// Central-difference Jacobian (m residuals x n variables).
+/// Central-difference Jacobian (m residuals x n variables), worked out
+/// block by block ([`Blocks`]). One column per movable variable: a pinned
+/// reference contributes none, so nothing can trade a constraint against
+/// tilting an axis.
 pub fn jacobian(sys: &System, x: &[f64]) -> Vec<Vec<f64>> {
-    // One column per movable variable: a pinned reference contributes none,
-    // so nothing can trade a constraint against tilting an axis.
-    let mut jac = vec![vec![0.0; sys.free.len()]; sys.residual_len];
-    let mut probe = x.to_vec();
-    for (column, &j) in sys.free.iter().enumerate() {
-        let eps = sys.settings.finite_difference_step * x[j].abs().max(1.0);
-        let original = probe[j];
-        probe[j] = original + eps;
-        let r_plus = eval_residuals(sys, &probe);
-        probe[j] = original - eps;
-        let r_minus = eval_residuals(sys, &probe);
-        probe[j] = original;
-        for (row, (rp, rm)) in jac.iter_mut().zip(r_plus.iter().zip(&r_minus)) {
-            row[column] = (rp - rm) / (2.0 * eps);
-        }
-    }
-    jac
+    let blocks = Blocks::of(sys);
+    blocks.dense(&blocks.jacobian(sys, x), sys.residual_len, sys.free.len())
 }
 
 /// Build JᵀJ and Jᵀr for the normal equations.

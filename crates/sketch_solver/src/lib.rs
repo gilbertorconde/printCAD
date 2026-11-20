@@ -10,5 +10,6 @@ pub mod replay;
 pub mod residual;
 pub mod soft;
 pub mod solve;
+pub mod sparse;
 pub mod spline;
 pub mod trace;
