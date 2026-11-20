@@ -11,6 +11,14 @@
 //! settings and the same view. Any mutable borrow of the tab state takes
 //! a fresh stamp ([`Stamped`]), and `on_frame` takes one every frame, so
 //! those never outlive the frame they were made in.
+//!
+//! What draws the most is kept across frames instead, keyed by exactly
+//! what it reads: the drawn sketch's content ([`ContentKey`], numbered by
+//! comparing each sketch shown with the last), the view ([`ViewKey`]) and
+//! the values of the tab state it takes ([`BaseKey`], [`GlyphKey`]). The
+//! elements, axes and loose ends hold while the pointer moves; the
+//! constraint glyphs hold while the pointer moves and the view and the
+//! sketch stay.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -18,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use core_document::WorkbenchRuntimeContext;
 
-use crate::{SketchFeature, SketchOptions, glyphs::Glyph, overlay::Overlays, relations::Relations};
+use crate::{SketchFeature, SketchOptions, overlay::Overlays, relations::Relations};
 
 static STAMPS: AtomicU64 = AtomicU64::new(1);
 
@@ -183,6 +191,114 @@ impl DrawKey {
     }
 }
 
+/// What a drawn sketch holds, as numbers: `shape` the same while the
+/// sketch and its plane stay but for where its labels sit, `labels` the
+/// same while those stay too.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct ContentKey {
+    pub shape: u64,
+    pub labels: u64,
+}
+
+/// Numbers each sketch drawn by comparing it with the last two: a
+/// sketch equal to one of them keeps its numbers. Two, as an open card's
+/// draft is drawn while the panel reads the stored sketch.
+#[derive(Default)]
+struct Contents(RefCell<Vec<(Arc<SketchFeature>, ContentKey)>>);
+
+impl Contents {
+    fn of(&self, feature: &Arc<SketchFeature>) -> ContentKey {
+        let mut kept = self.0.borrow_mut();
+        if let Some((_, key)) = kept.iter().find(|(f, _)| Arc::ptr_eq(f, feature)) {
+            return *key;
+        }
+        let same = kept
+            .iter()
+            .position(|(f, _)| f.plane == feature.plane && f.sketch.eq_but_labels(&feature.sketch));
+        let key = match same {
+            Some(i) => {
+                let (f, key) = kept.remove(i);
+                let labels = f
+                    .sketch
+                    .constraints
+                    .iter()
+                    .zip(&feature.sketch.constraints)
+                    .all(|(a, b)| a.label_offset == b.label_offset);
+                ContentKey {
+                    shape: key.shape,
+                    labels: if labels { key.labels } else { fresh_stamp() },
+                }
+            }
+            None => ContentKey {
+                shape: fresh_stamp(),
+                labels: fresh_stamp(),
+            },
+        };
+        kept.insert(0, (Arc::clone(feature), key));
+        kept.truncate(2);
+        key
+    }
+}
+
+/// What a sketch's projection to the screen reads of the view.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct ViewKey {
+    camera: ([f32; 3], [f32; 3]),
+    viewport: (u32, u32, u32, u32),
+    pixels_per_point: f32,
+    view_proj: Option<[[f32; 4]; 4]>,
+}
+
+impl ViewKey {
+    pub(crate) fn of(ctx: &WorkbenchRuntimeContext) -> Self {
+        Self {
+            camera: (ctx.camera_position, ctx.camera_target),
+            viewport: ctx.viewport,
+            pixels_per_point: ctx.pixels_per_point,
+            view_proj: ctx.view_proj,
+        }
+    }
+}
+
+/// What [`crate::overlay::build_base`] reads.
+#[derive(Clone, PartialEq)]
+pub(crate) struct BaseKey {
+    pub shape: u64,
+    pub view: ViewKey,
+    pub options: SketchOptions,
+    pub palette: core_document::SketchPalette,
+    pub selected: std::collections::HashSet<uuid::Uuid>,
+    /// The selected constraints and the one in hand, whose geometry
+    /// draws as theirs.
+    pub constraints: std::collections::HashSet<uuid::Uuid>,
+    pub constraint: Option<uuid::Uuid>,
+    pub hovered: Option<uuid::Uuid>,
+    pub idle: bool,
+    pub drawing: bool,
+    pub nodes: Option<crate::node_edit::NodeView>,
+}
+
+/// What the constraint glyphs read: the sketch with its labels, the view,
+/// the constraints lit and those a formula sets, the palette and the
+/// settings.
+#[derive(Clone, PartialEq)]
+pub(crate) struct GlyphKey {
+    pub content: ContentKey,
+    pub view: ViewKey,
+    pub options: SketchOptions,
+    pub palette: core_document::SketchPalette,
+    pub parked: bool,
+    pub lit: std::collections::HashSet<uuid::Uuid>,
+    pub bound: std::collections::HashSet<uuid::Uuid>,
+}
+
+/// What the view draws of the constraint glyphs.
+pub(crate) struct GlyphDraw {
+    pub lines: Vec<core_document::ScreenSpaceOverlay>,
+    pub marks: Vec<core_document::ScreenSpaceMark>,
+    pub labels: Vec<core_document::ScreenSpaceLabel>,
+}
+
 /// One value kept with the key it was worked out under.
 struct Slot<K, V>(RefCell<Option<(K, V)>>);
 
@@ -215,9 +331,12 @@ impl<K: PartialEq, V: Clone> Slot<K, V> {
 pub(crate) struct FrameMemo {
     active: Slot<ActiveKey, Option<Arc<SketchFeature>>>,
     displayed: Slot<SketchKey, Option<Arc<SketchFeature>>>,
-    overlays: Slot<DrawKey, Arc<Overlays>>,
-    glyphs: Slot<DrawKey, Arc<Vec<Glyph>>>,
-    relations: Slot<(SketchKey, usize), Arc<Relations>>,
+    contents: Contents,
+    base: Slot<BaseKey, Arc<Overlays>>,
+    overlays: Slot<DrawKey, (Arc<Overlays>, Arc<Overlays>)>,
+    glyphs: Slot<GlyphKey, Arc<GlyphDraw>>,
+    frame_glyphs: Slot<DrawKey, Arc<GlyphDraw>>,
+    relations: Slot<u64, Arc<Relations>>,
     landing: Slot<(DrawKey, [u64; 2]), Landing>,
     #[cfg(feature = "egui")]
     row_text: Slot<ActiveKey, Arc<crate::panel::RowText>>,
@@ -246,11 +365,8 @@ impl FrameMemo {
         self.row_text.get(key, || Arc::new(make()))
     }
 
-    pub(crate) fn relations(
-        &self,
-        key: (SketchKey, usize),
-        make: impl FnOnce() -> Relations,
-    ) -> Arc<Relations> {
+    /// The relations of the sketch whose shape is numbered `key`.
+    pub(crate) fn relations(&self, key: u64, make: impl FnOnce() -> Relations) -> Arc<Relations> {
         self.relations.get(key, || Arc::new(make()))
     }
 
@@ -270,24 +386,51 @@ impl FrameMemo {
         self.displayed.get(key, read)
     }
 
-    pub(crate) fn overlays(&self, key: DrawKey, build: impl FnOnce() -> Overlays) -> Arc<Overlays> {
-        self.overlays.get(key, || Arc::new(build()))
+    /// What `feature`'s content is numbered.
+    pub(crate) fn content(&self, feature: &Arc<SketchFeature>) -> ContentKey {
+        self.contents.of(feature)
+    }
+
+    pub(crate) fn base(&self, key: BaseKey, build: impl FnOnce() -> Overlays) -> Arc<Overlays> {
+        self.base.get(key, || Arc::new(build()))
+    }
+
+    /// The frame's overlays, kept as the base and what follows the pointer
+    /// over it.
+    pub(crate) fn overlays(
+        &self,
+        key: DrawKey,
+        build: impl FnOnce() -> (Arc<Overlays>, Arc<Overlays>),
+    ) -> (Arc<Overlays>, Arc<Overlays>) {
+        self.overlays.get(key, build)
     }
 
     pub(crate) fn glyphs(
         &self,
-        key: DrawKey,
-        build: impl FnOnce() -> Vec<Glyph>,
-    ) -> Arc<Vec<Glyph>> {
+        key: GlyphKey,
+        build: impl FnOnce() -> GlyphDraw,
+    ) -> Arc<GlyphDraw> {
         self.glyphs.get(key, || Arc::new(build()))
+    }
+
+    /// The frame's glyphs, looked up once a frame.
+    pub(crate) fn frame_glyphs(
+        &self,
+        key: DrawKey,
+        find: impl FnOnce() -> Arc<GlyphDraw>,
+    ) -> Arc<GlyphDraw> {
+        self.frame_glyphs.get(key, find)
     }
 
     /// Forget everything: the tab state is being moved.
     pub(crate) fn clear(&mut self) {
         self.active.clear();
         self.displayed.clear();
+        self.contents.0.get_mut().clear();
+        self.base.clear();
         self.overlays.clear();
         self.glyphs.clear();
+        self.frame_glyphs.clear();
         self.relations.clear();
         self.landing.clear();
         #[cfg(feature = "egui")]

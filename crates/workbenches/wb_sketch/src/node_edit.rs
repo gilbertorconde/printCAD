@@ -29,6 +29,7 @@ pub(crate) struct NodeEdit {
 }
 
 /// What the view draws for the spline under node edit.
+#[derive(Clone, PartialEq)]
 pub(crate) struct NodeView {
     pub spline: Uuid,
     /// Every node, and whether it is the one picked.

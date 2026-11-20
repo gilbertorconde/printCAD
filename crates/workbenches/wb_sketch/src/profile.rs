@@ -593,7 +593,8 @@ fn encloses_nothing(segments: &[ProfileSegment]) -> bool {
 }
 
 /// The loose ends of the curves that count in the profile: points only one
-/// of them reaches, which the profile leaves out with their curves.
+/// of them reaches, which the profile leaves out with their curves. In the
+/// order the sketch holds their curves.
 pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
     let mut ends = Vec::new();
     for geom in &sketch.geometry {
@@ -610,13 +611,16 @@ pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
     // spot) are one end.
     let joined = joined_ends(sketch, ends.iter().copied());
     let mut reach: HashMap<Uuid, usize> = HashMap::new();
+    let mut order = Vec::new();
     for end in ends {
-        *reach.entry(joined[&end]).or_default() += 1;
+        let n = reach.entry(joined[&end]).or_default();
+        if *n == 0 {
+            order.push(joined[&end]);
+        }
+        *n += 1;
     }
-    reach
-        .into_iter()
-        .filter_map(|(point, n)| (n == 1).then_some(point))
-        .collect()
+    order.retain(|point| reach[point] == 1);
+    order
 }
 
 /// The profile segment of spline `b` over its control point positions: the
