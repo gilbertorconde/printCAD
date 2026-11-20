@@ -638,6 +638,19 @@ pub enum BodyEdit {
     LinkedCopy,
     /// Build it again from its history.
     Recompute,
+    /// How the print layout lies it on the bed.
+    PrintOn(PrintOn),
+}
+
+/// How the print layout lies a part on the bed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintOn {
+    /// On its largest flat face with nothing below it, as the layout finds.
+    Auto,
+    /// Unturned, as modelled, its lowest point on the bed.
+    AsModelled,
+    /// This flat face, by its index in the body's mesh, turned down.
+    Face(u32),
 }
 
 /// What the clip pill's Sections menu does with a saved section, by name.

@@ -515,7 +515,8 @@ impl HostTask {
 }
 
 /// The print layout's panel: how many copies on how many plates, what
-/// does not fit, the gap, and export or the slicer with the layout.
+/// does not fit, how each part lies, the gap, and export or the slicer
+/// with the layout.
 fn print_layout(
     ui: &mut Ui,
     inputs: &HostTaskInputs<'_>,
@@ -525,15 +526,19 @@ fn print_layout(
     if close {
         return Some(HostTaskEnd::Cancelled);
     }
-    let widgets = print_layout_widgets(inputs.print_layout, inputs.printing);
-    for event in draw(ui, inputs.document, widgets) {
-        print_layout_event(&event, commands);
+    let layout = inputs.print_layout;
+    let (document, picked) = (&*inputs.document, inputs.picked_faces);
+    let widgets = print_layout_widgets(layout, document, picked, inputs.printing);
+    for event in draw(ui, document, widgets) {
+        print_layout_event(&event, layout, document, picked, commands);
     }
     None
 }
 
 fn print_layout_widgets(
     layout: Option<&doc_render::print_layout::Layout>,
+    document: &Document,
+    picked: &[(BodyId, u32)],
     printing: &settings::PrintingSettings,
 ) -> Vec<Widget> {
     let Some(layout) = layout else {
@@ -576,18 +581,101 @@ fn print_layout_widgets(
         ),
         ("Taller than the build height", &layout.too_tall),
         ("Not built yet, left out", &layout.unbuilt),
+        (
+            "The chosen face is gone or not flat, on its best face instead",
+            &layout.rest_lost,
+        ),
     ] {
         if !names.is_empty() {
             form.push(card(NoteKind::Warning, title, names.join(", ")));
         }
     }
+    print_rests(&mut form, layout, document, picked, &mut Vec::new());
     print_layout_controls(&mut form, printing, &mut Vec::new());
     form.finish()
 }
 
-fn print_layout_event(event: &PanelEvent, commands: &mut Vec<UiCommand>) {
+fn print_layout_event(
+    event: &PanelEvent,
+    layout: Option<&doc_render::print_layout::Layout>,
+    document: &Document,
+    picked: &[(BodyId, u32)],
+    commands: &mut Vec<UiCommand>,
+) {
     let printing = settings::PrintingSettings::default();
-    print_layout_controls(&mut Form::apply(event), &printing, commands);
+    let mut form = Form::apply(event);
+    if let Some(layout) = layout {
+        print_rests(&mut form, layout, document, picked, commands);
+    }
+    print_layout_controls(&mut form, &printing, commands);
+}
+
+/// How each part lies on the bed, a choice per part, and the selected
+/// flat faces of laid out parts turned down; declared, or with the event
+/// turned into the body edit it asks for.
+fn print_rests(
+    form: &mut Form,
+    layout: &doc_render::print_layout::Layout,
+    document: &Document,
+    picked: &[(BodyId, u32)],
+    commands: &mut Vec<UiCommand>,
+) {
+    use super::{BodyEdit, PrintOn};
+    use core_document::PrintRest;
+    if layout.parts.is_empty() {
+        return;
+    }
+    heading_in(form, "Lying on the bed");
+    for (body, name) in &layout.parts {
+        let now = document.body_print_rest(*body);
+        let mut options = vec![
+            (None, "Best face"),
+            (Some(PrintRest::AsModelled), "As modelled"),
+        ];
+        if matches!(now, Some(PrintRest::Face(_))) {
+            options.push((now, "Chosen face"));
+        }
+        let mut value = now;
+        let shape = select("rest", name, options.iter().map(|(_, l)| *l), 0, 160.0);
+        let chosen = form.choose("rest", &mut value, &options, shape);
+        if form.put(chosen) {
+            let on = match value {
+                None => PrintOn::Auto,
+                Some(PrintRest::AsModelled) => PrintOn::AsModelled,
+                Some(PrintRest::Face(face)) => PrintOn::Face(face.index),
+            };
+            commands.push(UiCommand::BodyEdit {
+                body: *body,
+                edit: BodyEdit::PrintOn(on),
+            });
+        }
+    }
+    let flat: Vec<(BodyId, u32)> = picked
+        .iter()
+        .filter(|(body, index)| {
+            layout.parts.iter().any(|(b, _)| b == body)
+                && document.local_geometry(*body).is_some_and(|(mesh, _)| {
+                    let key = core_document::FaceKey::of(&mesh, *index);
+                    doc_render::print_layout::face_normal(&mesh, key).is_some()
+                })
+        })
+        .copied()
+        .collect();
+    if !flat.is_empty() {
+        let down = secondary(form, "face_down", "Selected face down");
+        if down.set {
+            for (body, index) in &flat {
+                commands.push(UiCommand::BodyEdit {
+                    body: *body,
+                    edit: BodyEdit::PrintOn(PrintOn::Face(*index)),
+                });
+            }
+        }
+        form.push(hinted(
+            "The flat faces selected before the layout opened, each turned down on the bed",
+            down.widget,
+        ));
+    }
 }
 
 /// The print layout's gap, slicer switch and buttons, declared, or with
@@ -623,8 +711,9 @@ fn print_layout_controls(
     form.push(gap(GapSize::Medium));
     form.push(note(
         "Each part rests on its largest flat face with nothing below it, turned to its \
-         smallest footprint. How many of each comes from the parts list's Print column, \
-         every visible body once without one. The model stays where it is.",
+         smallest footprint, unless its row above says otherwise: a body's menu in the view \
+         chooses the face under the pointer. How many of each comes from the parts list's \
+         Print column, every visible body once without one. The model stays where it is.",
     ));
     form.push(gap(GapSize::Section));
     let send = form.button("send", "Send to slicer", ButtonStyle::Primary, true);
@@ -1998,7 +2087,7 @@ mod tests {
             button("send"),
             button("export"),
         ] {
-            print_layout_event(&event, &mut commands);
+            print_layout_event(&event, None, &Document::new("t"), &[], &mut commands);
         }
         let [gap, slicer, send, export] = &commands[..] else {
             panic!("four commands, got {commands:?}");
@@ -2012,6 +2101,67 @@ mod tests {
                 UiCommand::File(super::super::FileCommand::ExportLaidOut),
             )
         ));
+    }
+
+    /// A part's row chooses how it lies, and the selected flat face of a
+    /// laid out part goes down; a face of a body not laid out is left.
+    #[test]
+    fn the_print_layout_chooses_how_each_part_lies() {
+        use crate::ui::{BodyEdit, PrintOn};
+        let mut doc = Document::new("t");
+        let (post, other) = (doc.create_body(None), doc.create_body(None));
+        let mut cube = kernel_api::TriMesh {
+            positions: (0..8)
+                .map(|i: usize| [0, 1, 2].map(|k| ((i >> k) & 1) as f32 * 10.0))
+                .collect(),
+            indices: [
+                [0, 2, 3, 1],
+                [4, 5, 7, 6],
+                [0, 1, 5, 4],
+                [2, 6, 7, 3],
+                [0, 4, 6, 2],
+                [1, 3, 7, 5],
+            ]
+            .iter()
+            .flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]])
+            .collect(),
+            ..Default::default()
+        };
+        cube.faces = (0..6).flat_map(|f| [f, f]).collect();
+        let cube = std::sync::Arc::new(cube);
+        for body in [post, other] {
+            doc.set_imported_geometry(body, crate::test_support::geometry(cube.clone()));
+        }
+        let layout = doc_render::print_layout::Layout {
+            parts: vec![(post, "Post".into())],
+            ..Default::default()
+        };
+        let picked = [(post, 1), (other, 2)];
+        let widgets = print_layout_widgets(
+            Some(&layout),
+            &doc,
+            &picked,
+            &settings::PrintingSettings::default(),
+        );
+        assert!(has(&widgets, "face_down"));
+        let mut commands = Vec::new();
+        for event in [choice("rest", 1), button("face_down")] {
+            print_layout_event(&event, Some(&layout), &doc, &picked, &mut commands);
+        }
+        let edits: Vec<_> = commands
+            .iter()
+            .map(|c| match c {
+                UiCommand::BodyEdit { body, edit } => (*body, edit.clone()),
+                other => panic!("a body edit, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            edits,
+            [
+                (post, BodyEdit::PrintOn(PrintOn::AsModelled)),
+                (post, BodyEdit::PrintOn(PrintOn::Face(1))),
+            ]
+        );
     }
 
     /// The print layout edits nothing: it closes with Close alone, and

@@ -46,8 +46,8 @@ mod task_blocks;
 mod texture_task;
 pub use body_menu::{MenuLocal, OpenTask};
 pub use commands::{
-    BodyEdit, ConfigEdit, EditCommand, FileCommand, SavedSectionAction, SettingsEdit, StartKind,
-    UiCommand,
+    BodyEdit, ConfigEdit, EditCommand, FileCommand, PrintOn, SavedSectionAction, SettingsEdit,
+    StartKind, UiCommand,
 };
 pub use host_ctx::HostCtxParams;
 pub use inputs::{FileMarks, HoverCard, Physical, SelectionMass, UiFrameInputs};

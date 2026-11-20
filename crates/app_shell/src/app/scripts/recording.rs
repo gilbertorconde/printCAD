@@ -19,6 +19,14 @@ pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'sta
         ),
         BodyEdit::LinkedCopy => ("doc.linked_copy", json!({"body": id})),
         BodyEdit::Recompute => ("doc.recompute", json!({"body": id})),
+        BodyEdit::PrintOn(on) => {
+            let on = match on {
+                crate::ui::PrintOn::Auto => json!("auto"),
+                crate::ui::PrintOn::AsModelled => json!("as_modelled"),
+                crate::ui::PrintOn::Face(face) => json!(face),
+            };
+            ("doc.set_body", json!({"body": id, "print_on": on}))
+        }
     }
 }
 

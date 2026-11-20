@@ -181,7 +181,10 @@ temporary folder (`FileWork::slicer_folder`), in the
 format of `PrintingSettings::slicer_format` and runs
 `slicer_command` on it (`{file}` places the path, else it goes last;
 empty uses `xdg-open`). File › Print layout (`app/print_layout.rs`, a
-task, its packing `doc_render::print_layout`) lays each part on its largest face it stands on and packs the
+task, its packing `doc_render::print_layout`) lays each part on its largest face it stands on, or as
+`Body::print_rest` chooses (`PrintRest`: a flat face turned down, or as
+modelled; the body menu, the task's rows and `doc.set_body`'s
+`print_on` set it, op `SetBodyPrintRest`), and packs the
 copies on the bed, plate after plate, without moving the bodies; the
 counts come from `Workbench::print_parts` (the Assembly's parts list),
 and export, the slicer and `doc.print_layout` take the layout. The

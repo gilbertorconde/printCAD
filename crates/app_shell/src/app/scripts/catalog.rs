@@ -99,7 +99,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         CommandSpec::new(
             "doc.set_body",
             "Change a body's colour, how much shows through, material or placement, whether \
-             it is frozen or a scan, or whether clicks pick it",
+             it is frozen or a scan, whether clicks pick it, or how it lies for printing",
         )
         .param("body", ParamKind::Id, "")
         .optional(
@@ -129,6 +129,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "selectable",
             ParamKind::Bool,
             "false lets clicks pass through it",
+        )
+        .optional(
+            "print_on",
+            ParamKind::Any,
+            "How the print layout lies it on the bed: a flat face's number from doc.faces \
+             turned down, as_modelled (unturned, its lowest point on the bed) or auto (its \
+             largest flat face with nothing below it)",
         )
         .optional(
             "scan",
@@ -538,8 +545,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .read_only(),
         CommandSpec::new(
             "doc.print_layout",
-            "Where the print layout puts each copy: every part flat on its resting face, \
-             as many as the parts list prints, packed on the bed",
+            "Where the print layout puts each copy: every part flat on its resting face (or as \
+             doc.set_body's print_on chose), as many as the parts list prints, packed on the bed",
         )
         .optional(
             "bed",
@@ -554,7 +561,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         )
         .returns(
             "{plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, \
-             transform}}, too_big, too_tall, unbuilt}",
+             transform}}, too_big, too_tall, unbuilt, rest_lost (parts whose chosen face is gone \
+             or not flat)}",
         )
         .read_only(),
         CommandSpec::new(

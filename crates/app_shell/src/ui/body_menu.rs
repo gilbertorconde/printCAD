@@ -1,7 +1,7 @@
 //! The entries a body's menu has, in the tree (on the body's row and its
 //! features') and in the view alike: its appearance, placement and notes
-//! (tasks in the right panel), freezing, whether clicks pick it, copies and a
-//! rebuild. What only changes the window (a task, the property panel's
+//! (tasks in the right panel), how the print layout lies it, freezing,
+//! whether clicks pick it, copies and a rebuild. What only changes the window (a task, the property panel's
 //! page, the console's input) comes back as a [`MenuLocal`] for the UI to
 //! act on.
 
@@ -9,7 +9,7 @@ use core_document::{BodyId, Document, FeatureId, NoteId};
 use egui::Ui;
 
 use super::property_panel::PropertyTab;
-use super::{BodyEdit, TreeItemId, UiCommand};
+use super::{BodyEdit, PrintOn, TreeItemId, UiCommand};
 
 /// What a menu entry changes in the window rather than the document.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +57,56 @@ pub fn body_reference(name: &str, body: BodyId) -> String {
 
 fn edit(out: &mut Vec<UiCommand>, body: BodyId, edit: BodyEdit) {
     out.push(UiCommand::BodyEdit { body, edit });
+}
+
+/// How the print layout lies the body, as the menu offers it: the flat
+/// face the menu was opened on turned down, the body as modelled, or the
+/// layout's own choice again once one was made. The one picked, if any.
+fn print_entries(
+    ui: &mut Ui,
+    document: &Document,
+    body: BodyId,
+    face: Option<u32>,
+) -> Option<PrintOn> {
+    use core_document::PrintRest;
+    let rest = document.body_print_rest(body);
+    let flat = face.filter(|index| {
+        document.local_geometry(body).is_some_and(|(mesh, _)| {
+            let key = core_document::FaceKey::of(&mesh, *index);
+            rest != Some(PrintRest::Face(key))
+                && doc_render::print_layout::face_normal(&mesh, key).is_some()
+        })
+    });
+    let mut picked = None;
+    if let Some(index) = flat
+        && ui
+            .button("Print on this face")
+            .on_hover_text("The print layout lies the part on this face, turned down on the bed")
+            .clicked()
+    {
+        picked = Some(PrintOn::Face(index));
+    }
+    if rest != Some(PrintRest::AsModelled)
+        && ui
+            .button("Print as modelled")
+            .on_hover_text(
+                "The print layout drops the part to the bed unturned, its lowest point on it",
+            )
+            .clicked()
+    {
+        picked = Some(PrintOn::AsModelled);
+    }
+    if rest.is_some()
+        && ui
+            .button("Print on its best face")
+            .on_hover_text(
+                "The print layout lies the part on its largest flat face with nothing below it",
+            )
+            .clicked()
+    {
+        picked = Some(PrintOn::Auto);
+    }
+    picked
 }
 
 /// The body entries of a menu, after whatever came before. `face` is the
@@ -121,6 +171,10 @@ pub fn body_entries(
         .clicked()
     {
         *local = Some(MenuLocal::Task(OpenTask::Placement(body)));
+        picked = true;
+    }
+    if let Some(on) = print_entries(ui, document, body, face) {
+        edit(out, body, BodyEdit::PrintOn(on));
         picked = true;
     }
     ui.separator();

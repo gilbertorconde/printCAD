@@ -452,7 +452,7 @@ pc.doc.rename{id = pc.doc.feature{id = pad}.body, name = "Bracket"}
 assert(pc.doc.bodies()[1].name == "Bracket")
 ```
 
-`pc.doc.set_body`: Change a body's colour, how much shows through, material or placement, whether it is frozen or a scan, or whether clicks pick it.
+`pc.doc.set_body`: Change a body's colour, how much shows through, material or placement, whether it is frozen or a scan, whether clicks pick it, or how it lies for printing.
 
 - `body` (id)
 - `color` (any, optional): {r, g, b} from 0 to 1, or nil for the colour it came with
@@ -462,6 +462,7 @@ assert(pc.doc.bodies()[1].name == "Bracket")
 - `shading` (string, optional): A mesh body's shading: as_meshed (the default), sharp (every triangle flat) or smooth (across triangles turning less than `crease`)
 - `crease` (number, optional): Smooth shading's crease angle, degrees (30)
 - `selectable` (boolean, optional): false lets clicks pass through it
+- `print_on` (any, optional): How the print layout lies it on the bed: a flat face's number from doc.faces turned down, as_modelled (unturned, its lowest point on the bed) or auto (its largest flat face with nothing below it)
 - `scan` (boolean, optional): A mesh body marked as a scan, the measured part that inspection and mesh editing work on; false makes it an ordinary mesh again
 - `face_colors` (list, optional): An empty list gives every face the body's colour again
 - `translation` (any, optional): {x, y, z}: where its origin goes; bodies moving as one with it follow
@@ -1259,11 +1260,11 @@ assert(math.abs(least.moment - math.pi * 3125) < 1, least.moment)
 assert(math.abs(math.abs(least.axis[3]) - 1) < 1e-6)
 ```
 
-`pc.doc.print_layout`: Where the print layout puts each copy: every part flat on its resting face, as many as the parts list prints, packed on the bed.
+`pc.doc.print_layout`: Where the print layout puts each copy: every part flat on its resting face (or as doc.set_body's print_on chose), as many as the parts list prints, packed on the bed.
 
 - `bed` (any, optional): {x, y, z}: the bed's width, depth and build height, mm; Preferences › 3D printing's when left out
 - `gap` (number, optional): Between copies, mm; Preferences › 3D printing's (5) when left out
-- Returns {plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, transform}}, too_big, too_tall, unbuilt}
+- Returns {plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, transform}}, too_big, too_tall, unbuilt, rest_lost (parts whose chosen face is gone or not flat)}
 
 Notes:
 

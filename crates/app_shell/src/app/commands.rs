@@ -912,6 +912,9 @@ impl PrintCadApp {
                 app_log::info("Rebuilding the body");
                 return;
             }
+            BodyEdit::PrintOn(crate::ui::PrintOn::Face(_)) => "Print on this face",
+            BodyEdit::PrintOn(crate::ui::PrintOn::AsModelled) => "Print as modelled",
+            BodyEdit::PrintOn(crate::ui::PrintOn::Auto) => "Print on its best face",
         };
         self.session.journal.label_next(label);
         self.close_gesture();

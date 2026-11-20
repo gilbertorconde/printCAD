@@ -178,6 +178,12 @@ pub enum DocumentOp {
         id: BodyId,
         material: Option<crate::Material>,
     },
+    /// How a body lies in the print layout, `None` for the face the
+    /// layout finds.
+    SetBodyPrintRest {
+        id: BodyId,
+        rest: Option<crate::PrintRest>,
+    },
     /// The textures pressed into a body's faces, all of them.
     SetBodyTextures {
         id: BodyId,

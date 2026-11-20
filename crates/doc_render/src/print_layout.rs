@@ -6,7 +6,11 @@
 //! The resting face is the largest flat face the whole part stands on (no
 //! point of the part below that face's plane), among faces of nearly the
 //! same area the one leaving the part lowest; a part with no such face
-//! keeps its own frame's up. Each part is then turned about the vertical
+//! keeps its own frame's up. A body's `PrintRest` overrides that choice: a
+//! flat face of its own turned down, or the part unturned as modelled. A
+//! chosen face the body no longer has, or one that is not flat, leaves the
+//! choice to the layout and names the part. Each part is then turned about
+//! the vertical
 //! to the smallest rectangle around its footprint, its longer side along
 //! X, and the copies go on in rows (shelves), tallest first, a gap
 //! between them; what does not fit on the bed starts another plate,
@@ -15,7 +19,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use core_document::{BodyId, BodyPlacement, Document, DocumentService, PrintPart};
+use core_document::{BodyId, BodyPlacement, Document, DocumentService, PrintPart, PrintRest};
 use glam::{DVec2, DVec3, Quat, Vec3};
 use kernel_api::TriMesh;
 
@@ -84,6 +88,11 @@ pub struct Layout {
     pub too_tall: Vec<String>,
     /// Parts with no geometry yet, left out.
     pub unbuilt: Vec<String>,
+    /// Parts whose chosen face is gone or not flat, laid on the face the
+    /// layout found instead.
+    pub rest_lost: Vec<String>,
+    /// Each part laid out: the body whose shape it prints and its name.
+    pub parts: Vec<(BodyId, String)>,
 }
 
 /// The parts to print and how many of each: the first bench's parts list
@@ -128,6 +137,7 @@ pub fn layout_key(document: &Document, parts: &[PrintPart], settings: &LayoutSet
         part.count.hash(&mut hasher);
         if let Some(body) = part.bodies.first() {
             body.hash(&mut hasher);
+            document.body_print_rest(*body).hash(&mut hasher);
             document
                 .imported_geometry(*body)
                 .map(|g| g.revision)
@@ -165,14 +175,19 @@ pub fn lay_out(document: &Document, parts: &[PrintPart], settings: &LayoutSettin
         let Some(body) = part.bodies.first() else {
             continue;
         };
-        let Some(lying) = document
+        let rest = document.body_print_rest(*body);
+        let Some((lying, found)) = document
             .local_geometry(*body)
             .filter(|(mesh, _)| !mesh.indices.is_empty())
-            .map(|(mesh, _)| lying_of(&mesh))
+            .map(|(mesh, _)| lying_of(&mesh, rest))
         else {
             layout.unbuilt.push(part.name.clone());
             continue;
         };
+        if !found {
+            layout.rest_lost.push(part.name.clone());
+        }
+        layout.parts.push((*body, part.name.clone()));
         if lying.size().z > f64::from(settings.bed_mm[2]) {
             layout.too_tall.push(part.name.clone());
         }
@@ -294,17 +309,18 @@ impl Shelves {
     }
 }
 
-/// How a part with this mesh, in its own frame, lies on the bed.
-fn lying_of(mesh: &TriMesh) -> Lying {
-    let down = resting_normal(mesh).unwrap_or(DVec3::NEG_Z);
-    let onto = Quat::from_rotation_arc(down.as_vec3(), Vec3::NEG_Z);
-    let points: Vec<Vec3> = mesh
-        .positions
-        .iter()
-        .map(|p| onto * Vec3::from_array(*p))
-        .collect();
-    let about = smallest_footprint_turn(&points);
-    let turn = Quat::from_rotation_z(about) * onto;
+/// How a part with this mesh, in its own frame, lies on the bed, as
+/// `rest` asks when the user chose; and whether the face it names was
+/// found.
+fn lying_of(mesh: &TriMesh, rest: Option<PrintRest>) -> (Lying, bool) {
+    let (turn, found) = match rest {
+        Some(PrintRest::AsModelled) => (Quat::IDENTITY, true),
+        Some(PrintRest::Face(face)) => match face_normal(mesh, face) {
+            Some(down) => (face_down(mesh, Some(down)), true),
+            None => (face_down(mesh, resting_normal(mesh)), false),
+        },
+        None => (face_down(mesh, resting_normal(mesh)), true),
+    };
     let mut low = DVec3::splat(f64::INFINITY);
     let mut high = DVec3::splat(f64::NEG_INFINITY);
     for p in &mesh.positions {
@@ -312,7 +328,54 @@ fn lying_of(mesh: &TriMesh) -> Lying {
         low = low.min(q);
         high = high.max(q);
     }
-    Lying { turn, low, high }
+    (Lying { turn, low, high }, found)
+}
+
+/// The turn that puts `down` (the part's own up when `None`) facing the
+/// bed, then turns the part about the vertical to its smallest footprint.
+fn face_down(mesh: &TriMesh, down: Option<DVec3>) -> Quat {
+    let down = down.unwrap_or(DVec3::NEG_Z);
+    let onto = Quat::from_rotation_arc(down.as_vec3(), Vec3::NEG_Z);
+    let points: Vec<Vec3> = mesh
+        .positions
+        .iter()
+        .map(|p| onto * Vec3::from_array(*p))
+        .collect();
+    let about = smallest_footprint_turn(&points);
+    Quat::from_rotation_z(about) * onto
+}
+
+/// The outward normal of `face` of `mesh` when it is flat: every one of
+/// its triangles within a degree of the face's mean. `None` when the mesh
+/// has no such face or it is curved.
+pub fn face_normal(mesh: &TriMesh, face: core_document::FaceKey) -> Option<DVec3> {
+    if mesh.faces.len() * 3 != mesh.indices.len() {
+        return None;
+    }
+    let point = |i: u32| {
+        mesh.positions
+            .get(i as usize)
+            .map(|p| DVec3::from_array(p.map(f64::from)))
+    };
+    let mut normals = Vec::new();
+    for (t, index) in mesh.indices.as_chunks::<3>().0.iter().zip(&mesh.faces) {
+        if !face.is_face(mesh, *index) {
+            continue;
+        }
+        let [Some(a), Some(b), Some(c)] = t.map(point) else {
+            continue;
+        };
+        let cross = (b - a).cross(c - a);
+        if cross.length() > 1e-12 {
+            normals.push(cross);
+        }
+    }
+    let mean = normals.iter().sum::<DVec3>().try_normalize()?;
+    let flat = 1f64.to_radians().cos();
+    normals
+        .iter()
+        .all(|n| n.normalize().dot(mean) >= flat)
+        .then_some(mean)
 }
 
 /// The outward normal of the face the part rests on best: the largest
@@ -700,6 +763,75 @@ mod tests {
             (lo[0] + 107.5).abs() < 1e-3 && (lo[1] + 107.5).abs() < 1e-3,
             "{lo:?}"
         );
+    }
+
+    /// `block`'s six faces numbered, two triangles each: 0 the bottom,
+    /// 1 the top.
+    fn faced(mut mesh: TriMesh) -> TriMesh {
+        mesh.faces = (0..6).flat_map(|f| [f, f]).collect();
+        mesh
+    }
+
+    /// A post told to stand on its end does, the end on the bed, though
+    /// a long side is the largest face; and the layout is made again for
+    /// the choice.
+    #[test]
+    fn a_chosen_face_goes_down() {
+        let (mut document, bodies) =
+            document_with(&[("Post", faced(block([10.0, 20.0, 60.0], [5.0, -3.0, 7.0])))]);
+        let parts = [part("Post", bodies.clone(), 1)];
+        let before = layout_key(&document, &parts, &BED);
+        let top = core_document::FaceKey { name: 0, index: 1 };
+        document.set_body_print_rest(bodies[0], Some(PrintRest::Face(top)));
+        assert_ne!(layout_key(&document, &parts, &BED), before);
+        let layout = lay_out(&document, &parts, &BED);
+        assert!(layout.rest_lost.is_empty());
+        let piece = &layout.pieces[0];
+        let (lo, hi) = bounds(&piece_mesh(&document, piece).unwrap());
+        assert!(
+            (hi[2] - lo[2] - 60.0).abs() < 1e-3,
+            "standing: {lo:?} {hi:?}"
+        );
+        assert!(lo[2].abs() < 1e-3, "on the bed");
+        for corner in [[5.0, -3.0, 67.0], [15.0, 17.0, 67.0]] {
+            let on_bed = piece.placement.point(corner);
+            assert!(on_bed[2].abs() < 1e-3, "the end is down: {on_bed:?}");
+        }
+    }
+
+    /// Dropped to the bed, a part keeps the turn it is modelled with: only
+    /// moved, its lowest point on the bed.
+    #[test]
+    fn a_part_dropped_to_the_bed_is_not_turned() {
+        let (mut document, bodies) =
+            document_with(&[("Post", block([10.0, 20.0, 60.0], [5.0, -3.0, 7.0]))]);
+        document.set_body_print_rest(bodies[0], Some(PrintRest::AsModelled));
+        let parts = [part("Post", bodies, 1)];
+        let layout = lay_out(&document, &parts, &BED);
+        let piece = &layout.pieces[0];
+        assert!(
+            piece.placement.quat().angle_between(Quat::IDENTITY) < 1e-5,
+            "{:?}",
+            piece.placement.quat()
+        );
+        let (lo, hi) = bounds(&piece_mesh(&document, piece).unwrap());
+        assert!(lo[2].abs() < 1e-3 && (hi[2] - 60.0).abs() < 1e-3);
+        assert!((hi[0] - lo[0] - 10.0).abs() < 1e-3 && (hi[1] - lo[1] - 20.0).abs() < 1e-3);
+    }
+
+    /// A chosen face the part no longer has, or one that is not flat,
+    /// leaves the layout to choose, and the part is named.
+    #[test]
+    fn a_chosen_face_that_is_gone_is_named() {
+        let (mut document, bodies) =
+            document_with(&[("Post", faced(block([10.0, 20.0, 60.0], [0.0; 3])))]);
+        let gone = core_document::FaceKey { name: 0, index: 9 };
+        document.set_body_print_rest(bodies[0], Some(PrintRest::Face(gone)));
+        let parts = [part("Post", bodies, 1)];
+        let layout = lay_out(&document, &parts, &BED);
+        assert_eq!(layout.rest_lost, ["Post"]);
+        let (lo, hi) = bounds(&piece_mesh(&document, &layout.pieces[0]).unwrap());
+        assert!((hi[2] - lo[2] - 10.0).abs() < 1e-3, "on its largest face");
     }
 
     #[test]

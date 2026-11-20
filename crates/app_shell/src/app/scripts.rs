@@ -1622,6 +1622,21 @@ mod tests {
         )
         .unwrap();
         assert!(doc.bodies()[0].face_colors.is_empty());
+        let face_down = crate::ui::BodyEdit::PrintOn(crate::ui::PrintOn::Face(1));
+        let (call, args) = body_edit_call(body, &face_down);
+        run(&mut doc, call, args).unwrap();
+        let face = core_document::FaceKey { name: 12, index: 1 };
+        assert_eq!(
+            doc.body_print_rest(body),
+            Some(core_document::PrintRest::Face(face))
+        );
+        run(
+            &mut doc,
+            "doc.set_body",
+            json!({"body": id, "print_on": "auto"}),
+        )
+        .unwrap();
+        assert_eq!(doc.body_print_rest(body), None);
         let copy = run(&mut doc, "doc.linked_copy", json!({"body": id})).unwrap();
         let copy = BodyId(uuid::Uuid::parse_str(copy.as_str().unwrap()).unwrap());
         assert_eq!(doc.body(copy).unwrap().copy_of, Some(body));

@@ -177,6 +177,7 @@ pub(crate) fn print_layout_command(
         "too_big": layout.too_big,
         "too_tall": layout.too_tall,
         "unbuilt": layout.unbuilt,
+        "rest_lost": layout.rest_lost,
     }))
 }
 
@@ -227,6 +228,11 @@ pub(crate) fn document_command(
                             ),
                         })),
                         "selectable": !b.unselectable,
+                        "print_on": match b.print_rest {
+                            None => json!("auto"),
+                            Some(core_document::PrintRest::AsModelled) => json!("as_modelled"),
+                            Some(core_document::PrintRest::Face(face)) => json!(face.index),
+                        },
                         "material": b.material.as_ref().map(|m| json!({
                             "name": m.name,
                             "density": m.density,
@@ -1102,6 +1108,10 @@ pub(super) fn set_body(
     if let Some(selectable) = a.opt_bool("selectable")? {
         document.set_body_selectable(body, selectable);
     }
+    if let Some(on) = a.0.get("print_on") {
+        let rest = print_rest_arg(document, body, on)?;
+        document.set_body_print_rest(body, rest);
+    }
     if let Some(scan) = a.opt_bool("scan")? {
         let info = scan.then(|| entry.scan.unwrap_or_default());
         if scan && !document.is_mesh_body(body) {
@@ -1142,6 +1152,44 @@ pub(super) fn set_body(
         document.place_with_unit(body, core_document::BodyPlacement::new(turn, offset));
     }
     Ok(())
+}
+
+/// What `doc.set_body`'s `print_on` asks for: `auto` (or nil) for the
+/// layout's own choice, `as_modelled`, or a flat face as `doc.faces`
+/// numbers it.
+fn print_rest_arg(
+    document: &core_document::Document,
+    body: BodyId,
+    on: &Value,
+) -> Result<Option<core_document::PrintRest>, CommandError> {
+    use core_document::PrintRest;
+    const SAYS: &str = "is auto, as_modelled or a flat face's number from doc.faces";
+    match on {
+        Value::Null => Ok(None),
+        Value::String(s) if s == "auto" => Ok(None),
+        Value::String(s) if s == "as_modelled" => Ok(Some(PrintRest::AsModelled)),
+        Value::Number(n) => {
+            let index = n
+                .as_u64()
+                .and_then(|i| u32::try_from(i).ok())
+                .ok_or_else(|| CommandError::bad("print_on", SAYS))?;
+            let (mesh, _) = document
+                .local_geometry(body)
+                .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
+            if !mesh.faces.contains(&index) {
+                return Err(CommandError::bad("print_on", SAYS));
+            }
+            let face = core_document::FaceKey::of(&mesh, index);
+            if doc_render::print_layout::face_normal(&mesh, face).is_none() {
+                return Err(CommandError::bad(
+                    "print_on",
+                    format!("face {index} is not flat, so it cannot lie on the bed"),
+                ));
+            }
+            Ok(Some(PrintRest::Face(face)))
+        }
+        _ => Err(CommandError::bad("print_on", SAYS)),
+    }
 }
 
 /// The feature a drop next to `target` lands after: `target` itself, or
