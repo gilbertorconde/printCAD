@@ -398,7 +398,7 @@ number formulas set (`#[walk(length("depth", "Depth"))]`), a setting, or
 its own type's walk, where every `FeatureId` is a feature it reads.
 `Walker::of(&feature)` then answers its `parameters` and its
 `dependencies`, and a field added without a role does not compile.
-Design's features are written so (`wb_design/src/feature.rs`).
+Design's features are written so (`wb_design/src/feature/`).
 
 - `settle` makes the data whole once values are in (a sketch solves).
 - `derive`, `derive_on_solid` and `derive_on_geometry` bring working data
@@ -614,9 +614,10 @@ placement), not the code's inner steps, and with `fmt`, `clippy`,
 passing.
 
 **A Design feature**
-1. `wb_design/src/feature.rs`: the `DesignFeature` variant, new fields with
-   `#[serde(default)]`, and its arms in the walks over features (icon,
-   label, sketches and borrows it reads, `refine`, `boolean_tolerance`).
+1. `wb_design/src/feature/`: the `DesignFeature` variant and its new
+   fields with `#[serde(default)]` (`mod.rs`), its icon and label
+   (`labels.rs`), and its arms in the walks over features (`access.rs`:
+   sketches and borrows it reads, `refine`, `boolean_tolerance`).
 2. `wb_design/src/build.rs`: the `SolidOp`s it plans, in the body's frame.
 3. `wb_design/src/params.rs` and `references.rs`: the numbers formulas may
    set, and the inputs the property panel swaps.
