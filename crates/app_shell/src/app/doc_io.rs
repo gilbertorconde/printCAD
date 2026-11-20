@@ -109,6 +109,8 @@ pub(crate) enum FileDialogKind {
     InstallPackage,
     /// A file whose first solid becomes the body's shape.
     ReplaceShape(core_document::BodyId),
+    /// The printCAD file a linked part comes from.
+    Relink(core_document::BodyId),
     /// A picture for a texture's pattern: the body and which texture.
     TexturePicture(core_document::BodyId, usize),
 }
@@ -162,6 +164,7 @@ impl FileDialogKind {
             | FileDialogKind::ExportFolder
             | FileDialogKind::BenchOpen(_)
             | FileDialogKind::ReplaceShape(_)
+            | FileDialogKind::Relink(_)
             | FileDialogKind::TexturePicture(..) => true,
             FileDialogKind::Open
             | FileDialogKind::RunScript
@@ -244,6 +247,7 @@ impl PrintCadApp {
         // outgoing document's unsent ops do not describe: they leave with
         // it.
         self.session.document = opened(&self.registry, document);
+        self.session.file.links_from = path.parent().map(Path::to_path_buf);
         self.session.file.path = Some(path.clone());
         // The chats kept with the file come back, resting until shown.
         self.restore_chats();
@@ -856,6 +860,9 @@ impl PrintCadApp {
         // unsaved tail when the save lands, so they go to it first.
         self.session.send_outbox();
         let mut document = self.whole_solids().into_owned();
+        if let Some(folder) = path.parent() {
+            document.place_links_for_file(self.session.file.links_from.as_deref(), folder);
+        }
         let at_seq = self.session.document.mutation_seq();
         let seen_seq = self.session.connection.server_seq;
         let sent_batches = self.session.connection.batches_sent;
@@ -1237,6 +1244,11 @@ impl PrintCadApp {
                     self.replace_shape_from(body, &path);
                 }
             }
+            FileDialogKind::Relink(body) => {
+                if let Some(path) = path {
+                    self.relink(body, &path);
+                }
+            }
             FileDialogKind::TexturePicture(body, index) => {
                 if let Some(path) = path {
                     self.use_texture_picture(body, index, &path);
@@ -1355,6 +1367,11 @@ impl PrintCadApp {
                         "wrl", "vrml",
                     ],
                 ),
+                FileDialogKind::Relink(_) => picking(
+                    rfd::FileDialog::new().set_title("The file the linked part comes from"),
+                    "printCAD Document",
+                    &["prtcad"],
+                ),
                 FileDialogKind::TexturePicture(..) => picking(
                     rfd::FileDialog::new()
                         .set_title("A picture for the texture: grey levels, white high"),
@@ -1416,6 +1433,7 @@ impl PrintCadApp {
                     FileDialogKind::RunScript
                     | FileDialogKind::InstallPackage
                     | FileDialogKind::ReplaceShape(_)
+                    | FileDialogKind::Relink(_)
                     | FileDialogKind::TexturePicture(..)
                     | FileDialogKind::BenchOpen(_) => dialog.pick_file(),
                     FileDialogKind::Attach(_)

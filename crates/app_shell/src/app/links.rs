@@ -111,12 +111,18 @@ impl PrintCadApp {
         self.session.jobs.links.read(path, true);
     }
 
+    /// The folder this tab's links are found from.
+    fn links_from(&self) -> Option<PathBuf> {
+        self.session.file.links_from.clone()
+    }
+
     /// Read linked parts' files, land what was read, and look at the
     /// files for changes now and then.
     pub(crate) fn drive_links(&mut self) {
+        let from = self.links_from();
         let awaiting = self.session.document.links_awaiting_geometry();
         for (body, link) in &awaiting {
-            let path = PathBuf::from(&link.path);
+            let path = link.located(from.as_deref());
             let loading = self.session.jobs.links.loads.iter().any(|l| l.path == path);
             if !loading && !self.session.jobs.links.failed.contains(body) {
                 self.session.jobs.links.read(path, false);
@@ -158,11 +164,17 @@ impl PrintCadApp {
                 .collect();
             self.session.jobs.links.read_only.clear();
             for (body, link) in linked {
-                let now = stamp(Path::new(&link.path));
+                let Some(path) = link.resolve(from.as_deref()) else {
+                    self.session.document.set_link_missing(body, true);
+                    self.session.document.set_link_stale(body, false);
+                    continue;
+                };
+                self.session.document.set_link_missing(body, false);
+                let now = stamp(&path);
                 self.session
                     .document
                     .set_link_stale(body, now != link.stamp);
-                if crate::platform::read_only(Path::new(&link.path)) {
+                if crate::platform::read_only(&path) {
                     self.session.jobs.links.read_only.push(body);
                 }
             }
@@ -171,8 +183,9 @@ impl PrintCadApp {
 
     /// Every part linked to `path` still waiting: not asked again.
     fn fail_links_to(&mut self, path: &Path) {
+        let from = self.links_from();
         for (body, link) in self.session.document.links_awaiting_geometry() {
-            if Path::new(&link.path) == path {
+            if link.located(from.as_deref()) == path {
                 self.session.jobs.links.failed.insert(body);
             }
         }
@@ -180,7 +193,7 @@ impl PrintCadApp {
 
     /// A linked file read: its bodies inserted, or its parts' shapes given.
     fn land_link(&mut self, load: &LinkLoad, source: &Document) {
-        let path = load.path.to_string_lossy().into_owned();
+        let from = self.links_from();
         if load.insert {
             let at = stamp(&load.path);
             let mut count = 0;
@@ -193,11 +206,7 @@ impl PrintCadApp {
                 };
                 let id = self.session.document.create_linked_body(
                     body.name.clone(),
-                    FileLink {
-                        path: path.clone(),
-                        body: body.id,
-                        stamp: at,
-                    },
+                    FileLink::new(&load.path, body.id, at, from.as_deref()),
                 );
                 self.session.document.set_body_placement(id, body.placement);
                 self.session
@@ -219,7 +228,7 @@ impl PrintCadApp {
             return;
         }
         for (body, link) in self.session.document.links_awaiting_geometry() {
-            if link.path != path {
+            if link.located(from.as_deref()) != load.path {
                 continue;
             }
             match shape_of(source, link.body) {
@@ -251,7 +260,7 @@ impl PrintCadApp {
             return;
         };
         self.session.jobs.links.failed.remove(&body);
-        let now = stamp(Path::new(&link.path));
+        let now = stamp(&link.located(self.links_from().as_deref()));
         if self.session.document.reload_link(body, now) {
             self.session.journal.label_next("Reload linked part");
             self.close_gesture();
@@ -268,6 +277,33 @@ impl PrintCadApp {
         else {
             return;
         };
-        self.open_document_at(PathBuf::from(link.path));
+        let path = link.located(self.links_from().as_deref());
+        self.open_document_at(path);
+    }
+
+    /// Link a part to the printCAD file at `path`: its own file found
+    /// elsewhere, or another. One undo step; the part's shape is read from
+    /// the file next.
+    pub(crate) fn relink(&mut self, body: BodyId, path: &Path) {
+        let Some(link) = self
+            .session
+            .document
+            .body(body)
+            .and_then(|b| b.link.clone())
+        else {
+            return;
+        };
+        let from = self.links_from();
+        let link = FileLink::new(path, link.body, stamp(path), from.as_deref());
+        self.session.jobs.links.failed.remove(&body);
+        if self.session.document.relink(body, link) {
+            self.session.journal.label_next("Relink part");
+            self.close_gesture();
+            app_log::info(format!(
+                "`{}` is linked to {}",
+                self.body_name(body),
+                path.display()
+            ));
+        }
     }
 }

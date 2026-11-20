@@ -222,6 +222,10 @@ pub fn draw(
                                     commands.push(UiCommand::OpenLinkSource(menu.body));
                                     commands.push(UiCommand::CloseViewportMenu);
                                 }
+                                if item(ui, "Relink…") {
+                                    commands.push(UiCommand::Relink(menu.body));
+                                    commands.push(UiCommand::CloseViewportMenu);
+                                }
                             }
                             if item(ui, "Isolate") {
                                 commands.push(UiCommand::Isolate(Some(menu.body)));

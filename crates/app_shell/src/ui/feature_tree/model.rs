@@ -57,7 +57,12 @@ impl DocumentTree {
                     node.detail = Some(format!("Linked from {file}"));
                     node.tooltip = Some(link.path.clone());
                     node.linked_file = true;
-                    if document.link_stale(body.id) {
+                    if document.link_missing(body.id) {
+                        node.error = Some(format!(
+                            "{file} is not where it was linked from, nor beside this \
+                             document: Relink… finds it"
+                        ));
+                    } else if document.link_stale(body.id) {
                         node.error = Some(format!(
                             "{file} has changed since this part was read: Reload from file \
                              takes it as it is now"

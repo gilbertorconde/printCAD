@@ -772,6 +772,16 @@ impl Headless {
             self.document
                 .set_name(crate::app::doc_io::document_name_from_file_name(name));
         }
+        let folder = |file: &Path| {
+            std::path::absolute(file)
+                .ok()?
+                .parent()
+                .map(Path::to_path_buf)
+        };
+        if let Some(to) = folder(path) {
+            let from = self.file.as_deref().and_then(folder);
+            self.document.place_links_for_file(from.as_deref(), &to);
+        }
         self.document
             .save_to_file(path, core_document::Compression::None)?;
         self.document.mark_clean();

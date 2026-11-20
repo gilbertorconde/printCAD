@@ -140,6 +140,11 @@ pub(crate) struct KeptSelection {
 #[derive(Default)]
 pub(crate) struct FileState {
     pub path: Option<PathBuf>,
+    /// The folder the document's linked parts are found from: its file's
+    /// as opened. A Save As elsewhere writes the links for the new folder
+    /// into the file but leaves this, since the links in memory still mean
+    /// the files they were made with.
+    pub links_from: Option<PathBuf>,
     /// What wrote the tab's file and whether it can be written in place.
     pub safety: crate::app::file_safety::FileSafety,
     /// The workers packing `.prtcad` archives, and how far each has got.
