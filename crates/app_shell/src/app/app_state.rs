@@ -442,21 +442,21 @@ pub(crate) struct Agents {
     /// The MCP server agents reach the document through.
     pub mcp: Option<crate::app::mcp::McpServer>,
     /// Changes agents asked for, waiting for the user's OK.
-    pub approvals: Vec<crate::app::mcp::Approval>,
+    pub approvals: Vec<assistant::Approval>,
     /// `screen` calls waiting for the next picture of the view.
     pub screen_waiting: Vec<std::sync::mpsc::Sender<agents::mcp::ToolAnswer>>,
     /// An agent needs the user: the assistant panel opens.
     pub assistant_attention: bool,
     /// The chats with agents, in the order they were opened.
-    pub chats: Vec<crate::app::chats::Chat>,
+    pub chats: Vec<assistant::Chat>,
     /// How many chats this session has opened, for the next one's name.
     pub chats_made: usize,
     /// The closed chats the assistant's history lists, read again whenever
     /// one closes, reopens or is forgotten, and when the list opens.
-    pub history: Vec<crate::app::chats::PastChat>,
+    pub history: Vec<assistant::PastChat>,
     /// Chats closed on documents not saved, by tab: kept for the run, and
     /// moved into the store when the document is first saved.
-    pub closed_unsaved: Vec<(Uuid, crate::app::chat_store::SavedChat)>,
+    pub closed_unsaved: Vec<(Uuid, assistant::chat_store::SavedChat)>,
     /// Wakes the loop from another thread.
     pub waker: Arc<dyn Fn() + Send + Sync>,
 }

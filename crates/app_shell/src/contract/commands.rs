@@ -470,7 +470,7 @@ pub enum UiCommand {
     /// as what it names stands now.
     AddMention {
         chat: String,
-        option: crate::app::mentions::MentionOption,
+        option: assistant::mentions::MentionOption,
     },
     /// Name chat `chat` as the user typed it.
     RenameChat {

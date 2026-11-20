@@ -25,10 +25,10 @@ use ui_kit::widgets::{
 use ui_kit::{mono, sans, sans_medium};
 
 use super::UiCommand;
-use crate::app::chats::{Chat, ChatEntry, ChatStatus, PastChat};
-use crate::app::mcp::Approval;
-use crate::app::mentions::{Mention, MentionOption, find_tokens};
 use agents::acp::{OptionValue, SessionOption};
+use assistant::Approval;
+use assistant::mentions::{Mention, MentionOption, find_tokens};
+use assistant::{Chat, ChatEntry, ChatStatus, PastChat};
 
 /// The panel's own state: whether it shows, the chat on screen and what
 /// is being written in each chat.
@@ -496,7 +496,7 @@ fn history_list(
     // Escape is the rename field's while a chat is being renamed.
     let mut close = state.renaming.is_none()
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-    let now = crate::app::chat_store::now_ms();
+    let now = assistant::chat_store::now_ms();
     Card::new().padding(SPACE_2).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
@@ -1751,7 +1751,7 @@ mod tests {
         let past = |title: &str, file: &str, here: bool, used: u64| PastChat {
             file: Some(file.into()),
             tab: None,
-            chat: crate::app::chat_store::SavedChat {
+            chat: assistant::chat_store::SavedChat {
                 agent: "Claude".into(),
                 session: title.into(),
                 title: title.into(),
@@ -1972,7 +1972,7 @@ mod tests {
     /// message has; Backspace takes a chip away whole.
     #[test]
     fn at_lists_what_to_mention_and_a_chip_goes_whole() {
-        use crate::app::mentions::MentionSource;
+        use assistant::mentions::MentionSource;
         let tab = uuid::Uuid::nil();
         let options = [
             MentionOption {

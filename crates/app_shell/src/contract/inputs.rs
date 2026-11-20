@@ -183,13 +183,13 @@ pub struct UiFrameInputs<'a> {
     /// A recording is on.
     pub recording: bool,
     /// The chats with agents.
-    pub chats: &'a [crate::app::chats::Chat],
+    pub chats: &'a [assistant::Chat],
     /// Changes agents asked for, waiting for the user's OK.
-    pub approvals: &'a [crate::app::mcp::Approval],
+    pub approvals: &'a [assistant::Approval],
     /// What each chat's `@` list offers, by the tab the chat works on.
-    pub mentions: Vec<(uuid::Uuid, Vec<crate::app::mentions::MentionOption>)>,
+    pub mentions: Vec<(uuid::Uuid, Vec<assistant::mentions::MentionOption>)>,
     /// The closed chats the assistant's history offers, newest first.
-    pub past_chats: Vec<crate::app::chats::PastChat>,
+    pub past_chats: Vec<assistant::PastChat>,
     /// An agent needs the user: the assistant panel opens.
     pub assistant_attention: bool,
     /// The paste key went down: a chat whose box has the keyboard and got

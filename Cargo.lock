@@ -168,6 +168,7 @@ dependencies = [
  "app_log",
  "app_platform",
  "arboard",
+ "assistant",
  "axes",
  "base64 0.23.1",
  "bench_fixtures",
@@ -275,6 +276,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "assistant"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "app_log",
+ "core_document",
+ "local_ipc",
+ "serde_json",
+ "settings",
+ "uuid",
 ]
 
 [[package]]

@@ -489,7 +489,7 @@ impl PrintCadApp {
             let read_only_file = self.current_file_read_only();
             let marking = self.marking_counts();
             let note_card = self.note_card_view();
-            let mut mentions: Vec<(Uuid, Vec<crate::app::mentions::MentionOption>)> = Vec::new();
+            let mut mentions: Vec<(Uuid, Vec<assistant::mentions::MentionOption>)> = Vec::new();
             for chat in &self.agents.chats {
                 if !mentions.iter().any(|(tab, _)| *tab == chat.tab) {
                     mentions.push((chat.tab, self.mention_options(chat.tab)));

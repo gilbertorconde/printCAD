@@ -33,6 +33,7 @@ members = [
   "crates/ui_kit",
   "crates/scripting",
   "crates/agents",
+  "crates/assistant",
   "crates/local_ipc",
   "crates/viewport_camera",
   "crates/transform_gizmo",

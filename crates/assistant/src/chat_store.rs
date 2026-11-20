@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// A chat kept with a document.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SavedChat {
+pub struct SavedChat {
     /// The agent's name in Preferences.
     pub agent: String,
     /// The agent's session id.
@@ -43,13 +43,13 @@ struct Store {
 /// A closed chat in the history: the file it was kept with, by the
 /// store's key.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ClosedChat {
+pub struct ClosedChat {
     pub file: String,
     pub chat: SavedChat,
 }
 
 /// Now, in milliseconds since the epoch.
-pub(crate) fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)
@@ -144,7 +144,7 @@ impl Store {
 }
 
 /// What the store is keyed by: the file as an absolute path.
-pub(crate) fn key(file: &Path) -> String {
+pub fn key(file: &Path) -> String {
     std::fs::canonicalize(file)
         .unwrap_or_else(|_| file.to_path_buf())
         .display()
@@ -164,14 +164,14 @@ fn load(path: &Path) -> Result<Store, String> {
 }
 
 /// The open chats kept with `file`.
-pub(crate) fn chats_of(file: &Path) -> Vec<SavedChat> {
+pub fn chats_of(file: &Path) -> Vec<SavedChat> {
     store_path()
         .map(|path| chats_in(&path, file))
         .unwrap_or_default()
 }
 
 /// Keep `chats` as `file`'s open chats, in place of what it had.
-pub(crate) fn keep(file: &Path, chats: Vec<SavedChat>) {
+pub fn keep(file: &Path, chats: Vec<SavedChat>) {
     if let Some(path) = store_path() {
         keep_in(&path, file, chats);
     }
@@ -179,21 +179,21 @@ pub(crate) fn keep(file: &Path, chats: Vec<SavedChat>) {
 
 /// Keep `chat` with `file` as closed: out of its open chats, first in its
 /// history.
-pub(crate) fn close(file: &Path, chat: SavedChat) {
+pub fn close(file: &Path, chat: SavedChat) {
     if let Some(path) = store_path() {
         close_in(&path, &key(file), chat);
     }
 }
 
 /// Take the chat in `session` out of the store for good.
-pub(crate) fn forget(file: &str, session: &str) {
+pub fn forget(file: &str, session: &str) {
     if let Some(path) = store_path() {
         forget_in(&path, file, session);
     }
 }
 
 /// Every file's closed chats, newest first.
-pub(crate) fn history() -> Vec<ClosedChat> {
+pub fn history() -> Vec<ClosedChat> {
     store_path()
         .map(|path| history_in(&path))
         .unwrap_or_default()
@@ -209,7 +209,7 @@ fn chats_in(store: &Path, file: &Path) -> Vec<SavedChat> {
     }
 }
 
-pub(crate) fn history_in(store: &Path) -> Vec<ClosedChat> {
+pub fn history_in(store: &Path) -> Vec<ClosedChat> {
     let all = match load(store) {
         Ok(all) => all,
         Err(err) => {
@@ -269,7 +269,7 @@ fn keep_in(store: &Path, file: &Path, chats: Vec<SavedChat>) {
     });
 }
 
-pub(crate) fn close_in(store: &Path, file: &str, chat: SavedChat) {
+pub fn close_in(store: &Path, file: &str, chat: SavedChat) {
     change(store, |all| {
         all.drop_chat(file, &chat.session);
         all.closed
