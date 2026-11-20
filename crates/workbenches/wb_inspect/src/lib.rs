@@ -195,17 +195,6 @@ impl core_document::Workbench for InspectionWorkbench {
         self.passive_of(document, id, node)
     }
 
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        self.tool_enabled(tool_id, ctx)
-    }
-
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        (tool_id == PIN && self.tab.pinning)
-            || (tool_id == BEST_FIT && self.tab.fitting.running())
-            || (tool_id == align_commands::POINTS && self.tab.picks.aligning)
-            || (self.tab.armed.is_some() && kind_of_tool(tool_id) == self.tab.armed)
-    }
-
     fn delete_feature(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -247,17 +236,6 @@ impl core_document::Workbench for InspectionWorkbench {
 
     fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.land_best_fit(ctx);
-    }
-
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        core_document::ViewportOutput {
-            marks: self.screen_marks(ctx, ctx.active_document_object),
-            labels: self.screen_labels(ctx, ctx.active_document_object),
-            scalar_maps: self.scalar_maps(ctx),
-            status: self.status_items(ctx),
-            faded: self.faded_bodies(ctx),
-            ..Default::default()
-        }
     }
 
     fn feature_solid(
@@ -305,6 +283,30 @@ impl core_document::Workbench for InspectionWorkbench {
             x_axis: place(x.to_array(), 0.0),
             y_axis: place(y.to_array(), 0.0),
         })
+    }
+}
+
+impl core_document::BenchTools for InspectionWorkbench {
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        self.tool_enabled(tool_id, ctx)
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        (tool_id == PIN && self.tab.pinning)
+            || (tool_id == BEST_FIT && self.tab.fitting.running())
+            || (tool_id == align_commands::POINTS && self.tab.picks.aligning)
+            || (self.tab.armed.is_some() && kind_of_tool(tool_id) == self.tab.armed)
+    }
+
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            scalar_maps: self.scalar_maps(ctx),
+            status: self.status_items(ctx),
+            faded: self.faded_bodies(ctx),
+            ..Default::default()
+        }
     }
 
     fn on_input(

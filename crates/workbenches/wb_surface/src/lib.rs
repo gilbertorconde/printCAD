@@ -31,10 +31,10 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, CommandArgs,
-    CommandResult, Document, FeatureId, FeatureInfo, HostRequest, InputResult, Parameter,
-    RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
+    CommandArgs, CommandResult, Document, FeatureId, FeatureInfo, HostRequest, InputResult,
+    Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -744,6 +744,29 @@ impl Workbench for SurfaceWorkbench {
         commands::configure(context);
     }
 
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.tab.task.as_ref().map(|t| t.feature)
+    }
+
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        if self.tab.task.is_some() {
+            return;
+        }
+        let Some(data) = ctx.document.get_feature_data(id).cloned() else {
+            return;
+        };
+        self.open_task(Task {
+            feature: id,
+            opened: Some(data),
+        });
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchTools for SurfaceWorkbench {
     fn on_input(
         &mut self,
         event: &WorkbenchInputEvent,
@@ -812,10 +835,6 @@ impl Workbench for SurfaceWorkbench {
         }
     }
 
-    fn editing_feature(&self) -> Option<FeatureId> {
-        self.tab.task.as_ref().map(|t| t.feature)
-    }
-
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         let shaped = |body: BodyId| ctx.document.imported_brep_blob(body).is_some();
         match tool_id {
@@ -831,23 +850,6 @@ impl Workbench for SurfaceWorkbench {
                 None => true,
             },
         }
-    }
-
-    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
-        if self.tab.task.is_some() {
-            return;
-        }
-        let Some(data) = ctx.document.get_feature_data(id).cloned() else {
-            return;
-        };
-        self.open_task(Task {
-            feature: id,
-            opened: Some(data),
-        });
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 

@@ -107,9 +107,9 @@ pub use threads::ThreadCallout;
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 pub use variables::{Numbering, VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchReport, FeatureInfo,
-    FeaturePart, FeaturePaths, FeatureReference, FeatureState, FeatureStatus, FileImport,
-    INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope, OverlayMesh, PartPick,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchReport, BenchTools,
+    FeatureInfo, FeaturePart, FeaturePaths, FeatureReference, FeatureState, FeatureStatus,
+    FileImport, INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope, OverlayMesh, PartPick,
     PassiveGeometry, PassiveRegion, PassiveTint, PrintPart, PropertyHints, RADIAL_SLOTS,
     ReferenceChoice, ReportTable, ScalarMap, ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark,
     ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, StatusTone, TabSlot, TaskInfo,

@@ -686,8 +686,7 @@ fn focused_number<'w>(widgets: &'w [Widget], focused: Option<&str>) -> Option<&'
 mod tests {
     use super::*;
     use crate::test_support::{bare_geometry, pad};
-    use core_document::BenchPanels;
-    use core_document::Document;
+    use core_document::{BenchPanels, BenchTools, Document};
     use sketch_model::SketchFeature;
     use sketch_model::sketch::{GeometryElement, Point, Sketch, Vec2D};
 
@@ -1339,7 +1338,7 @@ mod tests {
     /// The open pad's end carries a handle; dragging it sets the length.
     #[test]
     fn dragging_the_pad_handle_sets_its_length() {
-        use core_document::{MouseButton, Workbench, WorkbenchInputEvent as E};
+        use core_document::{MouseButton, WorkbenchInputEvent as E};
         let Scene {
             mut doc, pad: id, ..
         } = scene();
@@ -1437,7 +1436,7 @@ mod tests {
     /// holds the keyboard.
     #[test]
     fn the_handle_being_edited_is_lit() {
-        use core_document::{KeyCode, Workbench, WorkbenchInputEvent as E};
+        use core_document::{KeyCode, WorkbenchInputEvent as E};
         let Scene {
             mut doc, pad: id, ..
         } = scene();
@@ -1508,7 +1507,7 @@ mod tests {
     /// Enter, and text that is no number sets its formula.
     #[test]
     fn typing_on_a_held_handle_sets_its_number_or_formula() {
-        use core_document::{KeyCode, Workbench, WorkbenchInputEvent as E};
+        use core_document::{KeyCode, WorkbenchInputEvent as E};
         let Scene {
             mut doc, pad: id, ..
         } = scene();
@@ -1566,7 +1565,7 @@ mod tests {
     /// on the face, lit while it holds; with Alt it drags past.
     #[test]
     fn a_dragged_pad_length_snaps_to_a_parallel_face() {
-        use core_document::{MouseButton, Workbench, WorkbenchInputEvent as E};
+        use core_document::{MouseButton, WorkbenchInputEvent as E};
         let Scene {
             mut doc, pad: id, ..
         } = scene();
@@ -1652,7 +1651,7 @@ mod tests {
     /// circles goes on to pick as any click.
     #[test]
     fn clicking_regions_in_the_view_chooses_what_the_pad_takes() {
-        use core_document::{MouseButton, Workbench, WorkbenchInputEvent as E};
+        use core_document::{MouseButton, WorkbenchInputEvent as E};
         use sketch_model::sketch::Circle;
         let mut sketch = Sketch::new("venn");
         for x in [0.0, 10.0] {

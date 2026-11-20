@@ -999,7 +999,7 @@ mod tests {
     use super::*;
     use core_document::{
         ActionDescriptor, BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters,
-        ToolDescriptor, Workbench, WorkbenchContext,
+        BenchTools, ToolDescriptor, Workbench, WorkbenchContext,
     };
 
     struct Bench {
@@ -1027,6 +1027,8 @@ mod tests {
             );
         }
     }
+
+    impl BenchTools for Bench {}
 
     impl BenchPanels for Bench {}
 

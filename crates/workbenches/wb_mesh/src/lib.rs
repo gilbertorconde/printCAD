@@ -437,25 +437,6 @@ impl core_document::Workbench for MeshWorkbench {
         }
     }
 
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        let Some(body) = ctx.selected_body_id.map(BodyId) else {
-            return false;
-        };
-        let mesh = ctx.document.is_mesh_body(body) || ctx.document.mesh_start(body).is_some();
-        match tool_id {
-            DELETE => {
-                mesh && ctx
-                    .current_marking()
-                    .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
-            }
-            ISLANDS | FLIP | CUT | SPLIT => mesh && self.tab.task.is_none(),
-            id if steps::is_tool(id) => mesh && self.tab.task.is_none(),
-            DEVIATION => true,
-            CROSSINGS => mesh,
-            _ => false,
-        }
-    }
-
     fn editing_feature(&self) -> Option<FeatureId> {
         self.tab.task.as_ref().map(|t| t.id)
     }
@@ -478,16 +459,37 @@ impl core_document::Workbench for MeshWorkbench {
         );
     }
 
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        (tool_id == DEVIATION && self.tab.deviation) || (tool_id == CROSSINGS && self.tab.crossings)
-    }
-
     fn busy(&self) -> bool {
         self.tab.deviations.busy() || self.tab.crossing_pairs.busy()
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.report_crossings(ctx);
+    }
+}
+
+impl core_document::BenchTools for MeshWorkbench {
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        let Some(body) = ctx.selected_body_id.map(BodyId) else {
+            return false;
+        };
+        let mesh = ctx.document.is_mesh_body(body) || ctx.document.mesh_start(body).is_some();
+        match tool_id {
+            DELETE => {
+                mesh && ctx
+                    .current_marking()
+                    .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
+            }
+            ISLANDS | FLIP | CUT | SPLIT => mesh && self.tab.task.is_none(),
+            id if steps::is_tool(id) => mesh && self.tab.task.is_none(),
+            DEVIATION => true,
+            CROSSINGS => mesh,
+            _ => false,
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        (tool_id == DEVIATION && self.tab.deviation) || (tool_id == CROSSINGS && self.tab.crossings)
     }
 
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
@@ -765,7 +767,7 @@ impl MeshWorkbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{BenchBuild, BenchCommands, Workbench};
+    use core_document::{BenchBuild, BenchCommands, BenchTools, Workbench};
 
     #[test]
     fn every_section_of_the_mesh_prose_names_a_command() {

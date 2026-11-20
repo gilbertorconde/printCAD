@@ -1,4 +1,4 @@
-use core_document::{Document, KeyCode, MouseButton, Workbench, WorkbenchInputEvent};
+use core_document::{BenchTools, Document, KeyCode, MouseButton, WorkbenchInputEvent};
 use glam::Mat4;
 use transform_gizmo::gizmo::Handle;
 

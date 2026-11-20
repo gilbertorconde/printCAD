@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use core_document::{
-    BenchCommands, BodyId, FeatureId, HostRequest, InputResult, KeyCode, Workbench,
+    BenchCommands, BenchTools, BodyId, FeatureId, HostRequest, InputResult, KeyCode,
     WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 use uuid::Uuid;

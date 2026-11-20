@@ -65,8 +65,8 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, FeatureId,
-    FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
+    FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
     WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
     WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
@@ -1374,21 +1374,6 @@ impl SketchWorkbench {
 }
 
 impl Workbench for SketchWorkbench {
-    fn tool_history(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        reply: core_document::ToolHistoryReply,
-    ) {
-        match reply {
-            core_document::ToolHistoryReply::Closed(entry) => self.tab.chain_links.closed(entry),
-            core_document::ToolHistoryReply::Undone { .. } => {
-                if let Some(feature) = self.get_active_sketch(ctx) {
-                    self.follow_history(ctx, &feature.sketch);
-                }
-            }
-        }
-    }
-
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             crate::KIND,
@@ -1441,23 +1426,6 @@ impl Workbench for SketchWorkbench {
             family_label: "Sketch".to_string(),
             builds_solid: false,
         }
-    }
-
-    fn locks_view_to_plane(&self) -> bool {
-        true
-    }
-
-    fn shows_origin_planes(&self) -> bool {
-        self.tab.pending_creation.is_some() && self.tab.active_sketch_id.is_none()
-    }
-
-    fn takes_numeric_input(&self) -> bool {
-        self.tab.active_sketch_id.is_some()
-            && !ovp::fields_for(&self.tab.tool_state, self.tab.last_tool.as_deref()).is_empty()
-    }
-
-    fn takes_text_input(&self) -> bool {
-        self.tab.active_sketch_id.is_some() && self.tab.dim_capture.takes_text()
     }
 
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
@@ -1590,19 +1558,6 @@ impl Workbench for SketchWorkbench {
         ctx.log_info("Sketch workbench deactivated");
     }
 
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.cancel_pointer(ctx);
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        self.handle_input(event, active_tool, ctx)
-    }
-
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         // A shape is recorded once it is done: its tool back at rest, or
         // another tool picked.
@@ -1683,6 +1638,91 @@ impl Workbench for SketchWorkbench {
                 .collect();
             self.tab.armable = (Some(self.tab.selection_shape.clone()), armable);
         }
+    }
+
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.tab.active_sketch_id
+    }
+
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        // What a click left waiting is written as it stands.
+        self.store_corner(ctx, false);
+        self.discard_corner();
+        self.flush_draw_record(ctx);
+        if self.tab.active_sketch_id.is_some() {
+            self.tab.active_sketch_id = None;
+            self.tab.session_start = None;
+            self.tab.sketch_picker = None;
+            self.clear_interaction_state();
+            // Deselect the feature: with it still active the next input
+            // event would immediately re-enter editing via
+            // `sync_active_sketch_from_ctx`.
+            ctx.active_document_object = None;
+            ctx.log_info("Exited sketch editing mode");
+        } else {
+            ctx.log_warn("Not in sketch editing mode");
+        }
+    }
+
+    fn shortcuts_changed(&mut self, keys: &HashMap<String, Vec<core_document::Chord>>) {
+        self.action_keys = keys
+            .iter()
+            .filter_map(|(id, chords)| Some((id.clone(), chords.first()?.to_string())))
+            .collect();
+    }
+
+    /// The edited sketch's reference pictures, laid on its plane under
+    /// its lines.
+    /// Edges are being found in a reference picture.
+    fn busy(&self) -> bool {
+        self.tab.picture_edges.running()
+    }
+}
+
+impl BenchTools for SketchWorkbench {
+    fn tool_history(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        reply: core_document::ToolHistoryReply,
+    ) {
+        match reply {
+            core_document::ToolHistoryReply::Closed(entry) => self.tab.chain_links.closed(entry),
+            core_document::ToolHistoryReply::Undone { .. } => {
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    self.follow_history(ctx, &feature.sketch);
+                }
+            }
+        }
+    }
+
+    fn locks_view_to_plane(&self) -> bool {
+        true
+    }
+
+    fn shows_origin_planes(&self) -> bool {
+        self.tab.pending_creation.is_some() && self.tab.active_sketch_id.is_none()
+    }
+
+    fn takes_numeric_input(&self) -> bool {
+        self.tab.active_sketch_id.is_some()
+            && !ovp::fields_for(&self.tab.tool_state, self.tab.last_tool.as_deref()).is_empty()
+    }
+
+    fn takes_text_input(&self) -> bool {
+        self.tab.active_sketch_id.is_some() && self.tab.dim_capture.takes_text()
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer(ctx);
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        self.handle_input(event, active_tool, ctx)
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
@@ -1782,37 +1822,6 @@ impl Workbench for SketchWorkbench {
         }
     }
 
-    fn editing_feature(&self) -> Option<FeatureId> {
-        self.tab.active_sketch_id
-    }
-
-    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        // What a click left waiting is written as it stands.
-        self.store_corner(ctx, false);
-        self.discard_corner();
-        self.flush_draw_record(ctx);
-        if self.tab.active_sketch_id.is_some() {
-            self.tab.active_sketch_id = None;
-            self.tab.session_start = None;
-            self.tab.sketch_picker = None;
-            self.clear_interaction_state();
-            // Deselect the feature: with it still active the next input
-            // event would immediately re-enter editing via
-            // `sync_active_sketch_from_ctx`.
-            ctx.active_document_object = None;
-            ctx.log_info("Exited sketch editing mode");
-        } else {
-            ctx.log_warn("Not in sketch editing mode");
-        }
-    }
-
-    fn shortcuts_changed(&mut self, keys: &HashMap<String, Vec<core_document::Chord>>) {
-        self.action_keys = keys
-            .iter()
-            .filter_map(|(id, chords)| Some((id.clone(), chords.first()?.to_string())))
-            .collect();
-    }
-
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
         core_document::ViewportOutput {
             meshes: self.overlay_meshes(ctx, ctx.active_document_object),
@@ -1826,13 +1835,6 @@ impl Workbench for SketchWorkbench {
             view_grid: self.view_grid(ctx),
             ..Default::default()
         }
-    }
-
-    /// The edited sketch's reference pictures, laid on its plane under
-    /// its lines.
-    /// Edges are being found in a reference picture.
-    fn busy(&self) -> bool {
-        self.tab.picture_edges.running()
     }
 }
 

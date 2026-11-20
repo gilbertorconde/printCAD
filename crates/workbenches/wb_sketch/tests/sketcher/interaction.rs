@@ -8,7 +8,7 @@ use crate::{
     line_of, number_text, spline_of, view_proj, view_proj_from,
 };
 use core_document::{
-    BenchCommands, BenchPanels, Document, FeatureId, KeyCode, MarkKind, MouseButton,
+    BenchCommands, BenchPanels, BenchTools, Document, FeatureId, KeyCode, MarkKind, MouseButton,
     ScreenSpaceMark, SketchPalette, ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
@@ -4290,7 +4290,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
 /// from the toolbar the way a user makes them.
 mod curve_constraints {
     use super::*;
-    use core_document::BenchParameters;
+    use core_document::{BenchParameters, BenchTools};
     use sketch_model::sketch::{ConstraintKind, X_AXIS_ID};
 
     /// Draw an arc about `(cx, cy)` from `radius` right of it, a quarter

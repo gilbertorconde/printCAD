@@ -3998,7 +3998,7 @@ fn made_on_picked_after(
     let key = WorkbenchInputEvent::KeyPress {
         key: core_document::KeyCode::A,
     };
-    core_document::Workbench::on_input(&mut bench, &key, Some(tool), &mut ctx);
+    core_document::BenchTools::on_input(&mut bench, &key, Some(tool), &mut ctx);
     let made = ctx.active_document_object.expect("the feature");
     let feature = DesignFeature::from_json(doc.get_feature_data(made).unwrap()).unwrap();
     (built(&doc, body).volume(), feature)

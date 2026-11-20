@@ -78,8 +78,8 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, Document,
-    FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
+    Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
     WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
     base_tool_id,
 };
@@ -414,48 +414,12 @@ impl Workbench for DesignWorkbench {
         self.register_tools(context);
     }
 
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        match base_tool_id(tool_id) {
-            "design.scan_deviation" => self.tab.scan_deviation,
-            id @ ("design.read_hole" | "design.read_thread" | "design.snap_to_scan") => {
-                self.tab.reading == Some(id)
-            }
-            _ => false,
-        }
-    }
-
     fn busy(&self) -> bool {
         self.tab.deviations.busy()
     }
 
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        core_document::ViewportOutput {
-            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
-            overlays: self.screen_overlays(ctx, ctx.active_document_object),
-            marks: self.screen_marks(ctx, ctx.active_document_object),
-            labels: self.screen_labels(ctx, ctx.active_document_object),
-            hud: self.viewport_hud(ctx),
-            scalar_maps: self.scalar_maps(ctx),
-            status: self.status_items(ctx),
-            ..Default::default()
-        }
-    }
-
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         ctx.log_info("Design workbench activated");
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        self.take_input(event, active_tool, ctx)
-    }
-
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.put_back_handle(ctx);
     }
 
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
@@ -479,6 +443,52 @@ impl Workbench for DesignWorkbench {
         }
     }
 
+    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
+        build::delete_feature(ctx.document, id)
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchTools for DesignWorkbench {
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        match base_tool_id(tool_id) {
+            "design.scan_deviation" => self.tab.scan_deviation,
+            id @ ("design.read_hole" | "design.read_thread" | "design.snap_to_scan") => {
+                self.tab.reading == Some(id)
+            }
+            _ => false,
+        }
+    }
+
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            overlays: self.screen_overlays(ctx, ctx.active_document_object),
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            hud: self.viewport_hud(ctx),
+            scalar_maps: self.scalar_maps(ctx),
+            status: self.status_items(ctx),
+            ..Default::default()
+        }
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        self.take_input(event, active_tool, ctx)
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.put_back_handle(ctx);
+    }
+
     /// While a view handle is held: what it sets, its steps and the key
     /// for the fine ones.
     /// Digits typed while a handle is held set its number.
@@ -493,14 +503,6 @@ impl Workbench for DesignWorkbench {
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         self.tool_enabled(tool_id, ctx)
-    }
-
-    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
-        build::delete_feature(ctx.document, id)
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 

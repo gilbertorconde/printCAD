@@ -1177,6 +1177,7 @@ fn mesh_edge(mesh: &TriMesh, pick: &EdgePick) -> Option<FrozenEdge> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_document::BenchTools;
 
     /// A unit cube's top face as two triangles, a side as two more, with
     /// their kernel faces and the top's outline edges named.
@@ -1338,7 +1339,7 @@ mod tests {
     use crate::DesignWorkbench;
     use crate::feature::{ExtrudeDirection, ExtrudeMode};
     use crate::test_support::made_id as id_of;
-    use core_document::{CommandResult, Workbench};
+    use core_document::CommandResult;
     use serde_json::{Value, json};
 
     fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {

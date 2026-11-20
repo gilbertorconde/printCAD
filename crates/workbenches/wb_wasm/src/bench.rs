@@ -8,12 +8,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId,
-    Chord, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId, FeatureInfo,
-    FeatureNode, InputResult, MarkKind, MenuItem, MenuScope, OverlayMesh, Parameter, PropertyHints,
-    ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior,
-    ToolDescriptor, ToolHint, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    ActionDescriptor, BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, Chord, CommandArgs, CommandError, CommandResult, CommandSpec, Document,
+    FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem, MenuScope, OverlayMesh,
+    Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems,
+    TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::de::DeserializeOwned;
 
@@ -778,10 +778,6 @@ impl Workbench for WasmWorkbench {
         self.deliver_within(&mut inner, ctx, input, Budget::Long)
     }
 
-    fn has_viewport_strip(&self) -> bool {
-        !self.inner().frame.transport.is_empty()
-    }
-
     /// The cosmetic threads the body's plan declares for the feature, each
     /// a helix over its round face.
     fn passive_geometry(
@@ -827,14 +823,6 @@ impl Workbench for WasmWorkbench {
         })
     }
 
-    fn locks_view_to_plane(&self) -> bool {
-        self.inner().frame.locks_view
-    }
-
-    fn takes_numeric_input(&self) -> bool {
-        self.inner().frame.numeric_input
-    }
-
     fn busy(&self) -> bool {
         let inner = self.inner();
         inner.guest.jobs.running()
@@ -874,35 +862,6 @@ impl Workbench for WasmWorkbench {
         self.deliver_finished_jobs(&mut inner, ctx);
     }
 
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        let Some((event, position)) = convert::event(event) else {
-            return InputResult::ignored();
-        };
-        let input = bench_api::Input {
-            event,
-            tool: active_tool.map(str::to_string),
-            pointer: convert::pointer(ctx, position),
-        };
-        let mut inner = self.inner();
-        match input.event {
-            bench_api::Event::Press { button } if !inner.held.contains(&button) => {
-                inner.held.push(button)
-            }
-            bench_api::Event::Release { button } => inner.held.retain(|b| *b != button),
-            _ => {}
-        }
-        if self.deliver(&mut inner, ctx, input) {
-            InputResult::consumed()
-        } else {
-            InputResult::redraw_only()
-        }
-    }
-
     fn files_opened(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -938,23 +897,6 @@ impl Workbench for WasmWorkbench {
         self.deliver_within(&mut inner, ctx, input, Budget::Long);
     }
 
-    /// What the frame shows, from one look at the package: refreshed
-    /// once, its regions worked out once.
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        let mut inner = self.inner();
-        self.refresh(&mut inner, ctx);
-        let regions = Self::regions(&mut inner, ctx);
-        core_document::ViewportOutput {
-            meshes: Self::overlay_meshes(&mut inner, &regions),
-            overlays: Self::screen_overlays(&inner, &regions, ctx),
-            marks: self.screen_marks(&inner, ctx),
-            labels: Self::screen_labels(&inner, ctx),
-            hud: self.viewport_hud(&inner),
-            status: Self::status_items(&inner),
-            ..Default::default()
-        }
-    }
-
     fn editing_feature(&self) -> Option<FeatureId> {
         let inner = self.inner();
         inner
@@ -962,19 +904,6 @@ impl Workbench for WasmWorkbench {
             .editing
             .as_deref()
             .and_then(|id| crate::host::feature_id(id).ok())
-    }
-
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        self.inner().frame.toggled.iter().any(|t| t == tool_id)
-    }
-
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        let mut inner = self.inner();
-        !self
-            .refresh(&mut inner, ctx)
-            .disabled
-            .iter()
-            .any(|t| t == tool_id)
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -987,20 +916,6 @@ impl Workbench for WasmWorkbench {
         };
         let mut inner = self.inner();
         self.deliver(&mut inner, ctx, input);
-    }
-
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        // The release the window will not see: the package hears it as
-        // one, where the pointer last was.
-        let mut inner = self.inner();
-        for button in std::mem::take(&mut inner.held) {
-            let input = bench_api::Input {
-                event: bench_api::Event::Release { button },
-                tool: None,
-                pointer: convert::pointer(ctx, None),
-            };
-            self.deliver(&mut inner, ctx, input);
-        }
     }
 
     fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
@@ -1055,6 +970,93 @@ impl Workbench for WasmWorkbench {
             invalidate_owned(ctx.document, &self.package, body);
         }
         removed
+    }
+}
+
+impl BenchTools for WasmWorkbench {
+    fn has_viewport_strip(&self) -> bool {
+        !self.inner().frame.transport.is_empty()
+    }
+
+    fn locks_view_to_plane(&self) -> bool {
+        self.inner().frame.locks_view
+    }
+
+    fn takes_numeric_input(&self) -> bool {
+        self.inner().frame.numeric_input
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        let Some((event, position)) = convert::event(event) else {
+            return InputResult::ignored();
+        };
+        let input = bench_api::Input {
+            event,
+            tool: active_tool.map(str::to_string),
+            pointer: convert::pointer(ctx, position),
+        };
+        let mut inner = self.inner();
+        match input.event {
+            bench_api::Event::Press { button } if !inner.held.contains(&button) => {
+                inner.held.push(button)
+            }
+            bench_api::Event::Release { button } => inner.held.retain(|b| *b != button),
+            _ => {}
+        }
+        if self.deliver(&mut inner, ctx, input) {
+            InputResult::consumed()
+        } else {
+            InputResult::redraw_only()
+        }
+    }
+
+    /// What the frame shows, from one look at the package: refreshed
+    /// once, its regions worked out once.
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        let mut inner = self.inner();
+        self.refresh(&mut inner, ctx);
+        let regions = Self::regions(&mut inner, ctx);
+        core_document::ViewportOutput {
+            meshes: Self::overlay_meshes(&mut inner, &regions),
+            overlays: Self::screen_overlays(&inner, &regions, ctx),
+            marks: self.screen_marks(&inner, ctx),
+            labels: Self::screen_labels(&inner, ctx),
+            hud: self.viewport_hud(&inner),
+            status: Self::status_items(&inner),
+            ..Default::default()
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        self.inner().frame.toggled.iter().any(|t| t == tool_id)
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        let mut inner = self.inner();
+        !self
+            .refresh(&mut inner, ctx)
+            .disabled
+            .iter()
+            .any(|t| t == tool_id)
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        // The release the window will not see: the package hears it as
+        // one, where the pointer last was.
+        let mut inner = self.inner();
+        for button in std::mem::take(&mut inner.held) {
+            let input = bench_api::Input {
+                event: bench_api::Event::Release { button },
+                tool: None,
+                pointer: convert::pointer(ctx, None),
+            };
+            self.deliver(&mut inner, ctx, input);
+        }
     }
 }
 

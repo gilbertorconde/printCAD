@@ -46,9 +46,10 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BodyId, BodyPlacement,
-    FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
+    BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
@@ -522,20 +523,6 @@ impl AssemblyWorkbench {
 }
 
 impl Workbench for AssemblyWorkbench {
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        core_document::ViewportOutput {
-            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
-            overlays: self.screen_overlays(ctx, ctx.active_document_object),
-            polygons: self.screen_polygons(ctx, ctx.active_document_object),
-            marks: self.screen_marks(ctx, ctx.active_document_object),
-            labels: self.screen_labels(ctx, ctx.active_document_object),
-            hud: self.viewport_hud(ctx),
-            status: self.status_items(ctx),
-            faded: self.faded_bodies(ctx),
-            ..Default::default()
-        }
-    }
-
     /// The joints of other bodies that hold them to `body`.
     fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
         joints(document)
@@ -652,34 +639,6 @@ impl Workbench for AssemblyWorkbench {
             || self.panel_running()
     }
 
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        tool_id == "asm.collisions" && !self.tab.collisions_off
-    }
-
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        self.tool_enabled(tool_id, ctx)
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        let result = self.input_turn(event, tool, ctx);
-        self.note_left(ctx.document);
-        result
-    }
-
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        if let Some(body) = self.handled_body(ctx) {
-            self.tab.handles.cancel(ctx, body);
-        }
-        self.tab.handles.reset();
-        self.drop_grab(ctx);
-        self.note_left(ctx.document);
-    }
-
     fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.frame_turn(dt, ctx);
         self.note_left(ctx.document);
@@ -711,6 +670,50 @@ impl Workbench for AssemblyWorkbench {
         self.tab.measuring = None;
         self.put_back_explosion(ctx);
         self.tab.task = None;
+    }
+}
+
+impl BenchTools for AssemblyWorkbench {
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            overlays: self.screen_overlays(ctx, ctx.active_document_object),
+            polygons: self.screen_polygons(ctx, ctx.active_document_object),
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            hud: self.viewport_hud(ctx),
+            status: self.status_items(ctx),
+            faded: self.faded_bodies(ctx),
+            ..Default::default()
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        tool_id == "asm.collisions" && !self.tab.collisions_off
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        self.tool_enabled(tool_id, ctx)
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        let result = self.input_turn(event, tool, ctx);
+        self.note_left(ctx.document);
+        result
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(body) = self.handled_body(ctx) {
+            self.tab.handles.cancel(ctx, body);
+        }
+        self.tab.handles.reset();
+        self.drop_grab(ctx);
+        self.note_left(ctx.document);
     }
 }
 

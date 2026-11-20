@@ -1722,6 +1722,8 @@ mod tests {
         }
     }
 
+    impl core_document::BenchTools for Counted {}
+
     impl core_document::BenchPanels for Counted {}
 
     impl core_document::BenchBuild for Counted {}
