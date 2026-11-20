@@ -58,8 +58,8 @@ it too); a pattern cannot repeat such a feature.
 
 It cuts against its sketch's normal: from a sketch at the top face's height it
 digs down into the solid. From a sketch on the bottom (XY at 0 under a pad) it
-cuts away from the material and removes nothing, without an error; `reversed =
-true` turns it.
+cuts away from the material and removes nothing: it builds, and its `warning`
+in `pc.doc.feature` says so; `reversed = true` turns it.
 
 `through_all = true` cuts through everything; else `depth`, 5 mm when left
 out.
@@ -84,6 +84,25 @@ assert(#pc.doc.rebuild() == 0, "the pocket builds")
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (40 * 30 - 10 * 10) * 5) < 1e-3, volume)
 assert(#pc.doc.faces{body = body} == 10, "six faces and four walls")
+```
+
+### A pocket pointing away from the material is warned of
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local under = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.rect{sketch = under, x = 15, y = 10, width = 10, height = 10}
+local pocket = pc.design.pocket{sketch = under, depth = 2}
+assert(#pc.doc.rebuild() == 0, "it builds")
+local warning = pc.doc.feature{id = pocket}.warning
+assert(warning:find("this pocket removes nothing", 1, true), warning)
+assert(math.abs(pc.doc.measure{body = body}.volume - 40 * 30 * 5) < 1e-3)
+pc.design.set{feature = pocket, reversed = true}
+assert(#pc.doc.rebuild() == 0)
+assert(pc.doc.feature{id = pocket}.warning == nil, "turned, it cuts")
 ```
 
 ## design.revolve
@@ -406,7 +425,8 @@ that sketch.
 
 It drills against the sketch's normal, `depth` deep (10 mm) or `through_all =
 true`. A sketch on the bottom of a pad drills away from the material and
-removes nothing, without an error; `reversed = true` turns it.
+removes nothing: it builds with a `warning` saying so; `reversed = true` turns
+it.
 
 Counterbores, countersinks and threads are fields too (`cut`, `threaded`,
 `thread`): `describe` and `help("design.hole")` list every field with its
@@ -965,7 +985,7 @@ body's last feature that is not a dress-up, a pattern, a mirror or a boolean.
 It is refused in a body with no solid feature yet.
 
 A copy that lands outside the solid (a pocket repeated past the material)
-changes nothing, without an error.
+changes nothing; one whose every copy does builds with a `warning` saying so.
 
 `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then
 each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own

@@ -1398,6 +1398,7 @@ impl Document {
             self.set_feature_error(id, None);
             if let Some(node) = self.feature_tree.get_node_mut(id) {
                 node.warning = None;
+                node.unchanged = None;
             }
         }
     }
@@ -1405,8 +1406,9 @@ impl Document {
     /// Keep a build's warnings on the features they are about: an op's on
     /// the feature `op_features` names for it, a probe's or projection's
     /// on the feature that asked it (a datum on a face, a sketch on one or
-    /// taking its edges). Several on one feature are joined. Derived
-    /// state, as [`Self::set_feature_error`].
+    /// taking its edges). Several on one feature are joined; one saying the
+    /// feature changed nothing is kept apart, as `FeatureNode::unchanged`.
+    /// Derived state, as [`Self::set_feature_error`].
     pub fn store_build_warnings(
         &mut self,
         op_features: &[FeatureId],
@@ -1417,7 +1419,7 @@ impl Document {
         let owner = |features: Vec<FeatureId>, warnings: &[kernel_api::OpWarning]| {
             warnings
                 .iter()
-                .filter_map(|w| Some((*features.get(w.op_index)?, w.message.clone())))
+                .filter_map(|w| Some((*features.get(w.op_index)?, w.clone())))
                 .collect::<Vec<_>>()
         };
         let warned = [
@@ -1431,8 +1433,14 @@ impl Document {
                 &result.projection_warnings,
             ),
         ];
-        for (id, message) in warned.into_iter().flatten() {
-            self.add_feature_warning(id, &message);
+        for (id, warning) in warned.into_iter().flatten() {
+            if warning.unchanged {
+                if let Some(node) = self.feature_tree.get_node_mut(id) {
+                    node.unchanged = Some(warning.message.clone());
+                }
+            } else {
+                self.add_feature_warning(id, &warning.message);
+            }
         }
     }
 

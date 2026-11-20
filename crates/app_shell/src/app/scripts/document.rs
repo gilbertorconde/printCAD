@@ -267,7 +267,7 @@ pub(crate) fn document_command(
                             "visible": n.visible,
                             "suppressed": n.suppressed,
                             "error": n.error,
-                            "warning": n.warning,
+                            "warning": registry.feature_warning(document, None, n.id, n),
                         })
                     })
                     .collect(),
@@ -285,7 +285,7 @@ pub(crate) fn document_command(
                 "visible": node.visible,
                 "suppressed": node.suppressed,
                 "error": node.error,
-                "warning": node.warning,
+                "warning": registry.feature_warning(document, None, node.id, node),
                 "fields": node.data,
                 "unset": unset_fields(&node.data),
                 // What it is built from now, where that is not what is kept:

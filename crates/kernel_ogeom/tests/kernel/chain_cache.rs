@@ -139,6 +139,7 @@ fn same(fresh: &SolidBuildResult, cached: &SolidBuildResult, what: &str) {
         fresh.mesh.edges, cached.mesh.edges,
         "{what}: the same outline"
     );
+    assert_eq!(fresh.warnings, cached.warnings, "{what}: the same warnings");
 }
 
 #[test]
@@ -241,4 +242,34 @@ fn skipping_a_pattern_s_original_builds_as_from_scratch() {
         let (fresh, cached) = part.build(&mut cache);
         same(&fresh, &cached, what);
     }
+}
+
+/// A boss turned down into the plate adds nothing, and a resumed build
+/// warns of it as a build from scratch does: after an edit of it that
+/// leaves it buried, whose solid is the one before and whose rest is
+/// taken as built, and after an edit past it.
+#[test]
+fn a_resumed_build_warns_of_a_feature_that_changes_nothing() {
+    let mut part = Part::new();
+    let mut cache = ChainCache::keeping_every_edit();
+    part.build(&mut cache);
+    part.run("pc.design.set{feature = boss, reversed = true}");
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "the boss buried");
+    let unchanged = |r: &SolidBuildResult| r.warnings.iter().filter(|w| w.unchanged).count();
+    assert_eq!(unchanged(&fresh), 1, "{:?}", fresh.warnings);
+
+    let boss = part.id("boss");
+    part.set(boss, "length", 4.0);
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "still buried");
+    assert!(cache.reused(), "the same solid: the rest as built");
+    assert_eq!(unchanged(&cached), 1);
+
+    let last = part.id("last");
+    part.set(last, "length", 4.0);
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "an edit past it");
+    assert!(cache.resumed() > 0, "resumed");
+    assert_eq!(unchanged(&cached), 1);
 }

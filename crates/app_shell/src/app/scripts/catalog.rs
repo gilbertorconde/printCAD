@@ -45,12 +45,12 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .read_only(),
         CommandSpec::new("doc.features", "List the features in build order")
             .optional("body", ParamKind::Id, "Only this body's")
-            .returns("a list of {id, name, kind, body, visible, suppressed, error}")
+            .returns("a list of {id, name, kind, body, visible, suppressed, error, warning}")
             .read_only(),
         CommandSpec::new("doc.feature", "A feature with its fields")
             .param("id", ParamKind::Id, "")
             .returns(
-                "{id, name, kind, body, visible, suppressed, error, fields, unset, values}: \
+                "{id, name, kind, body, visible, suppressed, error, warning, fields, unset, values}: \
                  unset names the fields holding no value, which fields leaves out; values \
                  is the data as the feature is built now (formulas worked out, a plane \
                  following what it stands on), given when it differs from fields",

@@ -33,6 +33,7 @@ mod rounds;
 pub use queries::{OgeomQueries, QUERIES};
 pub mod progress;
 mod tess;
+mod unchanged;
 
 pub use progress::CONTEXT_PREFIX;
 // The host installs a progress watch around each job; re-exported here so

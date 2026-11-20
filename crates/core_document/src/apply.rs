@@ -589,6 +589,7 @@ impl Document {
                     error: None,
                     refused_edges: Default::default(),
                     warning: None,
+                    unchanged: None,
                     data: data.clone(),
                     data_revision: Default::default(),
                     formulas: formulas.clone(),

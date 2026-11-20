@@ -754,7 +754,10 @@ is in [AI agents](AI.md).
   built** (a feature before it fails), **Formula** (a formula it reads
   fails), **Input broken** (a feature it reads fails), **Needs package**,
   **Warning** (its bench warns of something, such as projections whose
-  source is gone), **Broken shape** or **Stale link**. Hover the chip for
+  source is gone, a face found by where it was picked once its name was
+  lost, or a feature that adds or removes material and left the solid as
+  it was: a pocket pointing away from the material, a pad buried inside
+  it, a copy landing past it), **Broken shape** or **Stale link**. Hover the chip for
   the whole reason; a click opens it in a window you can copy from. The
   tree's header counts the problems, and a click on the count selects the
   next one, opening the branches above it and scrolling to it.

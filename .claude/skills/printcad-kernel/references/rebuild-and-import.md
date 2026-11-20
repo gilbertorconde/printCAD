@@ -17,6 +17,19 @@ history before it and `SolidOp::size_limit_key`), answered as
 Design's `size_limit.rs` reads it while the key holds, and its handle
 (`Handle::stop`) and fields (`Quantity::drag_max`) stop a drag there.
 
+**A feature that changes nothing.** The chain compares the solid before a
+feature's ops (one run of one tag) with the solid after them when one of
+them adds or removes material (`unchanged.rs`: `said_of` says which, a
+withheld original never; `left_alone` matches every face to one of the
+input's by surface kind and box, a split piece inside its whole counting,
+and measures the volume only then). Such a feature builds, and its last op
+gets an `OpWarning` with `unchanged` set, its message the predicate ("removes
+nothing: it may point away from the material"). `Document::store_build_warnings`
+keeps it apart as `FeatureNode::unchanged`, and `DocumentService::feature_warning`
+puts the feature's kind before it ("this pocket removes nothing: ...") for
+the tree and the scripts' `warning`. The `ChainCache`'s saved states carry
+the feature's starting solid so a resumed build warns alike.
+
 Recompute loop: workbench edits document → features marked dirty via the
 dependency DAG → `drive_part_recompute` (each frame) asks every bench for
 its `rebuild_jobs` (a `BuildPlan` of `SolidOp`s per body, the bench settling
