@@ -168,7 +168,9 @@ hacks, no silently degraded feature). Instead:
   keyed by the socket, and an untitled tab's socket carries the tab's id
   (`socket_path_for_untitled(tab)`), so two unsaved documents never share
   a log; one file for all of them meant the first to save took the other's
-  history. The outbox goes to the server at the end of each frame, but
+  history. An untitled tab's first save hands its log to the file's daemon
+  (`AdoptLog`, no `Leave` to the untitled one); a crash leaves it for the
+  start page (`RestoreLog` into a new untitled tab). The outbox goes to the server at the end of each frame, but
   the tab on screen keeps it while a mouse button is held, so a drag's
   whole-payload writes reach the server and peers as one op on release
   (`DocumentSession::send_outbox_after_frame`); everything that ends a

@@ -18,8 +18,14 @@ struct TestHome {
 
 impl TestHome {
     fn new(tag: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("printcad_daemon_{tag}_{}", std::process::id()));
+        // macOS keeps a socket's whole path under about 104 bytes and its
+        // temp folder is deep, so the tests' sockets sit under /tmp there.
+        let base = if cfg!(target_os = "macos") {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let dir = base.join(format!("printcad_daemon_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("test dir");
         Self { dir }
@@ -740,8 +746,13 @@ struct Replica {
 
 impl Replica {
     fn join(home: &TestHome, doc: Document) -> Self {
+        Self::join_at(&home.socket(), doc)
+    }
+
+    /// Join the daemon on `socket`, as an untitled tab joins its own.
+    fn join_at(socket: &std::path::Path, doc: Document) -> Self {
         Self {
-            client: DaemonClient::spawn_or_connect(&home.socket()).expect("client"),
+            client: DaemonClient::spawn_or_connect(socket).expect("client"),
             inbox: Inbox::default(),
             doc,
             seen: 0,
@@ -1169,8 +1180,14 @@ fn a_restart_that_lost_the_unsaved_edits_says_so() {
 
 /// Wait until the daemon on `home` has exited with its last client.
 fn wait_for_socket_gone(home: &TestHome) {
+    wait_for_gone(&home.socket());
+}
+
+/// Wait until the daemon on `socket` has exited with its last client.
+/// Asked of the entry itself, as `TestHome::socket_present` does.
+fn wait_for_gone(socket: &std::path::Path) {
     let deadline = Instant::now() + PATIENCE;
-    while home.socket_present() {
+    while std::fs::symlink_metadata(socket).is_ok() {
         assert!(Instant::now() < deadline, "the daemon never exited");
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -1294,6 +1311,111 @@ fn an_untitled_log_goes_with_a_clean_leave() {
         std::fs::symlink_metadata(&unhomed).is_err(),
         "gone on a clean leave"
     );
+}
+
+/// An untitled tab's first save goes to its file's daemon, which takes
+/// up the log the tab's own daemon kept: the edits made before the save
+/// stand in the document's log ahead of the save's mark, which counts them
+/// saved, and are gone from where they were.
+#[test]
+fn an_untitled_documents_first_save_takes_its_log_along() {
+    daemon_env();
+    let home = TestHome::new("first_save");
+    let untitled = home.dir.join("untitled-first.sock");
+    let unhomed = doc_server::unhomed_oplog_for(&untitled);
+    let mut alice = Replica::join_at(&untitled, Document::new("Untitled"));
+    alice.doc.create_body(Some("before the save".into()));
+    alice.send();
+    alice.settle();
+    assert!(unhomed.is_file(), "the edit is logged");
+
+    // As the app moves an untitled tab to its file's daemon: no Leave, so
+    // the untitled log stays for the save to take.
+    alice.client = DaemonClient::spawn_or_connect(&home.socket()).expect("file's daemon");
+    alice.inbox = Inbox::default();
+    alice.sent = 0;
+    alice.seen = 0;
+    alice.client.send(ClientMessage::AdoptLog {
+        socket: untitled.clone(),
+    });
+    alice.save(&home.document());
+
+    let log = std::fs::read_to_string(home.log()).expect("the document's log");
+    let edit = log
+        .find("before the save")
+        .expect("the untitled edit is in the document's log");
+    let mark = log.rfind("\"unsaved\"").expect("the save's mark");
+    assert!(edit < mark, "ahead of the save's mark");
+    assert!(std::fs::symlink_metadata(&unhomed).is_err(), "taken away");
+    assert!(std::fs::symlink_metadata(unhomed.with_extension("socket")).is_err());
+    alice.leave();
+    wait_for_socket_gone(&home);
+    let bob = Replica::open(&home, &home.document());
+    assert_eq!(bob.offered, 0, "the save holds the untitled edits");
+}
+
+/// An untitled session that crashed leaves its daemon's log, offered for
+/// recovery. Restored on a new untitled tab's daemon, its edits come back
+/// to that tab through the order and the log moves into the new daemon's,
+/// where a crash would keep it again; it is offered no more.
+#[test]
+fn a_crashed_untitled_sessions_log_comes_back_in_a_new_tab() {
+    daemon_env();
+    let home = TestHome::new("untitled_crash");
+    let crashed = home.dir.join("untitled-crashed.sock");
+    let offered = |socket: &std::path::Path| {
+        doc_server::daemon::untitled_logs()
+            .iter()
+            .any(|log| log.socket == socket)
+    };
+    let mut alice = Replica::join_at(&crashed, Document::new("Untitled"));
+    alice.doc.create_body(Some("kept".into()));
+    alice.send();
+    alice.settle();
+    assert!(!offered(&crashed), "not while its daemon runs");
+    drop(alice);
+    wait_for_gone(&crashed);
+    assert!(offered(&crashed), "left by a crash");
+
+    let fresh = home.dir.join("untitled-fresh.sock");
+    let mut bob = Replica::join_at(&fresh, Document::new("Untitled"));
+    bob.client.send(ClientMessage::RestoreLog {
+        socket: crashed.clone(),
+    });
+    bob.take_until("the restored edit", |r| bodies_named(&r.doc, "kept") == 1);
+    assert!(!offered(&crashed), "offered once");
+    assert!(std::fs::symlink_metadata(doc_server::unhomed_oplog_for(&crashed)).is_err());
+    let moved = std::fs::read_to_string(doc_server::unhomed_oplog_for(&fresh)).expect("log");
+    assert!(moved.contains("kept"), "in the new tab's log");
+    bob.leave();
+    wait_for_gone(&fresh);
+}
+
+/// An untitled log that begins at a document put in place (a recovered
+/// copy) cannot bring its session back alone, so it is not offered, and
+/// letting a log go takes it away with its note.
+#[test]
+fn an_untitled_log_after_a_rebase_is_not_offered_and_discard_removes_it() {
+    daemon_env();
+    let home = TestHome::new("untitled_rebased");
+    let socket = home.dir.join("untitled-rebased.sock");
+    let unhomed = doc_server::unhomed_oplog_for(&socket);
+    let mut alice = Replica::join_at(&socket, Document::new("Untitled"));
+    alice.client.send(ClientMessage::Rebase);
+    alice.doc.create_body(Some("on the copy".into()));
+    alice.send();
+    alice.settle();
+    drop(alice);
+    wait_for_gone(&socket);
+    assert!(unhomed.is_file(), "kept after a crash");
+    assert!(
+        !doc_server::daemon::untitled_logs()
+            .iter()
+            .any(|log| log.socket == socket)
+    );
+    doc_server::daemon::discard_untitled_log(&socket);
+    assert!(std::fs::symlink_metadata(&unhomed).is_err());
+    assert!(std::fs::symlink_metadata(unhomed.with_extension("socket")).is_err());
 }
 
 /// A log kept beside its document, as older versions kept it, moves into

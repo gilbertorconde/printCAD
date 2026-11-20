@@ -40,10 +40,24 @@ pub fn socket_path_for(document: &std::path::Path) -> PathBuf {
 /// gives the document a real identity, and never shared by two untitled
 /// tabs of one app.
 pub fn socket_path_for_untitled(tab: uuid::Uuid) -> PathBuf {
-    let mut bytes = Vec::from(std::process::id().to_le_bytes());
+    socket_path_for_untitled_of(std::process::id(), tab)
+}
+
+/// The socket untitled tab `tab` of process `pid` had: how a recovery
+/// copy that process left finds the log its tab's daemon kept.
+pub fn socket_path_for_untitled_of(pid: u32, tab: uuid::Uuid) -> PathBuf {
+    let mut bytes = Vec::from(pid.to_le_bytes());
     bytes.extend_from_slice(tab.as_bytes());
     let key = local_ipc::stable_key(bytes);
     runtime_dir().join(format!("untitled-{key:016x}.sock"))
+}
+
+/// Whether `socket` is an untitled tab's: no daemon after the one that
+/// served it ever listens there again.
+pub fn is_untitled_socket(socket: &std::path::Path) -> bool {
+    socket
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with("untitled-"))
 }
 
 /// Hash the platform's path units without lossy text conversion or Rust's Hash encoding.
@@ -72,6 +86,7 @@ pub fn unhomed_oplog_for(socket: &std::path::Path) -> PathBuf {
     runtime_dir().join(format!("unhomed-{:016x}.oplog.jsonl", path_key(socket)))
 }
 
+/// Where the logs of daemons whose documents have no file are kept.
 pub(crate) fn runtime_dir_for_logs() -> PathBuf {
     runtime_dir()
 }

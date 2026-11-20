@@ -323,11 +323,16 @@ fn recover_section(
                             .font(sans_medium(FONT_MD))
                             .color(TEXT1),
                     );
+                    use crate::app::recovery::Source;
                     let whence = match &copy.file {
-                        Some(file) if copy.from_log => format!(
+                        Some(file) if copy.source == Source::DocumentLog => format!(
                             "Unsaved edits, {} · {}",
                             humanize_age(copy.saved_ms, now).to_lowercase(),
                             file.display()
+                        ),
+                        None if matches!(copy.source, Source::UntitledLog { .. }) => format!(
+                            "Unsaved edits, {} · never saved",
+                            humanize_age(copy.saved_ms, now).to_lowercase()
                         ),
                         Some(file) => format!(
                             "Autosaved {} · {}",

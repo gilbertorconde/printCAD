@@ -6,6 +6,12 @@
 //! it back. Beside them it offers the documents whose op logs end with
 //! edits a session left unsaved (`doc_server::daemon::unsaved_logs`):
 //! Recover opens the document and brings them back through its server.
+//! An untitled tab's daemon keeps its log until the tab is saved or let
+//! go, so a crash leaves it too (`doc_server::daemon::untitled_logs`):
+//! Recover brings its edits into a new untitled tab through that tab's
+//! server. The log holds every edit the daemon was sent, the tab's copy
+//! only those up to the last autosave, so where both are left the log
+//! stands for the two, and the copy goes with it.
 
 use std::path::{Path, PathBuf};
 
@@ -27,13 +33,26 @@ struct Note {
 /// A copy a crash left, which the start page offers back.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Recoverable {
-    /// The copy, or for edits in a log, the document itself.
+    /// What names it: the copy, the document whose log holds the edits,
+    /// or the socket of the untitled tab's daemon that kept them.
     pub copy: PathBuf,
     pub name: String,
     pub file: Option<PathBuf>,
     pub saved_ms: u64,
-    /// Unsaved edits the document's op log holds, not a copy.
-    pub from_log: bool,
+    pub source: Source,
+}
+
+/// Where the work a crash left is kept.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Source {
+    /// An autosave copy. `untitled` is the socket its tab had while it had
+    /// no file, which names the log its daemon kept.
+    Copy { untitled: Option<PathBuf> },
+    /// Unsaved edits the document's op log holds.
+    DocumentLog,
+    /// The log an untitled tab's daemon kept. `copy_too` is that tab's
+    /// autosave copy, which goes with it.
+    UntitledLog { copy_too: Option<PathBuf> },
 }
 
 /// Where copies go: the app's data folder, else the temp folder.
@@ -107,14 +126,39 @@ fn running(pid: u32) -> bool {
 /// The copies left by processes no longer running and the documents whose
 /// logs hold unsaved edits, the latest first.
 pub(crate) fn left_behind() -> Vec<Recoverable> {
-    with_logs(left_behind_in(&dir()), doc_server::daemon::unsaved_logs())
+    with_logs(
+        left_behind_in(&dir()),
+        doc_server::daemon::unsaved_logs(),
+        doc_server::daemon::untitled_logs(),
+    )
 }
 
-/// `copies` with the documents `logs` names, the latest first.
+/// `copies` with the documents `logs` names and the untitled sessions'
+/// logs `untitled`, each standing for its tab's copy, the latest first.
 fn with_logs(
     mut copies: Vec<Recoverable>,
     logs: Vec<doc_server::daemon::UnsavedLog>,
+    untitled: Vec<doc_server::daemon::UntitledLog>,
 ) -> Vec<Recoverable> {
+    for log in untitled {
+        let copy = copies
+            .iter()
+            .position(|copy| {
+                matches!(&copy.source, Source::Copy { untitled: Some(socket) } if *socket == log.socket)
+            })
+            .map(|at| copies.remove(at));
+        copies.push(Recoverable {
+            name: copy
+                .as_ref()
+                .map_or_else(|| "Untitled".to_string(), |copy| copy.name.clone()),
+            copy: log.socket,
+            file: None,
+            saved_ms: log.modified_ms,
+            source: Source::UntitledLog {
+                copy_too: copy.map(|copy| copy.copy),
+            },
+        });
+    }
     copies.extend(logs.into_iter().map(|log| {
         Recoverable {
             name: log
@@ -128,7 +172,7 @@ fn with_logs(
             file: Some(log.document.clone()),
             copy: log.document,
             saved_ms: log.modified_ms,
-            from_log: true,
+            source: Source::DocumentLog,
         }
     }));
     copies.sort_by_key(|r| std::cmp::Reverse(r.saved_ms));
@@ -143,12 +187,18 @@ fn left_behind_in(dir: &Path) -> Vec<Recoverable> {
             let note: Note =
                 serde_json::from_slice(&crate::platform::read(&note_path).ok()?).ok()?;
             let copy = note_path.with_extension("prtcad");
+            let untitled = note
+                .file
+                .is_none()
+                .then(|| copy.file_stem()?.to_str()?.parse::<Uuid>().ok())
+                .flatten()
+                .map(|tab| doc_server::socket_path_for_untitled_of(note.pid, tab));
             (crate::platform::exists(&copy) && !running(note.pid)).then_some(Recoverable {
                 copy,
                 name: note.name,
                 file: note.file,
                 saved_ms: note.saved_ms,
-                from_log: false,
+                source: Source::Copy { untitled },
             })
         })
         .collect();
@@ -226,13 +276,14 @@ mod tests {
                 name: "copy".into(),
                 file: None,
                 saved_ms: u64::MAX,
-                from_log: false,
+                source: Source::Copy { untitled: None },
             }],
             doc_server::daemon::unsaved_logs_in(&dir),
+            Vec::new(),
         );
         let names: Vec<(&str, bool)> = offered
             .iter()
-            .map(|r| (r.name.as_str(), r.from_log))
+            .map(|r| (r.name.as_str(), r.source == Source::DocumentLog))
             .collect();
         assert_eq!(names.len(), 3, "{names:?}");
         assert_eq!(names[0], ("copy", false));
@@ -240,8 +291,66 @@ mod tests {
         assert!(
             offered
                 .iter()
-                .all(|r| !r.from_log || r.file == Some(r.copy.clone()))
+                .all(|r| r.source != Source::DocumentLog || r.file == Some(r.copy.clone()))
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An untitled tab's copy and the log its daemon kept are one piece of
+    /// work: offered once, as the log, under the copy's name, with the copy
+    /// going along. A log with no copy is offered as an untitled session,
+    /// and another tab's copy stays a copy.
+    #[test]
+    fn an_untitled_tabs_log_stands_for_its_copy() {
+        let dir = std::env::temp_dir().join(format!("printcad-recovery-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid = u32::MAX - 1;
+        let write = |tab: Uuid, name: &str| {
+            let copy = dir.join(format!("{tab}.prtcad"));
+            std::fs::write(&copy, b"copy").unwrap();
+            let note = Note {
+                name: name.to_string(),
+                file: None,
+                pid,
+                saved_ms: 1,
+            };
+            std::fs::write(note_of(&copy), serde_json::to_vec(&note).unwrap()).unwrap();
+            copy
+        };
+        let (logged, alone) = (Uuid::new_v4(), Uuid::new_v4());
+        let logged_copy = write(logged, "Bracket");
+        write(alone, "Alone");
+        let log = |socket: PathBuf| doc_server::daemon::UntitledLog {
+            socket,
+            modified_ms: 2,
+        };
+        let crashed = doc_server::socket_path_for_untitled_of(pid, logged);
+        let no_copy = doc_server::socket_path_for_untitled_of(pid, Uuid::new_v4());
+
+        let offered = with_logs(
+            left_behind_in(&dir),
+            Vec::new(),
+            vec![log(crashed.clone()), log(no_copy.clone())],
+        );
+        let entry = |key: &Path| offered.iter().find(|r| r.copy == key).cloned();
+        assert_eq!(offered.len(), 3, "{offered:?}");
+        let session = entry(&crashed).expect("the log is offered");
+        assert_eq!(session.name, "Bracket");
+        assert_eq!(
+            session.source,
+            Source::UntitledLog {
+                copy_too: Some(logged_copy.clone())
+            }
+        );
+        assert!(
+            entry(&logged_copy).is_none(),
+            "the copy is not offered twice"
+        );
+        assert_eq!(entry(&no_copy).expect("a log alone").name, "Untitled");
+        assert!(matches!(
+            entry(&dir.join(format!("{alone}.prtcad"))).map(|r| r.source),
+            Some(Source::Copy { untitled: Some(_) })
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

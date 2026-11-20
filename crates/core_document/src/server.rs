@@ -31,7 +31,7 @@ use crate::op::DocumentOp;
 
 /// Version of the client↔server protocol; the `Hello` handshake refuses a
 /// mismatch loudly rather than misreading frames quietly.
-pub const SERVER_PROTOCOL_VERSION: u32 = 5;
+pub const SERVER_PROTOCOL_VERSION: u32 = 6;
 
 /// A message whose container bytes travel beside it rather than inside it.
 ///
@@ -130,6 +130,17 @@ pub enum ClientMessage {
     RestoreUnsaved,
     /// Let those edits go: the log no longer offers them.
     DiscardUnsaved,
+    /// The log the daemon on `socket` kept while its document had no file
+    /// (the tab's own, while it was untitled) joins this server's log at
+    /// the next save that writes, ahead of what this server logged, so the
+    /// document's log begins with its first edit. The save holds those
+    /// edits, so the log marks them saved.
+    AdoptLog { socket: PathBuf },
+    /// The edits in the log the daemon on `socket` kept while its document
+    /// had no file (an untitled tab's, left by a crash) come back: the log
+    /// joins this server's, and the server orders its edits after
+    /// everything so far and sends them to every client.
+    RestoreLog { socket: PathBuf },
     /// This client is done with the document: what it holds unsaved, it
     /// chose to let go. A client that leaves without it (one that crashed)
     /// leaves its unsaved edits in the log, for the next open to offer.

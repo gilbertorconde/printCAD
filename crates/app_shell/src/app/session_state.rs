@@ -267,6 +267,10 @@ pub(crate) struct Connection {
     /// document's own once it has a file, the tab's own for Untitled.
     /// Reconnects and connection switches aim here.
     pub socket: PathBuf,
+    /// The tab's untitled socket while its first save is under way on its
+    /// file's server: that server takes up the log the untitled daemon
+    /// kept (`ClientMessage::AdoptLog`) once the save writes.
+    pub untitled_log: Option<PathBuf>,
     /// Last reconnect attempt, so a dead daemon is retried at a gentle pace
     /// instead of every frame.
     pub last_reconnect: Option<Instant>,
@@ -756,6 +760,7 @@ impl Connection {
         Self {
             server,
             socket,
+            untitled_log: None,
             last_reconnect: None,
             remote_import_routes: HashMap::new(),
             peer_presence: HashMap::new(),

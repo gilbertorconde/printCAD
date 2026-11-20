@@ -309,6 +309,12 @@ impl PrintCadApp {
     /// on failure the old connection stays and the move is only logged: a
     /// working degraded connection beats a broken fresh one.
     pub(crate) fn switch_server_to(&mut self, socket: std::path::PathBuf) {
+        self.move_server(socket, false);
+    }
+
+    /// [`Self::switch_server_to`]; `first_save` when an untitled tab moves
+    /// to its file's server to be saved there (`DocumentSession::move_to_server`).
+    fn move_server(&mut self, socket: std::path::PathBuf, first_save: bool) {
         if self.session.connection.socket == socket
             && self.session.connection.server.status().connected
         {
@@ -320,17 +326,7 @@ impl PrintCadApp {
                 // A save still packing names the old file: it goes to the
                 // server that owns that file, not the new one.
                 self.send_every_save_packing();
-                self.session
-                    .connection
-                    .server
-                    .send(core_document::server::ClientMessage::Leave);
-                self.session.connection.server.flush();
-                self.session.connection.server = server;
-                self.session.connection.socket = socket;
-                self.session.connection_replaced();
-                // The old connection's peers are not this one's.
-                self.session.connection.peer_presence.clear();
-                self.session.connection.last_sent_presence = None;
+                self.session.move_to_server(server, socket, first_save);
                 app_log::info(format!(
                     "Document server: {}",
                     self.session.connection.server.name()
@@ -672,6 +668,8 @@ impl PrintCadApp {
                         self.autosave.saved.remove(&self.session.tab);
                         crate::app::recovery::forget(self.session.tab);
                     }
+                    // The server took up the untitled log with the write.
+                    self.session.connection.untitled_log = None;
                     self.session.file.path = Some(path.clone());
                     self.note_saved_file();
                     // Its chats are kept with the file it is saved as.
@@ -743,8 +741,11 @@ impl PrintCadApp {
                 // finishes; the server owns the write itself.
                 if self.session.file.path.as_deref() != Some(path) {
                     // Save As gives the document a new identity, and a new
-                    // daemon to own it.
-                    self.switch_server_to(crate::app::server::socket_for(path));
+                    // daemon to own it; an untitled tab's first save takes
+                    // the log its own daemon kept there.
+                    let first_save = self.session.file.path.is_none()
+                        && doc_server::is_untitled_socket(&self.session.connection.socket);
+                    self.move_server(crate::app::server::socket_for(path), first_save);
                 }
                 self.start_document_save(path, compression);
                 return Ok(());
@@ -1064,15 +1065,23 @@ impl PrintCadApp {
             return;
         };
         match job.result {
-            Ok(bytes) => self.session.connection.server.send(
-                core_document::server::ClientMessage::SaveDocument {
-                    path: job.path,
-                    bytes,
-                    at_seq: job.at_seq,
-                    seen_seq: Some(job.seen_seq),
-                    sent_batches: Some(job.sent_batches),
-                },
-            ),
+            Ok(bytes) => {
+                let connection = &mut self.session.connection;
+                if let Some(socket) = connection.untitled_log.clone() {
+                    connection
+                        .server
+                        .send(core_document::server::ClientMessage::AdoptLog { socket });
+                }
+                connection
+                    .server
+                    .send(core_document::server::ClientMessage::SaveDocument {
+                        path: job.path,
+                        bytes,
+                        at_seq: job.at_seq,
+                        seen_seq: Some(job.seen_seq),
+                        sent_batches: Some(job.sent_batches),
+                    });
+            }
             Err(err) => app_log::error(format!("Failed to serialize document: {err}")),
         }
     }
@@ -1205,11 +1214,18 @@ impl PrintCadApp {
         else {
             return;
         };
-        if entry.from_log {
-            self.autosave.recoverable.retain(|r| r.copy != copy);
-            self.open_document_at(copy);
-            self.session.file.restore_unsaved_on_open = true;
-            return;
+        match &entry.source {
+            crate::app::recovery::Source::DocumentLog => {
+                self.autosave.recoverable.retain(|r| r.copy != copy);
+                self.open_document_at(copy);
+                self.session.file.restore_unsaved_on_open = true;
+                return;
+            }
+            crate::app::recovery::Source::UntitledLog { copy_too } => {
+                self.restore_untitled_log(&entry, copy_too.clone());
+                return;
+            }
+            crate::app::recovery::Source::Copy { .. } => {}
         }
         let document = crate::platform::read(&copy)
             .map_err(anyhow::Error::from)
@@ -1254,17 +1270,58 @@ impl PrintCadApp {
         }
     }
 
-    /// Let a copy a crash left go, or the edits a document's log holds.
+    /// Bring an untitled session's log back into a new untitled tab: that
+    /// tab's server takes the log up and sends its edits to the tab as it
+    /// sends any edit. The tab's copy, which the log stands for, goes.
+    fn restore_untitled_log(
+        &mut self,
+        entry: &crate::app::recovery::Recoverable,
+        copy_too: Option<PathBuf>,
+    ) {
+        self.reset_to_new_document();
+        if self.session.connection.server.standalone() {
+            app_log::error(format!(
+                "Could not recover `{}`: no document server runs to read its log",
+                entry.name
+            ));
+            return;
+        }
+        self.autosave.recoverable.retain(|r| r.copy != entry.copy);
+        self.session
+            .connection
+            .server
+            .send(core_document::server::ClientMessage::RestoreLog {
+                socket: entry.copy.clone(),
+            });
+        if let Some(copy) = copy_too {
+            crate::app::recovery::remove(&copy);
+        }
+        self.session
+            .document
+            .set_name(format!("{} (recovered)", entry.name));
+        self.session.journal.reset(&mut self.session.document);
+        self.session.document.mark_dirty();
+        app_log::info(format!("Recovered `{}`", entry.name));
+    }
+
+    /// Let a copy a crash left go, or the edits a log holds.
     pub(crate) fn discard_recovery(&mut self, copy: PathBuf) {
-        if self
+        use crate::app::recovery::Source;
+        match self
             .autosave
             .recoverable
             .iter()
-            .any(|r| r.copy == copy && r.from_log)
+            .find(|r| r.copy == copy)
+            .map(|r| r.source.clone())
         {
-            doc_server::daemon::discard_unsaved_log(&copy);
-        } else {
-            crate::app::recovery::remove(&copy);
+            Some(Source::DocumentLog) => doc_server::daemon::discard_unsaved_log(&copy),
+            Some(Source::UntitledLog { copy_too }) => {
+                doc_server::daemon::discard_untitled_log(&copy);
+                if let Some(copy_too) = copy_too {
+                    crate::app::recovery::remove(&copy_too);
+                }
+            }
+            Some(Source::Copy { .. }) | None => crate::app::recovery::remove(&copy),
         }
         self.autosave.recoverable.retain(|r| r.copy != copy);
     }

@@ -108,6 +108,37 @@ impl DocumentSession {
         self.connection
             .server
             .send(core_document::server::ClientMessage::Leave);
+        // A first save that never wrote leaves its untitled log behind,
+        // let go with the rest.
+        if let Some(socket) = self.connection.untitled_log.take() {
+            doc_server::daemon::discard_untitled_log(&socket);
+        }
+    }
+
+    /// Move the connection to `server` on `socket`, the old one's queued
+    /// writes flushed first. The old server hears `Leave` unless it is the
+    /// tab's untitled daemon handing over to its file's (`first_save`): the
+    /// log it kept stays, for the file's server to take up with the save.
+    pub(crate) fn move_to_server(
+        &mut self,
+        server: Box<dyn core_document::server::DocumentServer>,
+        socket: PathBuf,
+        first_save: bool,
+    ) {
+        if first_save {
+            self.connection.untitled_log = Some(self.connection.socket.clone());
+        } else {
+            self.connection
+                .server
+                .send(core_document::server::ClientMessage::Leave);
+        }
+        self.connection.server.flush();
+        self.connection.server = server;
+        self.connection.socket = socket;
+        self.connection_replaced();
+        // The old connection's peers are not this one's.
+        self.connection.peer_presence.clear();
+        self.connection.last_sent_presence = None;
     }
 
     /// The connection went and `server` takes its place: the same daemon,
@@ -556,6 +587,7 @@ mod tests {
             let said = match msg {
                 ClientMessage::Ops { batch, .. } => format!("ops {batch}"),
                 ClientMessage::OpenDocument { path, .. } => format!("open {}", path.display()),
+                ClientMessage::Leave => "leave".to_string(),
                 _ => return,
             };
             self.0.lock().unwrap().push(said);
@@ -608,6 +640,27 @@ mod tests {
         assert!(!session.rejoin(speaker()));
         assert!(said.lock().unwrap().is_empty());
         assert_eq!(session.document.sent_ops_unconfirmed(), 0);
+    }
+
+    /// An untitled tab moving to its file's server for its first save
+    /// leaves its own daemon without a word, so the log it kept stays for
+    /// the save to take up; any other move says it is done.
+    #[test]
+    fn a_first_save_leaves_the_untitled_daemon_its_log() {
+        let said = std::sync::Arc::<std::sync::Mutex<Vec<String>>>::default();
+        let speaker = || Box::new(Said(std::sync::Arc::clone(&said)));
+        let mut session = session_on(speaker());
+        let untitled = crate::app::server::socket_for_untitled(session.tab);
+        session.connection.socket = untitled.clone();
+        let file = crate::app::server::socket_for(std::path::Path::new("first.prtcad"));
+        session.move_to_server(speaker(), file.clone(), true);
+        assert!(said.lock().unwrap().is_empty(), "no Leave");
+        assert_eq!(session.connection.untitled_log, Some(untitled));
+        assert_eq!(session.connection.socket, file);
+
+        let other = crate::app::server::socket_for(std::path::Path::new("other.prtcad"));
+        session.move_to_server(speaker(), other, false);
+        assert_eq!(*said.lock().unwrap(), ["leave"]);
     }
 
     /// A body that went takes every pick on it along, faces and edges
