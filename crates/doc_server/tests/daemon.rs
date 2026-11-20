@@ -53,6 +53,27 @@ fn daemon_env() {
     });
 }
 
+/// Start the daemon by hand, as a process this test can stop, and wait for
+/// it to listen.
+fn start_daemon(home: &TestHome, args: &[&str]) -> std::process::Child {
+    daemon_env();
+    let binary = std::env::var_os("PRINTCAD_SERVERD").expect("daemon binary");
+    let _ = std::fs::remove_file(home.socket());
+    let child = std::process::Command::new(binary)
+        .arg("--socket")
+        .arg(home.socket())
+        .args(args)
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("daemon starts");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !home.socket().exists() {
+        assert!(Instant::now() < deadline, "the daemon never listened");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child
+}
+
 /// Messages polled but not yet consumed by a `wait_for`. Poll batches can
 /// carry several messages; without this, waiting for one would silently
 /// discard the others in its batch.
@@ -644,6 +665,8 @@ struct Replica {
     sent: u64,
     /// Every sequence number heard, in the order heard.
     heard: Vec<u64>,
+    /// The other editors the server last counted.
+    peers: Option<u32>,
 }
 
 impl Replica {
@@ -655,6 +678,7 @@ impl Replica {
             seen: 0,
             sent: 0,
             heard: Vec::new(),
+            peers: None,
         }
     }
 
@@ -677,6 +701,7 @@ impl Replica {
                 self.doc.confirm_sent_ops();
                 self.note(seq);
             }
+            ServerMessage::Peers { peers } => self.peers = Some(peers),
             _ => {}
         }
     }
@@ -917,4 +942,116 @@ fn a_save_keeps_the_edits_its_snapshot_lacks() {
         "bob, unheard by alice",
         "the edit the snapshot lacks"
     );
+}
+
+/// A daemon that dies leaves the unsaved edits in its log; the daemon that
+/// takes its place reads them back, so a client joining after the restart
+/// still gets them after the file.
+#[test]
+fn a_restarted_daemon_gives_joiners_the_unsaved_tail() {
+    let home = TestHome::new("restart_tail");
+    let mut daemon = start_daemon(&home, &[]);
+    let mut alice = Replica::join(&home, Document::new("Restarted"));
+    let body = alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    alice.doc.rename_body(body, "unsaved when it died");
+    alice.send();
+    alice.settle();
+    daemon.kill().expect("the daemon stops");
+    daemon.wait().expect("reaped");
+
+    let mut bob = Replica::open(&home, &home.document());
+    assert_eq!(
+        bob.doc.bodies()[0].name,
+        "Base",
+        "the file is the saved past"
+    );
+    bob.take_until("the unsaved tail", |r| {
+        r.doc.bodies()[0].name == "unsaved when it died"
+    });
+    // Bob's own edits come after the tail in the new daemon's order.
+    bob.doc.set_name("after the restart");
+    bob.send();
+    assert!(bob.settle() > 1);
+}
+
+/// When every client has left, their unsaved edits are gone with them: the
+/// next daemon on the document starts from the file alone.
+#[test]
+fn a_daemon_everyone_left_starts_again_from_the_file() {
+    daemon_env();
+    let home = TestHome::new("left_tail");
+    let mut alice = Replica::join(&home, Document::new("Left"));
+    let body = alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    alice.doc.rename_body(body, "discarded");
+    alice.send();
+    alice.settle();
+    drop(alice);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while home.socket().exists() {
+        assert!(Instant::now() < deadline, "the daemon never exited");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let mut bob = Replica::open(&home, &home.document());
+    bob.doc.set_name("reopened");
+    bob.send();
+    assert_eq!(bob.settle(), 1, "nothing was ordered before bob's edit");
+    assert_eq!(bob.doc.bodies()[0].name, "Base");
+}
+
+/// A client that stops reading is disconnected once its queue passes the
+/// limit, its peers told; it rejoins by opening the document again and
+/// gets every edit it missed from the file and the tail.
+#[test]
+fn a_client_too_far_behind_is_dropped_and_rejoins() {
+    let home = TestHome::new("slow_client");
+    let mut daemon = start_daemon(&home, &["--queue-limit", "16"]);
+    let mut alice = Replica::join(&home, Document::new("Busy"));
+    let body = alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+
+    let mut stalled = local_ipc::Stream::connect(home.socket()).expect("connect");
+    doc_server::framing::write_frame(
+        &mut stalled,
+        &ClientMessage::Hello {
+            protocol: core_document::server::SERVER_PROTOCOL_VERSION,
+            actor: uuid::Uuid::new_v4(),
+        },
+    )
+    .expect("hello");
+    alice.take_until("a second editor", |r| r.peers == Some(1));
+
+    let rounds = 60;
+    let padding = "x".repeat(200_000);
+    for round in 0..rounds {
+        alice.doc.rename_body(body, format!("{round} {padding}"));
+        alice.send();
+    }
+    alice.take_until("the stalled editor dropped", |r| r.peers == Some(0));
+    let last = alice.settle();
+
+    let mut relayed = 0;
+    loop {
+        match doc_server::framing::read_frame::<_, ServerMessage>(&mut stalled) {
+            Ok(ServerMessage::Ops { .. }) => relayed += 1,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    assert!(relayed < rounds, "the stream ended before the edits did");
+
+    let mut again = Replica::open(&home, &home.document());
+    again.catch_up(last);
+    assert_eq!(
+        again.doc.replicated_projection(),
+        alice.doc.replicated_projection(),
+        "the rejoined client holds every edit"
+    );
+    drop(again);
+    drop(alice);
+    daemon
+        .wait()
+        .expect("the daemon exits with its last client");
 }
