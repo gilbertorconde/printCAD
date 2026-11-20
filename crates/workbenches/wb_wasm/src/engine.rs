@@ -1,12 +1,10 @@
-//! One wasmtime engine for every package, the clock that stops a call
-//! running over its budget, and compiling a package's component once.
+//! One wasmtime engine for every package and the clock that stops a call
+//! running over its budget.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
 
 use crate::exports::Budget;
@@ -89,54 +87,4 @@ impl Drop for Running {
     fn drop(&mut self) {
         TICKER.running.fetch_sub(1, Ordering::AcqRel);
     }
-}
-
-/// The component in `bytes`, compiled once and kept in `cache` as `name`:
-/// a later start reads the compiled form back when this engine made it
-/// from the same bytes. A compiled form is native code, so `cache` is a
-/// folder the app alone writes, never one a package archive unpacks into.
-/// Without a cache it is compiled each time.
-pub(crate) fn component(
-    bytes: &[u8],
-    cache: Option<&Path>,
-    name: &str,
-) -> Result<Component, String> {
-    let Some(cache) = cache else {
-        return Component::new(&ENGINE, bytes).map_err(|e| format!("{e:#}"));
-    };
-    let key = {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        bytes.hash(&mut h);
-        ENGINE.precompile_compatibility_hash().hash(&mut h);
-        h.finish()
-    };
-    // `@` is in no package id, so one id's prefix is never another's.
-    let prefix = format!("{name}@");
-    let file = cache.join(format!("{prefix}{key:016x}.cwasm"));
-    if file.is_file() {
-        // SAFETY: the file is one this engine wrote from the same bytes
-        // (its name carries both hashes) into the app's own cache folder;
-        // deserializing checks the engine's settings again.
-        if let Ok(component) = unsafe { Component::deserialize_file(&ENGINE, &file) } {
-            return Ok(component);
-        }
-    }
-    let component = Component::new(&ENGINE, bytes).map_err(|e| format!("{e:#}"))?;
-    if let Ok(compiled) = component.serialize()
-        && std::fs::create_dir_all(cache).is_ok()
-    {
-        // The compiled forms of this package's earlier bytes go.
-        if let Ok(entries) = std::fs::read_dir(cache) {
-            for entry in entries.flatten() {
-                let old = entry.file_name();
-                let old = old.to_string_lossy();
-                if old.starts_with(&prefix) && old.ends_with(".cwasm") {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-        let _ = std::fs::write(&file, compiled);
-    }
-    Ok(component)
 }

@@ -138,8 +138,16 @@ walkthrough. Colors reach the workbenches through
   crate's own version) refuses a package needing a later patch.
 - `workbenches/wb_wasm`: workbench packages (`docs/PLUGINS.md`, RFC 0001).
   One wasmtime engine (`engine.rs`: an epoch ticker that runs only while a
-  call or job does, 25 ms for frame and input calls, 1 s otherwise; the
-  compiled component cached beside `bench.wasm`), `exports.rs` (the
+  call or job does, 25 ms for frame and input calls, 1 s otherwise),
+  `compiled.rs` (each component compiled once: in memory by the sha256 of
+  its bytes, one compile however many callers ask at once, and on disk in
+  the folder `set_compiled_cache` names, the app's cache folder
+  (`settings::compiled_packages_dir`), the tests' under
+  `CARGO_TARGET_TMPDIR`; files under `wasmtime-<engine hash>/`, each
+  header carrying the content hash and a digest of the serialized form,
+  checked before the unsafe deserialize; written by rename, other
+  engines' folders removed, least recently used past 64 files or 512 MB
+  evicted; without a folder, memory only), `exports.rs` (the
   guest's exports as the `Exports` trait, whichever runtime holds the
   instance, `Budget`, `Fault`), `host.rs` (`Reach`, the host's side of an
   instance: what the call in progress may reach, `Access::None/Read/Write`,

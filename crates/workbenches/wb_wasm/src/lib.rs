@@ -8,6 +8,7 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
 
 mod bench;
+mod compiled;
 mod convert;
 mod engine;
 mod exports;
@@ -26,6 +27,7 @@ pub mod testing;
 pub use bench::WasmWorkbench;
 pub use bench::load;
 pub use bench_api::{Capabilities, Manifest};
+pub use compiled::set_compiled_cache;
 pub use host::{ProfileSource, set_profile_source};
 pub use package::{Package, discover, install, pack, uninstall};
 
