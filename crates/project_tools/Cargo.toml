@@ -20,4 +20,5 @@ serde_json.workspace = true
 project_archive = { path = "../project_archive", version = "0.1.0" }
 
 [dev-dependencies]
+core_document = { path = "../core_document", features = ["test-support"] }
 zip = { workspace = true, features = ["deflate"] }
