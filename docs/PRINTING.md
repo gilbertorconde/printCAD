@@ -184,8 +184,30 @@ From a script, `pc.doc.print_layout{}` answers where each copy goes
 body's own frame), with `bed = {x, y, z}` and `gap` to lay out for
 another printer; `pc.doc.set_body{body = ..., print_on = 3}` lies a part
 on its face 3 (as `pc.doc.faces` numbers them), `print_on = "as_modelled"`
-drops it unturned and `print_on = "auto"` gives the choice back; `pc.file.export{path = ..., layout = true}` writes the
-layout and `pc.file.send_to_slicer{layout = true}` sends it.
+drops it unturned and `print_on = "auto"` gives the choice back;
+`pc.file.export{path = ..., layout = true}` writes the layout and
+`pc.file.send_to_slicer{layout = true}` sends it.
+
+## Files for the slicer
+
+File › Export (Ctrl+E) writes the visible bodies, or with **Selected body
+only** the selected ones, as STEP, STL or 3MF. **A file per body** writes
+each body in a file of its own instead, named after the body, into a
+folder it asks for; laid out for printing, each copy gets its own file
+("Bracket 1", "Bracket 2"). Files of the same name already in the folder
+are replaced, each written whole or not at all, as every export is.
+
+File › Send to slicer (Ctrl+P) writes the visible bodies to a file of
+the slicer's format and opens it in the slicer. **Send selection to
+slicer** (File menu and command palette) sends only the selected bodies;
+when the layout is sent, it lays out only their parts.
+
+From a script, `pc.file.export{path = folder, per_body = true}` writes a
+file per body and answers each file's path in `files`, and
+`pc.file.send_to_slicer{selected = true}` sends the selection.
+
+A 3MF names each body's object after it. The bodies' colours are not
+written yet: the kernel's 3MF writer takes no colours.
 
 ## Overhangs
 

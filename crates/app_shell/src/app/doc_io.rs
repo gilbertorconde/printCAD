@@ -92,6 +92,8 @@ pub(crate) enum FileDialogKind {
     SaveThen(crate::app::unsaved::Then),
     ImportStep,
     Export(kernel_ogeom::export::ExportFormat),
+    /// The folder an export of a file per body writes into.
+    ExportFolder,
     RunScript,
     /// Files to go with a chat's next prompt, by chat id.
     Attach(String),
@@ -157,6 +159,7 @@ impl FileDialogKind {
             | FileDialogKind::SaveThen(_)
             | FileDialogKind::ImportStep
             | FileDialogKind::Export(_)
+            | FileDialogKind::ExportFolder
             | FileDialogKind::BenchOpen(_)
             | FileDialogKind::ReplaceShape(_)
             | FileDialogKind::TexturePicture(..) => true,
@@ -1187,7 +1190,7 @@ impl PrintCadApp {
                     }
                 }
             }
-            FileDialogKind::Export(_) => {
+            FileDialogKind::Export(_) | FileDialogKind::ExportFolder => {
                 if let Some(path) = path {
                     self.start_export(path);
                 }
@@ -1371,6 +1374,8 @@ impl PrintCadApp {
                 FileDialogKind::Export(format) => rfd::FileDialog::new()
                     .add_filter(format!("{} file", format.label()), &[format.extension()])
                     .set_file_name(format!("{stem}.{}", format.extension())),
+                FileDialogKind::ExportFolder => rfd::FileDialog::new()
+                    .set_title("A folder for a file per body, each named after its body"),
                 _ => rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]),
             };
 
@@ -1388,7 +1393,9 @@ impl PrintCadApp {
                 FileDialogKind::BenchOpen(ref open) if open.multiple => {
                     dialog.pick_files().unwrap_or_default()
                 }
-                FileDialogKind::SaveFiles(_) => Vec::from_iter(dialog.pick_folder()),
+                FileDialogKind::SaveFiles(_) | FileDialogKind::ExportFolder => {
+                    Vec::from_iter(dialog.pick_folder())
+                }
                 _ => Vec::from_iter(match kind {
                     FileDialogKind::Open => dialog.pick_file(),
                     FileDialogKind::ImportStep => dialog.pick_file(),
@@ -1411,7 +1418,9 @@ impl PrintCadApp {
                     | FileDialogKind::ReplaceShape(_)
                     | FileDialogKind::TexturePicture(..)
                     | FileDialogKind::BenchOpen(_) => dialog.pick_file(),
-                    FileDialogKind::Attach(_) | FileDialogKind::SaveFiles(_) => None,
+                    FileDialogKind::Attach(_)
+                    | FileDialogKind::SaveFiles(_)
+                    | FileDialogKind::ExportFolder => None,
                 }),
             };
 

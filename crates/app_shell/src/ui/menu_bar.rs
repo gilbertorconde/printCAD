@@ -59,6 +59,8 @@ pub struct MenuBarInputs<'a> {
     pub recording: bool,
     /// The clipping plane cuts the view.
     pub section_on: bool,
+    /// Whether a body is selected, for Send selection to slicer.
+    pub bodies_selected: bool,
     /// The measure tool is armed.
     pub measuring: bool,
 }
@@ -435,6 +437,15 @@ pub fn draw_menu_bar(
                                 have_document,
                             ) {
                                 commands.push(UiCommand::File(FileCommand::SendToSlicer));
+                            }
+                            if item_when(
+                                ui,
+                                "Send selection to slicer",
+                                None,
+                                have_document && inputs.bodies_selected,
+                                "select a body first",
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SendSelectionToSlicer));
                             }
                             if item_needing_document(
                                 ui,

@@ -1681,6 +1681,7 @@ pub(crate) fn export_draft(
         draft.textures = textures;
     }
     draft.layout = a.opt_bool("layout")? == Some(true);
+    draft.per_body = a.opt_bool("per_body")? == Some(true);
     Ok(draft)
 }
 
@@ -1692,6 +1693,9 @@ pub(crate) fn export_args(draft: &crate::app::export::ExportDraft) -> CommandArg
     args.insert("angle".into(), json!(draft.detail.angular_tolerance_deg));
     args.insert("textures".into(), json!(draft.textures));
     args.insert("layout".into(), json!(draft.layout));
+    if draft.per_body {
+        args.insert("per_body".into(), json!(true));
+    }
     args
 }
 

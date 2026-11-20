@@ -445,6 +445,7 @@ impl PrintCadApp {
         let quick_measure = self.drive_quick_measure();
         self.follow_section_formula();
         let selection_mass = self.selection_mass();
+        let bodies_selected = !self.bodies_to_export_selected().is_empty();
         let physical = self.panel_physical();
         let panel_bounds_mm = self.panel_body().and_then(|body| self.body_bounds(body));
         let inertia_references = self.inertia_references();
@@ -580,6 +581,7 @@ impl PrintCadApp {
                         dimensions,
                         quick_measure,
                         selection_mass,
+                        bodies_selected,
                         physical,
                         panel_bounds_mm,
                         inertia_references,

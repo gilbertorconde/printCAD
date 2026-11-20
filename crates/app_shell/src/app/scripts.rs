@@ -65,12 +65,15 @@ impl PrintCadApp {
             if Args(&args).has("path") {
                 return self.run_file_command(action, &args);
             }
-            if let (keymap::HostAction::SendToSlicer, Some(layout)) =
-                (action, Args(&args).opt_bool("layout")?)
-            {
+            if action == keymap::HostAction::SendToSlicer {
+                let a = Args(&args);
+                let selected = a.opt_bool("selected")? == Some(true);
+                let layout = a.opt_bool("layout")?;
                 let was = self.user_settings.printing.slicer_layout;
-                self.user_settings.printing.slicer_layout = layout;
-                self.send_to_slicer(false);
+                if let Some(layout) = layout {
+                    self.user_settings.printing.slicer_layout = layout;
+                }
+                self.send_to_slicer(false, selected);
                 self.user_settings.printing.slicer_layout = was;
                 return Ok(Value::Null);
             }
@@ -331,13 +334,16 @@ impl PrintCadApp {
             Export => {
                 let draft = export_draft(&a, &path)?;
                 let bodies = body_list(args.get("bodies"))?;
-                let layout = draft.layout.then(|| self.current_print_layout());
+                let layout = draft
+                    .layout
+                    .then(|| self.print_layout_of(bodies.as_deref()));
                 let printing = &self.user_settings.printing;
                 let compensation = printing
                     .compensation
                     .as_ref()
                     .filter(|_| printing.apply_compensation);
-                let (path, exported) = crate::app::export::export_document(
+                let folder = draft.per_body.then(|| path.clone());
+                let files = crate::app::export::export_document(
                     (&self.whole_solids(), &self.registry),
                     path,
                     &draft,
@@ -346,12 +352,7 @@ impl PrintCadApp {
                     compensation,
                 )
                 .map_err(CommandError::failed)?;
-                Ok(json!({
-                    "path": path.display().to_string(),
-                    "written": exported.written,
-                    "skipped": exported.skipped,
-                    "triangles": exported.triangles,
-                }))
+                Ok(crate::app::export::export_answer(folder.as_deref(), &files))
             }
             _ => Err(CommandError::failed("this command takes no file")),
         }

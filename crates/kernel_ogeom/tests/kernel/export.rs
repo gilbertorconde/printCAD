@@ -62,6 +62,7 @@ fn round_trip(format: ExportFormat) -> (ImportedModel, ImportedModel) {
             finish: None,
             scale: None,
             rounds: None,
+            colors: None,
         })
         .collect();
     let out = export(&bodies, format, &TessellationSettings::default()).expect("exports");
@@ -109,6 +110,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
         finish: None,
         scale: None,
         rounds: None,
+        colors: None,
     }];
     assert!(
         export(
@@ -139,6 +141,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
     let scaled = [ExportBody {
         scale: Some([1.1, 1.0, 0.9]),
         rounds: None,
+        colors: None,
         ..ExportBody {
             name: "scan".into(),
             brep: None,
@@ -147,6 +150,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
             finish: None,
             scale: None,
             rounds: None,
+            colors: None,
         }
     }];
     let grown = export(&scaled, ExportFormat::Stl, &TessellationSettings::default()).unwrap();
@@ -161,6 +165,81 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
             "about its middle"
         );
     }
+}
+
+/// A 3MF carries each body's colour, and a face's own over it, so a
+/// slicer shows the bodies in the colours they are drawn in.
+#[test]
+#[ignore = "kernel: the 3MF writer takes no object or triangle colours"]
+fn a_3mf_carries_each_body_s_colours() {
+    use kernel_ogeom::export::ExportColors;
+    let tetra = |x: f32| TriMesh {
+        positions: vec![
+            [x, 0.0, 0.0],
+            [x + 10.0, 0.0, 0.0],
+            [x, 10.0, 0.0],
+            [x, 0.0, 10.0],
+        ],
+        indices: vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+        faces: vec![0, 0, 1, 1],
+        ..Default::default()
+    };
+    let (left, right) = (tetra(0.0), tetra(50.0));
+    let (red, blue, green) = ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]);
+    let body = |name: &str, mesh, colors| ExportBody {
+        name: name.into(),
+        brep: None,
+        transform: None,
+        mesh,
+        finish: None,
+        scale: None,
+        rounds: None,
+        colors: Some(colors),
+    };
+    let bodies = [
+        body(
+            "Left",
+            &left,
+            ExportColors {
+                body: red,
+                faces: Vec::new(),
+            },
+        ),
+        body(
+            "Right",
+            &right,
+            ExportColors {
+                body: blue,
+                faces: vec![(1, green)],
+            },
+        ),
+    ];
+    let out = export(
+        &bodies,
+        ExportFormat::ThreeMf,
+        &TessellationSettings::default(),
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!("printcad-colours-{}.3mf", std::process::id()));
+    std::fs::write(&path, &out.bytes).unwrap();
+    let back = import(&path);
+    let _ = std::fs::remove_file(&path);
+    let colours = |name: &str| -> Vec<[f32; 3]> {
+        back.bodies
+            .iter()
+            .find(|b| b.name.as_deref() == Some(name))
+            .map(|b| b.mesh.colors.clone())
+            .unwrap_or_default()
+    };
+    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 0.01);
+    let left = colours("Left");
+    assert!(
+        !left.is_empty() && left.iter().all(|c| near(*c, red)),
+        "{left:?}"
+    );
+    let right = colours("Right");
+    assert!(right.iter().any(|c| near(*c, blue)), "{right:?}");
+    assert!(right.iter().any(|c| near(*c, green)), "{right:?}");
 }
 
 #[test]
@@ -191,6 +270,7 @@ fn a_placed_body_is_written_where_it_sits() {
         finish: None,
         scale: None,
         rounds: None,
+        colors: None,
     }];
     let (lo, hi) = body.bounds_mm.unwrap();
     for format in [ExportFormat::Step, ExportFormat::ThreeMf] {
@@ -240,6 +320,7 @@ fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
         finish: None,
         scale: None,
         rounds: None,
+        colors: None,
     };
     let out = export(
         &[body],
@@ -291,6 +372,7 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
             finish: None,
             scale: None,
             rounds: None,
+            colors: None,
         },
         ExportBody {
             name: "right".into(),
@@ -300,6 +382,7 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
             finish: None,
             scale: None,
             rounds: None,
+            colors: None,
         },
     ];
     let out = export(
@@ -409,6 +492,7 @@ fn semantic_pmi_round_trips_on_faces_of_placed_parts() {
                     finish: None,
                     scale: None,
                     rounds: None,
+                    colors: None,
                 }
             })
             .collect();
@@ -561,6 +645,7 @@ fn write_and_read_noted_box() -> ImportedModel {
         finish: None,
         scale: None,
         rounds: None,
+        colors: None,
     }];
     let notes = [ExportNote {
         body: 0,
@@ -634,6 +719,7 @@ fn a_thread_callout_reads_back_on_the_part_it_threads() {
             finish: None,
             scale: None,
             rounds: None,
+            colors: None,
         },
         ExportBody {
             name: "threaded".into(),
@@ -643,6 +729,7 @@ fn a_thread_callout_reads_back_on_the_part_it_threads() {
             finish: None,
             scale: None,
             rounds: None,
+            colors: None,
         },
     ];
     let notes = [ExportNote {
@@ -713,6 +800,7 @@ fn a_mesh_export_offsets_round_holes_and_bosses() {
         finish: None,
         scale: None,
         rounds: Some([0.2, -0.1]),
+        colors: None,
     };
     let stl = export(&[body], ExportFormat::Stl, &TessellationSettings::default()).unwrap();
     // The radii of the vertices round each wall, at its rims.
@@ -766,6 +854,7 @@ mod heavy {
                 finish: None,
                 scale: None,
                 rounds: None,
+                colors: None,
             })
             .collect();
         let out = export(

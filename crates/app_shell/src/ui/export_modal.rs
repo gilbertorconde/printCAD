@@ -1,6 +1,7 @@
-//! The export dialog: the format, which bodies, and for the mesh formats
-//! how closely the triangles follow the surface. It edits the host's draft
-//! in place; Export asks for a file name.
+//! The export dialog: the format, which bodies, one file or a file per
+//! body, and for the mesh formats how closely the triangles follow the
+//! surface. It edits the host's draft in place; Export asks for a file
+//! name, or a folder for a file per body.
 
 use egui::{Context, RichText};
 use kernel_ogeom::export::ExportFormat;
@@ -85,11 +86,15 @@ pub fn draw_export_modal(
                         check_row(ui, &mut draft.selected_only, "Selected body only")
                             .on_hover_text("Otherwise every visible body");
                     }
+                    check_row(ui, &mut draft.per_body, "A file per body").on_hover_text(
+                        "Each body (each copy, laid out) in a file of its own, named after it, \
+                         in a folder you pick; files of the same name there are replaced",
+                    );
                     if draft.format.is_mesh() {
                         check_row(ui, &mut draft.textures, "Surface textures")
                             .on_hover_text("Press the bodies' surface textures into the mesh");
                     }
-                    if configurations > 0 {
+                    if configurations > 0 && !draft.per_body {
                         check_row(
                             ui,
                             &mut draft.every_configuration,

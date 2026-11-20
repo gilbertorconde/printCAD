@@ -155,7 +155,9 @@ solid sectioned by the plane's half space and the edges on the face kept;
 `ExternalSource::section`), refreshed the same way. File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
-tolerance and welded closed, on a thread of its own. It waits for the tab's
+tolerance and welded closed, on a thread of its own, in one file or a
+file per body (`ExportDraft::per_body`: a folder from
+`FileDialogKind::ExportFolder`, names from `per_body_paths`). It waits for the tab's
 next build cycle, which sends an edit of the same frame, and for the builds
 out (`Builds::built_since`); a body showing a task's preview is written
 whole (`whole_solids`, as a save does). While an open task's preview
@@ -174,7 +176,8 @@ Export for printing walks it on the pocketed example. With
 `PrintingSettings::apply_compensation`, mesh exports scale each body about
 its middle by `compensation` (`ExportBody::scale`; `app.print_compensation`,
 from `inspect.compensation`). File › Send to
-slicer writes the visible bodies to a new file (made exclusively, a
+slicer writes the visible bodies (Send selection to slicer, the
+selected ones: `send_to_slicer(laid_out, selected)`) to a new file (made exclusively, a
 number added on a clash) in this run's own 0700 folder,
 `printcad-slicer-<pid>-<random>` under `$XDG_RUNTIME_DIR` or the
 temporary folder (`FileWork::slicer_folder`), in the

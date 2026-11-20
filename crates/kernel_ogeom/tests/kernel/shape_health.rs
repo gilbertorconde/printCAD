@@ -379,6 +379,7 @@ fn a_void_survives_a_step_export() {
             finish: None,
             scale: None,
             rounds: None,
+            colors: None,
         }],
         ExportFormat::Step,
         &TessellationSettings::default(),

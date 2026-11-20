@@ -40,6 +40,8 @@ pub enum FileCommand {
     Export,
     /// Every visible body written for the slicer and opened in it.
     SendToSlicer,
+    /// The selected bodies written for the slicer and opened in it.
+    SendSelectionToSlicer,
     /// The export dialog, set to write the print layout.
     ExportLaidOut,
     /// The print layout written for the slicer and opened in it.

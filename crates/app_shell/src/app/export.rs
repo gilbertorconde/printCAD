@@ -1,7 +1,8 @@
 //! Export: File › Export opens a dialog on a draft of the options (format,
-//! which bodies, the mesh tolerance), a confirmed draft asks for a file
-//! name, and the kernel writes the file on a thread of its own so a large
-//! document never holds the window. The result lands in the log.
+//! which bodies, the mesh tolerance, a file per body), a confirmed draft
+//! asks for a file name (or a folder, for a file per body), and the kernel
+//! writes the files on a thread of its own so a large document never holds
+//! the window. The result lands in the log.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use std::sync::mpsc::channel;
 
 use kernel_api::{LinearDeflectionMode, TessellationSettings, TriMesh};
 use kernel_ogeom::export::{
-    ExportBody, ExportFormat, ExportNote, ExportPmi, export_with_annotations,
+    ExportBody, ExportColors, ExportFormat, ExportNote, ExportPmi, export_with_annotations,
 };
 
 use crate::PrintCadApp;
@@ -30,6 +31,9 @@ pub(crate) struct ExportDraft {
     /// The print layout rather than the bodies where they sit: each part
     /// flat on the bed, as many as the parts list prints.
     pub layout: bool,
+    /// One file per body (per copy, laid out), each named after it, in a
+    /// folder, rather than one file of them all.
+    pub per_body: bool,
 }
 
 impl Default for ExportDraft {
@@ -40,6 +44,7 @@ impl Default for ExportDraft {
             every_configuration: false,
             textures: true,
             layout: false,
+            per_body: false,
             // A print resolves far finer than a screen: a hundredth of a
             // millimetre off the true surface and a few degrees per facet.
             detail: TessellationSettings {
@@ -66,6 +71,33 @@ struct OwnedBody {
     /// The body's shown notes, in its own frame; their `body` is set as
     /// the export takes them.
     notes: Vec<ExportNote>,
+    /// The colours it shows in.
+    colors: Option<ExportColors>,
+}
+
+/// The colours `body` shows in: its own (the one it was given, else the
+/// default look) and each face's given or imported colour over it.
+fn body_colors(document: &core_document::Document, body: core_document::BodyId) -> ExportColors {
+    let entry = document.body(body);
+    let own = entry.and_then(|b| b.display).unwrap_or_default().color;
+    let mut faces: Vec<(u32, [f32; 3])> = document
+        .imported_brep_face_colors(body)
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (i as u32, *c))
+        .collect();
+    if let (Some(entry), Some((mesh, _))) = (entry, document.local_geometry(body)) {
+        let count = mesh.faces.iter().max().map_or(0, |m| m + 1);
+        for index in 0..count {
+            if let Some(c) = entry.face_colors.iter().find(|c| c.is_face(&mesh, index)) {
+                faces.retain(|(i, _)| *i != index);
+                faces.push((index, c.color));
+            }
+        }
+    }
+    faces.sort_by_key(|(i, _)| *i);
+    ExportColors { body: own, faces }
 }
 
 /// The notes a body's export carries, in the body's frame: those shown,
@@ -103,14 +135,15 @@ fn body_notes(document: &core_document::Document, body: core_document::BodyId) -
     notes.chain(threads).collect()
 }
 
-/// Every owned body's notes, as the kernel's export takes them.
-fn export_notes(bodies: &[OwnedBody]) -> Vec<ExportNote> {
-    bodies
+/// The notes of the owned bodies at `indices`, as the kernel's export
+/// takes them: each on its body's place among them.
+fn export_notes(bodies: &[OwnedBody], indices: &[usize]) -> Vec<ExportNote> {
+    indices
         .iter()
         .enumerate()
-        .flat_map(|(i, b)| {
-            b.notes.iter().map(move |note| ExportNote {
-                body: i,
+        .flat_map(|(at, &i)| {
+            bodies[i].notes.iter().map(move |note| ExportNote {
+                body: at,
                 ..note.clone()
             })
         })
@@ -164,27 +197,111 @@ impl OwnedBody {
 /// What a mesh file writes of one body's faces once meshed.
 type Finish<'a> = Box<dyn Fn(TriMesh) -> TriMesh + Sync + 'a>;
 
-/// Borrow owned bodies as the kernel's export takes them, their finishes
-/// kept alive beside them.
+/// Borrow the owned bodies at `indices` as the kernel's export takes
+/// them, their finishes kept alive beside them.
 fn borrowed<'a>(
     bodies: &'a [OwnedBody],
     finishes: &'a [Option<Finish<'a>>],
+    indices: &[usize],
     scale: Option<[f64; 3]>,
     rounds: Option<[f64; 2]>,
 ) -> Vec<ExportBody<'a>> {
-    bodies
+    indices
         .iter()
-        .zip(finishes)
-        .map(|(b, finish)| ExportBody {
-            name: b.name.clone(),
-            brep: b.brep.as_deref().map(Vec::as_slice),
-            transform: b.transform,
-            mesh: &b.mesh,
-            finish: finish
-                .as_deref()
-                .map(|f| f as &(dyn Fn(TriMesh) -> TriMesh + Sync)),
-            scale,
-            rounds,
+        .map(|&i| {
+            let b = &bodies[i];
+            ExportBody {
+                name: b.name.clone(),
+                brep: b.brep.as_deref().map(Vec::as_slice),
+                transform: b.transform,
+                mesh: &b.mesh,
+                finish: finishes[i]
+                    .as_deref()
+                    .map(|f| f as &(dyn Fn(TriMesh) -> TriMesh + Sync)),
+                scale,
+                rounds,
+                colors: b.colors.clone(),
+            }
+        })
+        .collect()
+}
+
+/// The files an export writes: each its path and the owned bodies in it,
+/// by index. One file of them all, or with `per_body` one per body in the
+/// folder `path` names, each named after its body.
+fn export_files(
+    path: &Path,
+    bodies: &[OwnedBody],
+    format: ExportFormat,
+    per_body: bool,
+) -> Vec<(PathBuf, Vec<usize>)> {
+    if per_body {
+        let names: Vec<&str> = bodies.iter().map(|b| b.name.as_str()).collect();
+        per_body_paths(path, &names, format)
+            .into_iter()
+            .enumerate()
+            .map(|(i, path)| (path, vec![i]))
+            .collect()
+    } else {
+        vec![(with_extension(path, format), (0..bodies.len()).collect())]
+    }
+}
+
+/// A file in `folder` for each of `names`, named after it as a file name
+/// may be (`file_stem_of`), a number added to a name another took first,
+/// whatever its case.
+pub(crate) fn per_body_paths(folder: &Path, names: &[&str], format: ExportFormat) -> Vec<PathBuf> {
+    let mut taken = std::collections::HashSet::new();
+    names
+        .iter()
+        .map(|name| {
+            let stem = file_stem_of(name);
+            let mut candidate = stem.clone();
+            let mut n = 1;
+            while !taken.insert(candidate.to_lowercase()) {
+                n += 1;
+                candidate = format!("{stem}-{n}");
+            }
+            folder.join(format!("{candidate}.{}", format.extension()))
+        })
+        .collect()
+}
+
+/// Write each of `files` from `bodies` as `draft` says: its bodies, their
+/// notes and their annotations. Each file's outcome, in order; a file
+/// written goes in whole or not at all.
+fn write_files(
+    bodies: &[OwnedBody],
+    semantic: &[ExportPmi],
+    files: Vec<(PathBuf, Vec<usize>)>,
+    draft: &ExportDraft,
+    (scale, rounds): (Option<[f64; 3]>, Option<[f64; 2]>),
+) -> Vec<(PathBuf, Result<kernel_ogeom::export::Exported, String>)> {
+    let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
+    files
+        .into_iter()
+        .map(|(path, indices)| {
+            let borrowed = borrowed(bodies, &finishes, &indices, scale, rounds);
+            let notes = export_notes(bodies, &indices);
+            let semantic: Vec<ExportPmi> = semantic
+                .iter()
+                .filter_map(|p| {
+                    let at = indices.iter().position(|i| *i == p.body)?;
+                    Some(ExportPmi {
+                        body: at,
+                        annotations: p.annotations.clone(),
+                    })
+                })
+                .collect();
+            let result =
+                export_with_annotations(&borrowed, &notes, &semantic, draft.format, &draft.detail)
+                    .map_err(|e| e.to_string())
+                    .and_then(|exported| {
+                        crate::platform::write(&path, &exported.bytes)
+                            .map(|()| exported)
+                            .map_err(|e| format!("could not write the file: {e}"))
+                    });
+            (path, result)
         })
         .collect()
 }
@@ -194,8 +311,8 @@ const EXPORT_STOPPED: &str = "The export stopped without writing the file";
 
 /// A finished export, for the log.
 pub(crate) struct ExportOutcome {
-    path: PathBuf,
-    result: Result<kernel_ogeom::export::Exported, String>,
+    /// Each file and what writing it came to.
+    files: Vec<(PathBuf, Result<kernel_ogeom::export::Exported, String>)>,
     /// The slicer command to open the file with once written, when the
     /// export was a send to the slicer.
     open_with: Option<String>,
@@ -288,7 +405,11 @@ impl PrintCadApp {
             return;
         }
         self.files.last_export = draft.clone();
-        self.start_file_dialog(crate::app::doc_io::FileDialogKind::Export(draft.format));
+        self.start_file_dialog(if draft.per_body {
+            crate::app::doc_io::FileDialogKind::ExportFolder
+        } else {
+            crate::app::doc_io::FileDialogKind::Export(draft.format)
+        });
     }
 
     /// Write the confirmed export to `path` on a thread of its own.
@@ -299,7 +420,7 @@ impl PrintCadApp {
             .document
             .configurations()
             .is_some_and(|(_, t)| !t.rows.is_empty());
-        if draft.every_configuration && configured {
+        if draft.every_configuration && configured && !draft.per_body {
             self.export_every_configuration(&path, &draft);
             return;
         }
@@ -334,11 +455,13 @@ impl PrintCadApp {
         );
     }
 
-    /// Hand every visible body to the slicer: written to a file of the
-    /// slicer's format in this run's private folder, then opened with the
-    /// slicer command from Preferences. Laid out for printing when
-    /// `laid_out`, or when Preferences say so.
-    pub(crate) fn send_to_slicer(&mut self, laid_out: bool) {
+    /// Hand every visible body, or with `selected` the selected ones, to
+    /// the slicer: written to a file of the slicer's format in this run's
+    /// private folder, then opened with the slicer command from
+    /// Preferences. Laid out for printing when `laid_out`, or when
+    /// Preferences say so: the selected bodies' parts alone, with
+    /// `selected`.
+    pub(crate) fn send_to_slicer(&mut self, laid_out: bool, selected: bool) {
         let printing = &self.user_settings.printing;
         let layout = laid_out || printing.slicer_layout;
         let draft = ExportDraft {
@@ -346,15 +469,20 @@ impl PrintCadApp {
                 settings::SlicerFormat::ThreeMf => ExportFormat::ThreeMf,
                 settings::SlicerFormat::Stl => ExportFormat::Stl,
             },
-            selected_only: false,
+            selected_only: selected,
             detail: self.files.last_export.detail.clone(),
             every_configuration: false,
             // What goes to the slicer is what gets printed.
             textures: true,
             layout,
+            per_body: false,
         };
         if self.export_bodies(&draft).is_empty() {
-            app_log::warn("Nothing to send: no visible body has geometry");
+            app_log::warn(if selected {
+                "Nothing to send: select a body with geometry first"
+            } else {
+                "Nothing to send: no visible body has geometry"
+            });
             return;
         }
         if self.files.export_rx.is_some() {
@@ -458,8 +586,13 @@ impl PrintCadApp {
     }
 
     fn write_export_now(&mut self, path: PathBuf, draft: ExportDraft, open_with: Option<String>) {
-        let path = with_extension(&path, draft.format);
         let bodies = self.export_bodies(&draft);
+        let files = export_files(&path, &bodies, draft.format, draft.per_body);
+        let path = if draft.per_body {
+            path
+        } else {
+            with_extension(&path, draft.format)
+        };
         self.warn_stopped_at_task(&path, &bodies);
         let semantic = export_pmi(
             &self.session.document,
@@ -494,22 +627,8 @@ impl PrintCadApp {
             ));
         }
         let started = crate::platform::spawn("printcad-export", move || {
-            let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
-            let borrowed = borrowed(&bodies, &finishes, scale, rounds);
-            let notes = export_notes(&bodies);
-            let result =
-                export_with_annotations(&borrowed, &notes, &semantic, draft.format, &draft.detail)
-                    .map_err(|e| e.to_string())
-                    .and_then(|exported| {
-                        crate::platform::write(&path, &exported.bytes)
-                            .map(|()| exported)
-                            .map_err(|e| format!("could not write the file: {e}"))
-                    });
-            let _ = tx.send(ExportOutcome {
-                path,
-                result,
-                open_with,
-            });
+            let files = write_files(&bodies, &semantic, files, &draft, (scale, rounds));
+            let _ = tx.send(ExportOutcome { files, open_with });
         });
         if let Err(err) = started {
             self.files.export_rx = None;
@@ -597,13 +716,15 @@ impl PrintCadApp {
     /// The bodies the draft asks for: the selected ones, or every visible
     /// body with geometry that is made; or the print layout's copies.
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
-        let layout = draft.layout.then(|| self.current_print_layout());
         let selected: Option<Vec<core_document::BodyId>> = draft.selected_only.then(|| {
             self.bodies_to_export_selected()
                 .into_iter()
                 .map(core_document::BodyId)
                 .collect()
         });
+        let layout = draft
+            .layout
+            .then(|| self.print_layout_of(selected.as_deref()));
         owned_bodies(
             (&self.whole_solids(), &self.registry),
             draft,
@@ -614,7 +735,7 @@ impl PrintCadApp {
 
     /// The bodies an export of the selection writes: the selected body
     /// and any others a box took with it.
-    fn bodies_to_export_selected(&self) -> Vec<uuid::Uuid> {
+    pub(crate) fn bodies_to_export_selected(&self) -> Vec<uuid::Uuid> {
         self.session
             .selection
             .earlier_bodies
@@ -624,12 +745,20 @@ impl PrintCadApp {
             .collect()
     }
 
-    /// The print layout as it stands: the one shown, when it is up to
-    /// date, else made now.
-    pub(crate) fn current_print_layout(&self) -> doc_render::print_layout::Layout {
+    /// The print layout as it stands, of every part or of the parts of
+    /// `only`'s bodies: the one shown, when it is up to date, else made
+    /// now.
+    pub(crate) fn print_layout_of(
+        &self,
+        only: Option<&[core_document::BodyId]>,
+    ) -> doc_render::print_layout::Layout {
         use doc_render::print_layout::{LayoutSettings, lay_out, layout_key, parts_to_print};
         let document = &self.session.document;
         let parts = parts_to_print(document, &self.registry);
+        let parts = match only {
+            Some(bodies) => parts_of(parts, bodies),
+            None => parts,
+        };
         let settings = LayoutSettings::of(&self.user_settings.printing);
         let key = layout_key(document, &parts, &settings);
         match &self.session.tools.print_layout {
@@ -639,51 +768,63 @@ impl PrintCadApp {
     }
 }
 
+/// The parts among `parts` that have a body of `bodies`.
+pub(crate) fn parts_of(
+    parts: Vec<core_document::PrintPart>,
+    bodies: &[core_document::BodyId],
+) -> Vec<core_document::PrintPart> {
+    parts
+        .into_iter()
+        .filter(|p| p.bodies.iter().any(|b| bodies.contains(b)))
+        .collect()
+}
+
 /// Log how an export went, and open it in the slicer it was for when
 /// `open` and it was written.
 fn report_export(outcome: ExportOutcome, open: bool) {
-    let ExportOutcome {
-        path,
-        result,
-        open_with,
-    } = outcome;
-    match result {
-        Ok(exported) => {
-            let mut line = format!(
-                "Exported {} to {}",
-                match exported.written {
-                    1 => "1 body".to_string(),
-                    n => format!("{n} bodies"),
-                },
-                path.display()
-            );
-            if exported.triangles > 0 {
-                line.push_str(&format!(" ({} triangles)", exported.triangles));
+    let ExportOutcome { files, open_with } = outcome;
+    let single = files.len() == 1;
+    for (path, result) in files {
+        let exported = match result {
+            Ok(exported) => exported,
+            Err(err) => {
+                app_log::error(format!("Export to {} failed: {err}", path.display()));
+                continue;
             }
-            app_log::info(line);
-            if !exported.skipped.is_empty() {
-                app_log::warn(format!(
-                    "Left out, as meshes have no exact shape to write: {}",
-                    exported.skipped.join(", ")
-                ));
-            }
-            if !exported.annotations_left_out.is_empty() {
-                app_log::warn(format!(
-                    "Annotations left out, as they lie on no face of their body: {}",
-                    exported.annotations_left_out.join(", ")
-                ));
-            }
-            if let Some(command) = open_with.filter(|_| open) {
-                match open_in_slicer(&command, &path) {
-                    Ok(program) => app_log::info(format!("Opened it with {program}")),
-                    Err(err) => app_log::error(format!(
-                        "Could not open it in the slicer: {err}. Set the slicer \
-                         in Preferences › 3D printing."
-                    )),
-                }
+        };
+        let mut line = format!(
+            "Exported {} to {}",
+            match exported.written {
+                1 => "1 body".to_string(),
+                n => format!("{n} bodies"),
+            },
+            path.display()
+        );
+        if exported.triangles > 0 {
+            line.push_str(&format!(" ({} triangles)", exported.triangles));
+        }
+        app_log::info(line);
+        if !exported.skipped.is_empty() {
+            app_log::warn(format!(
+                "Left out, as meshes have no exact shape to write: {}",
+                exported.skipped.join(", ")
+            ));
+        }
+        if !exported.annotations_left_out.is_empty() {
+            app_log::warn(format!(
+                "Annotations left out, as they lie on no face of their body: {}",
+                exported.annotations_left_out.join(", ")
+            ));
+        }
+        if let Some(command) = open_with.as_deref().filter(|_| open && single) {
+            match open_in_slicer(command, &path) {
+                Ok(program) => app_log::info(format!("Opened it with {program}")),
+                Err(err) => app_log::error(format!(
+                    "Could not open it in the slicer: {err}. Set the slicer \
+                     in Preferences › 3D printing."
+                )),
             }
         }
-        Err(err) => app_log::error(format!("Export to {} failed: {err}", path.display())),
     }
 }
 
@@ -716,6 +857,7 @@ fn layout_bodies(
                     mesh: local,
                     pressing,
                     notes: body_notes(document, piece.body),
+                    colors: Some(body_colors(document, piece.body)),
                 },
                 // A mesh body has only its triangles: pressed in its own
                 // frame, then moved to the bed.
@@ -732,6 +874,7 @@ fn layout_bodies(
                         mesh: Arc::new(piece.placement.mesh(&pressed)),
                         pressing: None,
                         notes: Vec::new(),
+                        colors: Some(body_colors(document, piece.body)),
                     }
                 }
             })
@@ -909,7 +1052,8 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
 }
 
 /// The bodies an export of `draft` writes: the copies of `layout` when
-/// given, else those `listed`, else every visible body with geometry that
+/// given (laid out of the parts `listed` alone, when listed), else those
+/// `listed`, else every visible body with geometry that
 /// no bench calls bought; their textures with them when the draft presses
 /// them into a mesh format. The dialog, the slicer and a script's export
 /// all take their bodies here.
@@ -939,8 +1083,11 @@ fn owned_bodies(
 
 /// Write what `draft` asks for to `path` now, on this thread: `bodies` of
 /// `document` (every one an export of everything takes when `None`), or
-/// the copies of `layout` when given. What a script's export does. A mesh
-/// format makes up for the printer as `compensation` says, when given.
+/// the copies of `layout` when given (those of `bodies`' parts alone, when
+/// both are). A mesh format makes up for the printer as `compensation`
+/// says, when given. With `draft.per_body`, `path` is the folder each
+/// body's file goes in. What a script's export does: each file written,
+/// or the first that failed.
 pub(crate) fn export_document(
     (document, registry): (&core_document::Document, &core_document::DocumentService),
     path: PathBuf,
@@ -948,31 +1095,58 @@ pub(crate) fn export_document(
     bodies: Option<Vec<core_document::BodyId>>,
     layout: Option<&doc_render::print_layout::Layout>,
     compensation: Option<&settings::PrintCompensation>,
-) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
+) -> Result<Vec<(PathBuf, kernel_ogeom::export::Exported)>, String> {
     let format = draft.format;
     let owned = owned_bodies((document, registry), draft, bodies.as_deref(), layout);
     if owned.is_empty() {
         return Err("there is nothing to export".to_string());
     }
-    let detail = &draft.detail;
-    let finishes: Vec<_> = owned.iter().map(OwnedBody::finish).collect();
     let compensation = compensation.filter(|_| format.is_mesh());
-    let borrowed = borrowed(
-        &owned,
-        &finishes,
-        compensation.map(|c| c.scale),
-        compensation
-            .map(|c| [c.holes, c.bosses])
-            .filter(|r| r.iter().any(|d| *d != 0.0)),
-    );
-    let path = with_extension(&path, format);
-    let notes = export_notes(&owned);
+    let scale = compensation.map(|c| c.scale);
+    let rounds = compensation
+        .map(|c| [c.holes, c.bosses])
+        .filter(|r| r.iter().any(|d| *d != 0.0));
+    let files = export_files(&path, &owned, format, draft.per_body);
     let semantic = export_pmi(document, registry, &owned, format);
-    let exported = export_with_annotations(&borrowed, &notes, &semantic, format, detail)
-        .map_err(|e| e.to_string())?;
-    crate::platform::write(&path, &exported.bytes)
-        .map_err(|e| format!("could not write the file: {e}"))?;
-    Ok((path, exported))
+    write_files(&owned, &semantic, files, draft, (scale, rounds))
+        .into_iter()
+        .map(|(path, result)| {
+            result
+                .map(|exported| (path.clone(), exported))
+                .map_err(|e| {
+                    if draft.per_body {
+                        format!("{}: {e}", path.display())
+                    } else {
+                        e
+                    }
+                })
+        })
+        .collect()
+}
+
+/// What a script's export answers: where it wrote (the folder, for a file
+/// per body, with each file), and how many bodies, left out and triangles.
+pub(crate) fn export_answer(
+    folder: Option<&Path>,
+    files: &[(PathBuf, kernel_ogeom::export::Exported)],
+) -> serde_json::Value {
+    let path = folder
+        .map(Path::to_path_buf)
+        .or_else(|| files.first().map(|(p, _)| p.clone()))
+        .unwrap_or_default();
+    let mut answer = serde_json::json!({
+        "path": path.display().to_string(),
+        "written": files.iter().map(|(_, e)| e.written).sum::<usize>(),
+        "skipped": files.iter().flat_map(|(_, e)| e.skipped.clone()).collect::<Vec<_>>(),
+        "triangles": files.iter().map(|(_, e)| e.triangles).sum::<usize>(),
+    });
+    if folder.is_some() {
+        answer["files"] = files
+            .iter()
+            .map(|(p, _)| serde_json::json!(p.display().to_string()))
+            .collect();
+    }
+    answer
 }
 
 /// The bodies of `document` that `take` accepts and that have geometry,
@@ -1012,6 +1186,7 @@ fn bodies_to_export(
                         .then(|| crate::app::textures::Pressing::of(document, *id, &mut pictures))
                         .flatten(),
                     notes: body_notes(document, *id),
+                    colors: Some(body_colors(document, *id)),
                 },
             )
         })
@@ -1118,7 +1293,7 @@ mod tests {
         layout: Option<&doc_render::print_layout::Layout>,
     ) -> kernel_ogeom::export::Exported {
         let path = std::env::temp_dir().join(format!("export-{}", uuid::Uuid::new_v4()));
-        let (path, exported) = export_document(
+        let mut files = export_document(
             (doc, &core_document::DocumentService::default()),
             path,
             &ExportDraft {
@@ -1130,6 +1305,7 @@ mod tests {
             None,
         )
         .unwrap();
+        let (path, exported) = files.remove(0);
         let _ = std::fs::remove_file(path);
         exported
     }
@@ -1408,7 +1584,8 @@ mod tests {
             None,
             None,
         )
-        .unwrap();
+        .unwrap()
+        .remove(0);
         std::fs::remove_file(path).unwrap();
         let text = String::from_utf8(exported.bytes).unwrap();
         assert!(text.contains("FLATNESS_TOLERANCE("));
@@ -1499,6 +1676,7 @@ mod tests {
             None,
         )
         .unwrap()
+        .remove(0)
         .1;
         let plain = export(&textured_box(false), ExportFormat::Stl, None);
         let _ = std::fs::remove_file(&path);
@@ -1524,6 +1702,102 @@ mod tests {
         assert!(slicer_files_may_go(0, long_ago, now));
         assert!(!slicer_files_may_go(0, Some(now), now), "just handed over");
         assert!(!slicer_files_may_go(1, long_ago, now), "still running");
+    }
+
+    /// A file per body is named after its body as a file name may be, a
+    /// number added to a name taken already, whatever its case.
+    #[test]
+    fn a_file_per_body_is_named_after_its_body() {
+        let folder = Path::new("/t/out");
+        let names = ["Bracket", "bracket", "Lid/2", "Lid 2", "  "];
+        let paths = per_body_paths(folder, &names, ExportFormat::ThreeMf);
+        let files: Vec<_> = paths
+            .iter()
+            .map(|p| p.strip_prefix(folder).unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            files,
+            [
+                "Bracket.3mf",
+                "bracket-2.3mf",
+                "Lid-2.3mf",
+                "Lid-2-2.3mf",
+                "model.3mf"
+            ]
+        );
+    }
+
+    /// A file per body writes each body alone into the folder, every one
+    /// whole, and the answer names each file.
+    #[test]
+    fn an_export_of_a_file_per_body_writes_each_alone() {
+        let mut doc = core_document::Document::new("t");
+        let tetra = |x: f32| TriMesh {
+            positions: vec![
+                [x, 0.0, 0.0],
+                [x + 10.0, 0.0, 0.0],
+                [x, 10.0, 0.0],
+                [x, 0.0, 10.0],
+            ],
+            indices: vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+            ..Default::default()
+        };
+        for (name, x) in [("Left", 0.0), ("Right", 50.0)] {
+            let body = doc.create_body(Some(name.into()));
+            doc.set_imported_geometry(body, crate::test_support::geometry(tetra(x)));
+        }
+        let folder = std::env::temp_dir().join(format!("export-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let draft = ExportDraft {
+            format: ExportFormat::Stl,
+            per_body: true,
+            ..Default::default()
+        };
+        let files = export_document(
+            (&doc, &core_document::DocumentService::default()),
+            folder.clone(),
+            &draft,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let answer = export_answer(Some(&folder), &files);
+        let written: Vec<(String, usize, f32)> = files
+            .iter()
+            .map(|(path, exported)| {
+                let bytes = std::fs::read(path).unwrap();
+                let (count, lo, _) = stl_bounds(&bytes);
+                assert_eq!(count, exported.triangles);
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                (name, exported.written, lo[0])
+            })
+            .collect();
+        let _ = std::fs::remove_dir_all(&folder);
+        assert_eq!(
+            written,
+            [("Left.stl".into(), 1, 0.0), ("Right.stl".into(), 1, 50.0)]
+        );
+        assert_eq!(answer["written"], 2);
+        assert_eq!(answer["files"].as_array().map(Vec::len), Some(2));
+        assert_eq!(answer["path"], folder.display().to_string());
+    }
+
+    /// The selection's parts are those with a selected body among theirs,
+    /// a copy's selection taking its source's part.
+    #[test]
+    fn the_selection_keeps_the_parts_it_touches() {
+        let id = || core_document::BodyId(uuid::Uuid::new_v4());
+        let (bracket, copy, lid) = (id(), id(), id());
+        let part = |name: &str, bodies: Vec<core_document::BodyId>| core_document::PrintPart {
+            name: name.into(),
+            bodies,
+            count: 1,
+        };
+        let parts = vec![part("Bracket", vec![bracket, copy]), part("Lid", vec![lid])];
+        let kept = parts_of(parts, &[copy]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "Bracket");
     }
 
     #[test]

@@ -159,8 +159,9 @@ impl PrintCadApp {
             }
             UiCommand::File(FileCommand::New) => intents.new_document = true,
             UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
-            UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(false),
-            UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true),
+            UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(false, false),
+            UiCommand::File(FileCommand::SendSelectionToSlicer) => self.send_to_slicer(false, true),
+            UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true, false),
             UiCommand::File(FileCommand::ExportLaidOut) => self.open_export_laid_out(),
             UiCommand::File(FileCommand::SavePicture) => self.save_picture(),
             UiCommand::ConfirmExport => self.confirm_export(),

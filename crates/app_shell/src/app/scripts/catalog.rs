@@ -853,12 +853,19 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
             spec,
             "Where to write; the dialog when left out",
         ))),
-        SendToSlicer => spec.optional(
-            "layout",
-            ParamKind::Bool,
-            "The print layout rather than the bodies where they sit; Preferences › 3D printing \
-             says when left out",
-        ),
+        SendToSlicer => spec
+            .optional(
+                "layout",
+                ParamKind::Bool,
+                "The print layout rather than the bodies where they sit; Preferences › 3D \
+                 printing says when left out",
+            )
+            .optional(
+                "selected",
+                ParamKind::Bool,
+                "Only the selected bodies (laid out, their parts alone) rather than every \
+                 visible one",
+            ),
         _ => spec,
     }
 }
@@ -895,9 +902,16 @@ pub(crate) fn export_options(spec: CommandSpec) -> CommandSpec {
     .optional(
         "layout",
         ParamKind::Bool,
-        "The print layout (doc.print_layout) rather than the bodies where they sit",
+        "The print layout (doc.print_layout) rather than the bodies where they sit; of \
+         the parts of `bodies` alone when they are given",
     )
-    .returns("{path, written, skipped, triangles}")
+    .optional(
+        "per_body",
+        ParamKind::Bool,
+        "A file per body (per copy, laid out), each named after it, in the folder `path` \
+         names; files of the same name there are replaced",
+    )
+    .returns("{path, written, skipped, triangles}, with files (each file's path) for per_body")
 }
 
 /// The application's commands that are not a key's.

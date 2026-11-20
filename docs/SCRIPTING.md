@@ -1546,8 +1546,9 @@ Notes:
 - `tolerance` (number, optional): The mesh formats' distance to the true surface, mm (0.01)
 - `angle` (number, optional): The mesh formats' largest turn between facets, degrees (5)
 - `textures` (boolean, optional): Whether the mesh formats press the bodies' surface textures in (true)
-- `layout` (boolean, optional): The print layout (doc.print_layout) rather than the bodies where they sit
-- Returns {path, written, skipped, triangles}
+- `layout` (boolean, optional): The print layout (doc.print_layout) rather than the bodies where they sit; of the parts of `bodies` alone when they are given
+- `per_body` (boolean, optional): A file per body (per copy, laid out), each named after it, in the folder `path` names; files of the same name there are replaced
+- Returns {path, written, skipped, triangles}, with files (each file's path) for per_body
 
 Notes:
 
@@ -1556,6 +1557,7 @@ Notes:
 `pc.file.send_to_slicer`: Send to slicer.
 
 - `layout` (boolean, optional): The print layout rather than the bodies where they sit; Preferences › 3D printing says when left out
+- `selected` (boolean, optional): Only the selected bodies (laid out, their parts alone) rather than every visible one
 
 `pc.file.print_layout`: Print layout.
 
