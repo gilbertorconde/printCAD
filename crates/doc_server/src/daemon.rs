@@ -451,8 +451,11 @@ fn document_oplog(document: &Path) -> PathBuf {
     }
 }
 
-/// Home the op log beside `document`; true when it moved there now.
+/// Home the op log beside `document`; true when it moved there now. Taken
+/// under the log's write lock, so no append lands in the unhomed log
+/// after its lines were carried over.
 fn set_oplog_home(document: &Path) -> bool {
+    let _guard = lock(&OPLOG_WRITE);
     let home = document_oplog(document);
     let mut slot = lock(&OPLOG_PATH);
     if slot.as_deref() == Some(home.as_path()) {
@@ -460,48 +463,112 @@ fn set_oplog_home(document: &Path) -> bool {
     }
     remember_home(document);
     // Ops recorded before the document had a file live in the unhomed log;
-    // carry them over so the document's history starts at its beginning,
-    // not at its first save.
+    // carry them over, oldest generation first, so the document's history
+    // starts at its beginning, not at its first save.
     let orphan = unhomed_oplog();
-    if let Ok(text) = std::fs::read_to_string(&orphan)
-        && !text.is_empty()
-    {
-        let appended = std::fs::OpenOptions::new()
+    let mut sources = generations(&orphan);
+    sources.push(orphan.clone());
+    let mut carried = Ok(());
+    for source in &sources {
+        let Ok(text) = std::fs::read(source) else {
+            continue;
+        };
+        carried = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&home)
-            .and_then(|mut file| file.write_all(text.as_bytes()));
-        match appended {
-            Ok(()) => {
-                // Gone rather than emptied: this daemon's history has a home
-                // now, and a file left behind is one more thing to explain.
-                let _ = std::fs::remove_file(&orphan);
-                // The log's blob markers reference the unhomed store;
-                // the blobs move with the lines they back.
-                let orphan_blobs = orphan.with_extension("blobs");
-                let home_blobs = home.with_extension("blobs");
-                if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
-                    let moved = std::fs::create_dir_all(&home_blobs).and_then(|()| {
-                        entries.flatten().try_for_each(|entry| {
-                            std::fs::rename(entry.path(), home_blobs.join(entry.file_name()))
-                        })
-                    });
-                    match moved {
-                        Ok(()) => {
-                            let _ = std::fs::remove_dir(&orphan_blobs);
-                        }
-                        Err(err) => tracing::warn!(
-                            "the op log's blobs did not all move to {}: {err}",
-                            home_blobs.display()
-                        ),
+            .and_then(|mut file| file.write_all(&text));
+        if carried.is_err() {
+            break;
+        }
+    }
+    match carried {
+        Ok(()) => {
+            // Gone rather than emptied: this daemon's history has a home
+            // now, and a file left behind is one more thing to explain.
+            for source in &sources {
+                let _ = std::fs::remove_file(source);
+            }
+            // The log's blob markers reference the unhomed store;
+            // the blobs move with the lines they back.
+            let orphan_blobs = orphan.with_extension("blobs");
+            let home_blobs = home.with_extension("blobs");
+            if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
+                let moved = std::fs::create_dir_all(&home_blobs).and_then(|()| {
+                    entries.flatten().try_for_each(|entry| {
+                        std::fs::rename(entry.path(), home_blobs.join(entry.file_name()))
+                    })
+                });
+                match moved {
+                    Ok(()) => {
+                        let _ = std::fs::remove_dir(&orphan_blobs);
                     }
+                    Err(err) => tracing::warn!(
+                        "the op log's blobs did not all move to {}: {err}",
+                        home_blobs.display()
+                    ),
                 }
             }
-            Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
         }
+        Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
     }
     *slot = Some(home);
     true
+}
+
+/// The log's rotated generations, oldest first: `<log>.1`, `<log>.2`, ...
+fn generations(log: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name)) = (log.parent(), log.file_name()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{}.", name.to_string_lossy());
+    let mut found: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let file = entry.file_name();
+            let number = file.to_str()?.strip_prefix(&prefix)?.parse().ok()?;
+            Some((number, entry.path()))
+        })
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+/// How many rotated generations a log keeps at most: past this the oldest
+/// go, and with them any unsaved edits they held.
+const MAX_GENERATIONS: usize = 16;
+
+/// Start a new generation: the live log takes the next number.
+fn rotate(log: &Path) {
+    let older = generations(log);
+    let next = older
+        .last()
+        .and_then(|path| path.extension()?.to_str()?.parse::<u64>().ok())
+        .map_or(1, |n| n + 1);
+    if let Err(err) = std::fs::rename(log, log.with_extension(format!("jsonl.{next}"))) {
+        tracing::warn!("the op log did not rotate, so it grows past its cap: {err}");
+        return;
+    }
+    let over = (older.len() + 1).saturating_sub(MAX_GENERATIONS);
+    if over > 0 {
+        tracing::warn!(
+            "the op log passed {MAX_GENERATIONS} generations; the oldest go, and a restart \
+             may not restore every unsaved edit"
+        );
+    }
+    for stale in older.iter().take(over) {
+        let _ = std::fs::remove_file(stale);
+    }
+}
+
+/// Take away every rotated generation: nothing before the live log is
+/// needed to restore the unsaved edits.
+fn drop_generations(log: &Path) {
+    for generation in generations(log) {
+        let _ = std::fs::remove_file(generation);
+    }
 }
 
 fn oplog_path() -> PathBuf {
@@ -514,9 +581,12 @@ fn oplog_path() -> PathBuf {
 /// any parameter payload.
 const BLOB_EXTRACT_THRESHOLD: usize = 256 * 1024;
 
-/// The log rotates once it passes this size; one previous generation is
-/// kept (`.oplog.jsonl.1`).
-const OPLOG_ROTATE_BYTES: u64 = 64 * 1024 * 1024;
+/// The log rotates once it passes this size, unless the daemon is started
+/// with another `--log-bytes`.
+pub const DEFAULT_LOG_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The size this daemon's log rotates at.
+static LOG_BYTES: AtomicU64 = AtomicU64::new(DEFAULT_LOG_BYTES);
 
 fn append_ops(
     actor: uuid::Uuid,
@@ -530,10 +600,8 @@ fn append_ops(
     }
     // Rotation before append: a single import op can be large, but the cap
     // is about unbounded sessions, not about splitting one op.
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() > OPLOG_ROTATE_BYTES)
-        && let Err(err) = std::fs::rename(&path, path.with_extension("jsonl.1"))
-    {
-        tracing::warn!("the op log did not rotate, so it grows past its cap: {err}");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_BYTES.load(Ordering::Relaxed)) {
+        rotate(&path);
     }
     let blob_dir = path.with_extension("blobs");
     let mut file = std::fs::OpenOptions::new()
@@ -603,6 +671,7 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 fn truncate_oplog() -> std::io::Result<()> {
     let _guard = lock(&OPLOG_WRITE);
     let path = oplog_path();
+    drop_generations(&path);
     if path.exists() {
         std::fs::write(path, b"")?;
     }
@@ -650,7 +719,8 @@ fn file_stamp(document: &Path) -> Option<serde_json::Value> {
 
 /// Add a mark to the log: the batches still unsaved (every batch logged
 /// before this line and not named here is in the file), with the file's
-/// stamp.
+/// stamp. A mark naming none leaves the rotated generations nothing to
+/// restore, so they go.
 fn mark_unsaved(unsaved: &[uuid::Uuid], document: Option<&Path>) {
     let _guard = lock(&OPLOG_WRITE);
     let path = oplog_path();
@@ -664,8 +734,10 @@ fn mark_unsaved(unsaved: &[uuid::Uuid], document: Option<&Path>) {
         .append(true)
         .open(&path)
         .and_then(|mut file| writeln!(file, "{mark}"));
-    if let Err(err) = written {
-        tracing::error!("the op log's unsaved mark was not written: {err}");
+    match written {
+        Ok(()) if unsaved.is_empty() => drop_generations(&path),
+        Ok(()) => {}
+        Err(err) => tracing::error!("the op log's unsaved mark was not written: {err}"),
     }
 }
 
@@ -681,12 +753,14 @@ struct Restored {
 /// when the log cannot say: a line no batch id names where the tail would
 /// be (a daemon that marks nothing wrote it, so a save may have taken
 /// it), a file changed since the mark, a batch it names that the log no
-/// longer holds (rotated out of both generations), a blob or an op that
-/// does not read. The previous generation is read first, so a tail the
-/// log rotated over once is still found.
+/// longer holds (its generation dropped past the cap), a blob or an op
+/// that does not read. The generations are read oldest first, so a tail
+/// the log rotated over is still found.
 fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
     let mut lines = Vec::new();
-    for generation in [log.with_extension("jsonl.1"), log.to_path_buf()] {
+    let mut sources = generations(log);
+    sources.push(log.to_path_buf());
+    for generation in sources {
         if let Ok(text) = std::fs::read_to_string(&generation) {
             lines.extend(
                 text.lines()
@@ -823,15 +897,36 @@ fn resume(state: &mut State, note: &Path) {
     );
 }
 
-/// Run the daemon on `socket` with the default queue limit.
+/// What a daemon holds to: how far a client may fall behind and how
+/// large its op log grows before it rotates.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// Messages a client may have queued and unwritten before it is
+    /// disconnected.
+    pub queue: usize,
+    /// Bytes the op log holds before it rotates to a new generation.
+    pub log_bytes: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            queue: DEFAULT_QUEUE_LIMIT,
+            log_bytes: DEFAULT_LOG_BYTES,
+        }
+    }
+}
+
+/// Run the daemon on `socket` with the default limits.
 pub fn run(socket: &Path) -> std::io::Result<()> {
-    run_with(socket, DEFAULT_QUEUE_LIMIT)
+    run_with(socket, Limits::default())
 }
 
 /// Run the daemon on `socket`: accept clients, serve each on its own
-/// thread, exit when the last one leaves. A client with more than
-/// `queue_limit` messages unwritten is disconnected.
-pub fn run_with(socket: &Path, queue_limit: usize) -> std::io::Result<()> {
+/// thread, exit when the last one leaves.
+pub fn run_with(socket: &Path, limits: Limits) -> std::io::Result<()> {
+    let queue_limit = limits.queue;
+    LOG_BYTES.store(limits.log_bytes.max(1), Ordering::Relaxed);
     if let Some(parent) = socket.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -919,6 +1014,38 @@ mod tests {
             crate::socket_path_for(path),
             crate::runtime_dir().join(format!("{:016x}.sock", crate::path_key(path)))
         );
+    }
+
+    /// Homing the log waits for an append under way, so no line lands in
+    /// the unhomed log after its lines were carried over.
+    #[test]
+    fn homing_the_log_waits_for_its_write_lock() {
+        let dir = std::env::temp_dir().join(format!("printcad_homing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let unhomed = dir.join("unhomed.oplog.jsonl");
+        std::fs::write(&unhomed, "{\"op\":1}\n").expect("unhomed log");
+        *lock(&UNHOMED_PATH) = Some(unhomed.clone());
+        let document = dir.join("model.prtcad");
+
+        let appending = lock(&OPLOG_WRITE);
+        let homing = std::thread::spawn({
+            let document = document.clone();
+            move || set_oplog_home(&document)
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !homing.is_finished(),
+            "homing went ahead of an append under way"
+        );
+        drop(appending);
+        assert!(homing.join().expect("homing"));
+        let homed = std::fs::read_to_string(document_oplog(&document)).expect("homed log");
+        assert_eq!(homed, "{\"op\":1}\n");
+        assert!(std::fs::symlink_metadata(&unhomed).is_err());
+        *lock(&OPLOG_PATH) = None;
+        *lock(&UNHOMED_PATH) = None;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The tail read back is what the last mark leaves unsaved plus what

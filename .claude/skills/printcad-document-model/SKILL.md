@@ -72,7 +72,11 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   daemon started on a socket whose `<socket>.home` names a document reads
   the tail back from the log (`restore_tail`: the last mark's ids plus
   what follows; a line without an id there, or a changed file, means no
-  tail). A client with more than `--queue-limit` (default 4096) unwritten
+  tail). The log rotates past `--log-bytes` (default 64 MB) into numbered
+  generations (`<log>.1`, `<log>.2`, ..., read oldest first), all kept
+  until a mark names nothing unsaved, at most `MAX_GENERATIONS`; homing
+  the unhomed log takes the log's write lock. A client with more than
+  `--queue-limit` (default 4096) unwritten
   messages is disconnected; an open's file and tail never count. An
   `AddFeature` or `SetFeatureBody` whose `seq` another feature holds takes
   the next one (`FeatureTree::unclaimed_seq`), so concurrent inserts end

@@ -216,7 +216,10 @@ still gets them.
 
 The operation log marks, at every save, which edits the file does not hold
 yet. A server that starts after one stopped without warning reads those
-edits back, so a copy opened then still gets them. When every copy has
+edits back, so a copy opened then still gets them. The log starts a new
+part every 64 MB and keeps every part back to the last save that left
+nothing unsaved (at most 16), so even a long run of unsaved edits comes
+back whole. When every copy has
 closed the document, its unsaved edits are gone with them, and the next
 server starts from the file. A copy that stops taking the server's
 messages is disconnected once thousands are waiting for it; opening the

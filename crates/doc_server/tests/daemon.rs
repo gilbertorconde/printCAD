@@ -999,6 +999,33 @@ fn a_restarted_daemon_gives_joiners_the_unsaved_tail() {
     assert!(bob.settle() > 1);
 }
 
+/// Unsaved edits that fill several generations of the log still come back
+/// whole after a restart: the log keeps every generation back to the last
+/// save that left nothing unsaved.
+#[test]
+fn a_restart_restores_unsaved_edits_across_rotations() {
+    let home = TestHome::new("rotated_tail");
+    let mut daemon = start_daemon(&home, &["--log-bytes", "2048"]);
+    let mut alice = Replica::join(&home, Document::new("Rotated"));
+    alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    let padding = "y".repeat(1000);
+    for round in 0..12 {
+        alice.doc.create_body(Some(format!("{round} {padding}")));
+        alice.send();
+    }
+    alice.settle();
+    daemon.kill().expect("the daemon stops");
+    wait_for_exit(&mut daemon, "once killed");
+
+    let mut bob = Replica::open(&home, &home.document());
+    bob.take_until("every unsaved body", |r| r.doc.bodies().len() == 13);
+    assert_eq!(
+        bob.doc.replicated_projection(),
+        alice.doc.replicated_projection()
+    );
+}
+
 /// When every client has left, their unsaved edits are gone with them: the
 /// next daemon on the document starts from the file alone.
 #[test]
