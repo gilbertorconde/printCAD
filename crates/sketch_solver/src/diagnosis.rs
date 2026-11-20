@@ -69,7 +69,17 @@ pub fn diagnose(problem: &Problem) -> Diagnosis {
 /// or compiled again without it where leaving it out changes more (see
 /// `Local`); there are no application callbacks.
 pub fn diagnose_at(problem: &Problem, outcome: SolveOutcome, solved: &Problem) -> Diagnosis {
-    let dof = estimate(problem).degrees;
+    diagnose_measured(problem, outcome, solved, estimate(problem).degrees)
+}
+
+/// [`diagnose_at`] with the problem's degrees of freedom already measured
+/// (`freedom::estimate(problem).degrees`), by a caller that keeps them.
+pub fn diagnose_measured(
+    problem: &Problem,
+    outcome: SolveOutcome,
+    solved: &Problem,
+    dof: i32,
+) -> Diagnosis {
     if problem.constraints.len() > problem.settings.diagnosis_limit {
         return Diagnosis {
             dof,
