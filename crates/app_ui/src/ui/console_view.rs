@@ -177,77 +177,79 @@ pub fn draw_console(
                 .inner_margin(egui::Margin::symmetric(10, 6)),
         )
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("Console")
-                        .font(sans_semibold(FONT_SM))
-                        .color(TEXT1),
-                );
-                ui.add_space(SPACE_2);
-                if small_secondary_button(ui, "Clear").clicked() {
-                    console::clear();
-                }
-                let save = ui.add_enabled_ui(!state.session_runs.is_empty(), |ui| {
-                    small_secondary_button(ui, "Save as script")
-                        .on_hover_text("Everything run here since the start, as a new script")
-                        .on_disabled_hover_text("Run something first")
-                });
-                if save.inner.clicked() {
-                    commands.push(UiCommand::SaveRunsAsScript(state.session_runs.clone()));
-                }
-                if let Some(script) = running {
-                    ui.add(egui::Spinner::new().size(12.0).color(ACCENT));
+            super::panel_contents(ui, |ui| {
+                ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("Running {script}"))
-                            .font(sans(FONT_XS))
-                            .color(TEXT2),
+                        RichText::new("Console")
+                            .font(sans_semibold(FONT_SM))
+                            .color(TEXT1),
                     );
-                    if small_secondary_button(ui, "Stop").clicked() {
-                        commands.push(UiCommand::StopScript);
+                    ui.add_space(SPACE_2);
+                    if small_secondary_button(ui, "Clear").clicked() {
+                        console::clear();
                     }
-                }
-                ui.label(
-                    RichText::new(
-                        "Lua · help() lists the commands · Tab completes · \
-                         Shift+Enter for another line",
-                    )
-                    .font(sans(FONT_XS))
-                    .color(TEXT3),
-                );
-            });
-            ui.add_space(SPACE_1);
-            // The input takes its own height from the bottom and the output
-            // the rest, so the two never ask for more than the panel has (a
-            // panel that is asked for more grows to fit).
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                draw_input(ui, state, command_ids, commands);
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        // Oldest first, whatever the layout around.
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.spacing_mut().item_spacing.y = 1.0;
-                            for line in console::entries() {
-                                let (prefix, color) = match line.kind {
-                                    LineKind::Input => ("> ", TEXT1),
-                                    LineKind::Printed => ("", TEXT2),
-                                    LineKind::Value => ("= ", INFO),
-                                    LineKind::Error => ("! ", DANGER),
-                                };
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(format!("{prefix}{}", line.text))
-                                            .font(mono(FONT_SM))
-                                            .color(color),
-                                    )
-                                    .selectable(true),
-                                );
-                            }
-                        });
+                    let save = ui.add_enabled_ui(!state.session_runs.is_empty(), |ui| {
+                        small_secondary_button(ui, "Save as script")
+                            .on_hover_text("Everything run here since the start, as a new script")
+                            .on_disabled_hover_text("Run something first")
                     });
-            });
+                    if save.inner.clicked() {
+                        commands.push(UiCommand::SaveRunsAsScript(state.session_runs.clone()));
+                    }
+                    if let Some(script) = running {
+                        ui.add(egui::Spinner::new().size(12.0).color(ACCENT));
+                        ui.label(
+                            RichText::new(format!("Running {script}"))
+                                .font(sans(FONT_XS))
+                                .color(TEXT2),
+                        );
+                        if small_secondary_button(ui, "Stop").clicked() {
+                            commands.push(UiCommand::StopScript);
+                        }
+                    }
+                    ui.label(
+                        RichText::new(
+                            "Lua · help() lists the commands · Tab completes · \
+                         Shift+Enter for another line",
+                        )
+                        .font(sans(FONT_XS))
+                        .color(TEXT3),
+                    );
+                });
+                ui.add_space(SPACE_1);
+                // The input takes its own height from the bottom and the output
+                // the rest, down to nothing in a short panel.
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    draw_input(ui, state, command_ids, commands);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .min_scrolled_height(0.0)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            // Oldest first, whatever the layout around.
+                            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                for line in console::entries() {
+                                    let (prefix, color) = match line.kind {
+                                        LineKind::Input => ("> ", TEXT1),
+                                        LineKind::Printed => ("", TEXT2),
+                                        LineKind::Value => ("= ", INFO),
+                                        LineKind::Error => ("! ", DANGER),
+                                    };
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(format!("{prefix}{}", line.text))
+                                                .font(mono(FONT_SM))
+                                                .color(color),
+                                        )
+                                        .selectable(true),
+                                    );
+                                }
+                            });
+                        });
+                });
+            })
         });
 }
 
@@ -291,7 +293,10 @@ fn draw_input(
             move_cursor_to_end(ui, id, &state.input);
         }
     }
-    ui.horizontal(|ui| {
+    // The row spans the room left and sits its widgets on the bottom edge,
+    // so an input of several lines grows upwards; a plain row would start
+    // one line high at the bottom and hang its other lines below the panel.
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
         ui.label(RichText::new(">").font(mono(FONT_SM)).color(TEXT3));
         let response = ui.add(
             egui::TextEdit::multiline(&mut state.input)
@@ -341,8 +346,9 @@ mod tests {
     use super::*;
 
     /// The room the rest of the window keeps below the menu, frame after
-    /// frame, with the console open and full.
-    fn room_left_per_frame(frames: usize) -> Vec<f32> {
+    /// frame, with the console open and full and `input` typed, and where
+    /// the input ends up.
+    fn room_left_per_frame(frames: usize, input: &str) -> (Vec<f32>, egui::Rect) {
         for i in 0..40 {
             console::push(LineKind::Printed, format!("line {i}"));
         }
@@ -350,6 +356,7 @@ mod tests {
         ui_kit::apply_theme(&ctx);
         let mut state = ConsoleState {
             open: true,
+            input: input.into(),
             ..Default::default()
         };
         let mut left = Vec::new();
@@ -367,20 +374,34 @@ mod tests {
             });
             output.textures_delta.clear();
         }
-        left
+        let input = ctx
+            .read_response(egui::Id::new("console_input"))
+            .expect("the input was drawn")
+            .rect;
+        (left, input)
     }
 
+    /// The panel keeps its height whatever is typed, and an input of
+    /// several lines grows upwards inside it rather than below the window.
     #[test]
     fn the_panel_keeps_its_height() {
-        let left = room_left_per_frame(30);
+        let (left, _) = room_left_per_frame(30, "");
         let settled = left[2];
         assert!(
             settled > 500.0,
             "the console takes a strip, not the window: {left:?}"
         );
+        let (typed, input) = room_left_per_frame(30, "a = 1\nb = 2\nc = 3\nd = 4\ne = 5");
         assert!(
-            left[2..].iter().all(|h| (h - settled).abs() < 0.5),
-            "the panel does not grow: {left:?}"
+            left[2..]
+                .iter()
+                .chain(&typed)
+                .all(|h| (h - settled).abs() < 0.5),
+            "the panel does not grow: {left:?} {typed:?}"
+        );
+        assert!(
+            input.bottom() <= 800.0 && input.height() > 60.0,
+            "{input:?}"
         );
     }
 
