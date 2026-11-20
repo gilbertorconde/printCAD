@@ -19,4 +19,8 @@
   a scratch document first so a refusal leaves the open one untouched.
   Its `project-tool` program (`inspect`, `convert`, `check`, which also
   holds each rebuilt solid to the file's saved shape by bounds and face
-  count) is a developer tool, never published.
+  count, and `corpus`, the local regression check over a folder of real
+  archives in `src/corpus/`: mass properties against each saved solid,
+  the first feature that strays, losses kept apart from geometry, one
+  child process an archive under a time limit) is a developer tool,
+  never published.

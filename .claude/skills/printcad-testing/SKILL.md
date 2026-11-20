@@ -76,6 +76,21 @@ The before-committing checks and the comment rule are in `CLAUDE.md`. Pictures f
   for a solid its measures before and after (`project-tool check`, the
   kernel's volume). Pictures go in the pull request, never the repository.
 
+## Project corpus (local only)
+
+- `project-tool corpus <folder>` (or `PRINTCAD_PROJECT_CORPUS`) imports
+  every project archive in a folder of your own the way File › Import
+  does, rebuilds each body and holds it to the archive's saved solid
+  (volume, area, bounding box, centre of mass); it names the first
+  feature whose step strays, lists unsupported features and lost
+  parametric data apart from geometry, and writes a table, a summary line
+  and a JSON report. One archive a process, with a time limit.
+  `--baseline <earlier.json>` fails on regressions only. It never runs in
+  CI and no one's archives are committed; its test entry point is an
+  `#[ignore]`d heavy test in `project_tools/tests/projects/corpus.rs`.
+  The tolerances, the verdicts and how to cut a failing case down to an
+  ordinary test are in `crates/project_tools/README.md`.
+
 ## STEP fixtures
 
 - STEP tests use the bundled fixture

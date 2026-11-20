@@ -7,6 +7,10 @@ rust-version.workspace = true
 publish = false
 description = "Archive project reader, document converter and parity checks"
 
+[features]
+# The local project-corpus test entry point (tests/projects/corpus.rs).
+heavy-tests = []
+
 [dependencies]
 core_document = { path = "../core_document" }
 wb_sketch = { path = "../workbenches/wb_sketch" }
@@ -20,4 +24,5 @@ serde_json.workspace = true
 project_archive = { path = "../project_archive", version = "0.1.0" }
 
 [dev-dependencies]
+core_document = { path = "../core_document", features = ["test-support"] }
 zip = { workspace = true, features = ["deflate"] }

@@ -1,6 +1,7 @@
 //! Read archived projects, convert their recipes, and check the resulting geometry.
 
 pub mod bench;
+pub mod corpus;
 pub mod document_import;
 pub mod error;
 mod numeric;
