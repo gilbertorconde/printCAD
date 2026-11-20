@@ -126,7 +126,7 @@ impl PrintCadApp {
     }
 
     /// Work out the document's formulas and hand the features whose values
-    /// moved to every bench (`Workbench::values_moved`).
+    /// moved to every bench (`BenchParameters::values_moved`).
     pub(crate) fn settle_formulas(&mut self) {
         self.registry.evaluate(&mut self.session.document);
         let moved = self.session.document.take_moved_values();

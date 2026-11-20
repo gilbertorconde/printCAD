@@ -4,7 +4,7 @@
 //! The application's own commands are the document's queries and edits
 //! (`doc.*`) and every command a key can run (`file.save`, `view.front`,
 //! ...). A workbench's command runs in the workbench through
-//! `Workbench::run_command`, with the same context its tools get, so the
+//! `BenchCommands::run_command`, with the same context its tools get, so the
 //! host never needs to know what the command does. Every call's arguments
 //! are checked against its spec before it runs.
 
@@ -1721,6 +1721,8 @@ mod tests {
             self.0 = state.and_then(|s| s.downcast::<u64>().ok()).map(|n| *n);
         }
     }
+
+    impl core_document::BenchFeatures for Counted {}
 
     impl core_document::BenchTools for Counted {}
 

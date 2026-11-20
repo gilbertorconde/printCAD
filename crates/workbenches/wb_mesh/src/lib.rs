@@ -428,6 +428,20 @@ impl core_document::Workbench for MeshWorkbench {
         }
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+
+    fn busy(&self) -> bool {
+        self.tab.deviations.busy() || self.tab.crossing_pairs.busy()
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.report_crossings(ctx);
+    }
+}
+
+impl core_document::BenchFeatures for MeshWorkbench {
     fn feature_info(&self, _node: &FeatureNode) -> FeatureInfo {
         FeatureInfo {
             icon: "workbench-mesh",
@@ -445,10 +459,6 @@ impl core_document::Workbench for MeshWorkbench {
         self.open_edit(ctx, id);
     }
 
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
-    }
-
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.close_task(
             ctx,
@@ -457,14 +467,6 @@ impl core_document::Workbench for MeshWorkbench {
                 accept: false,
             },
         );
-    }
-
-    fn busy(&self) -> bool {
-        self.tab.deviations.busy() || self.tab.crossing_pairs.busy()
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        self.report_crossings(ctx);
     }
 }
 
@@ -767,7 +769,7 @@ impl MeshWorkbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{BenchBuild, BenchCommands, BenchTools, Workbench};
+    use core_document::{BenchBuild, BenchCommands, BenchFeatures, BenchTools, Workbench};
 
     #[test]
     fn every_section_of_the_mesh_prose_names_a_command() {

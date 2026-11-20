@@ -2,7 +2,7 @@
 //! map, overlays, marks, labels and the datums' meshes.
 
 use crate::{DesignWorkbench, face_snap, handles, instances, region_pick, scan_deviation};
-use core_document::{FeatureId, Workbench, WorkbenchRuntimeContext};
+use core_document::{BenchFeatures, FeatureId, WorkbenchRuntimeContext};
 
 impl DesignWorkbench {
     pub(crate) fn scalar_maps(

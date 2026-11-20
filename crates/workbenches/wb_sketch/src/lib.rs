@@ -65,10 +65,10 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
-    FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope,
+    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
 use feature::SketchFeature;
@@ -1395,6 +1395,121 @@ impl Workbench for SketchWorkbench {
         .modal()
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        self.frame.clear();
+        Some(&mut self.tab)
+    }
+
+    fn configure(&self, context: &mut WorkbenchContext) {
+        self.register_tools(context);
+    }
+
+    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        ctx.log_info("Sketch workbench activated");
+    }
+
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        ctx.log_info("Sketch workbench deactivated");
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        // A shape is recorded once it is done: its tool back at rest, or
+        // another tool picked.
+        let shape_done = self.tab.draw_record.as_ref().is_some_and(|r| {
+            self.tab.tool_state.is_idle() || self.tab.last_tool.as_deref() != Some(r.tool.as_str())
+        });
+        if shape_done {
+            self.flush_draw_record(ctx);
+        }
+        // The picker opens as the bench does, not at the next input.
+        self.take_attach_request(ctx);
+        self.sync_active_sketch_from_ctx(ctx);
+        if self.tab.active_sketch_id.is_some()
+            && self.tab.external_refreshed != self.tab.active_sketch_id
+        {
+            self.tab.external_refreshed = self.tab.active_sketch_id;
+            self.refresh_external(ctx);
+        }
+        if self.tab.last_tool.as_deref() == Some("sketch.external") {
+            if self.tab.external_intersection {
+                self.take_intersection_picks(ctx);
+            } else {
+                self.take_external_picks(ctx);
+            }
+        }
+        if self.tab.active_sketch_id.is_none() {
+            self.tab.armed = None;
+        }
+        self.take_armed_picks(ctx);
+        self.drop_stale_wall_check(ctx);
+        if !chain::is_chain(&self.tab.tool_state) {
+            self.tab.chain_links.clear();
+        }
+        let seq = ctx.document.mutation_seq();
+        let from_outside = self
+            .tab
+            .own_seq
+            .swap(seq, std::sync::atomic::Ordering::Relaxed)
+            != seq;
+        self.tab.selection_shape = match self.frame_sketch(ctx) {
+            Some(feature) => {
+                // What was selected may be gone, by an edit here that took
+                // more with it (an element's constraints) or one from outside.
+                self.tab.selected.retain(|id| {
+                    feature.sketch.get_geometry(*id).is_some()
+                        || sketch::Reference::of(*id).is_some()
+                });
+                self.tab
+                    .selected_constraints
+                    .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
+                if from_outside {
+                    // A segment taken back puts the gesture before it.
+                    self.follow_chain(&feature.sketch);
+                    // The verdict is of a sketch that is not there any more.
+                    self.tab.last_solve = None;
+                    self.tab.last_diagnosis = None;
+                    // An undo may bring back geometry that meets its
+                    // constraints or geometry that waits for a solve.
+                    self.tab.unsolved_edits =
+                        !self.options.auto_update && !solver::holds(&feature.sketch);
+                }
+                self.tab.section_view = feature.shows_section(self.options.section_on_open);
+                let selected: Vec<Uuid> = self.tab.selected.iter().copied().collect();
+                self.tab.internal_target =
+                    !internal::curves_of(&feature.sketch, &selected).is_empty();
+                constrain::SelectionShape::picked_in(
+                    &feature.sketch,
+                    &self.tab.selected,
+                    self.tab.selected.in_order(),
+                )
+            }
+            None => constrain::SelectionShape::default(),
+        };
+        if self.tab.armable.0.as_ref() != Some(&self.tab.selection_shape) {
+            let armable = std::iter::once("dimension")
+                .chain(constrain::TOOLS.iter().copied())
+                .filter(|which| model_picks::completable(which, &self.tab.selection_shape))
+                .collect();
+            self.tab.armable = (Some(self.tab.selection_shape.clone()), armable);
+        }
+    }
+
+    fn shortcuts_changed(&mut self, keys: &HashMap<String, Vec<core_document::Chord>>) {
+        self.action_keys = keys
+            .iter()
+            .filter_map(|(id, chords)| Some((id.clone(), chords.first()?.to_string())))
+            .collect();
+    }
+
+    /// The edited sketch's reference pictures, laid on its plane under
+    /// its lines.
+    /// Edges are being found in a reference picture.
+    fn busy(&self) -> bool {
+        self.tab.picture_edges.running()
+    }
+}
+
+impl BenchFeatures for SketchWorkbench {
     fn feature_warning(
         &self,
         document: &core_document::Document,
@@ -1426,11 +1541,6 @@ impl Workbench for SketchWorkbench {
             family_label: "Sketch".to_string(),
             builds_solid: false,
         }
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        self.frame.clear();
-        Some(&mut self.tab)
     }
 
     fn passive_geometry(
@@ -1546,100 +1656,6 @@ impl Workbench for SketchWorkbench {
         snap::nearest_curve_distance(&feature.sketch, pos).map(|units| narrow(units) * px_per_unit)
     }
 
-    fn configure(&self, context: &mut WorkbenchContext) {
-        self.register_tools(context);
-    }
-
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Sketch workbench activated");
-    }
-
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Sketch workbench deactivated");
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        // A shape is recorded once it is done: its tool back at rest, or
-        // another tool picked.
-        let shape_done = self.tab.draw_record.as_ref().is_some_and(|r| {
-            self.tab.tool_state.is_idle() || self.tab.last_tool.as_deref() != Some(r.tool.as_str())
-        });
-        if shape_done {
-            self.flush_draw_record(ctx);
-        }
-        // The picker opens as the bench does, not at the next input.
-        self.take_attach_request(ctx);
-        self.sync_active_sketch_from_ctx(ctx);
-        if self.tab.active_sketch_id.is_some()
-            && self.tab.external_refreshed != self.tab.active_sketch_id
-        {
-            self.tab.external_refreshed = self.tab.active_sketch_id;
-            self.refresh_external(ctx);
-        }
-        if self.tab.last_tool.as_deref() == Some("sketch.external") {
-            if self.tab.external_intersection {
-                self.take_intersection_picks(ctx);
-            } else {
-                self.take_external_picks(ctx);
-            }
-        }
-        if self.tab.active_sketch_id.is_none() {
-            self.tab.armed = None;
-        }
-        self.take_armed_picks(ctx);
-        self.drop_stale_wall_check(ctx);
-        if !chain::is_chain(&self.tab.tool_state) {
-            self.tab.chain_links.clear();
-        }
-        let seq = ctx.document.mutation_seq();
-        let from_outside = self
-            .tab
-            .own_seq
-            .swap(seq, std::sync::atomic::Ordering::Relaxed)
-            != seq;
-        self.tab.selection_shape = match self.frame_sketch(ctx) {
-            Some(feature) => {
-                // What was selected may be gone, by an edit here that took
-                // more with it (an element's constraints) or one from outside.
-                self.tab.selected.retain(|id| {
-                    feature.sketch.get_geometry(*id).is_some()
-                        || sketch::Reference::of(*id).is_some()
-                });
-                self.tab
-                    .selected_constraints
-                    .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
-                if from_outside {
-                    // A segment taken back puts the gesture before it.
-                    self.follow_chain(&feature.sketch);
-                    // The verdict is of a sketch that is not there any more.
-                    self.tab.last_solve = None;
-                    self.tab.last_diagnosis = None;
-                    // An undo may bring back geometry that meets its
-                    // constraints or geometry that waits for a solve.
-                    self.tab.unsolved_edits =
-                        !self.options.auto_update && !solver::holds(&feature.sketch);
-                }
-                self.tab.section_view = feature.shows_section(self.options.section_on_open);
-                let selected: Vec<Uuid> = self.tab.selected.iter().copied().collect();
-                self.tab.internal_target =
-                    !internal::curves_of(&feature.sketch, &selected).is_empty();
-                constrain::SelectionShape::picked_in(
-                    &feature.sketch,
-                    &self.tab.selected,
-                    self.tab.selected.in_order(),
-                )
-            }
-            None => constrain::SelectionShape::default(),
-        };
-        if self.tab.armable.0.as_ref() != Some(&self.tab.selection_shape) {
-            let armable = std::iter::once("dimension")
-                .chain(constrain::TOOLS.iter().copied())
-                .filter(|which| model_picks::completable(which, &self.tab.selection_shape))
-                .collect();
-            self.tab.armable = (Some(self.tab.selection_shape.clone()), armable);
-        }
-    }
-
     fn editing_feature(&self) -> Option<FeatureId> {
         self.tab.active_sketch_id
     }
@@ -1662,20 +1678,6 @@ impl Workbench for SketchWorkbench {
         } else {
             ctx.log_warn("Not in sketch editing mode");
         }
-    }
-
-    fn shortcuts_changed(&mut self, keys: &HashMap<String, Vec<core_document::Chord>>) {
-        self.action_keys = keys
-            .iter()
-            .filter_map(|(id, chords)| Some((id.clone(), chords.first()?.to_string())))
-            .collect();
-    }
-
-    /// The edited sketch's reference pictures, laid on its plane under
-    /// its lines.
-    /// Edges are being found in a reference picture.
-    fn busy(&self) -> bool {
-        self.tab.picture_edges.running()
     }
 }
 

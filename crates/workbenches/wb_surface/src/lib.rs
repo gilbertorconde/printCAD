@@ -31,9 +31,9 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
-    CommandArgs, CommandResult, Document, FeatureId, FeatureInfo, HostRequest, InputResult,
-    Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, CommandArgs, CommandResult, Document, FeatureId, FeatureInfo, HostRequest,
+    InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext,
     WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
@@ -680,16 +680,6 @@ impl Workbench for SurfaceWorkbench {
         ])
     }
 
-    fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
-        let kind = SurfaceFeature::from_json(&node.data).ok().map(|f| f.kind());
-        FeatureInfo {
-            icon: kind.map_or("workbench-surface", |k| k.icon),
-            kind_label: kind.map_or("Surface", |k| k.label).to_string(),
-            family_label: "Surface feature".to_string(),
-            builds_solid: true,
-        }
-    }
-
     fn configure(&self, context: &mut WorkbenchContext) {
         context.register_tool(
             ToolDescriptor::new_action(SKETCH_TOOL, "Create sketch", Some("structure"))
@@ -744,6 +734,22 @@ impl Workbench for SurfaceWorkbench {
         commands::configure(context);
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchFeatures for SurfaceWorkbench {
+    fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
+        let kind = SurfaceFeature::from_json(&node.data).ok().map(|f| f.kind());
+        FeatureInfo {
+            icon: kind.map_or("workbench-surface", |k| k.icon),
+            kind_label: kind.map_or("Surface", |k| k.label).to_string(),
+            family_label: "Surface feature".to_string(),
+            builds_solid: true,
+        }
+    }
+
     fn editing_feature(&self) -> Option<FeatureId> {
         self.tab.task.as_ref().map(|t| t.feature)
     }
@@ -759,10 +765,6 @@ impl Workbench for SurfaceWorkbench {
             feature: id,
             opened: Some(data),
         });
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 

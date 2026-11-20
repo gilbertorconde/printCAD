@@ -500,7 +500,7 @@ fn apply_fields(feature: &mut DesignFeature, fields: &Map<String, Value>) -> Res
 mod tests {
     use super::*;
     use crate::test_support::made_id;
-    use core_document::{BenchPanels, BenchTools, Document, Workbench};
+    use core_document::{BenchFeatures, BenchPanels, BenchTools, Document};
 
     fn call(
         bench: &mut DesignWorkbench,
@@ -1500,7 +1500,7 @@ mod tests {
         {
             let mut ctx = core_document::testing::ctx(doc);
             ctx.active_document_object = Some(pad);
-            core_document::Workbench::edit_feature(bench, &mut ctx, pad);
+            core_document::BenchFeatures::edit_feature(bench, &mut ctx, pad);
         }
         let edit = open_and_accept(bench, doc, pad, |doc| {
             let mut data = doc.get_feature_data(pad).unwrap().clone();

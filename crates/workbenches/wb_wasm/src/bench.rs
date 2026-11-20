@@ -8,12 +8,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters,
-    BenchTools, BodyId, Chord, CommandArgs, CommandError, CommandResult, CommandSpec, Document,
-    FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem, MenuScope, OverlayMesh,
-    Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems,
-    TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    ActionDescriptor, BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels,
+    BenchParameters, BenchTools, BodyId, Chord, CommandArgs, CommandError, CommandResult,
+    CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem,
+    MenuScope, OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark,
+    ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::de::DeserializeOwned;
 
@@ -729,6 +729,105 @@ impl Workbench for WasmWorkbench {
         }
     }
 
+    fn busy(&self) -> bool {
+        let inner = self.inner();
+        inner.guest.jobs.running()
+            || inner.guest.jobs.has_finished(&inner.session)
+            || (inner.active && inner.frame.animating)
+    }
+
+    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        inner.active = true;
+        let input = bench_api::Input {
+            event: bench_api::Event::Activated,
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        self.deliver(&mut inner, ctx, input);
+    }
+
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        inner.active = false;
+        let input = bench_api::Input {
+            event: bench_api::Event::Deactivated,
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        self.deliver(&mut inner, ctx, input);
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        self.deliver_finished_jobs(&mut inner, ctx);
+    }
+
+    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        self.deliver_finished_jobs(&mut inner, ctx);
+    }
+
+    fn files_opened(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: &str,
+        files: Vec<(String, Vec<u8>)>,
+    ) {
+        let input = bench_api::Input {
+            event: bench_api::Event::FileOpened {
+                id: id.to_string(),
+                files: files
+                    .into_iter()
+                    .map(|(name, contents)| bench_api::OpenedFile { name, contents })
+                    .collect(),
+            },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        self.deliver_within(&mut inner, ctx, input, Budget::Long);
+    }
+
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        let mut inner = self.inner();
+        inner.stale = true;
+        inner.held.clear();
+        let state = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.suspend())
+            .and_then(|(state, _)| state);
+        // Until a tab comes on screen, a job started belongs to none.
+        let session = std::mem::replace(&mut inner.session, Arc::new(Session));
+        inner.guest.jobs.set_session(&inner.session);
+        Some(Box::new(Suspended {
+            load: self.load,
+            session,
+            state,
+        }))
+    }
+
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        // A tab's state from an earlier load of the package is not this
+        // load's: its jobs went with that load.
+        let kept = state
+            .and_then(|s| s.downcast::<Suspended>().ok())
+            .filter(|kept| kept.load == self.load);
+        let (session, bytes) = match kept {
+            Some(kept) => (kept.session, kept.state),
+            None => (Arc::new(Session), None),
+        };
+        let mut inner = self.inner();
+        inner.stale = true;
+        inner.guest.jobs.set_session(&session);
+        inner.session = session;
+        let _ = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.resume(bytes.as_deref()));
+    }
+}
+
+impl BenchFeatures for WasmWorkbench {
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
         self.info_and_status(node).0
     }
@@ -823,66 +922,6 @@ impl Workbench for WasmWorkbench {
         })
     }
 
-    fn busy(&self) -> bool {
-        let inner = self.inner();
-        inner.guest.jobs.running()
-            || inner.guest.jobs.has_finished(&inner.session)
-            || (inner.active && inner.frame.animating)
-    }
-
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        inner.active = true;
-        let input = bench_api::Input {
-            event: bench_api::Event::Activated,
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        self.deliver(&mut inner, ctx, input);
-    }
-
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        inner.active = false;
-        let input = bench_api::Input {
-            event: bench_api::Event::Deactivated,
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        self.deliver(&mut inner, ctx, input);
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        self.deliver_finished_jobs(&mut inner, ctx);
-    }
-
-    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        self.deliver_finished_jobs(&mut inner, ctx);
-    }
-
-    fn files_opened(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        id: &str,
-        files: Vec<(String, Vec<u8>)>,
-    ) {
-        let input = bench_api::Input {
-            event: bench_api::Event::FileOpened {
-                id: id.to_string(),
-                files: files
-                    .into_iter()
-                    .map(|(name, contents)| bench_api::OpenedFile { name, contents })
-                    .collect(),
-            },
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        let mut inner = self.inner();
-        self.deliver_within(&mut inner, ctx, input, Budget::Long);
-    }
-
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
         let input = bench_api::Input {
             event: bench_api::Event::EditFeature {
@@ -916,43 +955,6 @@ impl Workbench for WasmWorkbench {
         };
         let mut inner = self.inner();
         self.deliver(&mut inner, ctx, input);
-    }
-
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        let mut inner = self.inner();
-        inner.stale = true;
-        inner.held.clear();
-        let state = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.suspend())
-            .and_then(|(state, _)| state);
-        // Until a tab comes on screen, a job started belongs to none.
-        let session = std::mem::replace(&mut inner.session, Arc::new(Session));
-        inner.guest.jobs.set_session(&inner.session);
-        Some(Box::new(Suspended {
-            load: self.load,
-            session,
-            state,
-        }))
-    }
-
-    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        // A tab's state from an earlier load of the package is not this
-        // load's: its jobs went with that load.
-        let kept = state
-            .and_then(|s| s.downcast::<Suspended>().ok())
-            .filter(|kept| kept.load == self.load);
-        let (session, bytes) = match kept {
-            Some(kept) => (kept.session, kept.state),
-            None => (Arc::new(Session), None),
-        };
-        let mut inner = self.inner();
-        inner.stale = true;
-        inner.guest.jobs.set_session(&session);
-        inner.session = session;
-        let _ = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.resume(bytes.as_deref()));
     }
 
     fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {

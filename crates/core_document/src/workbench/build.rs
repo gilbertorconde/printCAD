@@ -1,6 +1,8 @@
 //! How a bench's features turn into solids and meshes.
 
-use super::*;
+use crate::feature::{BodyId, FeatureNode};
+use crate::rebuild::RebuildJob;
+use crate::{Document, FeatureId};
 
 /// Building the bodies: the rebuild plans a bench hands the kernel, the
 /// mesh histories it keeps, and the working data its features bring up

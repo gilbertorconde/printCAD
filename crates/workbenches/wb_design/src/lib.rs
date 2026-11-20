@@ -78,10 +78,10 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
-    Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
-    base_tool_id,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope,
+    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
+    WorkbenchRuntimeContext, base_tool_id,
 };
 use features::datum_icon;
 use making::{Given, ToolMade, take_base};
@@ -354,6 +354,36 @@ impl Workbench for DesignWorkbench {
         ])
     }
 
+    fn configure(&self, context: &mut WorkbenchContext) {
+        self.register_tools(context);
+    }
+
+    fn busy(&self) -> bool {
+        self.tab.deviations.busy()
+    }
+
+    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        ctx.log_info("Design workbench activated");
+    }
+
+    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+        self.tab.centre = None;
+        self.tab.datums_drawn = None;
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.tab.datums_drawn = Self::target_body(ctx);
+        if self.tab.centre.is_some() {
+            self.take_centre_pick(ctx);
+        }
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchFeatures for DesignWorkbench {
     fn editing_feature(&self) -> Option<FeatureId> {
         self.task_feature()
     }
@@ -410,18 +440,6 @@ impl Workbench for DesignWorkbench {
         self.pick_of(document, id, node, pick)
     }
 
-    fn configure(&self, context: &mut WorkbenchContext) {
-        self.register_tools(context);
-    }
-
-    fn busy(&self) -> bool {
-        self.tab.deviations.busy()
-    }
-
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Design workbench activated");
-    }
-
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
         self.let_go_of_handle();
         self.tab.centre = None;
@@ -431,24 +449,8 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
-        self.tab.centre = None;
-        self.tab.datums_drawn = None;
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        self.tab.datums_drawn = Self::target_body(ctx);
-        if self.tab.centre.is_some() {
-            self.take_centre_pick(ctx);
-        }
-    }
-
     fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
         build::delete_feature(ctx.document, id)
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 

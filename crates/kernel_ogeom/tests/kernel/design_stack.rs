@@ -2,7 +2,7 @@
 //! `wb_design::body_build_ops` → `OgeomKernel::execute_solid_chain` → mesh.
 //! This exercises the exact pipeline the app's recompute driver runs.
 
-use core_document::{BenchCommands, BenchPanels, BodyId, Document, FeatureId};
+use core_document::{BenchCommands, BenchFeatures, BenchPanels, BodyId, Document, FeatureId};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use sketch_model::SketchFeature;
@@ -4731,7 +4731,7 @@ fn holes_patterned_along_a_solid_edge_follow_it() {
 /// pocket is cut where the face and edge stand.
 #[test]
 fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
-    use core_document::{CommandArgs, Workbench, WorkbenchFeature, WorkbenchRuntimeContext};
+    use core_document::{CommandArgs, WorkbenchFeature, WorkbenchRuntimeContext};
     let mut registry = registry();
     registry.set_kernel(&kernel_ogeom::QUERIES);
     // A block 40 x 40, 10 high.

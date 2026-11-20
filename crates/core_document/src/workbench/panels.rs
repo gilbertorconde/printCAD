@@ -1,6 +1,8 @@
 //! The task panel, floating card, menus and settings a bench offers.
 
-use super::*;
+use super::{MenuItem, MenuScope, TaskInfo};
+use crate::Document;
+use crate::runtime::WorkbenchRuntimeContext;
 
 /// The chrome a bench fills with declared data the host draws: the task
 /// panel's state, the floating card, contextual menu entries and the

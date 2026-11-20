@@ -1,7 +1,9 @@
 //! What a bench contributes to what leaves the app: reports,
 //! annotations, threads, exports and print layouts.
 
-use super::*;
+use super::{BenchReport, PrintPart, WorkbenchId};
+use crate::feature::{BodyId, FeatureNode};
+use crate::{Document, FeatureId};
 
 /// What a bench adds to printed reports, exported annotations and
 /// threads, and what it keeps out of exports and print layouts.

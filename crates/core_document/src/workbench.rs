@@ -7,27 +7,24 @@
 use serde::{Deserialize, Serialize};
 
 use crate::feature::{BodyId, FeatureNode};
-use crate::rebuild::RebuildJob;
-use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
+use crate::runtime::WorkbenchRuntimeContext;
 use crate::{Document, FeatureId};
 
-mod tools;
-pub use tools::BenchTools;
-
-mod panels;
-pub use panels::BenchPanels;
-
 mod build;
-pub use build::BenchBuild;
-
-mod parameters;
-pub use parameters::BenchParameters;
-
-mod output;
-pub use output::BenchOutput;
-
 mod commands;
+mod features;
+mod output;
+mod panels;
+mod parameters;
+mod tools;
+
+pub use build::BenchBuild;
 pub use commands::BenchCommands;
+pub use features::BenchFeatures;
+pub use output::BenchOutput;
+pub use panels::BenchPanels;
+pub use parameters::BenchParameters;
+pub use tools::BenchTools;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct WorkbenchId(String);
@@ -326,7 +323,7 @@ pub struct ViewportHud {
     pub footer: Vec<String>,
     /// The values a tool draws with, typed through the bench's keys: a
     /// readout card (one with a `hint`) the host draws as it draws
-    /// [`Workbench::floating_card`]'s, beside its `screen` point, and only
+    /// [`BenchPanels::floating_card`]'s, beside its `screen` point, and only
     /// while that offers no card, since one card shows at a time.
     pub card: Option<panel_api::FloatingCard>,
 }
@@ -335,7 +332,7 @@ pub struct ViewportHud {
 /// panel offers it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FeatureReference {
-    /// Handed back to [`Workbench::set_reference`].
+    /// Handed back to [`BenchParameters::set_reference`].
     pub key: String,
     pub label: String,
     /// What it reads now, in words.
@@ -553,7 +550,7 @@ pub struct PassiveRegion {
     pub profile: kernel_api::Profile,
     pub opacity: f32,
     /// The part of the feature this shades, when it can be picked on its
-    /// own ([`Workbench::pick_part`]).
+    /// own ([`BenchFeatures::pick_part`]).
     pub part: Option<FeaturePart>,
 }
 
@@ -843,143 +840,48 @@ impl<T: Default + Send + 'static> TabSlot for T {
     }
 }
 
-/// Trait implemented by all workbench plugins.
+/// Trait implemented by all workbench plugins: what a bench is, and its
+/// lifecycle (registration, activation, frames, the state that moves with
+/// a tab).
 ///
-/// Workbenches declare their tools via `configure`, and can optionally
-/// implement runtime hooks for input handling, per-frame updates, and the
-/// declared panels and cards the host draws. What a bench draws itself
-/// with egui (its task panel, Preferences page, left panel and strip under
-/// the view) is a drawing-side trait of a host that draws, which reaches
-/// the bench as `dyn Any` through the registry's drawing side
-/// ([`crate::DocumentService::set_drawing_side`]).
+/// Everything else a bench does is in one supertrait per concern, each
+/// method with a default, so a bench implements every group and writes
+/// out only the methods it uses (`impl BenchOutput for MyBench {}` for a
+/// group it leaves alone):
+///
+/// - [`BenchFeatures`]: how the features of the kinds it claims present
+///   in the tree and the view, are picked, deleted and edited.
+/// - [`BenchTools`]: its tools' buttons, the input it takes and what it
+///   draws in the view while active.
+/// - [`BenchPanels`]: the task panel's state, the floating card,
+///   contextual menus and its own settings.
+/// - [`BenchBuild`]: rebuild plans, mesh histories and the derived
+///   working data of its features.
+/// - [`BenchParameters`]: the values formulas and the property panel
+///   reach, and the inputs the panel swaps.
+/// - [`BenchOutput`]: reports, annotations, threads, and the bodies
+///   exports and print layouts leave out or lay out.
+/// - [`BenchCommands`]: the commands it registered, run for scripts,
+///   agents and file imports.
+///
+/// The host calls every group through `dyn Workbench`. What a bench draws
+/// itself with egui (its task panel, Preferences page, left panel and
+/// strip under the view) is a drawing-side trait of a host that draws,
+/// which reaches the bench as `dyn Any` through the registry's drawing
+/// side ([`crate::DocumentService::set_drawing_side`]).
 pub trait Workbench:
     std::any::Any
     + Send
-    + BenchCommands
-    + BenchOutput
-    + BenchParameters
-    + BenchBuild
-    + BenchPanels
+    + BenchFeatures
     + BenchTools
+    + BenchPanels
+    + BenchBuild
+    + BenchParameters
+    + BenchOutput
+    + BenchCommands
 {
     /// Returns metadata describing this workbench.
     fn descriptor(&self) -> WorkbenchDescriptor;
-
-    /// How a feature of one of this bench's `feature_kinds` presents. The
-    /// registry calls it on the owning bench whichever bench is active.
-    fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
-        FeatureInfo::fallback(node)
-    }
-
-    /// The feature an owned feature consumes, whose row it sits under in
-    /// the tree (a pad under its sketch, a sketch under its datum). `None`
-    /// puts it at its body's top level in build order: a feature that
-    /// works on the whole body, or reads several features without
-    /// consuming one. Unless a bench says otherwise, a feature consumes
-    /// its one dependency and nothing when it has several.
-    fn consumed_feature(&self, document: &Document, node: &FeatureNode) -> Option<FeatureId> {
-        sole_dependency(document, node)
-    }
-
-    /// What the scene draws for an owned feature that is visible and not
-    /// under edit. Called on the owner whichever bench is active; the host
-    /// colours it and skips the feature under edit.
-    fn passive_geometry(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-        _node: &FeatureNode,
-    ) -> Option<PassiveGeometry> {
-        None
-    }
-
-    /// The curves and points an owned feature lays out, for what is
-    /// repeated along or at them (an array of copies along a path or at
-    /// points). `None` when it lays out none.
-    fn feature_paths(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-        _node: &FeatureNode,
-    ) -> Option<FeaturePaths> {
-        None
-    }
-
-    /// The bounded solid an owned feature offers a mesh boolean as its
-    /// operand (a fitted cylinder over its drawn extent), in the
-    /// document's frame. `None` when it offers none.
-    fn feature_solid(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-    ) -> Option<kernel_api::MeshOperand> {
-        None
-    }
-
-    /// The plane an owned feature offers to sketch on (a scan's section,
-    /// a fitted plane), in the document's frame: Create sketch puts a new
-    /// sketch there while the feature is selected. `None` when it offers
-    /// none.
-    fn feature_plane(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-        _node: &FeatureNode,
-    ) -> Option<kernel_api::ProfilePlane> {
-        None
-    }
-
-    /// A problem an owned feature has that does not stop it building (a
-    /// sketch whose projected edges are gone), which the tree warns of on
-    /// its row. Asked whenever the tree is drawn, so it answers from what
-    /// it worked out last for the same inputs.
-    fn feature_warning(
-        &self,
-        _document: &Document,
-        _kernel: Option<&dyn kernel_api::KernelQueries>,
-        _id: FeatureId,
-    ) -> Option<String> {
-        None
-    }
-
-    /// How far, in pixels, the cursor is from an owned feature, when it is
-    /// close enough to count as over it. `None` when it is not.
-    fn pick_feature(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-        _node: &FeatureNode,
-        _pick: &ViewportPick,
-    ) -> Option<f32> {
-        None
-    }
-
-    /// The part of an owned feature under the cursor: a curve within
-    /// `tolerance_px` of it, else the region it lies in. `None` when the
-    /// feature has no parts to pick there. Asked only while no task or
-    /// edit session is open.
-    fn pick_part(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-        _node: &FeatureNode,
-        _pick: &ViewportPick,
-        _tolerance_px: f32,
-    ) -> Option<PartPick> {
-        None
-    }
-
-    /// The lines one part of an owned feature draws (a curve), in its
-    /// body's frame, for the view to draw it picked. `None` for a part
-    /// drawn some other way (a region, through `passive_geometry`).
-    fn part_lines(
-        &self,
-        _document: &Document,
-        _id: FeatureId,
-        _part: &FeaturePart,
-    ) -> Option<kernel_api::TriMesh> {
-        None
-    }
 
     /// Called once at registration to declare tools, actions, commands and
     /// file imports.
@@ -1011,26 +913,6 @@ pub trait Workbench:
     ) {
     }
 
-    /// How the work of a feature of a kind this bench claims stands, when
-    /// the bench says.
-    fn feature_status(&self, _node: &FeatureNode) -> Option<FeatureStatus> {
-        None
-    }
-
-    /// A feature of a kind this bench claims, dragged in the tree and
-    /// dropped just before (`before`) or after `target`: true when the
-    /// bench took it (moved it its own way, or refused), false to leave the
-    /// host to move it in its body's history.
-    fn feature_dropped(
-        &mut self,
-        _ctx: &mut WorkbenchRuntimeContext,
-        _feature: FeatureId,
-        _target: FeatureId,
-        _before: bool,
-    ) -> bool {
-        false
-    }
-
     /// Called every frame while this workbench is not active and
     /// [`Self::busy`]: the work it runs away from the window ends whatever
     /// bench is on screen, and this is where it hears of it.
@@ -1045,21 +927,6 @@ pub trait Workbench:
         _keys: &std::collections::HashMap<String, Vec<crate::shortcut::Chord>>,
     ) {
     }
-
-    /// The feature whose edit session is open, for the tree to badge.
-    fn editing_feature(&self) -> Option<FeatureId> {
-        None
-    }
-
-    /// The user asked to edit `id`, a feature of a kind this bench claims
-    /// (a double click on its tree row): open its task. Selecting a feature
-    /// alone never opens one; the host has made `id` the active document
-    /// object before this call.
-    fn edit_feature(&mut self, _ctx: &mut WorkbenchRuntimeContext, _id: FeatureId) {}
-
-    /// Finish/close the current editing session (e.g., finish sketch).
-    /// Called when the user requests to finish editing (e.g., via UI button).
-    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
 
     /// The bench's state for the document on screen: everything that is
     /// not a setting or a cache keyed by what it was worked out from,
@@ -1088,24 +955,10 @@ pub trait Workbench:
             slot.put_back(state);
         }
     }
-
-    /// Features of other bodies that act on `body` (a joint holding
-    /// another body to it): the tree lists each under `body` too, as a
-    /// link to the feature.
-    fn linked_features(&self, _document: &Document, _body: BodyId) -> Vec<FeatureId> {
-        Vec::new()
-    }
-
-    /// Remove an owned feature and settle what depended on it: features
-    /// it hid come back, its body rebuilds. `false` when nothing was
-    /// removed.
-    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
-        ctx.document.remove_feature(id).is_ok()
-    }
 }
 
 /// Everything a bench contributes to the viewport and chrome in one frame
-/// ([`Workbench::viewport`]). Screen-space items are in viewport pixels,
+/// ([`BenchTools::viewport`]). Screen-space items are in viewport pixels,
 /// relative to the viewport's origin, and keep their size at any zoom or
 /// camera rotation; they draw bottom to top as pictures, polygons, lines,
 /// marks, labels.
@@ -1342,7 +1195,7 @@ impl WorkbenchContext {
     }
 
     /// Offer a command to scripts and other callers; it runs in
-    /// `Workbench::run_command`.
+    /// `BenchCommands::run_command`.
     pub fn register_command(&mut self, command: crate::CommandSpec) {
         self.commands.push(command);
     }

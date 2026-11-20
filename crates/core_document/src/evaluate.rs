@@ -104,7 +104,7 @@ pub struct Evaluation {
     /// Every slot of every feature that has one, in order.
     pub slots: HashMap<FeatureId, Vec<SlotValue>>,
     /// Each feature's data as the values left it, before its bench settled
-    /// it (`Workbench::settle`): the same input next time reuses `data`.
+    /// it (`BenchBuild::settle`): the same input next time reuses `data`.
     pub unsettled: HashMap<FeatureId, Value>,
     /// The numbers each feature's owner listed for this evaluation, so a
     /// bench can work a draft out again with only its own list in hand

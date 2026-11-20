@@ -371,8 +371,8 @@ pub fn draw(
 mod tests {
     use super::*;
     use core_document::{
-        BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools,
-        Workbench, WorkbenchContext,
+        BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+        BenchTools, Workbench, WorkbenchContext,
     };
 
     /// A bench offering `card`, if any, as its floating card.
@@ -388,6 +388,8 @@ mod tests {
 
         fn configure(&self, _context: &mut WorkbenchContext) {}
     }
+
+    impl BenchFeatures for Bench {}
 
     impl BenchTools for Bench {}
 

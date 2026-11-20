@@ -125,7 +125,7 @@ pub struct FeatureNode {
     #[serde(skip)]
     pub data_revision: DataRevision,
     /// The formulas that set its numbers, by the key its bench gives each
-    /// (`Workbench::parameters`). The number in `data` is what the user
+    /// (`BenchParameters::parameters`). The number in `data` is what the user
     /// last set; what a formula comes to now is derived
     /// (`Document::feature_values`).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]

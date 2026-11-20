@@ -2,10 +2,10 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools,
-    CameraOrientRequest, Document, DocumentError, DocumentService, FeatureId, FeatureNode,
-    HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints, ViewportPick,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, CameraOrientRequest, Document, DocumentError, DocumentService, FeatureId,
+    FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints,
+    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
     WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
@@ -67,6 +67,9 @@ impl Workbench for FakeBench {
         if self.modal { d.modal() } else { d }
     }
     fn configure(&self, _context: &mut WorkbenchContext) {}
+}
+
+impl BenchFeatures for FakeBench {
     fn passive_geometry(
         &self,
         _document: &Document,
@@ -396,6 +399,8 @@ impl Workbench for Panicky {
     fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
 }
 
+impl BenchFeatures for Panicky {}
+
 impl BenchTools for Panicky {}
 
 impl BenchPanels for Panicky {}
@@ -469,6 +474,8 @@ impl Workbench for Importer {
         context.register_import(core_document::FileImport::new("Drawing", ["DRW"], command));
     }
 }
+
+impl BenchFeatures for Importer {}
 
 impl BenchTools for Importer {}
 

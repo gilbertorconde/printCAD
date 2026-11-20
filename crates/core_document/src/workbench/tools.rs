@@ -1,6 +1,7 @@
 //! A bench's tools, the input it takes and what it draws in the view.
 
-use super::*;
+use super::ViewportOutput;
+use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 
 /// What a bench does while it is active: its tools' buttons, the input
 /// it takes, and what it shows over and in the viewport.

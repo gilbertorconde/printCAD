@@ -1556,6 +1556,8 @@ mod tests {
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
         }
 
+        impl core_document::BenchFeatures for Bench {}
+
         impl core_document::BenchTools for Bench {}
 
         impl core_document::BenchPanels for Bench {}
@@ -1650,6 +1652,8 @@ mod tests {
             }
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
         }
+
+        impl core_document::BenchFeatures for Bought {}
 
         impl core_document::BenchTools for Bought {}
 

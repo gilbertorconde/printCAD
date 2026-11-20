@@ -617,7 +617,7 @@ impl DesignWorkbench {
             }
         }
         if changed {
-            // A sketch drawn on this datum follows it (`Workbench::derive`),
+            // A sketch drawn on this datum follows it (`BenchBuild::derive`),
             // and what stands on the sketch rebuilds.
             match ctx.document.update_feature_data(datum_id, datum.to_json()) {
                 Ok(()) => crate::datum_refs::sync_dependencies(ctx, datum_id, &datum),
@@ -1193,7 +1193,7 @@ mod tests {
         {
             let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
             ctx.active_document_object = Some(id);
-            core_document::Workbench::edit_feature(wb, &mut ctx, id);
+            core_document::BenchFeatures::edit_feature(wb, &mut ctx, id);
         }
         frame(wb, panel, doc, Some(id), OPEN, vec![])
     }

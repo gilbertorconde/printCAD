@@ -46,10 +46,10 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BenchBuild, BenchCommands, BenchOutput, BenchPanels, BenchParameters, BenchTools, BodyId,
-    BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest,
+    InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
@@ -523,19 +523,6 @@ impl AssemblyWorkbench {
 }
 
 impl Workbench for AssemblyWorkbench {
-    /// The joints of other bodies that hold them to `body`.
-    fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
-        joints(document)
-            .into_iter()
-            .filter(|j| {
-                j.feature.kind != JointKind::Ground
-                    && j.feature.other_body == body
-                    && j.body != body
-            })
-            .map(|j| j.id)
-            .collect()
-    }
-
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             JOINT_KIND,
@@ -566,6 +553,52 @@ impl Workbench for AssemblyWorkbench {
 
     fn configure(&self, context: &mut WorkbenchContext) {
         self.register_tools(context);
+    }
+
+    /// A check or a measuring running away from the window, its answer
+    /// shown once it comes, or a motion study, an exploded view or a
+    /// joint's drive playing.
+    fn busy(&self) -> bool {
+        self.tab.checking.is_some()
+            || self.tab.measuring.is_some()
+            || self.tab.sweeping.is_some()
+            || matches!(&self.tab.task, Some(Task::Explode { steps, .. }) if steps.playing)
+            || matches!(&self.tab.task, Some(Task::Motion(studying)) if studying.playing)
+            || self.panel_running()
+    }
+
+    fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.frame_turn(dt, ctx);
+        self.note_left(ctx.document);
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer_gesture(ctx);
+        self.put_back_motion(ctx);
+        self.tab.picking = None;
+        self.tab.checking = None;
+        self.tab.measuring = None;
+        self.put_back_explosion(ctx);
+        self.tab.task = None;
+    }
+}
+
+impl BenchFeatures for AssemblyWorkbench {
+    /// The joints of other bodies that hold them to `body`.
+    fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
+        joints(document)
+            .into_iter()
+            .filter(|j| {
+                j.feature.kind != JointKind::Ground
+                    && j.feature.other_body == body
+                    && j.body != body
+            })
+            .map(|j| j.id)
+            .collect()
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
@@ -627,42 +660,11 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
-    /// A check or a measuring running away from the window, its answer
-    /// shown once it comes, or a motion study, an exploded view or a
-    /// joint's drive playing.
-    fn busy(&self) -> bool {
-        self.tab.checking.is_some()
-            || self.tab.measuring.is_some()
-            || self.tab.sweeping.is_some()
-            || matches!(&self.tab.task, Some(Task::Explode { steps, .. }) if steps.playing)
-            || matches!(&self.tab.task, Some(Task::Motion(studying)) if studying.playing)
-            || self.panel_running()
-    }
-
-    fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        self.frame_turn(dt, ctx);
-        self.note_left(ctx.document);
-    }
-
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
         self.open_task(ctx, id);
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.cancel_pointer_gesture(ctx);
-        self.put_back_motion(ctx);
-        self.tab.picking = None;
-        self.tab.checking = None;
-        self.tab.measuring = None;
-        self.put_back_explosion(ctx);
-        self.tab.task = None;
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
-    }
-
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.cancel_pointer_gesture(ctx);
         self.put_back_motion(ctx);
         self.tab.picking = None;

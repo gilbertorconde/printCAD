@@ -21,7 +21,7 @@ pub struct DocumentService {
     order: Vec<WorkbenchId>,
     /// Feature kind → the bench that claimed it.
     owners: HashMap<String, WorkbenchId>,
-    /// The kernel evaluation asks of solids (`Workbench::derive_on_geometry`).
+    /// The kernel evaluation asks of solids (`BenchBuild::derive_on_geometry`).
     kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
@@ -328,7 +328,7 @@ impl DocumentService {
     }
 
     /// What a drag of `parameter` of feature `id` may set, from the bench
-    /// that claimed its kind (see `Workbench::parameter_drag_range`).
+    /// that claimed its kind (see `BenchParameters::parameter_drag_range`).
     pub fn parameter_drag_range(
         &self,
         document: &Document,
@@ -745,7 +745,7 @@ impl DocumentService {
     }
 
     /// Every visible feature's part under the cursor
-    /// ([`Workbench::pick_part`]), each with where it lies in the
+    /// ([`crate::BenchFeatures::pick_part`]), each with where it lies in the
     /// document's frame, in no particular order.
     pub fn parts_under_cursor(
         &self,

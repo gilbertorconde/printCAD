@@ -1,7 +1,10 @@
 //! The numbers and inputs of a bench's features that formulas and the
 //! property panel reach.
 
-use super::*;
+use super::{FeatureReference, PropertyHints, ReferenceChoice};
+use crate::feature::FeatureNode;
+use crate::runtime::WorkbenchRuntimeContext;
+use crate::{Document, FeatureId};
 
 /// The values of an owned feature that formulas and the property panel
 /// set and read, and the inputs the panel's Inputs group swaps.

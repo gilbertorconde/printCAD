@@ -182,6 +182,27 @@ impl core_document::Workbench for InspectionWorkbench {
         self.register_tools(context);
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+
+    fn busy(&self) -> bool {
+        self.tab.maps.busy() || self.tab.tolerance_readings.busy() || self.tab.fitting.running()
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(kernel) = ctx.kernel {
+            let _ = self.kernel.set(kernel);
+        }
+        self.land_best_fit(ctx);
+    }
+
+    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.land_best_fit(ctx);
+    }
+}
+
+impl core_document::BenchFeatures for InspectionWorkbench {
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
         self.info_of(node)
     }
@@ -217,25 +238,6 @@ impl core_document::Workbench for InspectionWorkbench {
 
     fn editing_feature(&self) -> Option<core_document::FeatureId> {
         self.tab.tolerance_task.as_ref().map(|t| t.id)
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
-    }
-
-    fn busy(&self) -> bool {
-        self.tab.maps.busy() || self.tab.tolerance_readings.busy() || self.tab.fitting.running()
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        if let Some(kernel) = ctx.kernel {
-            let _ = self.kernel.set(kernel);
-        }
-        self.land_best_fit(ctx);
-    }
-
-    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.land_best_fit(ctx);
     }
 
     fn feature_solid(
