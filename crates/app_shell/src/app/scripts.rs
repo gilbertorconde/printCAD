@@ -436,7 +436,7 @@ impl PrintCadApp {
                 self.in_script_tab(|app| {
                     app.close_gesture();
                     app.session.journal.label_next(step);
-                    app.session.journal.hold(true);
+                    app.session.journal.begin_run();
                 });
             }
             Event::Printed(line) => {
@@ -484,25 +484,31 @@ impl PrintCadApp {
                     self.start_rebuild(args, reply);
                     return;
                 }
+                // Undo and redo wait for the kernel, as the UI's do.
+                if is_history_step(&id) && self.kernel_worker.in_flight() > 0 {
+                    self.scripting.rebuild = Some(RebuildWait {
+                        reply,
+                        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+                        then: Some((id, args)),
+                    });
+                    return;
+                }
                 let kept = args.clone();
                 let answer = self
-                    .in_script_tab(|app| app.execute_command(&id, args, event_loop))
+                    .in_script_tab(|app| {
+                        let answer = app.execute_command(&id, args, event_loop);
+                        app.close_call(&id);
+                        answer
+                    })
                     .unwrap_or_else(|| {
                         Err(CommandError::failed("the script's document was closed"))
                     });
-                if let (Ok(result), Some(run)) = (&answer, self.scripting.runs.front_mut()) {
-                    run.calls.push(core_document::Recorded {
-                        id,
-                        args: kept,
-                        result: result.clone(),
-                    });
-                }
+                self.keep_call(id, kept, &answer);
                 let _ = reply.send(answer);
             }
             Event::Finished { label, mut output } => {
                 let failed = output.error.is_some();
                 let rolled = self.in_script_tab(|app| {
-                    app.session.journal.hold(false);
                     // A run that stops with an error leaves nothing behind.
                     let rolled = failed.then(|| {
                         let rolled = app.session.journal.roll_back(&mut app.session.document);
@@ -511,6 +517,7 @@ impl PrintCadApp {
                         }
                         rolled
                     });
+                    app.session.journal.end_run(&mut app.session.document);
                     app.close_gesture();
                     rolled
                 });
@@ -555,6 +562,45 @@ impl PrintCadApp {
         }
     }
 
+    /// Close what a script's call did as its own step, named by the
+    /// command: what the formulas moved goes with it. A run steps back
+    /// through these with `doc.undo`, and they become its one step.
+    fn close_call(&mut self, id: &str) {
+        self.settle_formulas();
+        self.session
+            .journal
+            .note_call(&mut self.session.document, id);
+    }
+
+    /// Keep a call that answered for the running script's crash trail.
+    fn keep_call(&mut self, id: String, args: CommandArgs, answer: &CommandResult) {
+        if let (Ok(result), Some(run)) = (answer, self.scripting.runs.front_mut()) {
+            run.calls.push(core_document::Recorded {
+                id,
+                args,
+                result: result.clone(),
+            });
+        }
+    }
+
+    /// `doc.undo` or `doc.redo` (`redo`): step the tab's history as Edit ›
+    /// Undo and Redo do. Answers the step's name, or nil when there is
+    /// none.
+    pub(crate) fn history_step(&mut self, redo: bool) -> CommandResult {
+        if self.kernel_worker.in_flight() > 0
+            || self.session.connection.server.status().opens_in_flight > 0
+        {
+            return Err(CommandError::failed(
+                "the kernel or a document open is still working",
+            ));
+        }
+        let label = step_history(&mut self.session.journal, &mut self.session.document, redo)?;
+        if label.is_some() {
+            self.after_history_jump();
+        }
+        Ok(label.map_or(Value::Null, Value::String))
+    }
+
     /// Run `f` with the tab the running script started in on screen, for
     /// as long as `f` takes. `None` when that tab has closed.
     fn in_script_tab<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
@@ -593,6 +639,7 @@ impl PrintCadApp {
             reply,
             deadline: std::time::Instant::now()
                 + std::time::Duration::from_secs_f64(timeout.max(0.0)),
+            then: None,
         });
     }
 
@@ -608,21 +655,36 @@ impl PrintCadApp {
                 app.session.jobs.mesh_histories.pending()
             })
             .unwrap_or(false);
-        let answer = if self.kernel_worker.in_flight() == 0 && !mesh_pending {
-            let errors = self
-                .in_script_tab(|app| rebuild_failures(&app.session.document))
-                .unwrap_or_default();
-            Ok(Value::Array(errors))
-        } else if std::time::Instant::now() > deadline {
-            Err(CommandError::failed(
-                "the kernel was still working at the timeout",
-            ))
-        } else {
+        let idle = self.kernel_worker.in_flight() == 0 && !mesh_pending;
+        if !idle && std::time::Instant::now() <= deadline {
+            return;
+        }
+        let Some(wait) = self.scripting.rebuild.take() else {
             return;
         };
-        if let Some(wait) = self.scripting.rebuild.take() {
-            let _ = wait.reply.send(answer);
-        }
+        let answer = match (idle, wait.then) {
+            (false, _) => Err(CommandError::failed(
+                "the kernel was still working at the timeout",
+            )),
+            (true, None) => Ok(Value::Array(
+                self.in_script_tab(|app| rebuild_failures(&app.session.document))
+                    .unwrap_or_default(),
+            )),
+            (true, Some((id, args))) => {
+                let answer = self
+                    .in_script_tab(|app| {
+                        let answer = app.history_step(id == "doc.redo");
+                        app.close_call(&id);
+                        answer
+                    })
+                    .unwrap_or_else(|| {
+                        Err(CommandError::failed("the script's document was closed"))
+                    });
+                self.keep_call(id, args, &answer);
+                answer
+            }
+        };
+        let _ = wait.reply.send(answer);
     }
 
     /// Keep `calls` in the recording, when one is on and no script is
@@ -769,6 +831,7 @@ impl PrintCadApp {
         let a = Args(args);
         match id {
             "doc.picture" => picture_command(args, |request| self.picture(request)),
+            "doc.undo" | "doc.redo" => self.history_step(id == "doc.redo"),
             "doc.report_pdf" => self.report_pdf(args),
             "doc.print_layout" => print_layout_command(
                 args,
@@ -915,6 +978,34 @@ fn short_json(value: &Value) -> String {
 pub(crate) struct RebuildWait {
     reply: std::sync::mpsc::Sender<CommandResult>,
     deadline: std::time::Instant,
+    /// The undo or redo that runs once the kernel is idle, answering in
+    /// place of the rebuild's failures.
+    then: Option<(String, CommandArgs)>,
+}
+
+/// Whether `id` steps the document's history.
+fn is_history_step(id: &str) -> bool {
+    matches!(id, "doc.undo" | "doc.redo")
+}
+
+/// Undo (or `redo`) one step of `journal` on `document`, refused while a
+/// task is open: the step's name, or `None` when there is none. The
+/// window's and the window-less host's.
+pub(crate) fn step_history(
+    journal: &mut core_document::history::OpJournal,
+    document: &mut core_document::Document,
+    redo: bool,
+) -> Result<Option<String>, CommandError> {
+    if journal.in_task() {
+        return Err(CommandError::failed(
+            "a task is open: finish or cancel it first",
+        ));
+    }
+    Ok(if redo {
+        journal.redo(document)
+    } else {
+        journal.undo(document)
+    })
 }
 
 /// `bench` takes the state `kept` holds for it (none: a tab it has no
@@ -1286,18 +1377,20 @@ mod tests {
                             // A known failure fails until it is fixed, and
                             // then asks for its mark to come off.
                             let known = script.starts_with(KNOWN_FAILURE);
-                            match crate::headless::run_in_empty_document(
+                            let (document, journal, ran) = crate::headless::run_journaled(
                                 &mut registry,
+                                core_document::Document::new("Untitled"),
                                 script,
                                 title,
-                            ) {
+                            );
+                            match ran {
                                 Err(_) if known => {}
                                 Ok(_) if known => failed.push(format!(
                                     "{owner}, \"{title}\": passes now; take off its known-failure mark"
                                 )),
                                 Err(error) => failed.push(format!("{owner}, \"{title}\": {error}")),
-                                Ok(document) => {
-                                    if let Some(left) = undone_leaves(document) {
+                                Ok(_) => {
+                                    if let Some(left) = undone_leaves(document, journal) {
                                         failed.push(format!(
                                             "{owner}, \"{title}\": undone, it leaves {left}"
                                         ));
@@ -1327,10 +1420,11 @@ mod tests {
     /// empty document does not hold: the first path where they differ.
     /// `None` when the undo takes everything back, or when an import made
     /// the edits a barrier undo does not cross.
-    fn undone_leaves(mut document: core_document::Document) -> Option<String> {
-        let mut journal = core_document::history::OpJournal::new(1);
-        journal.note(&mut document);
-        journal.undo(&mut document)?;
+    fn undone_leaves(
+        mut document: core_document::Document,
+        journal: Option<core_document::history::OpJournal>,
+    ) -> Option<String> {
+        journal?.undo(&mut document)?;
         let left = document.replicated_projection();
         // An empty document of its own: the same id, nothing else in it.
         let mut empty = core_document::Document::new("Untitled").replicated_projection();

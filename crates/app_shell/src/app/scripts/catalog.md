@@ -702,6 +702,35 @@ assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = body}.volume - (1000 - math.pi * 12)) < 1e-3)
 ```
 
+## doc.undo, doc.redo
+
+They step the same history as Edit › Undo and Redo. Each call a script makes
+is a step of its own: `pc.doc.undo()` takes back the script's last call, then
+the one before, then what was done before the script ran. When the script ends,
+the calls it kept become one step, named after the script. An agent's undo is a
+change to the document like any other, asked about when its chat asks before
+changes.
+
+Called while the kernel builds, they wait for it to finish first. They are
+refused while a task is open. An import clears the history, so nothing before
+it undoes.
+
+See also: `doc.rebuild`
+
+### Take back the last call
+
+```lua
+local body = pc.doc.new_body{}
+pc.doc.rename{id = body, name = "Bracket"}
+assert(pc.doc.undo() == "doc.rename")
+assert(pc.doc.bodies()[1].name ~= "Bracket")
+assert(pc.doc.redo() == "doc.rename")
+assert(pc.doc.bodies()[1].name == "Bracket")
+pc.doc.undo()
+pc.doc.undo()
+assert(#pc.doc.bodies() == 0)
+```
+
 ## doc.rebuild
 
 Commands that make or change features build nothing; this builds them, and is

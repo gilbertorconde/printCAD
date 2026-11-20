@@ -753,6 +753,22 @@ impl Builds {
     pub fn built_since(&self, cycle: u64) -> bool {
         self.cycles > cycle && self.quiet()
     }
+
+    /// The bodies whose whole solid, as saves and exports write it, stops
+    /// at the feature an open task edits: the history after it is not
+    /// built yet.
+    pub fn stopped_at_task(&self) -> Vec<core_document::BodyId> {
+        let mut bodies: Vec<_> = self
+            .previews
+            .iter()
+            .filter(|(_, preview)| !preview.complete)
+            .map(|(body, _)| *body)
+            .chain(self.preview_rest.keys().map(|b| core_document::BodyId(*b)))
+            .collect();
+        bodies.sort_by_key(|b| b.0);
+        bodies.dedup();
+        bodies
+    }
 }
 
 #[cfg(test)]

@@ -228,5 +228,5 @@ newest, kept through undo and redo), the hook context carries the newest
 as `ctx.undo_entry`, `HostRequest::CloseToolGesture` closes the step
 through `close_gesture` and `UndoToolGesture` undoes `entry`
 (`OpJournal::undo_entry`, refused unless it is the newest step, while a
-script holds the journal, or while undo itself is blocked), each answered
+script's run is open, or while undo itself is blocked), each answered
 to the bench at once through `Workbench::tool_history`.

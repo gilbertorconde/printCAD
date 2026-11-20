@@ -392,6 +392,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             ParamKind::Bool,
             "true: build the whole history again",
         ),
+        CommandSpec::new("doc.undo", "Undo the newest step, as Edit › Undo does")
+            .returns("the step's name, or nil when there is nothing to undo"),
+        CommandSpec::new("doc.redo", "Redo the step undone last, as Edit › Redo does")
+            .returns("the step's name, or nil when there is nothing to redo"),
         CommandSpec::new(
             "doc.rebuild",
             "Rebuild every solid that changed, repair or convert what was asked, and wait",
@@ -752,6 +756,8 @@ pub(super) fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostA
                     | PivotAtCursor
                     | Revert
                     | CloseOtherTabs
+                    | Undo
+                    | Redo
             )
         })
         .map(|(id, label, action)| {
@@ -780,8 +786,8 @@ fn for_agents(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
             "it closes a document's tab, and with it the chats working on that document; \
              only the user closes tabs",
         ),
-        New | Open | SaveAs | SaveAll | Import | Export | SendToSlicer | Undo | Redo | NewTab
-        | ReopenTab | NextTab | PreviousTab => spec.agent_always_asks(),
+        New | Open | SaveAs | SaveAll | Import | Export | SendToSlicer | NewTab | ReopenTab
+        | NextTab | PreviousTab => spec.agent_always_asks(),
         _ => spec,
     }
 }

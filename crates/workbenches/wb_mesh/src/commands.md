@@ -16,6 +16,13 @@ when all three of its corners are in the region.
 Without a region it turns the marked faces over, or every face when nothing is
 marked.
 
+## mesh.cut
+
+The plane is xy, xz or yz, or any plane given by its `normal`. It passes
+through `origin`, or else through the point nearest the mesh's middle that
+lies `at` mm along the normal from the body's origin (for xy, the height z =
+`at`), or through the middle itself. Above is the side the normal points to.
+
 ## mesh.deviation
 
 Each point of the mesh the scan draws now is measured to its mesh as imported:

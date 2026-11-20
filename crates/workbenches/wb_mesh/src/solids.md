@@ -89,6 +89,15 @@ Builds the cut mesh.cut would add on the mesh as it stands, recording nothing.
     assert(pc.mesh.inspect{scan = scan}.triangles == before)
 ```
 
+### Preview a slanted cut
+
+```lua
+{{scan}}
+
+    local cut = pc.mesh.preview_cut{scan = scan, normal = {1, 1, 0}, origin = {5, 5, 5}}
+    assert(cut.report.Cut.capped_loops == 1 and cut.report.Cut.open_loops == 0)
+```
+
 ## mesh.export
 
 Writes the mesh at its history's tip, its triangles as they are, in the body's

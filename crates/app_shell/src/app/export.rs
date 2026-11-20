@@ -203,13 +203,40 @@ pub(crate) struct ExportOutcome {
 
 /// An export asked for while the tab's solids were rebuilding: where it
 /// goes, what it writes and what opens it.
-#[derive(Default)]
 pub(crate) struct WaitingExport {
     path: PathBuf,
     draft: ExportDraft,
     open_with: Option<String>,
     /// The tab's build cycle when it was asked for.
     after: u64,
+    /// When it was asked for.
+    asked: std::time::Instant,
+}
+
+/// How long an export waits for the history after the feature an open
+/// task edits before it writes what a save would write.
+const TASK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl Default for WaitingExport {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::new(),
+            draft: ExportDraft::default(),
+            open_with: None,
+            after: 0,
+            asked: std::time::Instant::now(),
+        }
+    }
+}
+
+impl WaitingExport {
+    /// Whether it is written at `now`: once the builds since it was asked
+    /// are in, or, while a task's preview holds the history after its
+    /// feature back, once it has waited [`TASK_WAIT`].
+    fn ready(&self, builds: &crate::app::session_state::Builds, now: std::time::Instant) -> bool {
+        builds.built_since(self.after)
+            || (builds.preview_feature.is_some() && now.duration_since(self.asked) >= TASK_WAIT)
+    }
 }
 
 /// `path` with the format's extension, unless it already names one the
@@ -390,6 +417,7 @@ impl PrintCadApp {
             draft,
             open_with,
             after: self.session.builds.cycles,
+            asked: std::time::Instant::now(),
         });
     }
 
@@ -401,7 +429,7 @@ impl PrintCadApp {
             .file
             .export_waiting
             .as_ref()
-            .is_some_and(|w| self.session.builds.built_since(w.after));
+            .is_some_and(|w| w.ready(&self.session.builds, std::time::Instant::now()));
         if !ready || self.files.export_rx.is_some() {
             return;
         }
@@ -411,13 +439,14 @@ impl PrintCadApp {
     }
 
     /// End the tab's waiting export as its tab or the app goes (`why`):
-    /// written now when its rebuild is done, the export in flight
-    /// finished first, else said in the log not to be written.
+    /// written now when its rebuild is done or a task's preview holds it
+    /// back (what a save writes), the export in flight finished first,
+    /// else said in the log not to be written.
     pub(crate) fn settle_waiting_export(&mut self, why: &str) {
         let Some(waiting) = self.session.file.export_waiting.take() else {
             return;
         };
-        if self.session.builds.built_since(waiting.after) {
+        if waiting.ready(&self.session.builds, waiting.asked + TASK_WAIT) {
             self.finish_export();
             self.write_export_now(waiting.path, waiting.draft, None);
         } else {
@@ -431,6 +460,7 @@ impl PrintCadApp {
     fn write_export_now(&mut self, path: PathBuf, draft: ExportDraft, open_with: Option<String>) {
         let path = with_extension(&path, draft.format);
         let bodies = self.export_bodies(&draft);
+        self.warn_stopped_at_task(&path, &bodies);
         let semantic = export_pmi(
             &self.session.document,
             &self.registry,
@@ -484,6 +514,30 @@ impl PrintCadApp {
         if let Err(err) = started {
             self.files.export_rx = None;
             crate::app_log::error(format!("Could not start the export: {err}"));
+        }
+    }
+
+    /// Say which of the bodies written to `path` stop at the feature an
+    /// open task edits, the history after it not built yet.
+    fn warn_stopped_at_task(&self, path: &Path, bodies: &[OwnedBody]) {
+        let stopped = self.session.builds.stopped_at_task();
+        let feature = self
+            .session
+            .builds
+            .preview_feature
+            .and_then(|f| self.session.document.get_feature_meta(f))
+            .map_or_else(|| "the feature".to_string(), |n| format!("`{}`", n.name));
+        for body in stopped
+            .iter()
+            .filter_map(|id| bodies.iter().find(|b| b.body == *id))
+        {
+            app_log::warn(format!(
+                "The export to {} holds `{}` only up to {feature}, which an open task edits: \
+                 the history after it was not built. Close the task and export again for the \
+                 whole body",
+                path.display(),
+                body.name,
+            ));
         }
     }
 
@@ -969,6 +1023,43 @@ fn bodies_to_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// While a task's preview holds a body's history back, an export
+    /// waits a bounded time and then writes what a save writes, naming
+    /// the bodies that stop at the task's feature; without a task it
+    /// waits for the builds however long they take.
+    #[test]
+    fn an_export_held_back_by_a_task_preview_waits_a_bounded_time() {
+        let mut builds = crate::app::session_state::Builds::default();
+        let body = core_document::BodyId(uuid::Uuid::new_v4());
+        let preview = |complete| crate::app::session::BodyPreview {
+            full: Default::default(),
+            complete,
+            tool: Default::default(),
+            id: uuid::Uuid::new_v4(),
+            revision: 0,
+        };
+        builds.cycles = 1;
+        builds.previews.insert(body, preview(false));
+        let other = uuid::Uuid::new_v4();
+        builds.out.sent(other, None);
+        let asked = std::time::Instant::now();
+        let waiting = WaitingExport {
+            asked,
+            ..WaitingExport::default()
+        };
+        let later = asked + TASK_WAIT;
+        assert!(!waiting.ready(&builds, later), "no task: it waits");
+        builds.preview_feature = Some(core_document::FeatureId(uuid::Uuid::new_v4()));
+        assert!(!waiting.ready(&builds, asked));
+        assert!(waiting.ready(&builds, later));
+        assert_eq!(builds.stopped_at_task(), vec![body]);
+
+        builds.out.landed(other);
+        builds.previews.insert(body, preview(true));
+        assert!(waiting.ready(&builds, asked), "built: written at once");
+        assert!(builds.stopped_at_task().is_empty());
+    }
 
     /// A 10 mm box built by the kernel, its top face textured.
     fn textured_box(textured: bool) -> core_document::Document {

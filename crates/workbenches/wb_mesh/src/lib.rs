@@ -718,6 +718,41 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_takes_any_plane_and_keeps_the_named_ones_as_shorthand() {
+        let cube = TriMesh {
+            positions: vec![[0., 0., 0.], [10., 10., 10.], [0., 10., 0.]],
+            indices: vec![0, 1, 2],
+            ..TriMesh::default()
+        };
+        let plane = |args: serde_json::Value| {
+            let args = core_document::command::object(args);
+            match solids::cut(&Args(&args), &cube) {
+                Ok(MeshOp::Cut { origin, normal, .. }) => Ok((origin, normal)),
+                Ok(other) => panic!("{other:?}"),
+                Err(e) => Err(e.to_string()),
+            }
+        };
+        let named = plane(json!({"plane": "xz", "at": 3})).unwrap();
+        assert_eq!(named, ([5., 3., 5.], [0., 1., 0.]));
+        assert_eq!(
+            plane(json!({"normal": {"x": 0, "y": 2, "z": 0}, "at": 3})),
+            Ok(named)
+        );
+        let (origin, normal) = plane(json!({"normal": [1, 1, 0], "origin": [1, 2, 3]})).unwrap();
+        assert_eq!(origin, [1., 2., 3.]);
+        let half = 0.5f64.sqrt();
+        assert!((normal[0] - half).abs() < 1e-12 && (normal[1] - half).abs() < 1e-12);
+        assert_eq!(normal[2], 0.0);
+        for refused in [
+            json!({"plane": "xy", "normal": [0, 0, 1]}),
+            json!({"normal": [0, 0, 0]}),
+            json!({"origin": [0, 0, 0], "at": 1}),
+        ] {
+            assert!(plane(refused.clone()).is_err(), "{refused}");
+        }
+    }
+
+    #[test]
     fn the_diagonal_spans_the_points_and_an_empty_mesh_has_none() {
         assert_eq!(diagonal(&TriMesh::default()), 0.0);
         let mesh = TriMesh {

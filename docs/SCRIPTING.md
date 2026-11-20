@@ -74,7 +74,9 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
   script. `pcall(pc.design.pad, {sketch = s})` catches it instead.
 - Every change is an ordinary edit, so Undo takes it back. A console line
   or a script run is one undo step, and so is anything you edit by hand
-  while it runs.
+  while it runs. Inside a run each call is a step: `pc.doc.undo()` takes
+  back the script's last call, then the ones before it, then what was
+  done before the run, and `pc.doc.redo()` puts them back.
 - A run that stops with an error, or is stopped, takes back everything
   changed while it ran and leaves no undo step: the document is as it was
   before the run. An import is the exception; it cannot be taken back, so
@@ -940,6 +942,56 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "built up to 
 pc.doc.set_tip{id = pad, clear = true}
 assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = body}.volume - (1000 - math.pi * 12)) < 1e-3)
+```
+
+`pc.doc.undo`: Undo the newest step, as Edit › Undo does.
+
+- Returns the step's name, or nil when there is nothing to undo
+
+Notes:
+
+- They step the same history as Edit › Undo and Redo. Each call a script makes is a step of its own: `pc.doc.undo()` takes back the script's last call, then the one before, then what was done before the script ran. When the script ends, the calls it kept become one step, named after the script. An agent's undo is a change to the document like any other, asked about when its chat asks before changes.
+- Called while the kernel builds, they wait for it to finish first. They are refused while a task is open. An import clears the history, so nothing before it undoes.
+
+See also `pc.doc.rebuild`.
+
+Example: Take back the last call.
+
+```lua
+local body = pc.doc.new_body{}
+pc.doc.rename{id = body, name = "Bracket"}
+assert(pc.doc.undo() == "doc.rename")
+assert(pc.doc.bodies()[1].name ~= "Bracket")
+assert(pc.doc.redo() == "doc.rename")
+assert(pc.doc.bodies()[1].name == "Bracket")
+pc.doc.undo()
+pc.doc.undo()
+assert(#pc.doc.bodies() == 0)
+```
+
+`pc.doc.redo`: Redo the step undone last, as Edit › Redo does.
+
+- Returns the step's name, or nil when there is nothing to redo
+
+Notes:
+
+- They step the same history as Edit › Undo and Redo. Each call a script makes is a step of its own: `pc.doc.undo()` takes back the script's last call, then the one before, then what was done before the script ran. When the script ends, the calls it kept become one step, named after the script. An agent's undo is a change to the document like any other, asked about when its chat asks before changes.
+- Called while the kernel builds, they wait for it to finish first. They are refused while a task is open. An import clears the history, so nothing before it undoes.
+
+See also `pc.doc.rebuild`.
+
+Example: Take back the last call.
+
+```lua
+local body = pc.doc.new_body{}
+pc.doc.rename{id = body, name = "Bracket"}
+assert(pc.doc.undo() == "doc.rename")
+assert(pc.doc.bodies()[1].name ~= "Bracket")
+assert(pc.doc.redo() == "doc.rename")
+assert(pc.doc.bodies()[1].name == "Bracket")
+pc.doc.undo()
+pc.doc.undo()
+assert(#pc.doc.bodies() == 0)
 ```
 
 `pc.doc.rebuild`: Rebuild every solid that changed, repair or convert what was asked, and wait.
@@ -2033,10 +2085,6 @@ See also `pc.doc.save_section`.
 `pc.view.measure`: Measure.
 
 ### edit
-
-`pc.edit.undo`: Undo.
-
-`pc.edit.redo`: Redo.
 
 `pc.edit.cut`: Cut.
 
@@ -9189,11 +9237,13 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 `pc.mesh.preview_cut`: Preview a cut.
 
 - `scan` (id, optional): The mesh body; the selected one
-- `plane` (string, optional): xy, xz or yz; xy
-- `at` (number, optional): Plane position, mm; the mesh's middle
-- `keep` (string, optional): below or above; below
-- `close` (boolean, optional): Cap the cut flat; true
-- `bridge` (number, optional): Close rim gaps up to this, mm; diagonal / 50
+- `plane` (string, optional): xy, xz or yz, in the body's frame; xy
+- `normal` (any, optional): {x, y, z} square to the plane, in the body's frame, instead of plane
+- `origin` (any, optional): {x, y, z} a point of the plane, in the body's frame
+- `at` (number, optional): Where along the normal, mm, instead of origin; the mesh's middle
+- `keep` (string, optional): below or above the plane (the side the normal points to); below
+- `close` (boolean, optional): Cap every loop of the cut flat; true
+- `bridge` (number, optional): Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal
 - Returns {faces, note, report = {Cut = {capped_loops, bridged, open_loops}}}
 
 Notes:
@@ -9477,11 +9527,17 @@ Notes:
 
 - `scan` (id, optional): The mesh body; the selected one
 - `plane` (string, optional): xy, xz or yz, in the body's frame; xy
-- `at` (number, optional): Where along the plane's normal, mm; the mesh's middle
-- `keep` (string, optional): below or above the plane; below
+- `normal` (any, optional): {x, y, z} square to the plane, in the body's frame, instead of plane
+- `origin` (any, optional): {x, y, z} a point of the plane, in the body's frame
+- `at` (number, optional): Where along the normal, mm, instead of origin; the mesh's middle
+- `keep` (string, optional): below or above the plane (the side the normal points to); below
 - `close` (boolean, optional): Cap every loop of the cut flat; true
 - `bridge` (number, optional): Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal
 - Returns {feature, name}
+
+Notes:
+
+- The plane is xy, xz or yz, or any plane given by its `normal`. It passes through `origin`, or else through the point nearest the mesh's middle that lies `at` mm along the normal from the body's origin (for xy, the height z = `at`), or through the middle itself. Above is the side the normal points to.
 
 `pc.mesh.deviation`: Edit deviation.
 

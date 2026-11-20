@@ -93,26 +93,50 @@ pub(super) fn side(value: &str) -> Result<MeshSide, CommandError> {
     }
 }
 
-/// A plane cut from the command's arguments, placed on `mesh`.
+/// A plane cut from the command's arguments, placed on `mesh`: the plane
+/// square to `normal` (or a named plane's axis) through `origin`, else
+/// through the point nearest the mesh's middle `at` along the normal.
 pub(super) fn cut(a: &Args, mesh: &TriMesh) -> Result<MeshOp, CommandError> {
-    let normal = match a.opt_string("plane")?.unwrap_or("xy") {
-        "xy" | "XY" => [0.0, 0.0, 1.0],
-        "xz" | "XZ" => [0.0, 1.0, 0.0],
-        "yz" | "YZ" => [1.0, 0.0, 0.0],
-        _ => return Err(CommandError::bad("plane", "is xy, xz or yz")),
-    };
-    let (lo, hi) = mesh
-        .bounds()
-        .ok_or_else(|| CommandError::failed("the scan has no points"))?;
-    let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
-    let mut origin: [f64; 3] = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
-    if let Some(at) = a.opt_number("at")? {
-        for k in 0..3 {
-            if normal[k] != 0.0 {
-                origin[k] = at;
-            }
+    let normal = match (a.opt_string("plane")?, a.opt_vec3("normal")?) {
+        (Some(_), Some(_)) => {
+            return Err(CommandError::bad(
+                "normal",
+                "is given instead of plane, not with it",
+            ));
         }
-    }
+        (_, Some(n)) => {
+            let length = n.iter().map(|v| v * v).sum::<f64>().sqrt();
+            if length < 1e-12 {
+                return Err(CommandError::bad("normal", "must not be zero"));
+            }
+            n.map(|v| v / length)
+        }
+        (plane, None) => match plane.unwrap_or("xy") {
+            "xy" | "XY" => [0.0, 0.0, 1.0],
+            "xz" | "XZ" => [0.0, 1.0, 0.0],
+            "yz" | "YZ" => [1.0, 0.0, 0.0],
+            _ => return Err(CommandError::bad("plane", "is xy, xz or yz")),
+        },
+    };
+    let origin = match (a.opt_vec3("origin")?, a.opt_number("at")?) {
+        (Some(_), Some(_)) => {
+            return Err(CommandError::bad(
+                "at",
+                "is given instead of origin, not with it",
+            ));
+        }
+        (Some(origin), None) => origin,
+        (None, at) => {
+            let (lo, hi) = mesh
+                .bounds()
+                .ok_or_else(|| CommandError::failed("the scan has no points"))?;
+            let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
+            let middle: [f64; 3] = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
+            let along = |p: [f64; 3]| (0..3).map(|k| p[k] * normal[k]).sum::<f64>();
+            let shift = at.map_or(0.0, |at| at - along(middle));
+            std::array::from_fn(|k| middle[k] + shift * normal[k])
+        }
+    };
     let keep_above = match a.opt_string("keep")?.unwrap_or("below") {
         "below" => false,
         "above" => true,
@@ -125,6 +149,34 @@ pub(super) fn cut(a: &Args, mesh: &TriMesh) -> Result<MeshOp, CommandError> {
         close: a.opt_bool("close")?.unwrap_or(true),
         bridge: a.opt_number("bridge")?.unwrap_or(diagonal(mesh) / 50.0),
     })
+}
+
+/// The plane and the side kept that `mesh.cut` and `mesh.preview_cut`
+/// take, read by [`cut`].
+pub(super) fn cut_params(spec: CommandSpec) -> CommandSpec {
+    spec.optional("plane", ParamKind::String, "xy, xz or yz, in the body's frame; xy")
+        .optional(
+            "normal",
+            ParamKind::Any,
+            "{x, y, z} square to the plane, in the body's frame, instead of plane",
+        )
+        .optional(
+            "origin",
+            ParamKind::Any,
+            "{x, y, z} a point of the plane, in the body's frame",
+        )
+        .optional(
+            "at",
+            ParamKind::Number,
+            "Where along the normal, mm, instead of origin; the mesh's middle",
+        )
+        .optional("keep", ParamKind::String, "below or above the plane (the side the normal points to); below")
+        .optional("close", ParamKind::Bool, "Cap every loop of the cut flat; true")
+        .optional(
+            "bridge",
+            ParamKind::Number,
+            "Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal",
+        )
 }
 
 /// The cut `mesh.cut` would add, built on the mesh as it stands.
@@ -313,20 +365,7 @@ pub(super) fn table(t: &mut CommandTable<MeshWorkbench>) {
     );
     commands::on_scan(
         t,
-        scan(CommandSpec::new("mesh.preview_cut", "Preview a cut"))
-            .optional("plane", ParamKind::String, "xy, xz or yz; xy")
-            .optional(
-                "at",
-                ParamKind::Number,
-                "Plane position, mm; the mesh's middle",
-            )
-            .optional("keep", ParamKind::String, "below or above; below")
-            .optional("close", ParamKind::Bool, "Cap the cut flat; true")
-            .optional(
-                "bridge",
-                ParamKind::Number,
-                "Close rim gaps up to this, mm; diagonal / 50",
-            )
+        cut_params(scan(CommandSpec::new("mesh.preview_cut", "Preview a cut")))
             .returns("{faces, note, report = {Cut = {capped_loops, bridged, open_loops}}}")
             .read_only(),
         |_, a, ctx, body, _| preview_cut(a, ctx, body),
