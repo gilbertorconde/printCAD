@@ -142,8 +142,8 @@ impl PrintCadApp {
             partial = self.session.builds.partial_out.remove(body_id);
             let dropped = self.session.builds.dropped.remove(body_id);
             if dropped
-                && let KernelResponse::SolidFailed { error, .. } = &response
-                && Self::is_cancellation(error)
+                && let KernelResponse::SolidFailed { failure, .. } = &response
+                && failure.cancelled()
             {
                 // Dropped for the plan that goes now.
                 self.session.builds.stale.remove(body_id);
@@ -214,21 +214,13 @@ impl PrintCadApp {
                         // Body deleted (e.g. undo) while the rebuild ran.
                         return;
                     }
-                    self.session.document.store_build_warnings(
+                    build_driver::store_answers(
+                        &mut self.session.document,
                         &op_features,
                         &probes,
                         &projections,
                         &result,
                     );
-                    self.session
-                        .document
-                        .store_size_limit(&op_features, &result);
-                    self.session
-                        .document
-                        .store_probe_answers(&probes, &result.probes);
-                    self.session
-                        .document
-                        .store_projections(&projections, &result.projections);
                     let mut result = *result;
                     let complete = !partial;
                     let landing = crate::app::recompute::preview_landing(
@@ -245,11 +237,7 @@ impl PrintCadApp {
                         (Some(_), PreviewLanding::Keep) => {}
                         _ => {
                             self.session.builds.previews.remove(&bid);
-                            crate::app::recompute::store_built_solid(
-                                &mut self.session.document,
-                                bid,
-                                result,
-                            );
+                            build_driver::store_solid(&mut self.session.document, bid, result);
                         }
                     }
                     self.session.shape_rebuilt(bid);
@@ -258,18 +246,7 @@ impl PrintCadApp {
                         Some(failed) => {
                             self.drop_failed_preview(bid);
                             self.session.builds.coarse.remove(&body_id);
-                            if let Some(feature) = failed.feature {
-                                let feature = core_document::FeatureId(feature);
-                                self.session.document.set_feature_failure(
-                                    feature,
-                                    failed.error.clone(),
-                                    failed.edges,
-                                );
-                                self.mark_unbuilt(
-                                    feature,
-                                    failed.unbuilt.into_iter().map(core_document::FeatureId),
-                                );
-                            }
+                            build_driver::record_failure(&mut self.session.document, &failed);
                             app_log::error(format!(
                                 "Rebuild of `{name}` failed: {}; it shows the history before",
                                 failed.error
@@ -377,10 +354,7 @@ impl PrintCadApp {
                 }
                 KernelResponse::SolidFailed {
                     body_id,
-                    failed_feature,
-                    error,
-                    edges,
-                    unbuilt,
+                    failure,
                     nothing_built,
                 } => {
                     let name = self
@@ -392,7 +366,7 @@ impl PrintCadApp {
                     // A cancellation is not a defect: leave the feature
                     // unbadged and the body on its last good solid. The next
                     // edit marks it dirty and rebuilds.
-                    if Self::is_cancellation(&error) {
+                    if failure.cancelled() {
                         app_log::info(format!("Rebuild of `{name}` cancelled"));
                         return;
                     }
@@ -402,24 +376,15 @@ impl PrintCadApp {
                     // Pin the failure on the culprit feature; the panel and
                     // tree surface it, and the features after it say they
                     // were left out.
-                    if let Some(feature) = failed_feature {
-                        let feature = core_document::FeatureId(feature);
-                        self.session
-                            .document
-                            .set_feature_failure(feature, error.clone(), edges);
-                        self.mark_unbuilt(
-                            feature,
-                            unbuilt.into_iter().map(core_document::FeatureId),
-                        );
-                    }
+                    build_driver::record_failure(&mut self.session.document, &failure);
                     // The first feature failed: nothing of the history
                     // builds, and a shape left from before would be stale.
                     let bid = BodyId(body_id);
                     if nothing_built && !self.session.document.body_solid_is_imported(bid) {
                         self.session.builds.previews.remove(&bid);
-                        self.session.document.remove_imported_geometry(bid);
+                        build_driver::clear_unbuilt(&mut self.session.document, bid);
                     }
-                    app_log::error(format!("Rebuild of `{name}` failed: {error}"));
+                    app_log::error(format!("Rebuild of `{name}` failed: {}", failure.error));
                 }
             }
         }

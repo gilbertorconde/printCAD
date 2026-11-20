@@ -31,7 +31,7 @@ history) is not yet from that asset, and the host's
 `drive_shape_replacements` reads each on the kernel thread
 (`OgeomKernel::read_solid`: a STEP/IGES file's first body, a `.brep`
 file's shape, a mesh file converted) into the base, invalidating the
-body, or into its shape (`recompute::land_shape`, which headless runs
+body, or into its shape (`build_driver::land_shape`, which headless runs
 too). `Document::shape_body_from_file` records the same op for a body
 holding nothing yet. A stand-in (`Body.stand_in`, op `SetBodyStandIn`,
 also a barrier) is a shape asset kept for a body built from features:

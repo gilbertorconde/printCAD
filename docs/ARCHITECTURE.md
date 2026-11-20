@@ -20,6 +20,7 @@ and macOS. It is written in Rust.
 | Document server | `doc_server` | Owns the file on disk, one process per document (desktop only) |
 | Geometry interface | `kernel_api` | Meshes, profiles and solid operations as plain data |
 | Geometry kernel | `kernel_ogeom` | The interface implemented with the ogeom kernel |
+| Build driver | `build_driver` | Builds a document's solids from the workbenches' plans, the same way for the app, scripts and project import |
 | Renderer | `render_wgpu` | wgpu: scene data in, pixels out |
 | Camera | `viewport_camera` | Camera pose, projection, rays, navigation and fit, with no window |
 | Transform gizmo | `transform_gizmo` | Move, turn and scale handles: layout, hit test and drag, drawn by the host |
@@ -57,7 +58,11 @@ and macOS. It is written in Rust.
 3. Each frame, the workbenches turn dirty bodies into lists of solid
    operations.
 4. The kernel worker runs them on background threads, resuming from what
-   the last build of the body kept, and returns a mesh per body.
+   the last build of the body kept, and returns a mesh per body. What a
+   build leaves in the document (the solid, warnings, a failing feature's
+   error) is landed by `build_driver`, which a script run without a window
+   and a project import use to build on their own thread, so all three
+   build a document alike.
 5. The renderer draws the meshes and answers pick requests.
 
 ## What comes next

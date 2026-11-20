@@ -1322,4 +1322,136 @@ endsolid t
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// The app builds a document as a script does: its kernel worker,
+    /// with its threads, kept solids and chain states, and the landing of
+    /// its answers come to the same meshes and the same feature errors as
+    /// the build on the script's thread, for a body that builds, one that
+    /// stops at a failing fillet and one built against another body.
+    #[test]
+    fn the_app_s_kernel_worker_builds_what_a_script_builds() {
+        use crate::kernel_worker::{KernelResponse, KernelWorker};
+        use build_driver::{Next, clear_unbuilt, record_failure, store_answers, store_solid};
+        let mut registry = registry();
+        let made = r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            pc.design.fillet{body = body, radius = 50, mode = "Radius",
+              edges = {Edges = {{point = {20, 5, 5}, direction = {0, 1, 0}}}}}
+            local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
+            pc.sketch.rect{sketch = top, x = 2, y = 2, width = 5, height = 5}
+            pc.design.pad{sketch = top, length = 3}
+            local tool = pc.doc.new_body{name = "Tool"}
+            local t = pc.sketch.new{body = tool, plane = "XY"}
+            pc.sketch.circle{sketch = t, x = 10, y = 5, radius = 3}
+            pc.design.pad{sketch = t, length = 20}
+            local other = pc.doc.new_body{name = "Other"}
+            local o = pc.sketch.new{body = other, plane = "XY"}
+            pc.sketch.rect{sketch = o, x = 0, y = 0, width = 30, height = 30}
+            pc.design.pad{sketch = o, length = 2}
+            pc.design.boolean{body = other, tool_body = tool, kind = "Cut"}
+            assert(#pc.doc.rebuild() == 2, "the fillet fails, the pad after it is left out")
+            "#;
+        let made = run_in_empty_document(&mut registry, made, "made").unwrap();
+        // Nothing built: every body's history to build again.
+        let unbuilt = |registry: &DocumentService| {
+            let mut document = made.clone();
+            for body in document.bodies().iter().map(|b| b.id).collect::<Vec<_>>() {
+                document.remove_imported_geometry(body);
+                document.clear_body_feature_errors(body);
+            }
+            registry.invalidate_all(&mut document);
+            document
+        };
+        let scripted = unbuilt(&registry);
+        let (scripted, out) = run_in_document(&mut registry, scripted, "pc.doc.rebuild()", "s");
+        out.unwrap();
+
+        let mut app = unbuilt(&registry);
+        let mut worker = KernelWorker::spawn();
+        let detail = TessellationSettings::default();
+        for _ in 0..32 {
+            let jobs = registry.rebuild_jobs(&mut app);
+            if jobs.is_empty() {
+                break;
+            }
+            for job in jobs {
+                let begun = build_driver::begin(&mut app, job);
+                if let Next::Build(plan) = begun.next {
+                    worker.request_build_solid(
+                        begun.body.0,
+                        plan.ops,
+                        plan.op_features,
+                        detail.clone(),
+                        None,
+                        plan.probes,
+                        plan.projections,
+                    );
+                }
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            while worker.in_flight() > 0 && std::time::Instant::now() < deadline {
+                for answer in worker.drain() {
+                    match answer {
+                        KernelResponse::SolidBuilt {
+                            body_id,
+                            result,
+                            probes,
+                            projections,
+                            op_features,
+                            failed,
+                            ..
+                        } => {
+                            let body = core_document::BodyId(body_id);
+                            store_answers(&mut app, &op_features, &probes, &projections, &result);
+                            store_solid(&mut app, body, *result);
+                            if let Some(failed) = failed {
+                                record_failure(&mut app, &failed);
+                            }
+                        }
+                        KernelResponse::SolidFailed {
+                            body_id,
+                            failure,
+                            nothing_built,
+                        } => {
+                            record_failure(&mut app, &failure);
+                            if nothing_built {
+                                clear_unbuilt(&mut app, core_document::BodyId(body_id));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+
+        let shown = |document: &Document| {
+            let bodies: Vec<_> = document
+                .bodies()
+                .iter()
+                .map(|b| {
+                    let mesh = document.imported_geometry(b.id).map(|g| g.mesh.clone());
+                    let mesh = mesh.map(|m| (m.positions.clone(), m.indices.clone()));
+                    (b.name.clone(), mesh)
+                })
+                .collect();
+            let mut errors: Vec<_> = document
+                .feature_tree()
+                .all_nodes()
+                .map(|(_, n)| (n.name.clone(), n.error.clone(), n.warning.clone()))
+                .collect();
+            errors.sort();
+            (bodies, errors)
+        };
+        let (bodies, errors) = shown(&scripted);
+        assert!(
+            bodies.iter().all(|(_, mesh)| mesh.is_some()),
+            "every body built"
+        );
+        assert_eq!(errors.iter().filter(|(_, e, _)| e.is_some()).count(), 2);
+        assert_eq!((bodies, errors), shown(&app));
+    }
 }

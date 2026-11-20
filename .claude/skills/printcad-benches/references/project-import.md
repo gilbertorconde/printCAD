@@ -12,7 +12,10 @@
   a body starting with a Clone of the step before, the edges and faces a
   feature names found on the saved shapes and made picks, what cannot be
   rebuilt left out with what stands on it and listed as findings), and
-  is registered by the
+  `import_document` builds what it converted through
+  `build_driver::build_all` with the Sketch and Design benches, as the
+  app would, a failing body taking its saved stand-in; it is registered by
+  the
   `workbenches` facade as `ProjectImportBench`: no tools and no feature
   kinds, not in `REGISTERED_WORKBENCHES` (so no switcher shows it), only
   File › Import's FreeCAD file and `project.import`, which converts into
