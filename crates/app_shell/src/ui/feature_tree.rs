@@ -1342,7 +1342,7 @@ mod tests {
     #[test]
     fn an_imported_part_sits_under_its_assembly_without_a_body_row() {
         let mut doc = Document::new("tree");
-        let body = doc.create_body(Some("Imported Body".into()));
+        let body = doc.create_body(Some("Part".into()));
         let (root, leaf, loose) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         set_graph(
             &mut doc,
@@ -2044,8 +2044,73 @@ mod tests {
             .iter()
             .find(|n| n.id == TreeItemId::ImportedObject(generic))
             .expect("the generic instance's row");
-        assert_eq!(row.label, "Anet v1-body");
+        assert_eq!(row.label, "Frame", "named as its body");
         assert_eq!(row.detail.as_deref(), Some("Instance of part Anet v1-body"));
+    }
+
+    /// A row standing for a body carries the body's name, the one a
+    /// rename changes and the parts list and print layout show, whether
+    /// the body is an instance's or a part's; the file's names stay on
+    /// the details line.
+    #[test]
+    fn an_imported_row_shows_its_body_renamed() {
+        use kernel_api::ImportedNodeKind as K;
+        let mut doc = Document::new("tree");
+        let (bolt_a, bolt_b) = (
+            doc.create_body(Some("M5x16 BHCS".into())),
+            doc.create_body(Some("M5x16 BHCS".into())),
+        );
+        let [asm, first, first_part, second] = [(); 4].map(|_| Uuid::new_v4());
+        let mut bound = node(second, Some(asm), vec![], K::Part, "M5x16 BHCS");
+        bound.body_id = Some(bolt_b);
+        set_graph(
+            &mut doc,
+            vec![
+                node(asm, None, vec![first, second], K::Assembly, "Asm"),
+                node(first, Some(asm), vec![first_part], K::Instance, "Bolt:1"),
+                part_of(first_part, first, "M5x16 BHCS", bolt_a),
+                bound,
+            ],
+        );
+        // Renaming the instance's row renames the body it stands for.
+        for id in [first, bolt_b.0] {
+            let args = core_document::command::object(
+                serde_json::json!({"id": id.to_string(), "name": "Cap screw"}),
+            );
+            crate::app::scripts::document_command(
+                "doc.rename",
+                &args,
+                &mut doc,
+                &core_document::DocumentService::default(),
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        }
+        assert_eq!(doc.body(bolt_a).unwrap().name, "Cap screw");
+        let tree = tree(&doc);
+        let row = |id| {
+            tree.nodes()[0]
+                .children
+                .iter()
+                .find(|n| n.id == TreeItemId::ImportedObject(id))
+                .map(|n| (n.label.clone(), n.detail.clone().unwrap_or_default()))
+                .unwrap()
+        };
+        assert_eq!(
+            row(first),
+            (
+                "Cap screw".into(),
+                "Instance Bolt:1 of part M5x16 BHCS".into()
+            )
+        );
+        assert_eq!(
+            row(second),
+            (
+                "Cap screw".into(),
+                "Part M5x16 BHCS in the file, linked to a body".into()
+            )
+        );
     }
 
     fn node(

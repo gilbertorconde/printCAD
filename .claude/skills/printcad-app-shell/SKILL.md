@@ -39,7 +39,11 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   `recompute.rs` (parametric rebuild driver), `links.rs` (parts linked from other
   `.prtcad` files: `Body.link` names the file and body, the shape is read
   from it on a thread and never saved here, a changed modified time marks
-  the part stale until Reload), `workbench_host.rs` (ctx
+  the part stale until Reload; `FileLink::relative`, written by every save
+  (`place_links_for_file` on the save's copy), is tried before the absolute
+  path from `FileState::links_from`, the folder the document was opened
+  from; a link found nowhere is `link_missing` and Relink… records a
+  `SetBodyLink`), `workbench_host.rs` (ctx
   plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive; keeps
   the last few solids per body by what they were built from, so moving a
   body's tip back and forth through its history, or undo and redo, finds

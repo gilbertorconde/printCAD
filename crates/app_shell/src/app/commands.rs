@@ -260,6 +260,7 @@ impl PrintCadApp {
             }
             UiCommand::ReloadLink(body) => self.reload_link(body),
             UiCommand::OpenLinkSource(body) => self.open_link_source(body),
+            UiCommand::Relink(body) => self.start_file_dialog(FileDialogKind::Relink(body)),
             UiCommand::Isolate(body) => self.isolate(body),
             UiCommand::LeaveIsolation => self.session.document.set_isolation(None),
             UiCommand::HideOthers(body) => self.hide_others(body),

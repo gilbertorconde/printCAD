@@ -270,6 +270,10 @@ pub struct Document {
     /// Linked parts whose file changed since it was read.
     #[serde(skip)]
     link_stale: std::collections::HashSet<BodyId>,
+    /// Linked parts whose file is found neither beside the document nor
+    /// where it was linked from.
+    #[serde(skip)]
+    link_missing: std::collections::HashSet<BodyId>,
     /// The bodies the view is isolated to, when it is: the rest draw and
     /// pick as if hidden while each body's own visibility stays as saved.
     /// View state of this replica, never an op and never saved.
@@ -390,6 +394,7 @@ impl Document {
             lineage: Lineage::default(),
             left_out: Vec::new(),
             link_stale: Default::default(),
+            link_missing: Default::default(),
             isolated: None,
             built_against: HashMap::new(),
             probed: HashMap::new(),

@@ -2,8 +2,9 @@
 //! misbehaves on request and one reaching what the example leaves out,
 //! all built from `sdk/` for wasm32-wasip2.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use bench_api::PanelEvent;
@@ -70,10 +71,20 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// Package folder `source` (under `sdk/`) with its component, packed into
-/// an archive under a fresh folder.
-fn archive(source: &str, component: &str, name: &str) -> PathBuf {
+/// an archive once a run and shared by every test, which only reads it.
+fn archive(source: &str, component: &str) -> PathBuf {
+    static PACKED: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+    let mut packed = PACKED.get_or_init(Default::default).lock().unwrap();
+    if let Some(archive) = packed.get(source) {
+        return archive.clone();
+    }
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk");
-    let work = scratch(name);
+    let work = std::env::temp_dir().join(format!(
+        "printcad-wasm-packed-{}/{}",
+        std::process::id(),
+        source.replace('/', "-")
+    ));
+    let _ = std::fs::remove_dir_all(&work);
     let folder = work.join("src");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::copy(
@@ -91,13 +102,14 @@ fn archive(source: &str, component: &str, name: &str) -> PathBuf {
     }
     let archive = work.join("package.pcbench");
     wb_wasm::pack(&folder, &archive).expect("packs");
+    packed.insert(source.to_string(), archive.clone());
     archive
 }
 
-/// [`archive`], installed under a fresh root beside it.
+/// [`archive`], installed under a fresh root of its own.
 fn installed(source: &str, component: &str, name: &str) -> Package {
-    let archive = archive(source, component, name);
-    wb_wasm::install(&archive, &archive.parent().unwrap().join("installed")).expect("installs")
+    let archive = archive(source, component);
+    wb_wasm::install(&archive, &scratch(name).join("installed")).expect("installs")
 }
 
 fn registry_with(package: &Package, granted: Capabilities) -> DocumentService {
@@ -1996,7 +2008,7 @@ fn reinstalling_keeps_the_data_folder_and_uninstalling_removes_it() {
     let root = package.dir.parent().unwrap().to_path_buf();
     std::fs::create_dir_all(package.data_dir()).unwrap();
     std::fs::write(package.data_dir().join("keep.txt"), "mine").unwrap();
-    let archive = root.parent().unwrap().join("package.pcbench");
+    let archive = archive("tests/rogue", "rogue.wasm");
     let again = wb_wasm::install(&archive, &root).expect("reinstalls");
     assert_eq!(
         std::fs::read_to_string(again.data_dir().join("keep.txt")).unwrap(),
@@ -2062,8 +2074,8 @@ fn sha256(bytes: &[u8]) -> String {
 #[test]
 fn a_package_installs_from_a_github_release_and_takes_its_updates() {
     use wb_wasm::remote;
-    let gear = std::fs::read(archive("examples/gear", "gear.wasm", "github-gear")).unwrap();
-    let rogue = std::fs::read(archive("tests/rogue", "rogue.wasm", "github-rogue")).unwrap();
+    let gear = std::fs::read(archive("examples/gear", "gear.wasm")).unwrap();
+    let rogue = std::fs::read(archive("tests/rogue", "rogue.wasm")).unwrap();
     let root = scratch("github-root");
     let github = FakeGithub {
         tag: Default::default(),

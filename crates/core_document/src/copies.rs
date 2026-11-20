@@ -1,5 +1,7 @@
 //! Linked copies of bodies and parts linked from other files.
 
+use std::path::{Path, PathBuf};
+
 use super::*;
 
 /// Where a linked part's shape comes from: a body of another printCAD
@@ -7,9 +9,105 @@ use super::*;
 /// time in seconds).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileLink {
+    /// The file's absolute path.
     pub path: String,
     pub body: BodyId,
     pub stamp: u64,
+    /// The file's path from the folder of the document holding the link,
+    /// `/`-separated; tried before `path`, so a project folder moved whole
+    /// keeps its links. Written whenever the document has a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative: Option<String>,
+}
+
+impl FileLink {
+    /// A link to `body` of the file at `path`, read at `stamp`, from a
+    /// document in `folder` (none while it has no file).
+    pub fn new(path: &Path, body: BodyId, stamp: u64, folder: Option<&Path>) -> Self {
+        let path = normal(path);
+        Self {
+            relative: folder.and_then(|f| relative_path(&path, f)),
+            path: path.to_string_lossy().into_owned(),
+            body,
+            stamp,
+        }
+    }
+
+    /// Where the linked file is for a document in `folder`: beside it by
+    /// the relative path, else at the absolute one; `None` when neither
+    /// holds a file.
+    pub fn resolve(&self, folder: Option<&Path>) -> Option<PathBuf> {
+        let beside = self
+            .relative
+            .as_deref()
+            .zip(folder)
+            .map(|(relative, folder)| normal(&folder.join(relative)));
+        beside
+            .into_iter()
+            .chain(std::iter::once(PathBuf::from(&self.path)))
+            .find(|p| p.is_file())
+    }
+
+    /// The path to read for a document in `folder`: where the file is
+    /// found, else the absolute path it was linked from.
+    pub fn located(&self, folder: Option<&Path>) -> PathBuf {
+        self.resolve(folder)
+            .unwrap_or_else(|| PathBuf::from(&self.path))
+    }
+
+    /// This link as a document in `from` writes it into a file in `to`:
+    /// the file where it is found now, by its absolute path and from `to`.
+    pub fn for_folder(&self, from: Option<&Path>, to: &Path) -> Self {
+        Self::new(&self.located(from), self.body, self.stamp, Some(to))
+    }
+}
+
+/// `path` with `.` and `..` taken out, without asking the file system.
+fn normal(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// `target` from `folder`, both absolute, `/`-separated; `None` when they
+/// share no root (another drive).
+fn relative_path(target: &Path, folder: &Path) -> Option<String> {
+    use std::path::Component;
+    let folder = normal(folder);
+    let target: Vec<Component> = target.components().collect();
+    let folder: Vec<Component> = folder.components().collect();
+    fn root<'a>(c: &'a [Component<'a>]) -> &'a [Component<'a>] {
+        let n = c
+            .iter()
+            .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+            .count();
+        &c[..n]
+    }
+    if root(&target).is_empty() || root(&target) != root(&folder) {
+        return None;
+    }
+    let shared = target
+        .iter()
+        .zip(&folder)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let up = std::iter::repeat_n("..".to_string(), folder.len() - shared);
+    let down = target[shared..]
+        .iter()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    let parts: Vec<String> = up.chain(down).collect();
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 impl Document {
@@ -92,6 +190,44 @@ impl Document {
             link: FileLink { stamp, ..link },
         });
         true
+    }
+
+    /// Link a part to another file, or to its own file found elsewhere:
+    /// one edit, its shape read again from `link`. False when `body` is not
+    /// a linked part.
+    pub fn relink(&mut self, body: BodyId, link: FileLink) -> bool {
+        if self.body(body).is_none_or(|b| b.link.is_none()) {
+            return false;
+        }
+        self.link_missing.remove(&body);
+        self.record_and_apply(op::DocumentOp::SetBodyLink { id: body, link });
+        true
+    }
+
+    /// Write every link for a file in `to`, the document having been in
+    /// `from`: the file each finds now, by its absolute path and from `to`.
+    /// For the copy a save writes; the links mean the same files, so it is
+    /// no edit and records nothing.
+    pub fn place_links_for_file(&mut self, from: Option<&Path>, to: &Path) {
+        for body in &mut self.bodies {
+            if let Some(link) = &body.link {
+                body.link = Some(link.for_folder(from, to));
+            }
+        }
+    }
+
+    /// Mark a linked part whose file is found nowhere. Derived state: no op.
+    pub fn set_link_missing(&mut self, body: BodyId, missing: bool) {
+        if missing {
+            self.link_missing.insert(body);
+        } else {
+            self.link_missing.remove(&body);
+        }
+    }
+
+    /// Whether a linked part's file is found nowhere, as last looked.
+    pub fn link_missing(&self, body: BodyId) -> bool {
+        self.link_missing.contains(&body)
     }
 
     /// Linked parts with no shape yet: each with its link.

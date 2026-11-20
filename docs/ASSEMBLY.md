@@ -347,6 +347,12 @@ in the view) reads the file as it stands, and Open the file opens it in a
 tab of its own to edit. A linked part takes joints, placements and copies
 like any body.
 
+A saved document keeps each link both as the file's full path and as its
+path from the document's folder, and looks beside the document first, so
+a project folder moved or copied whole keeps its links. A part whose file
+is found in neither place shows a mark on its row; Relink… (on the row or
+the body in the view) picks the file where it is now, as one undo step.
+
 ## Export
 
 File › Export…, with STEP as the format, writes several bodies as an

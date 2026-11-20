@@ -311,6 +311,8 @@ pub enum UiCommand {
     ReloadLink(core_document::BodyId),
     /// Open the file a linked part comes from.
     OpenLinkSource(core_document::BodyId),
+    /// Pick the file a linked part comes from, where it is now.
+    Relink(core_document::BodyId),
     /// Hide every body but this one (the selected one when `None`), as
     /// an undo step.
     HideOthers(Option<core_document::BodyId>),

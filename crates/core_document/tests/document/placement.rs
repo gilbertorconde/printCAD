@@ -193,6 +193,7 @@ fn a_linked_part_is_read_from_its_file() {
         path: "/tmp/part.prtcad".into(),
         body: core_document::BodyId::new(),
         stamp: 7,
+        relative: None,
     };
     let part = doc.create_linked_body("Bracket".into(), link.clone());
     assert_eq!(doc.links_awaiting_geometry(), [(part, link.clone())]);
@@ -221,6 +222,97 @@ fn a_linked_part_is_read_from_its_file() {
     journal.note(&mut doc);
     assert!(!doc.link_stale(part));
     assert_eq!(doc.links_awaiting_geometry()[0].1.stamp, 9);
+}
+
+/// A save writes each link also relative to the document's folder, which
+/// is tried first: a project folder moved whole keeps its links. A link
+/// written before it had a relative path reads as it was, by its absolute
+/// path.
+#[test]
+fn a_link_follows_its_project_folder_when_it_moves() {
+    use core_document::FileLink;
+    let root = std::env::temp_dir().join(format!("printcad-links-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (old, new) = (root.join("old"), root.join("new"));
+    std::fs::create_dir_all(old.join("parts")).unwrap();
+    std::fs::write(old.join("parts/bolt.prtcad"), b"part").unwrap();
+
+    let mut doc = Document::new("t");
+    let link = FileLink::new(
+        &old.join("parts/bolt.prtcad"),
+        core_document::BodyId::new(),
+        3,
+        None,
+    );
+    assert_eq!(link.relative, None, "no folder yet, no relative path");
+    let part = doc.create_linked_body("Bolt".into(), link.clone());
+    doc.mark_clean();
+    let mut saved = doc.clone();
+    saved.place_links_for_file(None, &old);
+    assert!(
+        !saved.metadata().dirty(),
+        "writing links for a file is no edit"
+    );
+    let saved = reloaded(&mut saved);
+    let written = saved.body(part).unwrap().link.clone().unwrap();
+    assert_eq!(written.relative.as_deref(), Some("parts/bolt.prtcad"));
+
+    std::fs::rename(&old, &new).unwrap();
+    assert_eq!(
+        written.resolve(Some(&new)),
+        Some(new.join("parts/bolt.prtcad")),
+        "found beside the moved document"
+    );
+    assert_eq!(link.resolve(Some(&new)), None, "the absolute path is gone");
+    // Saved again from the moved folder, the absolute path follows too.
+    let mut again = saved.clone();
+    again.place_links_for_file(Some(&new), &new);
+    let moved = again.body(part).unwrap().link.clone().unwrap();
+    assert_eq!(
+        std::path::PathBuf::from(&moved.path),
+        new.join("parts/bolt.prtcad")
+    );
+
+    let old_json = r#"{"path": "/elsewhere/bolt.prtcad", "body": "00000000-0000-0000-0000-000000000001", "stamp": 1}"#;
+    let old_link: FileLink = serde_json::from_str(old_json).unwrap();
+    assert_eq!(old_link.relative, None);
+    assert_eq!(
+        old_link.located(Some(&new)),
+        std::path::PathBuf::from("/elsewhere/bolt.prtcad")
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// Relinking a part to another file is one edit: it asks the part's shape
+/// of the new file, and undo takes it back to the file it had.
+#[test]
+fn relinking_a_part_is_one_undoable_edit() {
+    use core_document::FileLink;
+    let mut doc = Document::new("t");
+    let body = core_document::BodyId::new();
+    let before = FileLink::new(std::path::Path::new("/gone/bolt.prtcad"), body, 3, None);
+    let part = doc.create_linked_body("Bolt".into(), before.clone());
+    doc.set_linked_geometry(part, geometry(triangle()), None, None);
+    let mut journal = OpJournal::new(10);
+    journal.note(&mut doc);
+
+    let after = FileLink::new(
+        std::path::Path::new("/project/parts/bolt.prtcad"),
+        body,
+        5,
+        Some(std::path::Path::new("/project")),
+    );
+    assert_eq!(after.relative.as_deref(), Some("parts/bolt.prtcad"));
+    assert!(doc.relink(part, after.clone()));
+    assert_eq!(doc.links_awaiting_geometry(), [(part, after)]);
+    journal.label_next("Relink part");
+    journal.note(&mut doc);
+    journal.undo(&mut doc).expect("the relink undoes");
+    assert_eq!(doc.body(part).unwrap().link, Some(before));
+    assert!(!doc.relink(
+        core_document::BodyId::new(),
+        FileLink::new(std::path::Path::new("/x.prtcad"), body, 0, None)
+    ));
 }
 
 /// A pick a hair off a flat face lands on the face's exact plane.

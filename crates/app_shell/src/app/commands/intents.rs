@@ -137,10 +137,13 @@ impl PrintCadApp {
                     self.session.document.set_note(changed);
                 }
             }
-            TreeItemId::DocumentRoot
-            | TreeItemId::ImportedObject(_)
-            | TreeItemId::Notes(_)
-            | TreeItemId::Array(_) => {}
+            // An imported row standing for a body shows the body's name.
+            TreeItemId::ImportedObject(id) => {
+                if let Some(body) = self.session.document.body_of_imported_object(id) {
+                    self.session.document.rename_body(body, name);
+                }
+            }
+            TreeItemId::DocumentRoot | TreeItemId::Notes(_) | TreeItemId::Array(_) => {}
         }
     }
 

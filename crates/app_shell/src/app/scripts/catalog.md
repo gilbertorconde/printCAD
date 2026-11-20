@@ -190,6 +190,10 @@ empty name leaves the name as it was.
 
 A variable set is a feature: this renames it too.
 
+A body has one name: the tree, the parts list and the print layout show it.
+An imported row that stands for a body (a part from the file, or an instance
+of one) renames that body; the file's own name stays on the row's details line.
+
 See also: `var.rename`
 
 ### A formula follows a renamed pad
@@ -1128,6 +1132,30 @@ See also: `file.export`, `file.import`
 local a = pc.file.temp_path{name = "part.stl"}
 local b = pc.file.temp_path{name = "part.stl", text = "solid empty\nendsolid empty\n"}
 assert(a ~= b and a:sub(-4) == ".stl" and b:sub(-4) == ".stl")
+```
+
+## file.open
+
+In the window the document opens in a tab of its own, or its tab comes to the
+front when it is open already; the document the script runs in stays as it is.
+An agent's call asks the user first, as reading any other file does.
+
+A `printcad --script` run has one document: the file opened takes its place,
+and the commands after it work on the file. While the run's document has edits
+not saved it refuses, unless `discard = true` lets them go.
+
+See also: `file.save_as`
+
+### Save, then open the file again
+
+```lua
+local path = pc.file.temp_path{name = "kept.prtcad"}
+local body = pc.doc.new_body{name = "Kept"}
+pc.file.save_as{path = path}
+pc.doc.rename{id = body, name = "Changed"}
+assert(not pcall(pc.file.open, {path = path}), "unsaved edits are kept")
+pc.file.open{path = path, discard = true}
+assert(pc.doc.bodies()[1].name == "Kept")
 ```
 
 ## doc.parameters

@@ -581,6 +581,14 @@ pub(super) fn attach_body_menu(
                         .push(super::super::UiCommand::OpenLinkSource(body));
                     ui.close();
                 }
+                if ui
+                    .button("Relink…")
+                    .on_hover_text("Pick the file the part comes from, where it is now")
+                    .clicked()
+                {
+                    result.commands.push(super::super::UiCommand::Relink(body));
+                    ui.close();
+                }
                 ui.separator();
             }
             if node.body.is_some() {
