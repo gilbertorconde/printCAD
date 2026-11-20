@@ -218,14 +218,20 @@ impl SketchWorkbench {
         let feature = self.frame_displayed(ctx)?;
         let pal = ctx.sketch_palette;
         let verdict = self.solver_verdict(&feature.sketch);
-        let named = style::ElementNames::new(&feature.sketch);
-        let mut names: Vec<String> = feature
-            .sketch
-            .geometry
-            .iter()
-            .filter(|g| self.tab.selected.contains(&g.id()))
-            .map(|g| named.name(g.id()))
-            .collect();
+        // Elements are named by their ordinals, worked out only when one
+        // is selected.
+        let mut names: Vec<String> = if self.tab.selected.is_empty() {
+            Vec::new()
+        } else {
+            let named = style::ElementNames::new(&feature.sketch);
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .filter(|g| self.tab.selected.contains(&g.id()))
+                .map(|g| named.name(g.id()))
+                .collect()
+        };
         names.extend(
             feature
                 .sketch
@@ -442,9 +448,10 @@ impl SketchWorkbench {
         // fifth of a millimetre at most: in the fitting colour where it
         // lies within range of the sketch's curves, the conflict colour
         // where it does not.
-        let off = scan::distance_to_sketch(&feature.sketch);
+        let guides = self.scan_guides(ctx);
+        let off = std::cell::LazyCell::new(|| scan::distance_to_sketch(&feature.sketch));
         let range = self.options.scan_range;
-        for chain in self.scan_guides(ctx).iter() {
+        for chain in guides.iter() {
             let mut kept: Vec<[f64; 2]> = Vec::new();
             for p in &chain.points {
                 if kept
@@ -462,7 +469,7 @@ impl SketchWorkbench {
             for pair in kept.windows(2) {
                 let at = |p: [f64; 2]| proj.to_px(Vec2D::new(p[0], p[1]));
                 if let (Some(a), Some(b)) = (at(pair[0]), at(pair[1])) {
-                    let color = match off(pair[0]).zip(off(pair[1])) {
+                    let color = match (*off)(pair[0]).zip((*off)(pair[1])) {
                         Some((d, e)) if d.max(e) <= range => pal.fully_constrained,
                         Some(_) => pal.conflict,
                         None => pal.external,
@@ -475,8 +482,7 @@ impl SketchWorkbench {
         }
         out.extend(
             self.frame_overlays(ctx, &feature, &proj, &pal)
-                .lines
-                .iter()
+                .lines()
                 .cloned(),
         );
         // The calibration's line, to the cursor until its second point.
@@ -513,11 +519,12 @@ impl SketchWorkbench {
             }
         }
         if !self.options.constraints_hidden {
-            let glyphs = self.frame_glyphs(ctx, &feature, &proj);
-            out.extend(glyphs::dimension_overlays(
-                &glyphs,
-                &self.options.appearance,
-            ));
+            out.extend(
+                self.frame_glyphs(ctx, &feature, &proj)
+                    .lines
+                    .iter()
+                    .cloned(),
+            );
         }
         out
     }
@@ -532,10 +539,11 @@ impl SketchWorkbench {
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        let mut out = self
+        let mut out: Vec<ScreenSpaceMark> = self
             .frame_overlays(ctx, &feature, &proj, &pal)
-            .marks
-            .clone();
+            .marks()
+            .cloned()
+            .collect();
         if let Some(check) = self.shown_wall_check() {
             out.extend(walls::marks(check, &proj, &pal));
         }
@@ -553,11 +561,11 @@ impl SketchWorkbench {
             }
         }
         if !self.options.constraints_hidden {
-            let size = self.options.appearance.label_px(ctx.pixels_per_point);
             out.extend(
                 self.frame_glyphs(ctx, &feature, &proj)
+                    .marks
                     .iter()
-                    .filter_map(|g| g.mark(size)),
+                    .cloned(),
             );
         }
         out
@@ -576,16 +584,12 @@ impl SketchWorkbench {
         let mut labels: Vec<ScreenSpaceLabel> = if self.options.constraints_hidden {
             Vec::new()
         } else {
-            self.frame_glyphs(ctx, &feature, &proj)
-                .iter()
-                .filter_map(|g| g.label(&self.options.appearance, ctx.pixels_per_point))
-                .collect()
+            self.frame_glyphs(ctx, &feature, &proj).labels.clone()
         };
         // What the cursor would snap to, by name.
         labels.extend(
             self.frame_overlays(ctx, &feature, &proj, &pal)
-                .labels
-                .iter()
+                .labels()
                 .cloned(),
         );
         labels.extend(overlay::spline_labels(
@@ -632,8 +636,13 @@ impl SketchWorkbench {
         }
         // The probable design value of each selected unsized curve, at its
         // middle.
-        for size in candidates::sizes(&feature.sketch) {
-            if !self.tab.selected.in_order().contains(&size.element) {
+        let sizes = if self.tab.selected.is_empty() {
+            Vec::new()
+        } else {
+            candidates::sizes(&feature.sketch)
+        };
+        for size in sizes {
+            if !self.tab.selected.contains(&size.element) {
                 continue;
             }
             let middle = feature
@@ -682,20 +691,40 @@ impl SketchWorkbench {
         sketch: &Sketch,
         proj: &SketchProjector,
     ) -> Vec<glyphs::Glyph> {
+        let lit = self.lit_constraints(|| std::sync::Arc::new(relations::Relations::of(sketch)));
+        self.build_glyphs(ctx, sketch, proj, &lit, &self.bound_dimensions(ctx))
+    }
+
+    /// The constraints whose glyphs draw lit: the selected ones, the one
+    /// in hand, and an element in hand in the panel lights its
+    /// constraints, as its row's badges and the constraint rows do.
+    fn lit_constraints(
+        &self,
+        relations: impl FnOnce() -> std::sync::Arc<relations::Relations>,
+    ) -> HashSet<Uuid> {
         let mut lit = self.tab.selected_constraints.clone();
         lit.extend(self.tab.hovered_constraint);
-        // An element in hand in the panel lights its constraints, as its
-        // row's badges and the constraint rows do.
         if self.tab.hover_from_panel
             && let Some(id) = self.tab.hovered
         {
-            lit.extend(self.frame_relations(ctx, sketch).constraints_on(id));
+            lit.extend(relations().constraints_on(id));
         }
+        lit
+    }
+
+    fn build_glyphs(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+        proj: &SketchProjector,
+        lit: &HashSet<Uuid>,
+        bound: &HashSet<Uuid>,
+    ) -> Vec<glyphs::Glyph> {
         glyphs::build(
             sketch,
             proj,
-            &lit,
-            &self.bound_dimensions(ctx),
+            lit,
+            bound,
             &ctx.sketch_palette,
             self.tab.parked_layer,
             self.options.dimension_labels,
@@ -763,19 +792,16 @@ impl SketchWorkbench {
             })
     }
 
-    /// [`relations::Relations::of`] `sketch`, worked out once while the
-    /// frame's sketch reads stand: the panel's list and the overlays both
-    /// ask. Known by where `sketch` lies, which a frame's reads keep alive.
+    /// [`relations::Relations::of`] `feature`'s sketch, worked out once
+    /// while its shape stands: the panel's list, the overlays and the
+    /// glyphs all ask.
     pub(crate) fn frame_relations(
         &self,
-        ctx: &WorkbenchRuntimeContext,
-        sketch: &Sketch,
+        feature: &std::sync::Arc<SketchFeature>,
     ) -> std::sync::Arc<relations::Relations> {
-        let key = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
-        self.frame
-            .relations((key, std::ptr::from_ref(sketch) as usize), || {
-                relations::Relations::of(sketch)
-            })
+        self.frame.relations(self.frame.content(feature).shape, || {
+            relations::Relations::of(&feature.sketch)
+        })
     }
 
     pub(crate) fn draw_key(&self, ctx: &WorkbenchRuntimeContext) -> frame_memo::DrawKey {
@@ -783,35 +809,125 @@ impl SketchWorkbench {
         frame_memo::DrawKey::of(sketch, self.options, ctx)
     }
 
-    /// [`Self::build_overlays`] of the frame's displayed sketch, built once
-    /// for its lines, marks and labels.
+    /// The overlays of the frame's displayed sketch: what is drawn
+    /// wherever the pointer is, kept while what it reads holds, then what
+    /// follows the pointer, built once a frame for its lines, marks and
+    /// labels.
     fn frame_overlays(
         &self,
         ctx: &WorkbenchRuntimeContext,
-        feature: &SketchFeature,
+        feature: &std::sync::Arc<SketchFeature>,
+        proj: &SketchProjector,
+        pal: &SketchPalette,
+    ) -> FrameOverlays {
+        let (base, pointer) = self.frame.overlays(self.draw_key(ctx), || {
+            let base = self.base_overlays(ctx, feature, proj, pal);
+            let pointer = std::sync::Arc::new(self.build_pointer(ctx, feature, proj, pal));
+            (base, pointer)
+        });
+        FrameOverlays { base, pointer }
+    }
+
+    /// What is drawn wherever the pointer is, kept while what it reads
+    /// holds.
+    fn base_overlays(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &std::sync::Arc<SketchFeature>,
         proj: &SketchProjector,
         pal: &SketchPalette,
     ) -> std::sync::Arc<overlay::Overlays> {
-        self.frame.overlays(self.draw_key(ctx), || {
-            self.build_overlays(ctx, feature, proj, pal)
+        let key = frame_memo::BaseKey {
+            shape: self.frame.content(feature).shape,
+            view: frame_memo::ViewKey::of(ctx),
+            options: self.options,
+            palette: *pal,
+            selected: (*self.tab.selected).clone(),
+            constraints: self.tab.selected_constraints.clone(),
+            constraint: self.tab.hovered_constraint,
+            hovered: self.tab.hovered,
+            idle: self.tab.tool_state.is_idle(),
+            drawing: self
+                .tab
+                .last_tool
+                .as_deref()
+                .is_some_and(crate::is_draw_tool),
+            nodes: self.node_view(feature),
+        };
+        self.frame.base(key.clone(), || {
+            // Selected constraints show the geometry they hold, in their
+            // own colour: it is not selected, so tools do not act on it.
+            let relations = self.frame_relations(feature);
+            let mut referenced: HashSet<Uuid> = HashSet::new();
+            for c in &feature.sketch.constraints {
+                if key.constraints.contains(&c.id) || key.constraint == Some(c.id) {
+                    referenced.extend(relations.held_by(c.id));
+                }
+            }
+            overlay::build_base(
+                proj,
+                pal,
+                &feature.sketch,
+                &key.selected,
+                &referenced,
+                &self.locked_elements(&feature.sketch),
+                key.hovered,
+                key.idle,
+                key.drawing,
+                self.options.construction_on_top,
+                &self.options.appearance,
+                self.options.arc_helpers,
+                self.options.spline_polygon,
+                key.nodes.as_ref(),
+            )
         })
     }
 
-    /// [`Self::glyphs`] of the frame's displayed sketch, built once for its
-    /// lines, marks and labels.
+    /// The constraint glyphs of the frame's displayed sketch and what the
+    /// view draws of them, kept while what they read holds.
     fn frame_glyphs(
         &self,
         ctx: &WorkbenchRuntimeContext,
-        feature: &SketchFeature,
+        feature: &std::sync::Arc<SketchFeature>,
         proj: &SketchProjector,
-    ) -> std::sync::Arc<Vec<glyphs::Glyph>> {
-        self.frame.glyphs(self.draw_key(ctx), || {
-            self.glyphs(ctx, &feature.sketch, proj)
+    ) -> std::sync::Arc<frame_memo::GlyphDraw> {
+        self.frame
+            .frame_glyphs(self.draw_key(ctx), || self.kept_glyphs(ctx, feature, proj))
+    }
+
+    fn kept_glyphs(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &std::sync::Arc<SketchFeature>,
+        proj: &SketchProjector,
+    ) -> std::sync::Arc<frame_memo::GlyphDraw> {
+        let key = frame_memo::GlyphKey {
+            content: self.frame.content(feature),
+            view: frame_memo::ViewKey::of(ctx),
+            options: self.options,
+            palette: ctx.sketch_palette,
+            parked: self.tab.parked_layer,
+            lit: self.lit_constraints(|| self.frame_relations(feature)),
+            bound: self.bound_dimensions(ctx),
+        };
+        self.frame.glyphs(key.clone(), || {
+            let glyphs = self.build_glyphs(ctx, &feature.sketch, proj, &key.lit, &key.bound);
+            let look = &self.options.appearance;
+            let size = look.label_px(ctx.pixels_per_point);
+            frame_memo::GlyphDraw {
+                lines: glyphs::dimension_overlays(&glyphs, look),
+                marks: glyphs.iter().filter_map(|g| g.mark(size)).collect(),
+                labels: glyphs
+                    .iter()
+                    .filter_map(|g| g.label(look, ctx.pixels_per_point))
+                    .collect(),
+            }
         })
     }
 
-    /// The geometry, previews and markers of one frame.
-    fn build_overlays(
+    /// What follows the pointer in one frame: the tool's preview, the
+    /// snap's marker, the selection box.
+    fn build_pointer(
         &self,
         ctx: &WorkbenchRuntimeContext,
         feature: &SketchFeature,
@@ -825,18 +941,6 @@ impl SketchWorkbench {
             .and_then(|(_, snap)| snap)
             .or_else(|| self.hover_snap(ctx, feature))
             .or_else(|| self.armed_snap(ctx, feature));
-        // Selected constraints show the geometry they hold, in their own
-        // colour: it is not selected, so tools do not act on it.
-        let selected = self.tab.selected.clone();
-        let relations = self.frame_relations(ctx, &feature.sketch);
-        let mut referenced: HashSet<Uuid> = HashSet::new();
-        for c in &feature.sketch.constraints {
-            if self.tab.selected_constraints.contains(&c.id)
-                || self.tab.hovered_constraint == Some(c.id)
-            {
-                referenced.extend(relations.held_by(c.id));
-            }
-        }
         // Typed values place the preview where they will place the click.
         let typed = self.tab.dim_capture.typed(ctx.document);
         let preview_cursor = landed.map(|(cursor, _)| {
@@ -851,15 +955,11 @@ impl SketchWorkbench {
             }
         });
         let params = ovp::typed_params(&self.tab.tool_params, &self.tab.tool_state, &typed);
-        let locked = self.locked_elements(&feature.sketch);
-        overlay::build_overlays(
+        overlay::build_pointer(
             proj,
             pal,
             &feature.sketch,
-            &selected,
-            &referenced,
-            &locked,
-            self.tab.hovered,
+            &self.tab.selected,
             &self.tab.tool_state,
             preview_cursor,
             &ToolParams {
@@ -871,13 +971,116 @@ impl SketchWorkbench {
             self.tab.last_tool.as_deref(),
             snap_tol,
             snap,
-            self.options.construction_on_top,
-            &self.options.appearance,
             self.options.hint_lines,
-            self.options.arc_helpers,
-            self.options.spline_polygon,
             self.tool_proposal(ctx, feature).as_ref(),
-            self.node_view(feature).as_ref(),
         )
+    }
+}
+
+/// A frame's overlays: what is drawn wherever the pointer is, then what
+/// follows the pointer over it.
+struct FrameOverlays {
+    base: std::sync::Arc<overlay::Overlays>,
+    pointer: std::sync::Arc<overlay::Overlays>,
+}
+
+impl FrameOverlays {
+    fn lines(&self) -> impl Iterator<Item = &core_document::ScreenSpaceOverlay> {
+        self.base.lines.iter().chain(&self.pointer.lines)
+    }
+
+    fn marks(&self) -> impl Iterator<Item = &ScreenSpaceMark> {
+        self.base.marks.iter().chain(&self.pointer.marks)
+    }
+
+    fn labels(&self) -> impl Iterator<Item = &ScreenSpaceLabel> {
+        self.base.labels.iter().chain(&self.pointer.labels)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use core_document::{Document, Workbench, WorkbenchInputEvent};
+    use glam::{Mat4, Vec3};
+
+    use super::*;
+    use crate::placement::stored_sketch;
+    use crate::sketch::{ConstraintKind, Line, Point, SketchPlane};
+
+    type Drawn = (Arc<overlay::Overlays>, Arc<frame_memo::GlyphDraw>);
+
+    /// What one frame draws wherever the pointer is, and its glyphs,
+    /// after a pointer move to `x` with the view `distance` off the sketch.
+    fn frame(
+        doc: &mut Document,
+        wb: &mut SketchWorkbench,
+        id: FeatureId,
+        x: f32,
+        distance: f32,
+    ) -> Drawn {
+        let cam = [2.5, 1.0, distance];
+        let proj = glam::camera::rh::proj::directx::perspective(1.0, 800.0 / 600.0, 0.1, 1e4);
+        let view = glam::camera::rh::view::look_at_mat4(
+            Vec3::from(cam),
+            Vec3::new(2.5, 1.0, 0.0),
+            Vec3::Y,
+        );
+        let mut ctx = WorkbenchRuntimeContext::new(doc, cam, [2.5, 1.0, 0.0], (0, 0, 800, 600));
+        ctx.view_proj =
+            Some((Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d());
+        ctx.active_document_object = Some(id);
+        let viewport_pos = (x, 300.0);
+        let event = WorkbenchInputEvent::MouseMove { viewport_pos };
+        wb.on_input(&event, Some("sketch.line"), &mut ctx);
+        wb.on_frame(0.016, &mut ctx);
+        let feature = wb.frame_displayed(&ctx).expect("the edited sketch");
+        let proj = SketchProjector::new(&ctx, feature.plane);
+        let drawn = wb.frame_overlays(&ctx, &feature, &proj, &ctx.sketch_palette);
+        (drawn.base, wb.frame_glyphs(&ctx, &feature, &proj))
+    }
+
+    /// The elements and the glyphs are kept while the pointer moves and
+    /// worked out again when what they read changes: the selection the
+    /// elements alone, the view both, a label's place the glyphs alone,
+    /// an edit both.
+    #[test]
+    fn the_drawing_is_kept_until_what_it_reads_changes() {
+        let mut sketch = Sketch::new("s");
+        let [a, b] = [0.0, 5.0]
+            .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        let mut doc = Document::new("t");
+        let feature = SketchFeature::new(sketch, SketchPlane::xy());
+        let id = doc.add_feature(feature, "s".into()).unwrap();
+        let mut wb = SketchWorkbench::default();
+        let mut x = 400.0;
+        let mut next = |doc: &mut Document, wb: &mut SketchWorkbench, distance: f32| {
+            x += 7.0;
+            frame(doc, wb, id, x, distance)
+        };
+        let kept = |a: &Drawn, b: &Drawn| (Arc::ptr_eq(&a.0, &b.0), Arc::ptr_eq(&a.1, &b.1));
+        let first = next(&mut doc, &mut wb, 20.0);
+        let moved = next(&mut doc, &mut wb, 20.0);
+        assert_eq!(kept(&first, &moved), (true, true), "a pointer move");
+        wb.tab.selected.insert(line);
+        let selected = next(&mut doc, &mut wb, 20.0);
+        assert_eq!(kept(&moved, &selected), (false, true), "a selection");
+        let turned = next(&mut doc, &mut wb, 30.0);
+        assert_eq!(kept(&selected, &turned), (false, false), "the view");
+        let mut held = stored_sketch(&doc, id).unwrap();
+        held.sketch.constraints[0].label_offset = Some(Vec2D::new(0.0, 3.0));
+        doc.update_feature_data(id, held.to_json()).unwrap();
+        let labelled = next(&mut doc, &mut wb, 30.0);
+        assert_eq!(kept(&turned, &labelled), (true, false), "a label's place");
+        let mut edited = held;
+        let free = Point::new(Vec2D::new(2.0, 3.0));
+        edited.sketch.add_geometry(GeometryElement::Point(free));
+        doc.update_feature_data(id, edited.to_json()).unwrap();
+        let edited = next(&mut doc, &mut wb, 30.0);
+        assert_eq!(kept(&labelled, &edited), (false, false), "an edit");
+        let again = next(&mut doc, &mut wb, 30.0);
+        assert_eq!(kept(&edited, &again), (true, true), "nothing changed");
     }
 }

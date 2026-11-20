@@ -138,7 +138,7 @@ impl DesignWorkbench {
             .pending_task_from_tool
             .take()
             .filter(|made| made.feature == id);
-        self.tab.edited = None;
+        self.tab.focused = None;
         self.tab.task = Some(TaskState {
             feature: id,
             kind,
@@ -211,6 +211,8 @@ impl DesignWorkbench {
         }
         let widgets = self.task_widgets(ctx, target_id);
         let out = bench_panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
+        self.tab.focused = focused_number(&widgets, out.focused.as_deref())
+            .map(|key| (target_id, key.to_string()));
         self.apply_output(ctx, target_id, out);
         TaskOutcome::Open
     }
@@ -299,7 +301,6 @@ impl DesignWorkbench {
         ) {
             let key = editors::hole_field_key(event.id()).to_string();
             self.tab.task_focus = Some((id, key));
-            self.tab.edited = f.edited.map(|key| (id, key));
         }
     }
 
@@ -667,6 +668,18 @@ fn faceted_hint(
              (the Base last), then right-click the body › Refine shape."
         )
     })
+}
+
+/// The place in the feature's data of the number whose field is
+/// `focused`, among `widgets`; `None` for a field bound to nothing.
+fn focused_number<'w>(widgets: &'w [Widget], focused: Option<&str>) -> Option<&'w str> {
+    let focused = focused?;
+    bench_api::walk_widgets(widgets)
+        .into_iter()
+        .find_map(|w| match w {
+            Widget::Quantity(q) if q.id == focused => q.bind.as_ref().map(|b| b.key.as_str()),
+            _ => None,
+        })
 }
 
 #[cfg(test)]
@@ -1420,7 +1433,8 @@ mod tests {
     }
 
     /// The handle being edited is lit: the one held, the one whose value
-    /// is typed past its release, or the one whose field the panel edited.
+    /// is typed past its release, or the one whose field in the panel
+    /// holds the keyboard.
     #[test]
     fn the_handle_being_edited_is_lit() {
         use core_document::{KeyCode, Workbench, WorkbenchInputEvent as E};
@@ -1463,7 +1477,31 @@ mod tests {
             value: 12.0,
         };
         wb.task_event(&mut ctx, id, &typed);
-        assert_eq!(lit(&wb), ["Length"]);
+        assert!(lit(&wb).is_empty(), "a value set lights nothing");
+        // Its field in the panel lights it while the keyboard is in it.
+        let panel = panel();
+        let tab = || {
+            let key = |pressed| egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            };
+            vec![key(true), key(false)]
+        };
+        let mut walked = Vec::new();
+        for _ in 0..12 {
+            frame(&mut wb, &panel, &mut doc, Some(id), OPEN, tab());
+            frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+            walked.push(lit(&wb));
+        }
+        // One at a time, and only while its field holds the keyboard.
+        assert!(walked.iter().all(|l| l.len() <= 1), "{walked:?}");
+        let at = walked.iter().position(|l| l == &["Length"]);
+        let at = at.unwrap_or_else(|| panic!("{walked:?}"));
+        assert!(walked[at + 1].is_empty(), "{walked:?}");
+        assert!(walked[at + 1..].iter().any(|l| !l.is_empty()), "{walked:?}");
     }
 
     /// Digits typed while the pad's handle is held set its length on

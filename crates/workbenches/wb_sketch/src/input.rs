@@ -254,9 +254,9 @@ impl SketchWorkbench {
         if self.tab.snap_off {
             return None;
         }
+        let (at, index) = self.edge_snap(ctx, feature, tool, cursor, tol)?;
         // A point within reach wins over the edge, as the click has it.
         let (landed, _) = self.landing(ctx, feature, tool, cursor);
-        let (at, index) = self.edge_snap(ctx, feature, tool, cursor, tol)?;
         if landed != at {
             return None;
         }

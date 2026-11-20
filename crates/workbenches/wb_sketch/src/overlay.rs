@@ -1847,12 +1847,12 @@ fn short_number(value: f64) -> String {
     }
 }
 
-/// Build the full overlay set for one frame of sketch editing.
-/// `selection_box` is an in-progress box selection (anchor, current corner)
-/// in sketch coordinates; `active_tool`/`snap_tol` drive tool-specific
-/// hover feedback (the trim tool highlights the span a click would remove).
+/// What the sketch draws wherever the pointer is: the axes, the arc
+/// helpers while a drawing tool is in hand (`drawing`), every element in
+/// its style, a path's nodes under node edit, and the loose ends while no
+/// shape is being drawn (`idle`).
 #[allow(clippy::too_many_arguments)]
-pub fn build_overlays(
+pub fn build_base(
     proj: &SketchProjector,
     pal: &SketchPalette,
     sketch: &Sketch,
@@ -1860,24 +1860,17 @@ pub fn build_overlays(
     referenced: &HashSet<Uuid>,
     locked: &HashSet<Uuid>,
     hovered: Option<Uuid>,
-    tool_state: &ToolState,
-    cursor: Option<Vec2D>,
-    params: &ToolParams,
-    selection_box: Option<(Vec2D, Vec2D)>,
-    active_tool: Option<&str>,
-    snap_tol: f64,
-    snap: Option<crate::snap::Snap>,
+    idle: bool,
+    drawing: bool,
     construction_on_top: bool,
     look: &Appearance,
-    hint_lines: bool,
     arc_helpers: bool,
     spline_polygon: bool,
-    proposed: Option<&Proposed>,
     nodes: Option<&crate::node_edit::NodeView>,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
-    if arc_helpers && active_tool.is_some_and(crate::is_draw_tool) {
+    if arc_helpers && drawing {
         push_arc_helpers(&mut out, proj, pal, sketch);
     }
 
@@ -1950,10 +1943,34 @@ pub fn build_overlays(
 
     // Where the profile stops: each loose end ringed, while no shape is
     // being drawn (mid-shape, the end drawn from is always loose).
-    if tool_state.is_idle() {
+    if idle {
         push_loose_ends(&mut out, proj, pal, sketch);
     }
+    out
+}
 
+/// What follows the pointer, drawn over [`build_base`]: an in-progress
+/// box selection (anchor, current corner, in sketch coordinates), else
+/// the tool's preview to where a click at `cursor` lands, the trim span
+/// a click would remove (`snap_tol` its reach), the snap's marker and
+/// the crosshair.
+#[allow(clippy::too_many_arguments)]
+pub fn build_pointer(
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    sketch: &Sketch,
+    selected: &HashSet<Uuid>,
+    tool_state: &ToolState,
+    cursor: Option<Vec2D>,
+    params: &ToolParams,
+    selection_box: Option<(Vec2D, Vec2D)>,
+    active_tool: Option<&str>,
+    snap_tol: f64,
+    snap: Option<crate::snap::Snap>,
+    hint_lines: bool,
+    proposed: Option<&Proposed>,
+) -> Overlays {
+    let mut out = Overlays::default();
     if let Some((a, b)) = selection_box {
         push_selection_box(&mut out, proj, pal, a, b);
     } else if let Some(raw) = cursor {

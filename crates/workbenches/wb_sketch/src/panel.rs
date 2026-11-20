@@ -51,6 +51,13 @@ pub(crate) struct PanelState {
     modes: Vec<Option<core_document::DatumAttachment>>,
     /// What the pointer is on in each list: the row, its tag, its badge.
     pointed: [Pointed; 2],
+    /// What the element and constraint lists were last declared from, and
+    /// their widgets while the panel is not drawing them: declared again
+    /// only when the key changes. Their rows stay in `elements` and
+    /// `constraints` meanwhile.
+    lists: Option<(ListKey, Option<Vec<Widget>>)>,
+    /// Where the lists stand among the widgets of the panel being drawn.
+    list_range: std::ops::Range<usize>,
     /// The font choice of the text tool and of the selected text, while
     /// it names no font yet.
     font_modes: [Option<usize>; 2],
@@ -61,6 +68,29 @@ type Pointed = (Option<usize>, Option<usize>, Option<usize>);
 /// A selected spline with its degree, and a selected control point with
 /// the spline it weighs on.
 type SelectedSpline = (Option<(Uuid, u32)>, Option<(Uuid, Uuid)>);
+
+/// What the element and constraint lists are declared from beyond the
+/// sketch's shape: the document (its formulas, the edited sketch), the
+/// projected elements lost, the palette, the selection and what is in
+/// hand, the filters, the diagnosis, and the row being renamed or about
+/// to take the keys.
+#[derive(Clone, PartialEq)]
+struct ListKey {
+    sketch: crate::frame_memo::ActiveKey,
+    lost: Vec<Uuid>,
+    palette: core_document::SketchPalette,
+    selected: std::collections::HashSet<Uuid>,
+    selected_constraints: std::collections::HashSet<Uuid>,
+    hovered: Option<Uuid>,
+    hover_from_panel: bool,
+    hovered_constraint: Option<Uuid>,
+    element_filter: ElementFilter,
+    constraint_filter: String,
+    constraint_kind_filter: crate::ConstraintFilter,
+    diagnosis: Option<crate::solver::Diagnosis>,
+    pending_focus: Option<Uuid>,
+    renaming: Option<Uuid>,
+}
 
 /// An element's row: the element, and the constraint behind each badge.
 struct ElementRow {
@@ -162,6 +192,7 @@ impl SketchWorkbench {
         let before = (self.tab.hovered, self.tab.hovered_constraint);
         let widgets = self.task_widgets(ctx);
         let out = bench_panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
+        self.keep_list_widgets(widgets);
         // A formula typed into a dimension's row opens its task, as a value
         // typed there does.
         let mut set_by_formula = Vec::new();
@@ -220,6 +251,7 @@ impl SketchWorkbench {
     /// The panel as widgets: the plane picker while a sketch waits for its
     /// plane, else the open sketch's panel.
     pub(crate) fn task_widgets(&mut self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
+        self.tab.panel.list_range = 0..0;
         if self.tab.pending_creation.is_some() {
             return self.attachment_widgets(ctx);
         }
@@ -247,7 +279,9 @@ impl SketchWorkbench {
         widgets.extend(self.spline_widgets(sketch));
         widgets.extend(self.text_widgets(sketch));
         widgets.extend(self.image_widgets(ctx, sketch));
-        widgets.extend(self.list_widgets(ctx, sketch));
+        let start = widgets.len();
+        widgets.extend(self.list_widgets(ctx, &feature));
+        self.tab.panel.list_range = start..widgets.len();
         widgets.extend(self.placement_widgets(shift, on_datum));
         widgets.extend(self.settings_widgets(sketch));
         widgets
@@ -960,9 +994,68 @@ impl SketchWorkbench {
         )]
     }
 
+    /// [`Self::build_list_widgets`], declared again only when what they
+    /// are declared from changed, a row is to be brought into view, or
+    /// the last ones drawn were not given back ([`Self::keep_list_widgets`]).
+    fn list_widgets(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &std::sync::Arc<crate::SketchFeature>,
+    ) -> Vec<Widget> {
+        let lost = self
+            .tab
+            .active_sketch_id
+            .map(|id| self.lost_external(ctx.document, ctx.kernel, id))
+            .unwrap_or_default();
+        let key = ListKey {
+            sketch: self.active_key(ctx).without_label(),
+            lost,
+            palette: ctx.sketch_palette,
+            selected: (*self.tab.selected).clone(),
+            selected_constraints: self.tab.selected_constraints.clone(),
+            hovered: self.tab.hovered,
+            hover_from_panel: self.tab.hover_from_panel,
+            hovered_constraint: self.tab.hovered_constraint,
+            element_filter: self.tab.element_filter,
+            constraint_filter: self.tab.constraint_filter.clone(),
+            constraint_kind_filter: self.tab.constraint_kind_filter,
+            diagnosis: self.tab.last_diagnosis.clone(),
+            pending_focus: self.tab.pending_focus,
+            renaming: self.tab.renaming_constraint,
+        };
+        let tab = &mut *self.tab;
+        if tab.scroll_to_row.is_none()
+            && let Some((kept, widgets)) = &mut tab.panel.lists
+            && *kept == key
+            && let Some(widgets) = widgets.take()
+        {
+            return widgets;
+        }
+        let widgets = self.build_list_widgets(ctx, feature);
+        self.tab.panel.lists = Some((key, None));
+        widgets
+    }
+
+    /// Take back the list widgets out of the panel's `widgets` once drawn,
+    /// for [`Self::list_widgets`] to declare again while their key holds.
+    fn keep_list_widgets(&mut self, mut widgets: Vec<Widget>) {
+        let range = std::mem::take(&mut self.tab.panel.list_range);
+        if let Some((_, kept @ None)) = &mut self.tab.panel.lists
+            && range.end <= widgets.len()
+            && !range.is_empty()
+        {
+            *kept = Some(widgets.drain(range).collect());
+        }
+    }
+
     /// One filter over both lists, then the elements and the constraints,
     /// each folding on its own.
-    fn list_widgets(&mut self, ctx: &WorkbenchRuntimeContext, sketch: &Sketch) -> Vec<Widget> {
+    fn build_list_widgets(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &std::sync::Arc<crate::SketchFeature>,
+    ) -> Vec<Widget> {
+        let sketch = &feature.sketch;
         let choice = if self.tab.element_filter != ElementFilter::All {
             ListFilter::Elements(self.tab.element_filter)
         } else {
@@ -970,7 +1063,7 @@ impl SketchWorkbench {
         };
         // What the rows light comes from what last frame left in hand: the
         // item the panel hovered, and the selection.
-        let relations = self.frame_relations(ctx, sketch);
+        let relations = self.frame_relations(feature);
         let panel_element = self.tab.hovered.filter(|_| self.tab.hover_from_panel);
         let hand = InHand {
             related: relations.related(
@@ -3440,5 +3533,83 @@ mod text_controls {
                 "text_draft.reversed"
             ]
         );
+    }
+}
+#[cfg(all(test, feature = "egui"))]
+mod kept_lists {
+    use super::*;
+    use crate::SketchFeature;
+    use crate::sketch::{ConstraintKind, GeometryElement, Line, Point, Vec2D};
+    use core_document::{Document, Workbench};
+
+    type Change = dyn Fn(&mut SketchWorkbench, &mut WorkbenchRuntimeContext);
+
+    /// The panel's widgets, as drawn and given back after.
+    fn draw(wb: &mut SketchWorkbench, ctx: &mut WorkbenchRuntimeContext) -> Vec<Widget> {
+        wb.on_frame(0.016, ctx);
+        let widgets = wb.task_widgets(ctx);
+        let drawn = widgets.clone();
+        wb.keep_list_widgets(widgets);
+        drawn
+    }
+
+    /// The lists declared from nothing kept.
+    fn afresh(wb: &mut SketchWorkbench, ctx: &mut WorkbenchRuntimeContext) -> Vec<Widget> {
+        wb.tab.panel.lists = None;
+        draw(wb, ctx)
+    }
+
+    /// The element and constraint lists are declared once while nothing
+    /// they show changes, and again, as declared afresh, after a
+    /// selection, a constraint in hand, a filter or an edit.
+    #[test]
+    fn the_lists_are_declared_again_only_when_what_they_show_changes() {
+        let mut sketch = Sketch::new("s");
+        let [a, b] = [0.0, 5.0]
+            .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let length = sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        let mut doc = Document::new("t");
+        let feature = SketchFeature::new(sketch, SketchPlane::xy());
+        let id = doc.add_feature(feature, "s".into()).unwrap();
+        let mut wb = SketchWorkbench::default();
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        let first = draw(&mut wb, &mut ctx);
+        // A widget planted in the kept lists comes back: they were not
+        // declared again.
+        let planted = panel::gap(GapSize::Large);
+        if let Some((_, Some(kept))) = &mut wb.tab.panel.lists {
+            kept.push(planted.clone());
+        }
+        let again = draw(&mut wb, &mut ctx);
+        assert_eq!(again.len(), first.len() + 1);
+        assert!(again.contains(&planted));
+        let changes: [(&str, &Change); 4] = [
+            ("a selection", &move |wb, _| {
+                wb.tab.selected.insert(line);
+            }),
+            ("a constraint in hand", &move |wb, _| {
+                wb.tab.hovered_constraint = Some(length);
+            }),
+            ("a filter", &|wb, _| {
+                wb.tab.constraint_filter = "length".into();
+            }),
+            ("an edit", &|wb, ctx| {
+                let mut feature = wb.get_active_sketch(ctx).unwrap();
+                feature.sketch.constraints.clear();
+                wb.store_sketch(ctx, feature);
+            }),
+        ];
+        for (what, change) in changes {
+            change(&mut wb, &mut ctx);
+            let kept = draw(&mut wb, &mut ctx);
+            assert!(!kept.contains(&planted), "{what}");
+            assert_eq!(kept, afresh(&mut wb, &mut ctx), "{what}");
+            if let Some((_, Some(kept))) = &mut wb.tab.panel.lists {
+                kept.push(planted.clone());
+            }
+        }
     }
 }

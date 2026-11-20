@@ -293,10 +293,10 @@ struct Tab {
     /// it belongs to: the task's drawing lights its measures.
     #[cfg(feature = "egui")]
     task_focus: Option<(FeatureId, String)>,
-    /// The number the open task's panel last edited, by its place in the
-    /// feature's data, and the feature: its handle is lit. A press on a
-    /// handle in the view takes it away.
-    edited: Option<(FeatureId, String)>,
+    /// The number whose field in the open task's panel holds the
+    /// keyboard, by its place in the feature's data, and the feature: its
+    /// handle is lit. A press on a handle in the view takes it away.
+    focused: Option<(FeatureId, String)>,
     /// A value typed for a handle taken: the handle, and the text so far.
     /// It stays open past the release until Enter, Escape or a click.
     typed: Option<(handles::Handle, String)>,

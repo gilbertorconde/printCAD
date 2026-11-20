@@ -71,6 +71,9 @@ impl SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
     ) -> Option<(usize, usize)> {
         let guides = self.scan_guides(ctx);
+        if guides.is_empty() {
+            return None;
+        }
         let off = scan::distance_to_sketch(sketch);
         let mut counts = (0, 0);
         for p in guides.iter().flat_map(|c| &c.points) {

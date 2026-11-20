@@ -37,6 +37,9 @@ pub struct PanelOutput {
     /// Formulas set on bound numbers (`None` takes one away), for the host
     /// to write into the document: the bench never handles formulas.
     pub formulas: Vec<FormulaSet>,
+    /// The declared field holding keyboard focus, by its widget's id: a
+    /// number or a text field being typed into.
+    pub focused: Option<String>,
     /// The item lists drawn this frame, by id.
     lists: Vec<String>,
     /// What the rows of a [`Widget::Settings`] are narrowed to, lowercase.
@@ -746,6 +749,9 @@ fn show_one(
             let width = place.width(ui, entry.width.unwrap_or(default));
             let key = id.with(("entry", &entry.id));
             let typed = text_edit(ui, key, entry, width, out.card, document);
+            if typed.focused {
+                out.focused = Some(entry.id.clone());
+            }
             if let Some(value) = typed.text {
                 out.events.push(PanelEvent::Text {
                     id: entry.id.clone(),
@@ -2679,5 +2685,82 @@ mod tests {
             "{by_label}"
         );
         assert!(!drawn_words(&settings, "nothing").contains("Look"));
+    }
+
+    /// The field the keyboard is in is reported by its widget's id, as
+    /// Tab walks the panel: a plain number, a number bound to a feature
+    /// (its formula button between, a field of no one's), and a text
+    /// field; nothing before the first Tab.
+    #[test]
+    fn the_field_holding_the_keyboard_is_reported_by_its_id() {
+        let mut document = Document::new("panel");
+        let feature = document.add_feature_of_kind(
+            core_document::WorkbenchId::new("bench.thing"),
+            "Thing".into(),
+            None,
+            Vec::new(),
+            serde_json::json!({"length": 10.0}),
+            Default::default(),
+        );
+        let widgets = vec![
+            Widget::Quantity(bench_api::Quantity {
+                id: "plain".into(),
+                label: "Width".into(),
+                value: 1.0,
+                ..Default::default()
+            }),
+            Widget::Quantity(bench_api::Quantity {
+                id: "bound".into(),
+                label: "Length".into(),
+                value: 10.0,
+                bind: Some(Bind {
+                    feature: feature.0.to_string(),
+                    key: "/length".into(),
+                }),
+                ..Default::default()
+            }),
+            Widget::Entry(bench_api::Entry {
+                id: "name".into(),
+                label: "Name".into(),
+                ..Default::default()
+            }),
+        ];
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let frame = |events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(360.0, 900.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut focused = None;
+            let mut output = ctx.run_ui(raw, |ui| {
+                focused = show(ui, egui::Id::new("focus"), &widgets, Some(&document)).focused;
+            });
+            output.textures_delta.clear();
+            focused
+        };
+        let tab = || {
+            let key = |pressed| egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            };
+            vec![key(true), key(false)]
+        };
+        frame(Vec::new());
+        assert_eq!(frame(Vec::new()), None);
+        let mut walked: Vec<Option<String>> = Vec::new();
+        for _ in 0..4 {
+            frame(tab());
+            walked.push(frame(Vec::new()));
+        }
+        let at = |id: &str| Some(id.to_string());
+        assert_eq!(walked, [at("plain"), at("bound"), None, at("name")]);
     }
 }
