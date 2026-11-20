@@ -425,4 +425,45 @@ mod tests {
         }
         assert!(redundant_sketches > 60, "{redundant_sketches}");
     }
+
+    /// Retries stopped once the damping is the largest give what retrying
+    /// at it until the retries run out gives, to the bit: solves and
+    /// diagnoses of sketches that converge and of ones that cannot, a
+    /// corner held at two places.
+    #[test]
+    fn retries_stopped_at_the_largest_damping_change_nothing() {
+        let both = |problem: &Problem| {
+            let sys = compile_system(problem, None, false);
+            let answer = iterate(&sys, problem.settings);
+            let bits: Vec<u64> = answer.values.iter().map(|x| x.to_bits()).collect();
+            (bits, format!("{:?}", answer.outcome), diagnose(problem))
+        };
+        let mut failing = 0;
+        for seed in 1..=12u64 {
+            let mut problem = drawn(seed * 7919);
+            // A low ceiling on the damping, so it is reached while steps still
+            // move the sketch.
+            if seed % 3 == 0 {
+                problem.settings.lambda_max = 1e-1;
+            }
+            if seed % 2 == 0 {
+                for (k, x) in [(1u128 << 60, 50.0), (1 << 61, -50.0)] {
+                    problem.constraints.push(Constraint {
+                        id: ConstraintId(k),
+                        kind: R::FixedPoint {
+                            point: PointReference::Point(PointId(2)),
+                            position: Vector { x, y: 50.0 },
+                        },
+                    });
+                }
+            }
+            let stopped = both(&problem);
+            crate::solve::RETRY_SATURATED.set(true);
+            let retried = both(&problem);
+            crate::solve::RETRY_SATURATED.set(false);
+            assert_eq!(stopped, retried, "seed {seed}");
+            failing += usize::from(stopped.1.starts_with("NotConverged"));
+        }
+        assert!(failing >= 5, "{failing}");
+    }
 }

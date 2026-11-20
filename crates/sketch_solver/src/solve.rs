@@ -218,6 +218,25 @@ pub(crate) fn part_coincident_ends(sys: &System) -> Vec<f64> {
     x
 }
 
+/// The damping after a rejected step, or `None` when it stays where it
+/// is (already the largest): the next retry would take the very step just
+/// rejected, from the same point, and be rejected again.
+pub(crate) fn raised(lambda: f64, settings: &Settings) -> Option<f64> {
+    let next = (lambda * 10.0).min(settings.lambda_max);
+    #[cfg(test)]
+    if RETRY_SATURATED.get() {
+        return Some(next);
+    }
+    (next != lambda).then_some(next)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Retry at the largest damping until the retries run out, as a test's
+    /// reference for what stopping there gives.
+    pub(crate) static RETRY_SATURATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
 /// to `offset` (zero when `None`).
 fn descend(
@@ -294,7 +313,10 @@ fn descend(
                 }
             }
             if singular {
-                lambda = (lambda * 10.0).min(settings.lambda_max);
+                match raised(lambda, &settings) {
+                    Some(raised) => lambda = raised,
+                    None => break,
+                }
                 continue;
             }
             cap_step(&mut step, var_scale(&x), settings.maximum_step_scale);
@@ -313,7 +335,10 @@ fn descend(
                 improved = true;
                 break;
             }
-            lambda = (lambda * 10.0).min(settings.lambda_max);
+            match raised(lambda, &settings) {
+                Some(raised) => lambda = raised,
+                None => break,
+            }
         }
 
         if inf_norm(&r) < tolerance * var_scale(&x) {

@@ -7,7 +7,8 @@
 //! Then, on the grid with a dimension on each cell's bottom side and
 //! circle, an edit (a segment drawn, the task panel drawn too) and a
 //! dimension's label dragged, with and without the panel; and an edit
-//! with dimensions on 25 cells only, which the diagnosis analyses; one
+//! with dimensions on 25 cells only, which the diagnosis analyses, and
+//! the same with one side held to two lengths, which it cannot meet; one
 //! with a line tangent to each circle, its end held on it, and one with
 //! each cell's bottom side fitted to measured points; a point of the
 //! plain grid dragged, a solve and a store per frame; and
@@ -311,6 +312,22 @@ fn dimensioned(mut sketch: Sketch, cells: usize) -> Sketch {
     sketch
 }
 
+/// The first dimensioned side held to a second, other length as well:
+/// the constraints cannot all hold, and the diagnosis looks for those
+/// in conflict.
+fn conflicting(mut sketch: Sketch) -> Sketch {
+    let line = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match c.kind {
+            ConstraintKind::Length { line, .. } => Some(line),
+            _ => None,
+        })
+        .expect("a dimensioned side");
+    sketch.add_constraint(ConstraintKind::Length { line, length: 6.0 });
+    sketch
+}
+
 /// A line touching each cell's circle at its top, its end held on the
 /// circle and tangent to it.
 fn tangent_lines(mut sketch: Sketch) -> Sketch {
@@ -576,6 +593,7 @@ fn main() {
     // Few enough dimensions for the diagnosis to look for redundancy.
     let few = dimensioned(sketch.clone(), 25);
     edit("edit, 50 dimensions", &few, span, edits);
+    edit("edit, a conflict", &conflicting(few.clone()), span, edits);
     edit(
         "edit, tangent lines",
         &tangent_lines(marked.clone()),

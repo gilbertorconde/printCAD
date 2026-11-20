@@ -16,7 +16,7 @@ use crate::problem::{
     Constraint, ConstraintId, CurveReference, Geometry, Point, PointId, PointReference, Problem,
     Relation, Vector,
 };
-use crate::solve::{Dense, Iteration, SolveOutcome, eval_residuals, iterate_in};
+use crate::solve::{Dense, Iteration, SolveOutcome, eval_residuals, iterate_in, raised};
 use crate::sparse::{Block, Blocks, Matrix};
 use crate::trace::EquationSource;
 
@@ -123,7 +123,10 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
                 }
             }
             if singular {
-                lambda = (lambda * 10.0).min(settings.lambda_max);
+                match raised(lambda, &settings) {
+                    Some(raised) => lambda = raised,
+                    None => break,
+                }
                 continue;
             }
             let mut trial = x.clone();
@@ -137,7 +140,10 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
                     back.outcome,
                     SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve
                 ) {
-                    lambda = (lambda * 10.0).min(settings.lambda_max);
+                    match raised(lambda, &settings) {
+                        Some(raised) => lambda = raised,
+                        None => break,
+                    }
                     continue;
                 }
                 trial = back.values;
@@ -151,7 +157,10 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
                 improved = gain > 1e-14 * cost.max(1e-30);
                 break;
             }
-            lambda = (lambda * 10.0).min(settings.lambda_max);
+            match raised(lambda, &settings) {
+                Some(raised) => lambda = raised,
+                None => break,
+            }
         }
         if !improved {
             break;
