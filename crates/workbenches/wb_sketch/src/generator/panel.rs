@@ -31,7 +31,7 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
         .document
         .feature_values(id)
         .cloned()
-        .unwrap_or_else(|| node.data.clone());
+        .unwrap_or_else(|| Value::clone(&node.data));
     let Some(generator) = SketchFeature::from_json(&values)
         .ok()
         .and_then(|f| f.generator)
@@ -45,7 +45,7 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
         &widgets,
         Some(&*ctx.document),
     );
-    let mut data = node.data.clone();
+    let mut data = Value::clone(&node.data);
     let mut edited: Vec<String> = Vec::new();
     // A number a formula now sets takes its value from the formula.
     let by_formula: Vec<String> = out

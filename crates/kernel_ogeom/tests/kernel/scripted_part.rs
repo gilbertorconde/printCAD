@@ -181,7 +181,7 @@ fn a_script_drills_a_standard_hole() {
         .feature_tree()
         .all_nodes()
         .find_map(|(id, node)| {
-            let data = &node.data;
+            let data: &serde_json::Value = &node.data;
             data.get("Hole").map(|_| (*id, data.clone()))
         })
         .expect("a hole");

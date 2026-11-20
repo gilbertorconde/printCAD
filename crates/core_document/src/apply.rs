@@ -156,7 +156,7 @@ impl Document {
             Op::AddFeature { id, .. } => Op::RemoveFeature { id: *id },
             Op::UpdateFeatureData { id, .. } => Op::UpdateFeatureData {
                 id: *id,
-                data: self.feature_tree.get_node(*id)?.data.clone().into(),
+                data: std::sync::Arc::clone(&self.feature_tree.get_node(*id)?.data),
             },
             Op::RenameFeature { id, .. } => Op::RenameFeature {
                 id: *id,
@@ -204,7 +204,7 @@ impl Document {
                     name: node.name.clone(),
                     body: node.body,
                     deps: self.feature_tree.dependencies(*id),
-                    data: node.data.clone(),
+                    data: serde_json::Value::clone(&node.data),
                     seq: node.seq,
                     created_at: node.created_at,
                     formulas: node.formulas.clone(),
@@ -617,7 +617,7 @@ impl Document {
                     refused_edges: Default::default(),
                     warning: None,
                     unchanged: None,
-                    data: data.clone(),
+                    data: data.clone().into(),
                     data_revision: Default::default(),
                     formulas: formulas.clone(),
                     made_by: made_by.clone(),
@@ -632,7 +632,7 @@ impl Document {
             }
             Op::UpdateFeatureData { id, data } => {
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
-                    node.data = serde_json::Value::clone(data);
+                    node.data = std::sync::Arc::clone(data);
                     node.data_revision = Default::default();
                 }
             }

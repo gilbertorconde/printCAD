@@ -184,7 +184,8 @@ pub(crate) fn turn_counts(document: &Document) -> Vec<(FeatureId, i64)> {
         .all_nodes()
         .filter(|(_, node)| node.workbench_id.as_str() == COUPLING_KIND)
         .filter_map(|(id, node)| {
-            let coupling = serde_json::from_value::<Coupling>(node.data.clone()).ok()?;
+            let coupling =
+                serde_json::from_value::<Coupling>(serde_json::Value::clone(&node.data)).ok()?;
             Some((*id, coupling.turns))
         })
         .collect()

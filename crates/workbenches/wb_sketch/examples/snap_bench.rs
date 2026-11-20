@@ -10,7 +10,8 @@
 //! with dimensions on 25 cells only, which the diagnosis analyses; one
 //! with a line tangent to each circle, its end held on it, and one with
 //! each cell's bottom side fitted to measured points; and
-//! the points the grid leaves free selected.
+//! the points the grid leaves free selected, then the pointer moved
+//! about with them selected and the panel drawn.
 //!
 //! `cargo run --release -p wb_sketch --example snap_bench -- [cells] [queries] [only]`:
 //! a square grid of `cells` × `cells` cells (20 by default), each a closed
@@ -428,6 +429,27 @@ fn select_free(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
     });
 }
 
+/// Pointer moves with the select tool, the panel drawn, while the free
+/// points are selected.
+fn hover_selected(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
+    if !wanted(label) {
+        return;
+    }
+    let mut s = Session::new(sketch, span, true);
+    s.send(
+        Some(WorkbenchInputEvent::ToolActivated),
+        "sketch.select_dof",
+    );
+    let tool = "sketch.select";
+    s.send(Some(WorkbenchInputEvent::ToolActivated), tool);
+    let moves: Vec<_> = queries.iter().map(|&c| s.px(c)).collect();
+    let mut k = 0;
+    measure(label, queries, |_| {
+        s.move_to(moves[k % moves.len()], tool);
+        k += 1;
+    });
+}
+
 fn main() {
     let cells: usize = std::env::args()
         .nth(1)
@@ -535,6 +557,7 @@ fn main() {
         span,
         &queries[..queries.len().min(4)],
     );
+    hover_selected("hover, free points selected", &marked, span, &queries);
     label_drag("label drag", &marked, span, &queries, false);
     label_drag("label drag, panel drawn", &marked, span, &queries, true);
 }

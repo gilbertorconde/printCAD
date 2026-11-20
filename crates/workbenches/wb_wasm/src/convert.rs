@@ -34,7 +34,7 @@ pub(crate) fn node(document: &Document, node: &FeatureNode) -> bench_api::Node {
         data: document
             .feature_values(node.id)
             .cloned()
-            .unwrap_or_else(|| node.data.clone()),
+            .unwrap_or_else(|| serde_json::Value::clone(&node.data)),
         visible: node.visible,
         made_by: node.made_by.clone(),
         deps: document

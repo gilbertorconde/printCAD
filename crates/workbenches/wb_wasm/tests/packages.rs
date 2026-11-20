@@ -954,7 +954,7 @@ fn a_package_feature_shows_its_status_and_moves_its_own_way() {
         assert_eq!(status.state, core_document::FeatureState::Running);
         assert_eq!(status.note, Some(id.0.to_string()));
     }
-    let mut data = node.data.clone();
+    let mut data = serde_json::Value::clone(&node.data);
     data["state"] = json!("done");
     document.update_feature_data(thing, data).unwrap();
     for (node, expected) in [
@@ -1959,7 +1959,7 @@ fn a_package_writing_a_feature_stamps_its_own_version_on_it() {
     )
     .unwrap();
     let node = document.get_feature_meta(feature).unwrap();
-    assert_eq!(node.data, json!({"touched": true}));
+    assert_eq!(*node.data, json!({"touched": true}));
     assert_eq!(
         node.made_by.as_deref(),
         Some("test.rogue 0.1.0"),

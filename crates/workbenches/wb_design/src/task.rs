@@ -142,7 +142,7 @@ impl DesignWorkbench {
         self.tab.task = Some(TaskState {
             feature: id,
             kind,
-            snapshot: node.data.clone(),
+            snapshot: serde_json::Value::clone(&node.data),
             created_by_tool: created.is_some(),
             pieces: created
                 .as_ref()

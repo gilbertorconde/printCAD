@@ -52,7 +52,7 @@ impl Clipboard {
                     id: fid,
                     kind: node.workbench_id.clone(),
                     name: node.name.clone(),
-                    data: node.data.clone(),
+                    data: serde_json::Value::clone(&node.data),
                     deps: document.feature_tree().dependencies(fid),
                     formulas: node.formulas.clone(),
                     visible: node.visible,

@@ -109,8 +109,9 @@ pub struct FeatureNode {
     /// state, as `error` is.
     #[serde(skip)]
     pub unchanged: Option<String>,
-    /// Type-erased feature data (serialized JSON)
-    pub data: serde_json::Value,
+    /// Type-erased feature data (serialized JSON), shared with the ops
+    /// that wrote it and the inverses that restore it.
+    pub data: std::sync::Arc<serde_json::Value>,
     /// Which `data` this is: a new one each time it is written.
     #[serde(skip)]
     pub data_revision: DataRevision,
@@ -238,7 +239,7 @@ impl FeatureNode {
             refused_edges: Default::default(),
             warning: None,
             unchanged: None,
-            data: feature.to_json(),
+            data: feature.to_json().into(),
             data_revision: DataRevision::default(),
             formulas: Default::default(),
             made_by: None,
@@ -508,7 +509,7 @@ mod tests {
             refused_edges: Default::default(),
             warning: None,
             unchanged: None,
-            data: serde_json::Value::Null,
+            data: Default::default(),
             data_revision: DataRevision::default(),
             formulas: Default::default(),
             made_by: None,

@@ -25,7 +25,8 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   singles widened through their shortest decimal). `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
-  looked up once per query into a `Scene`, the kinds in a fixed order,
+  looked up into a `Scene`, kept for the sketches the frame shares
+  through `snap::share` and built per query for any other, the kinds in a fixed order,
   ties settled by `Rank` from what the candidates are, never by ids,
   which a replay draws anew; `snap::Lookup` the one lookup a click's
   or a preview's point and curve snaps share; `examples/snap_bench.rs` times it, an edit and a label drag on a large

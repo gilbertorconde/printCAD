@@ -38,16 +38,12 @@ impl SelectionShape {
     /// follow in sketch order).
     pub fn picked_in(sketch: &Sketch, selected: &HashSet<Uuid>, order: &[Uuid]) -> Self {
         let mut shape = Self::of(sketch, selected);
-        let mut picked: Vec<Uuid> = order
-            .iter()
-            .copied()
-            .filter(|id| shape.all.contains(id))
+        let all: HashSet<Uuid> = shape.all.iter().copied().collect();
+        let mut picked: Vec<Uuid> = (order.iter().copied())
+            .filter(|id| all.contains(id))
             .collect();
-        for id in &shape.all {
-            if !picked.contains(id) {
-                picked.push(*id);
-            }
-        }
+        let taken: HashSet<Uuid> = picked.iter().copied().collect();
+        picked.extend(shape.all.iter().filter(|id| !taken.contains(*id)));
         shape.picked = picked;
         shape
     }
@@ -95,17 +91,21 @@ impl SelectionShape {
             }
         }
         shape.picked = shape.all.clone();
-        for point in shape.points.clone() {
-            let owner = sketch.geometry.iter().find_map(|g| match g {
-                GeometryElement::Line(l) if l.start == point || l.end == point => {
-                    Some((l.id, true))
-                }
-                GeometryElement::Arc(a) if a.start == point || a.end == point => {
-                    Some((a.id, false))
-                }
-                _ => None,
-            });
-            if let Some((curve, line)) = owner {
+        // Each selected point's first line or arc ending on it.
+        let points: HashSet<Uuid> = shape.points.iter().copied().collect();
+        let mut owners: std::collections::HashMap<Uuid, (Uuid, bool)> = Default::default();
+        for g in &sketch.geometry {
+            let (curve, ends, line) = match g {
+                GeometryElement::Line(l) => (l.id, [l.start, l.end], true),
+                GeometryElement::Arc(a) => (a.id, [a.start, a.end], false),
+                _ => continue,
+            };
+            for end in ends.into_iter().filter(|end| points.contains(end)) {
+                owners.entry(end).or_insert((curve, line));
+            }
+        }
+        for &point in &shape.points {
+            if let Some(&(curve, line)) = owners.get(&point) {
                 shape.curve_ends.push((point, curve, line));
             }
         }

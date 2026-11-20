@@ -639,7 +639,7 @@ impl Document {
 
     /// Get feature data (returns JSON, workbench must deserialize).
     pub fn get_feature_data(&self, id: FeatureId) -> Option<&serde_json::Value> {
-        self.feature_tree.get_node(id).map(|n| &n.data)
+        self.feature_tree.get_node(id).map(|n| &*n.data)
     }
 
     /// The feature's data as it builds: what the user set, with every
@@ -793,7 +793,7 @@ impl Document {
             if evaluation.reused.contains(id) {
                 continue;
             }
-            let raw = self.feature_tree.get_node(*id).map(|n| &n.data);
+            let raw = self.feature_tree.get_node(*id).map(|n| &*n.data);
             let before = old.get(id).or(raw);
             let after = evaluation.data.get(id).or(raw);
             if before != after && !changed.contains(id) {
@@ -900,7 +900,7 @@ impl Document {
     pub fn update_feature_data(
         &mut self,
         id: FeatureId,
-        data: serde_json::Value,
+        data: impl Into<std::sync::Arc<serde_json::Value>>,
     ) -> DocumentResult<()> {
         if self.feature_tree.get_node(id).is_none() {
             return Err(DocumentError::FeatureNotFound(id));
@@ -967,7 +967,7 @@ impl Document {
             let kept = (formula.is_none() && !self.needs_evaluation())
                 .then(|| self.evaluated.evaluation.unsettled.get(&feature_id))
                 .flatten()
-                .filter(|values| **values != node.data)
+                .filter(|values| **values != *node.data)
                 .cloned();
             if let Some(data) = kept {
                 self.record_and_apply(op::DocumentOp::UpdateFeatureData {
