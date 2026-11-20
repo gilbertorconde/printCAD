@@ -312,9 +312,9 @@ impl PrintCadApp {
         self.move_server(socket, false);
     }
 
-    /// [`Self::switch_server_to`]; `first_save` when an untitled tab moves
-    /// to its file's server to be saved there (`DocumentSession::move_to_server`).
-    fn move_server(&mut self, socket: std::path::PathBuf, first_save: bool) {
+    /// [`Self::switch_server_to`]; `saving` when the tab moves to its
+    /// file's server to be saved there (`DocumentSession::move_to_server`).
+    fn move_server(&mut self, socket: std::path::PathBuf, saving: bool) {
         if self.session.connection.socket == socket
             && self.session.connection.server.status().connected
         {
@@ -326,7 +326,7 @@ impl PrintCadApp {
                 // A save still packing names the old file: it goes to the
                 // server that owns that file, not the new one.
                 self.send_every_save_packing();
-                self.session.move_to_server(server, socket, first_save);
+                self.session.move_to_server(server, socket, saving);
                 app_log::info(format!(
                     "Document server: {}",
                     self.session.connection.server.name()
@@ -743,9 +743,7 @@ impl PrintCadApp {
                     // Save As gives the document a new identity, and a new
                     // daemon to own it; an untitled tab's first save takes
                     // the log its own daemon kept there.
-                    let first_save = self.session.file.path.is_none()
-                        && doc_server::is_untitled_socket(&self.session.connection.socket);
-                    self.move_server(crate::app::server::socket_for(path), first_save);
+                    self.move_server(crate::app::server::socket_for(path), true);
                 }
                 self.start_document_save(path, compression);
                 return Ok(());
@@ -1066,21 +1064,16 @@ impl PrintCadApp {
         };
         match job.result {
             Ok(bytes) => {
-                let connection = &mut self.session.connection;
-                if let Some(socket) = connection.untitled_log.clone() {
-                    connection
-                        .server
-                        .send(core_document::server::ClientMessage::AdoptLog { socket });
-                }
-                connection
-                    .server
-                    .send(core_document::server::ClientMessage::SaveDocument {
+                self.session.adopt_untitled_log();
+                self.session.connection.server.send(
+                    core_document::server::ClientMessage::SaveDocument {
                         path: job.path,
                         bytes,
                         at_seq: job.at_seq,
                         seen_seq: Some(job.seen_seq),
                         sent_batches: Some(job.sent_batches),
-                    });
+                    },
+                );
             }
             Err(err) => app_log::error(format!("Failed to serialize document: {err}")),
         }
