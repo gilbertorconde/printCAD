@@ -15,6 +15,7 @@ mod dressup;
 mod extrude;
 mod holes;
 mod patterns;
+mod ribs;
 mod sweeps;
 mod threads;
 

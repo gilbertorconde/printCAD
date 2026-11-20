@@ -99,6 +99,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::Scale { .. } => "Scale",
         SolidOp::KeepPiece { .. } => "Piece",
         SolidOp::Thread { .. } => "Thread",
+        SolidOp::Rib { .. } => "Rib",
         SolidOp::Transform { .. } | SolidOp::TransformCopies { .. } | SolidOp::Pattern { .. } => {
             "Pattern"
         }

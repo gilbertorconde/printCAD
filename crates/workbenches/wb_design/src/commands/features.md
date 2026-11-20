@@ -580,6 +580,41 @@ local cut = plain - pc.doc.measure{body = body}.volume
 assert(cut > ring * 0.3 and cut < ring * 0.7, cut)
 ```
 
+## design.rib
+
+Its sketch is an open line or chain of lines and arcs, `thickness` thick (2
+mm), the thickness on both sides of the sketch plane, or `side = "Front"`
+(the side the normal points to) or `"Back"`. The line's ends run on along
+its end tangents until they meet the solid, and the web fills between the
+line and the solid on every side where the solid closes it in. With
+`along_normal = true` the line, thickened in its plane, runs along the
+plane's normal instead, either way, until it meets the solid. A rib that
+meets nothing, or a sketch that closes, fails on the feature.
+
+See also: `design.pad`, `sketch.line`
+
+### A web across a channel, from a line between its walls
+
+```lua
+local body = pc.doc.new_body{}
+local box = function(x, l, h)
+  pc.design.primitive{body = body, kind = {Box = {length = l, width = 20, height = h}},
+    placement = {origin = {x, -20, 0}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+end
+box(0, 20, 2)
+box(0, 2, 20)
+box(18, 2, 20)
+assert(#pc.doc.rebuild() == 0)
+local channel = pc.doc.measure{body = body}.volume
+local s = pc.sketch.new{body = body, plane = "XZ", offset = 10}
+pc.sketch.line{sketch = s, x1 = 6, y1 = 12, x2 = 14, y2 = 12}
+pc.design.rib{sketch = s, thickness = 2}
+assert(#pc.doc.rebuild() == 0, "the rib builds")
+-- Between the walls (16 mm), from the line down to the floor (10 mm), 2 mm thick.
+local web = pc.doc.measure{body = body}.volume - channel
+assert(math.abs(web - 16 * 10 * 2) < 1e-3, web)
+```
+
 ## design.fillet, design.chamfer
 
 `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks

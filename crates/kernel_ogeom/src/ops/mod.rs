@@ -6,6 +6,7 @@ pub mod pattern;
 pub mod pattern_steps;
 pub mod primitive;
 pub mod project;
+pub mod rib;
 pub mod surface;
 pub mod sweep;
 pub mod thread;

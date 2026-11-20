@@ -97,5 +97,9 @@
   face's triangulation), tells shaft from bore by its outward normal, and
   cuts the same groove profile as a hole's along a helix, kept within the
   face's length by a turned clip (a cone over a run-out) and a 45° cone
-  for a chamfer.
+  for a chamfer. Ribs (`SolidOp::Rib`, `ops/rib.rs`): a large slab per side
+  of the chain (across the plane, its ends run on along their tangents; or
+  the chain thickened in the plane and swept along the normal), less the
+  solid; the piece at the chain is kept where it stays well inside the
+  slab's far side, so a side the solid does not close in adds nothing.
   `docs/HOLES.md` is the user guide.

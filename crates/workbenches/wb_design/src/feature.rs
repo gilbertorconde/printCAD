@@ -101,6 +101,11 @@ macro_rules! fuse_settings {
                 refine: $refine,
                 boolean_tolerance: $tolerance,
                 ..
+            }
+            | DesignFeature::Rib {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
             } => Some($then),
             _ => None,
         }
@@ -2326,6 +2331,29 @@ pub enum DesignFeature {
         #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
     },
+    /// A web grown from an open line or chain of a sketch's lines and
+    /// arcs, `thickness` thick, until it meets the solid: across the
+    /// sketch's plane, its ends carried on along the chain, or along the
+    /// plane's normal.
+    Rib {
+        sketch: FeatureId,
+        #[walk(length("thickness", "Thickness"))]
+        thickness: f32,
+        /// Where the thickness lies about the chain.
+        #[serde(default)]
+        #[walk(setting)]
+        side: kernel_api::RibSide,
+        /// The web runs along the sketch plane's normal, not across it.
+        #[serde(default)]
+        #[walk(setting)]
+        along_normal: bool,
+        #[serde(default)]
+        #[walk(setting)]
+        refine: bool,
+        #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
+        boolean_tolerance: Option<f32>,
+    },
     Fillet {
         #[walk(length("radius", "Radius"))]
         radius: f32,
@@ -2852,6 +2880,7 @@ impl DesignFeature {
             | DesignFeature::Helix { sketch, .. }
             | DesignFeature::Hole { sketch, .. }
             | DesignFeature::Project { sketch, .. }
+            | DesignFeature::Rib { sketch, .. }
             | DesignFeature::Text { sketch, .. } => Some(*sketch),
             DesignFeature::Pipe { profile, .. } => Some(*profile),
             _ => None,
@@ -2982,6 +3011,7 @@ impl DesignFeature {
             }
             DesignFeature::Hole { .. } => "Hole",
             DesignFeature::Thread { .. } => "Thread",
+            DesignFeature::Rib { .. } => "Rib",
             DesignFeature::Fillet { .. } => "Fillet",
             DesignFeature::Chamfer { .. } => "Chamfer",
             DesignFeature::Draft { .. } => "Draft",
@@ -3056,6 +3086,7 @@ impl DesignFeature {
             }
             DesignFeature::Hole { .. } => "hole",
             DesignFeature::Thread { .. } => "thread",
+            DesignFeature::Rib { .. } => "rib",
             DesignFeature::Fillet { .. } => "fillet",
             DesignFeature::Chamfer { .. } => "chamfer",
             DesignFeature::Draft { .. } => "draft",

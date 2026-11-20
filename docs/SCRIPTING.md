@@ -4338,6 +4338,45 @@ local cut = plain - pc.doc.measure{body = body}.volume
 assert(cut > ring * 0.3 and cut < ring * 0.7, cut)
 ```
 
+`pc.design.rib`: Grow a web from an open sketch line until it meets the solid.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, a thread's round face, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.rib")` list every one, with its kind, default and forms
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- Its sketch is an open line or chain of lines and arcs, `thickness` thick (2 mm), the thickness on both sides of the sketch plane, or `side = "Front"` (the side the normal points to) or `"Back"`. The line's ends run on along its end tangents until they meet the solid, and the web fills between the line and the solid on every side where the solid closes it in. With `along_normal = true` the line, thickened in its plane, runs along the plane's normal instead, either way, until it meets the solid. A rib that meets nothing, or a sketch that closes, fails on the feature.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.pad`, `pc.sketch.line`.
+
+Example: A web across a channel, from a line between its walls.
+
+```lua
+local body = pc.doc.new_body{}
+local box = function(x, l, h)
+  pc.design.primitive{body = body, kind = {Box = {length = l, width = 20, height = h}},
+    placement = {origin = {x, -20, 0}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+end
+box(0, 20, 2)
+box(0, 2, 20)
+box(18, 2, 20)
+assert(#pc.doc.rebuild() == 0)
+local channel = pc.doc.measure{body = body}.volume
+local s = pc.sketch.new{body = body, plane = "XZ", offset = 10}
+pc.sketch.line{sketch = s, x1 = 6, y1 = 12, x2 = 14, y2 = 12}
+pc.design.rib{sketch = s, thickness = 2}
+assert(#pc.doc.rebuild() == 0, "the rib builds")
+-- Between the walls (16 mm), from the line down to the floor (10 mm), 2 mm thick.
+local web = pc.doc.measure{body = body}.volume - channel
+assert(math.abs(web - 16 * 10 * 2) < 1e-3, web)
+```
+
 `pc.design.fillet`: Round edges.
 
 - `sketch` (id, optional): The sketch it uses

@@ -44,6 +44,10 @@ pub(super) const FEATURES: &[(&str, &str)] = &[
         "design.thread",
         "Cut a thread into a shaft's or a bore's round face",
     ),
+    (
+        "design.rib",
+        "Grow a web from an open sketch line until it meets the solid",
+    ),
     ("design.fillet", "Round edges"),
     ("design.chamfer", "Bevel edges"),
     ("design.draft", "Tilt faces"),

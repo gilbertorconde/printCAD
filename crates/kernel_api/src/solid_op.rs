@@ -980,6 +980,10 @@ pub enum SolidOp {
     /// finds: an external one into a shaft, an internal one into a bore,
     /// as the face's outward normal says.
     Thread { face: FaceProbe, form: FaceThread },
+    /// A web grown from an open chain of a sketch's lines and arcs (one
+    /// wire of `profile`, not closed) and joined to the running solid, as
+    /// [`RibForm`] says.
+    Rib { profile: Profile, form: RibForm },
 }
 
 /// The thread a [`SolidOp::Thread`] cuts. The groove is the tooth space
@@ -1010,6 +1014,36 @@ pub struct FaceThread {
     /// shallower until it meets the face; zero ends it square.
     #[serde(default)]
     pub run_out: f64,
+}
+
+/// How a [`SolidOp::Rib`] grows its web from the sketch's chain.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct RibForm {
+    /// How thick the web is, mm.
+    pub thickness: f64,
+    /// Where the thickness lies about the chain.
+    #[serde(default)]
+    pub side: RibSide,
+    /// The web runs along the sketch plane's normal from the chain, the
+    /// thickness across the chain in the plane; otherwise it runs across
+    /// the plane from the chain, its ends carried on along the chain's
+    /// end tangents, the thickness along the normal. Either way it runs
+    /// until it meets the solid, on every side where it does.
+    #[serde(default)]
+    pub along_normal: bool,
+}
+
+/// Where a rib's thickness lies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RibSide {
+    /// Half each way.
+    #[default]
+    Both,
+    /// All of it on the side of the sketch plane its normal points to,
+    /// or with the web along the normal, left of the chain as it runs.
+    Front,
+    /// All of it on the other side.
+    Back,
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.

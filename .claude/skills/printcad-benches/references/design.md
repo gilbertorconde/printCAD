@@ -1,7 +1,7 @@
 # Design bench
 
 - `workbenches/wb_design`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
-  Primitive/Hole/Thread/Fillet/Chamfer/Draft/Thickness/Offset solid/Scale/patterns/Boolean/Split/Piece features
+  Primitive/Hole/Thread/Rib/Fillet/Chamfer/Draft/Thickness/Offset solid/Scale/patterns/Boolean/Split/Piece features
   (`feature.rs`; every one that fuses or cuts, and Fillet and Chamfer,
   carries `refine`, which the build follows with a `SolidOp::Refine`
   merging faces on one surface and then edges continuing one curve; the
@@ -21,8 +21,8 @@
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution; `plan_feature` hands each family to its module in
   `build/`: `extrude`, `sweeps`, `dressup`, `patterns`, `bodies`, `holes`,
-  `threads` (a Thread on a picked cylinder, `SolidOp::Thread`; the view's
-  seat of a thread, its
+  `threads` (a Thread on a picked cylinder, `SolidOp::Thread`, and a Rib
+  from an open chain, `SolidOp::Rib`; the view's seat of a thread, its
   length handle and a cosmetic one's helix and callout read the body's
   mesh, `thread_seat`),
   its tests in `build/tests/` by the same families). `split.rs`: the body menu's Split… and

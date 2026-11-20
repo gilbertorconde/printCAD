@@ -491,6 +491,20 @@ your own, for its whole length or part of it, with a chamfered start or
 a run-out end, or only shown as a cosmetic thread. docs/HOLES.md
 (Threads on a face) describes it.
 
+**Rib** grows a web from an open line or chain of lines and arcs in a
+sketch, the classic stiffener between two walls of a printed part. Draw
+the line where the web's free edge goes, on a plane through the part
+(the middle of a bracket, across a channel), select the sketch and choose
+Rib. The line's ends run on along it until they meet the solid, and the
+web fills between the line and the solid on the side where the solid
+closes it in, **Thickness** thick: on **Both sides** of the sketch plane,
+or all of it on **One side** or the **Other side**. **Along the normal**
+instead thickens the line in its plane and runs it along the plane's
+normal until it meets the solid: a web drawn on a plane above a floor
+stands down onto it, and one drawn between two plates reaches both. A
+line that meets no solid, or a sketch that closes, fails on the feature.
+A rib is copied by Mirrored and the patterns like any other feature.
+
 **Scale body** scales the whole solid about a point: by one **Factor**,
 or with **Per axis** by one along each of the body's X, Y and Z. It
 scales **About** the body's origin, the middle of the solid's bounding

@@ -11,6 +11,7 @@ mod extrude;
 mod holes;
 mod inputs;
 mod patterns;
+mod ribs;
 mod sweeps;
 mod threads;
 #[cfg(test)]
@@ -35,6 +36,7 @@ use inputs::{
 };
 pub(crate) use patterns::{Mat4, occurrence_steps, occurrence_transforms, transform_point};
 use patterns::{compose_steps, mat_mul, mat_rotation, mat_translation, normalize, plan_pattern};
+use ribs::rib_op;
 pub(crate) use sweeps::axis_in_sketch;
 use sweeps::{datum_direction, plan_sweep};
 use threads::thread_ops;
@@ -432,6 +434,9 @@ fn plan_feature(
         }
         DesignFeature::Thread { .. } => {
             plan.ops.extend(thread_ops(feature).map_err(&fail)?);
+        }
+        DesignFeature::Rib { .. } => {
+            plan.ops.push(rib_op(document, feature).map_err(&fail)?);
         }
         DesignFeature::Fillet { .. }
         | DesignFeature::Chamfer { .. }

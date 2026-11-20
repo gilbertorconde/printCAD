@@ -143,6 +143,7 @@ impl DesignWorkbench {
             context,
             action("design.pipe", "Additive pipe", "additive-pipe", "additive"),
         );
+        register(context, action("design.rib", "Rib", "rib", "additive"));
         register(
             context,
             action(
@@ -452,6 +453,7 @@ impl DesignWorkbench {
             | "design.subtractive_loft"
             | "design.subtractive_pipe"
             | "design.subtractive_helix" => has_sketch && has_solid,
+            "design.rib" => has_sketch && has_solid,
             "design.subtractive_primitive" | "design.text" | "design.thread" => has_solid,
             "design.fillet"
             | "design.chamfer"

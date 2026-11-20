@@ -424,6 +424,20 @@ impl DesignWorkbench {
                     "Thread",
                 )
             }
+            "design.rib" => {
+                need_material(has_solid)?;
+                (
+                    DesignFeature::Rib {
+                        sketch: need_sketch(sketch)?,
+                        thickness: 2.0,
+                        side: kernel_api::RibSide::Both,
+                        along_normal: false,
+                        refine: false,
+                        boolean_tolerance: None,
+                    },
+                    "Rib",
+                )
+            }
             "design.fillet" => {
                 need_material(has_solid)?;
                 let edges = Self::selected_edges(ctx, body, given, "round")?;

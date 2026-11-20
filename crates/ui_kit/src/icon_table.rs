@@ -380,6 +380,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/rendering-order.svg"),
     ),
     ("revolution", include_str!("../icons/revolution.svg")),
+    ("rib", include_str!("../icons/rib.svg")),
     (
         "rotate-geometry",
         include_str!("../icons/rotate-geometry.svg"),
