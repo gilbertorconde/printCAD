@@ -380,6 +380,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/rendering-order.svg"),
     ),
     ("revolution", include_str!("../icons/revolution.svg")),
+    ("rib", include_str!("../icons/rib.svg")),
     (
         "rotate-geometry",
         include_str!("../icons/rotate-geometry.svg"),
@@ -644,6 +645,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/text-wrap-turn.svg"),
     ),
     ("thickness", include_str!("../icons/thickness.svg")),
+    ("thread", include_str!("../icons/thread.svg")),
     ("toggle-active", include_str!("../icons/toggle-active.svg")),
     (
         "toggle-axis-cross",

@@ -226,7 +226,8 @@ pub fn retarget_feature_sketch(
         DesignFeature::Revolution { sketch, .. }
         | DesignFeature::Groove { sketch, .. }
         | DesignFeature::Helix { sketch, .. }
-        | DesignFeature::Hole { sketch, .. } => *sketch = new_sketch,
+        | DesignFeature::Hole { sketch, .. }
+        | DesignFeature::Rib { sketch, .. } => *sketch = new_sketch,
         DesignFeature::Pipe { profile, .. } => *profile = new_sketch,
         _ => return Err("this feature is not sketch-based".into()),
     }

@@ -126,6 +126,7 @@ by_serde!(
     crate::AttachmentOffset,
     kernel_api::ProjectMode,
     kernel_api::ThicknessJoin,
+    kernel_api::RibSide,
     kernel_api::PrimitiveKind,
     kernel_api::Placement,
     kernel_api::FilletCorner,

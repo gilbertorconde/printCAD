@@ -92,4 +92,14 @@
   which the parts list's Threads column, `app/annotations.rs`'s callouts
   and a STEP export's callouts (`export.rs::body_notes`) read. Drill points and
   counterdrill cones are kernel cone primitives cut at each centre.
+- Threads on a face (`SolidOp::Thread`, `kernel_ogeom/src/ops/thread.rs`):
+  the kernel finds the picked cylinder, its axis and its length (from the
+  face's triangulation), tells shaft from bore by its outward normal, and
+  cuts the same groove profile as a hole's along a helix, kept within the
+  face's length by a turned clip (a cone over a run-out) and a 45° cone
+  for a chamfer. Ribs (`SolidOp::Rib`, `ops/rib.rs`): a large slab per side
+  of the chain (across the plane, its ends run on along their tangents; or
+  the chain thickened in the plane and swept along the normal), less the
+  solid; the piece at the chain is kept where it stays well inside the
+  slab's far side, so a side the solid does not close in adds nothing.
   `docs/HOLES.md` is the user guide.

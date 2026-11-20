@@ -1,7 +1,8 @@
 //! Drag handles on the feature under edit: an arrow to the end of each
 //! number the view can show (a pad's or pocket's lengths, a hole's depth,
-//! a revolution's or groove's angles round its axis, a draft's angle, a
-//! primitive's sizes, a fillet's or chamfer's size), dragged along its
+//! a thread's length, a revolution's or groove's angles round its axis, a
+//! draft's angle, a primitive's sizes, a fillet's or chamfer's size),
+//! dragged along its
 //! line or round its arc in steps, and where a pad, pocket or hole starts
 //! along its way or a revolution or groove starts round its axis. Only
 //! numbers the feature lists as
@@ -340,6 +341,7 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
             out.extend(extrude_handles(&maker, &part));
         }
         DesignFeature::Hole { .. } => out.extend(hole_handles(&maker, &part)),
+        DesignFeature::Thread { .. } => out.push(thread_handle(&maker, &part)),
         DesignFeature::Revolution { .. } | DesignFeature::Groove { .. } => {
             out.extend(revolve_handles(&maker, &part));
         }
@@ -528,6 +530,28 @@ fn hole_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
         ));
     }
     out
+}
+
+/// A thread's length, along its face from the end it starts at, on the
+/// face's surface; none while it runs the whole face.
+fn thread_handle(maker: &Maker, part: &DesignFeature) -> Option<Handle> {
+    let DesignFeature::Thread {
+        full_length: false, ..
+    } = part
+    else {
+        return None;
+    };
+    let seat = crate::build::thread_seat(maker.document, maker.body, part)?;
+    let rim: [f64; 3] = std::array::from_fn(|k| seat.start[k] + seat.across[k] * seat.radius);
+    maker.handle(
+        "/length",
+        Shape::Line {
+            origin: maker.world64(rim),
+            dir: maker.world_dir64(seat.into),
+            scale: 1.0,
+        },
+        Range::Positive,
+    )
 }
 
 /// A revolution's or groove's: where it starts round the axis from the

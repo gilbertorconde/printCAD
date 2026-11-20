@@ -5,8 +5,10 @@ use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 use crate::feature::{
     ChamferMode, DesignFeature, DrillPoint, EdgePick, ExtrudeDirection, ExtrudeMode, FacePick,
     HelixMode, HoleCut, HoleFit, MirrorPlane, PatternAxis, PatternPath, PipeCorner,
-    PipeOrientation, RevolveAxis, RevolveMode, ScaleCentre, TransformStep, primitive_preset,
+    PipeOrientation, RevolveAxis, RevolveMode, ScaleCentre, ThreadSpec, TransformStep,
+    primitive_preset,
 };
+use crate::hole_tables::ThreadStandard;
 use crate::{DesignWorkbench, Given, build, region_pick};
 
 impl DesignWorkbench {
@@ -366,6 +368,74 @@ impl DesignWorkbench {
                         reversed: false,
                     },
                     "Hole",
+                )
+            }
+            "design.thread" => {
+                need_material(has_solid)?;
+                let face = crate::text_feature::picked_face(ctx, body).ok_or_else(|| {
+                    given.say(
+                        "Click a shaft's or a bore's round face in the viewport first",
+                        "It needs a cylindrical face: give `face_point` and `face_normal`",
+                    )
+                })?;
+                // The ISO metric coarse size nearest the face: by its major
+                // diameter on a shaft, its minor in a bore.
+                let size = match face.surface {
+                    Some(kernel_api::FaceSurface::Cylinder {
+                        origin,
+                        axis,
+                        radius,
+                    }) => {
+                        let off: [f32; 3] = std::array::from_fn(|k| face.point[k] - origin[k]);
+                        let along: f32 = (0..3).map(|k| off[k] * axis[k]).sum();
+                        let outward: f32 = (0..3)
+                            .map(|k| (off[k] - axis[k] * along) * face.normal[k])
+                            .sum();
+                        build::nearest_thread_size(
+                            ThreadStandard::IsoMetricCoarse,
+                            f64::from(radius) * 2.0,
+                            outward > 0.0,
+                        )
+                    }
+                    None => "M6".to_string(),
+                    Some(_) => {
+                        return Err(given.say(
+                            "A thread goes on a round face: click a shaft's or a bore's face",
+                            "`face_point` must name a cylindrical face",
+                        ));
+                    }
+                };
+                (
+                    DesignFeature::Thread {
+                        face: FacePick::of(face),
+                        thread: Some(ThreadSpec::new(ThreadStandard::IsoMetricCoarse, &size)),
+                        pitch: 1.0,
+                        depth: 0.6,
+                        length: 10.0,
+                        full_length: true,
+                        from_far_end: false,
+                        left_handed: false,
+                        chamfer: false,
+                        run_out: false,
+                        cosmetic: false,
+                        refine: false,
+                        boolean_tolerance: None,
+                    },
+                    "Thread",
+                )
+            }
+            "design.rib" => {
+                need_material(has_solid)?;
+                (
+                    DesignFeature::Rib {
+                        sketch: need_sketch(sketch)?,
+                        thickness: 2.0,
+                        side: kernel_api::RibSide::Both,
+                        along_normal: false,
+                        refine: false,
+                        boolean_tolerance: None,
+                    },
+                    "Rib",
                 )
             }
             "design.fillet" => {

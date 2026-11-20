@@ -292,7 +292,8 @@ preview.
 
 **View handles.** While its task is open, a feature shows a dot at the
 end of each number it can show in the view: a pad's or pocket's length
-(and the second side's), a hole's depth, a revolution's or groove's
+(and the second side's), a hole's depth, a thread's length along its
+face, a revolution's or groove's
 angles on an arc round its axis, a draft's angle, a primitive's sizes, a
 fillet's radius or a chamfer's size. One more dot sets where it starts: a
 pad's, pocket's or hole's start offset, from its profile or from the
@@ -483,6 +484,26 @@ or a socket with play. The kernel offsets flat, cylindrical, conical,
 spherical and toroidal faces; a solid with a free-form face (a spline
 pad, a loft, an ellipsoid), or one a shrink would collapse, fails on the
 feature with the kernel's reason.
+
+**Thread** cuts a thread into a round face of the solid, a shaft's
+outside or a bore's inside, to a standard size or a pitch and depth of
+your own, for its whole length or part of it, with a chamfered start or
+a run-out end, or only shown as a cosmetic thread. docs/HOLES.md
+(Threads on a face) describes it.
+
+**Rib** grows a web from an open line or chain of lines and arcs in a
+sketch, the classic stiffener between two walls of a printed part. Draw
+the line where the web's free edge goes, on a plane through the part
+(the middle of a bracket, across a channel), select the sketch and choose
+Rib. The line's ends run on along it until they meet the solid, and the
+web fills between the line and the solid on the side where the solid
+closes it in, **Thickness** thick: on **Both sides** of the sketch plane,
+or all of it on **One side** or the **Other side**. **Along the normal**
+instead thickens the line in its plane and runs it along the plane's
+normal until it meets the solid: a web drawn on a plane above a floor
+stands down onto it, and one drawn between two plates reaches both. A
+line that meets no solid, or a sketch that closes, fails on the feature.
+A rib is copied by Mirrored and the patterns like any other feature.
 
 **Scale body** scales the whole solid about a point: by one **Factor**,
 or with **Per axis** by one along each of the body's X, Y and Z. It

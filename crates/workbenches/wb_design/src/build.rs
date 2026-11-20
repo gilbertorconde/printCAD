@@ -11,7 +11,9 @@ mod extrude;
 mod holes;
 mod inputs;
 mod patterns;
+mod ribs;
 mod sweeps;
+mod threads;
 #[cfg(test)]
 use crate::feature::{DrillPoint, HoleCut, ThreadSpec};
 use bodies::plan_body;
@@ -34,8 +36,14 @@ use inputs::{
 };
 pub(crate) use patterns::{Mat4, occurrence_steps, occurrence_transforms, transform_point};
 use patterns::{compose_steps, mat_mul, mat_rotation, mat_translation, normalize, plan_pattern};
+use ribs::rib_op;
 pub(crate) use sweeps::axis_in_sketch;
 use sweeps::{datum_direction, plan_sweep};
+use threads::thread_ops;
+pub(crate) use threads::{
+    nearest_thread_size, thread_designation, thread_form, thread_left_handed, thread_lines,
+    thread_seat,
+};
 
 use core_document::{BodyId, Document, FeatureId, RebuildJob, WorkbenchFeature};
 pub use core_document::{BuildError, BuildPlan};
@@ -423,6 +431,12 @@ fn plan_feature(
         DesignFeature::Hole { .. } => {
             let hole_ops = hole_ops(document, feature).map_err(&fail)?;
             plan.ops.extend(hole_ops);
+        }
+        DesignFeature::Thread { .. } => {
+            plan.ops.extend(thread_ops(feature).map_err(&fail)?);
+        }
+        DesignFeature::Rib { .. } => {
+            plan.ops.push(rib_op(document, feature).map_err(&fail)?);
         }
         DesignFeature::Fillet { .. }
         | DesignFeature::Chamfer { .. }

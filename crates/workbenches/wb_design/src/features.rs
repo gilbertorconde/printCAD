@@ -39,6 +39,25 @@ impl DesignWorkbench {
         let Some(body) = node.body else {
             return Vec::new();
         };
+        // A cosmetic thread on a face: its face's starting end.
+        if let Some(feature @ DesignFeature::Thread { cosmetic: true, .. }) =
+            document.feature_as::<DesignFeature>(id)
+        {
+            let (Some(designation), Some(seat)) = (
+                feature.cosmetic_thread(),
+                build::thread_seat(document, body, &feature),
+            ) else {
+                return Vec::new();
+            };
+            return vec![core_document::ThreadCallout {
+                feature: id,
+                body,
+                designation,
+                mouth: seat.start,
+                axis: seat.into,
+                radius: seat.radius,
+            }];
+        }
         // Only a threaded hole or a copy of features has bores to thread.
         let threads_or_copies = document
             .feature_as::<DesignFeature>(id)
@@ -86,6 +105,19 @@ impl DesignWorkbench {
                     ^ body
                         .and_then(|b| document.imported_geometry(b))
                         .map_or(0, |g| g.revision),
+                mesh,
+                tint: core_document::PassiveTint::External,
+                regions: Vec::new(),
+            });
+        }
+        // A cosmetic thread on a face: a helix along it.
+        if let (Some(body), Some(feature @ DesignFeature::Thread { cosmetic: true, .. })) =
+            (node.body, document.feature_as::<DesignFeature>(id))
+        {
+            let mesh = build::thread_lines(document, body, &feature);
+            return (!mesh.positions.is_empty()).then(|| core_document::PassiveGeometry {
+                revision: core_document::data_revision(&feature.to_json())
+                    ^ document.imported_geometry(body).map_or(0, |g| g.revision),
                 mesh,
                 tint: core_document::PassiveTint::External,
                 regions: Vec::new(),
@@ -188,14 +220,17 @@ impl DesignWorkbench {
             return false;
         };
         // A feature placed by faces of the solid takes where they are now,
-        // a projected sketch or text on any face it went on, curved ones
-        // too, and text round a whole turn the cylinder's radius as well.
+        // a projected sketch, text or a thread on any face it went on,
+        // curved ones too, and text round a whole turn the cylinder's
+        // radius as well.
         let asked: Vec<kernel_api::ShapeProbe> =
             made.placing_faces().iter().map(|f| f.probe()).collect();
         if !asked.is_empty() {
             let curved = matches!(
                 made,
-                DesignFeature::Project { .. } | DesignFeature::Text { .. }
+                DesignFeature::Project { .. }
+                    | DesignFeature::Text { .. }
+                    | DesignFeature::Thread { .. }
             );
             let mut faces = feature.placing_faces_mut();
             if probed.probes != asked || faces.len() != asked.len() {

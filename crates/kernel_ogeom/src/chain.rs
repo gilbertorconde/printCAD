@@ -1052,6 +1052,36 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 ops::dressup::nearest_of(&mut model, &shape, ogeom::topo::ShapeType::Solid, near)
                     .map_err(|_| err("the shape holds no solid to keep a piece of".into()))?
             }
+            SolidOp::Thread { face, form } => {
+                let solid = base.ok_or_else(|| err("a thread needs an existing solid".into()))?;
+                let tool = ops::thread::tool(&mut model, &solid, face, form).map_err(&err)?;
+                tool_names = Some(tool_names_fresh(&model, &tool, tag));
+                tool_snapshot = ToolSnapshot::of(solid_op, BooleanOp::Cut, Some(tool.clone()));
+                keep(&tool, BooleanOp::Cut);
+                combine(
+                    &mut model,
+                    Some(&solid),
+                    tool,
+                    BooleanOp::Cut,
+                    withheld[index],
+                )
+                .map_err(&err)?
+            }
+            SolidOp::Rib { profile, form } => {
+                let solid = base.ok_or_else(|| err("a rib needs an existing solid".into()))?;
+                let tool = ops::rib::tool(&mut model, &solid, profile, form).map_err(&err)?;
+                tool_names = Some(tool_names_fresh(&model, &tool, tag));
+                tool_snapshot = ToolSnapshot::of(solid_op, BooleanOp::Fuse, Some(tool.clone()));
+                keep(&tool, BooleanOp::Fuse);
+                combine(
+                    &mut model,
+                    Some(&solid),
+                    tool,
+                    BooleanOp::Fuse,
+                    withheld[index],
+                )
+                .map_err(&err)?
+            }
             SolidOp::RemoveFaces { faces, face_names } => {
                 let solid =
                     base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;

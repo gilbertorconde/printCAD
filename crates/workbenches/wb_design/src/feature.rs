@@ -96,6 +96,16 @@ macro_rules! fuse_settings {
                 refine: $refine,
                 boolean_tolerance: $tolerance,
                 ..
+            }
+            | DesignFeature::Thread {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Rib {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
             } => Some($then),
             _ => None,
         }
@@ -1200,6 +1210,26 @@ pub enum NutSide {
 
 /// A hole's nut trap as a script may give it: whole, `true` for the
 /// usual one, or `false` for none.
+/// A thread's size as a document or a script gives it, or "Custom" (or
+/// an empty name) for none: the thread's own pitch and depth.
+fn thread_or_custom<'de, D>(deserializer: D) -> Result<Option<ThreadSpec>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(name))
+            if name.is_empty() || name.eq_ignore_ascii_case("custom") =>
+        {
+            Ok(None)
+        }
+        Some(v) => ThreadSpec::deserialize(v)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
 pub(crate) fn nut_trap_or_flag<'de, D>(deserializer: D) -> Result<Option<NutTrap>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1626,6 +1656,18 @@ fn overhang_angle() -> f32 {
 
 fn z_axis() -> [f32; 3] {
     [0.0, 0.0, 1.0]
+}
+
+fn default_thread_pitch() -> f32 {
+    1.0
+}
+
+fn default_thread_depth() -> f32 {
+    0.6
+}
+
+fn default_thread_length() -> f32 {
+    10.0
 }
 
 fn drill_point_angle() -> f32 {
@@ -2231,6 +2273,87 @@ pub enum DesignFeature {
         #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
     },
+    /// A thread cut into a cylindrical face of the solid: a shaft's or a
+    /// boss's outside, a bore's inside, whichever way the face faces.
+    /// Cosmetic, it is shown and called out, not cut.
+    Thread {
+        /// The cylindrical face it goes on; the thread starts at the end
+        /// of it nearer where it was picked.
+        face: FacePick,
+        /// The standard size it is cut to: its pitch, and its depth from
+        /// the major to the minor diameter. `None` (read from "Custom"
+        /// too) cuts `pitch` and `depth`.
+        #[serde(default, deserialize_with = "thread_or_custom")]
+        #[walk(setting)]
+        thread: Option<ThreadSpec>,
+        /// Its own pitch, mm, with no standard.
+        #[serde(default = "default_thread_pitch")]
+        #[walk(length("pitch", "Pitch"))]
+        pitch: f32,
+        /// Its own depth into the material from the face, mm, with no
+        /// standard.
+        #[serde(default = "default_thread_depth")]
+        #[walk(length("depth", "Depth"))]
+        depth: f32,
+        /// How far along the face from its starting end, mm, unless it
+        /// runs the face's whole length.
+        #[serde(default = "default_thread_length")]
+        #[walk(length("length", "Length"))]
+        length: f32,
+        #[serde(default = "default_true")]
+        #[walk(setting)]
+        full_length: bool,
+        /// Starts at the end of the face farther from where it was picked.
+        #[serde(default)]
+        #[walk(setting)]
+        from_far_end: bool,
+        /// Turns left; a standard size's own left hand counts too.
+        #[serde(default)]
+        #[walk(setting)]
+        left_handed: bool,
+        /// A 45° chamfer at the starting end, down to the thread's root.
+        #[serde(default)]
+        #[walk(setting)]
+        chamfer: bool,
+        /// The groove grows shallower over its last two pitches rather
+        /// than ending square.
+        #[serde(default)]
+        #[walk(setting)]
+        run_out: bool,
+        /// Shown on the face and called out, not cut.
+        #[serde(default)]
+        #[walk(setting)]
+        cosmetic: bool,
+        #[serde(default)]
+        #[walk(setting)]
+        refine: bool,
+        #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
+        boolean_tolerance: Option<f32>,
+    },
+    /// A web grown from an open line or chain of a sketch's lines and
+    /// arcs, `thickness` thick, until it meets the solid: across the
+    /// sketch's plane, its ends carried on along the chain, or along the
+    /// plane's normal.
+    Rib {
+        sketch: FeatureId,
+        #[walk(length("thickness", "Thickness"))]
+        thickness: f32,
+        /// Where the thickness lies about the chain.
+        #[serde(default)]
+        #[walk(setting)]
+        side: kernel_api::RibSide,
+        /// The web runs along the sketch plane's normal, not across it.
+        #[serde(default)]
+        #[walk(setting)]
+        along_normal: bool,
+        #[serde(default)]
+        #[walk(setting)]
+        refine: bool,
+        #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
+        boolean_tolerance: Option<f32>,
+    },
     Fillet {
         #[walk(length("radius", "Radius"))]
         radius: f32,
@@ -2757,6 +2880,7 @@ impl DesignFeature {
             | DesignFeature::Helix { sketch, .. }
             | DesignFeature::Hole { sketch, .. }
             | DesignFeature::Project { sketch, .. }
+            | DesignFeature::Rib { sketch, .. }
             | DesignFeature::Text { sketch, .. } => Some(*sketch),
             DesignFeature::Pipe { profile, .. } => Some(*profile),
             _ => None,
@@ -2886,6 +3010,8 @@ impl DesignFeature {
                 }
             }
             DesignFeature::Hole { .. } => "Hole",
+            DesignFeature::Thread { .. } => "Thread",
+            DesignFeature::Rib { .. } => "Rib",
             DesignFeature::Fillet { .. } => "Fillet",
             DesignFeature::Chamfer { .. } => "Chamfer",
             DesignFeature::Draft { .. } => "Draft",
@@ -2959,6 +3085,8 @@ impl DesignFeature {
                 primitive_icon(shape, *subtractive)
             }
             DesignFeature::Hole { .. } => "hole",
+            DesignFeature::Thread { .. } => "thread",
+            DesignFeature::Rib { .. } => "rib",
             DesignFeature::Fillet { .. } => "fillet",
             DesignFeature::Chamfer { .. } => "chamfer",
             DesignFeature::Draft { .. } => "draft",
@@ -3088,8 +3216,12 @@ impl DesignFeature {
     }
 
     /// A cosmetic thread's designation ("M6", "1/4-20 2B LH"), for a
-    /// threaded hole that shows its thread rather than cutting it.
+    /// threaded hole or a thread that shows its thread rather than
+    /// cutting it.
     pub fn cosmetic_thread(&self) -> Option<String> {
+        if let DesignFeature::Thread { cosmetic: true, .. } = self {
+            return crate::build::thread_designation(self);
+        }
         let DesignFeature::Hole {
             thread: Some(spec),
             threaded: true,
@@ -3154,6 +3286,7 @@ impl DesignFeature {
             DesignFeature::Project { faces, .. } | DesignFeature::Text { faces, .. } => {
                 faces.iter().collect()
             }
+            DesignFeature::Thread { face, .. } => vec![face],
             other => other.start_face().into_iter().collect(),
         }
     }
@@ -3207,6 +3340,7 @@ impl DesignFeature {
                 extras.start_face.as_mut().into_iter().collect()
             }
             DesignFeature::Hole { start, .. } => start.face.as_mut().into_iter().collect(),
+            DesignFeature::Thread { face, .. } => vec![face],
             _ => Vec::new(),
         }
     }
@@ -3216,7 +3350,8 @@ impl DesignFeature {
         match self {
             DesignFeature::Pocket { .. }
             | DesignFeature::Groove { .. }
-            | DesignFeature::Hole { .. } => true,
+            | DesignFeature::Hole { .. }
+            | DesignFeature::Thread { .. } => true,
             DesignFeature::Loft { subtractive, .. }
             | DesignFeature::Pipe { subtractive, .. }
             | DesignFeature::Helix { subtractive, .. }

@@ -15,7 +15,9 @@ mod dressup;
 mod extrude;
 mod holes;
 mod patterns;
+mod ribs;
 mod sweeps;
+mod threads;
 
 fn rect_sketch() -> SketchFeature {
     crate::test_support::rect_sketch(10.0, 5.0)

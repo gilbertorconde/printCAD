@@ -976,6 +976,74 @@ pub enum SolidOp {
     /// Keep one piece of the running shape: of its solids, the one
     /// nearest `near`, the others left out.
     KeepPiece { near: [f64; 3] },
+    /// A thread cut into the cylindrical face of the running solid `face`
+    /// finds: an external one into a shaft, an internal one into a bore,
+    /// as the face's outward normal says.
+    Thread { face: FaceProbe, form: FaceThread },
+    /// A web grown from an open chain of a sketch's lines and arcs (one
+    /// wire of `profile`, not closed) and joined to the running solid, as
+    /// [`RibForm`] says.
+    Rib { profile: Profile, form: RibForm },
+}
+
+/// The thread a [`SolidOp::Thread`] cuts. The groove is the tooth space
+/// of `flank_deg` between its flanks, `depth` deep from the face, flat a
+/// pitch's eighth wide at its root, swept along a helix about the face's
+/// axis from the end of the face nearer the probe's point (the other end
+/// with `from_far_end`) and kept within the face's length.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct FaceThread {
+    pub pitch: f64,
+    /// How far the groove reaches into the material from the face, mm.
+    pub depth: f64,
+    /// The included angle between the flanks, degrees.
+    pub flank_deg: f64,
+    /// How far along the face it runs from its starting end; `None` for
+    /// the face's whole length.
+    #[serde(default)]
+    pub length: Option<f64>,
+    #[serde(default)]
+    pub from_far_end: bool,
+    #[serde(default)]
+    pub left_handed: bool,
+    /// A 45° chamfer at the starting end, down to the groove's root on a
+    /// shaft and out to it on a bore.
+    #[serde(default)]
+    pub chamfer: bool,
+    /// Over this much of its length at the far end the groove grows
+    /// shallower until it meets the face; zero ends it square.
+    #[serde(default)]
+    pub run_out: f64,
+}
+
+/// How a [`SolidOp::Rib`] grows its web from the sketch's chain.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct RibForm {
+    /// How thick the web is, mm.
+    pub thickness: f64,
+    /// Where the thickness lies about the chain.
+    #[serde(default)]
+    pub side: RibSide,
+    /// The web runs along the sketch plane's normal from the chain, the
+    /// thickness across the chain in the plane; otherwise it runs across
+    /// the plane from the chain, its ends carried on along the chain's
+    /// end tangents, the thickness along the normal. Either way it runs
+    /// until it meets the solid, on every side where it does.
+    #[serde(default)]
+    pub along_normal: bool,
+}
+
+/// Where a rib's thickness lies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RibSide {
+    /// Half each way.
+    #[default]
+    Both,
+    /// All of it on the side of the sketch plane its normal points to,
+    /// or with the web along the normal, left of the chain as it runs.
+    Front,
+    /// All of it on the other side.
+    Back,
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.
