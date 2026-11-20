@@ -46,9 +46,12 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
   script's `arg` table. Output goes to stdout and log lines to stderr. The
   exit code is 0 when the script finishes, 1 when it stops on an error and
   2 when the command line is wrong. Commands that need a window (the view,
-  the selection, tools) are not available there; `pc.file.import`,
-  `pc.file.save_as` and `pc.file.export` take a `path`, so a recording or
-  a crash report that imports a file replays there too.
+  the selection, tools) are not available there; `pc.file.open`,
+  `pc.file.import`, `pc.file.save_as` and `pc.file.export` take a `path`,
+  so a recording or a crash report that imports a file replays there too,
+  and a script can save a document and open it again. `pc.file.open`
+  replaces the run's document, and refuses while it has edits not saved
+  unless `discard = true`.
 
 ## Working with commands
 
@@ -1518,7 +1521,27 @@ assert(a ~= b and a:sub(-4) == ".stl" and b:sub(-4) == ".stl")
 `pc.file.open`: Open.
 
 - `path` (string, optional): The document to open; the dialog when left out
+- `discard` (boolean, optional): Without a window: open even though the run's document has edits not saved, which are lost. The window opens a tab of its own and loses nothing
 - Returns nothing; the document opens in its tab after the script
+
+Notes:
+
+- In the window the document opens in a tab of its own, or its tab comes to the front when it is open already; the document the script runs in stays as it is. An agent's call asks the user first, as reading any other file does.
+- A `printcad --script` run has one document: the file opened takes its place, and the commands after it work on the file. While the run's document has edits not saved it refuses, unless `discard = true` lets them go.
+
+See also `pc.file.save_as`.
+
+Example: Save, then open the file again.
+
+```lua
+local path = pc.file.temp_path{name = "kept.prtcad"}
+local body = pc.doc.new_body{name = "Kept"}
+pc.file.save_as{path = path}
+pc.doc.rename{id = body, name = "Changed"}
+assert(not pcall(pc.file.open, {path = path}), "unsaved edits are kept")
+pc.file.open{path = path, discard = true}
+assert(pc.doc.bodies()[1].name == "Kept")
+```
 
 `pc.file.save`: Save.
 

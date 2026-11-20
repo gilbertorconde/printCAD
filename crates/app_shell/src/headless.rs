@@ -3,7 +3,7 @@
 //!
 //! The script sees the workbenches' commands and the document's own
 //! (reading it, adding and naming bodies, visibility, deleting, rebuilding
-//! and measuring), and `file.import`, `file.save_as` and `file.export`
+//! and measuring), and `file.open`, `file.import`, `file.save_as` and `file.export`
 //! with a path, an import read and landed on this thread as the app lands
 //! it (`step_import::land_import`). What
 //! needs a window (the selection, the view, tools) answers that it is not
@@ -294,6 +294,16 @@ fn file_commands() -> Vec<CommandSpec> {
             ParamKind::String,
             crate::app::scripts::UNITS_IMPORT_DOC,
         ),
+        CommandSpec::new(
+            "file.open",
+            "Open a printCAD document in place of the run's document",
+        )
+        .param("path", ParamKind::String, "The document to open")
+        .optional(
+            "discard",
+            ParamKind::Bool,
+            crate::app::scripts::OPEN_DISCARD_DOC,
+        ),
         CommandSpec::new("file.save_as", "Save the document").param(
             "path",
             ParamKind::String,
@@ -435,6 +445,27 @@ impl Headless {
                 self.save(&path)
                     .map_err(|e| CommandError::failed(e.to_string()))?;
                 self.file = Some(path);
+                Ok(Value::Null)
+            }
+            "file.open" => {
+                let path = PathBuf::from(a.string("path")?);
+                if self.document.metadata().dirty() && a.opt_bool("discard")? != Some(true) {
+                    return Err(CommandError::failed(
+                        "the document has edits not saved: save them first \
+                         (file.save_as), or pass discard = true to lose them",
+                    ));
+                }
+                let opened = Document::load_from_file(&path)
+                    .map_err(|e| CommandError::bad("path", format!("could not be opened: {e}")))?;
+                self.document = crate::app::doc_io::opened(&self.registry, opened);
+                self.file = Some(path);
+                // The history before belongs to the document that is gone.
+                if self.journal.is_some() {
+                    self.journal = Some(core_document::history::OpJournal::new(
+                        crate::app::session::JOURNAL_LIMIT,
+                    ));
+                }
+                self.rebuild();
                 Ok(Value::Null)
             }
             "doc.print_layout" => {
@@ -743,6 +774,7 @@ impl Headless {
         }
         self.document
             .save_to_file(path, core_document::Compression::None)?;
+        self.document.mark_clean();
         Ok(())
     }
 }

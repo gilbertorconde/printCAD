@@ -1134,6 +1134,30 @@ local b = pc.file.temp_path{name = "part.stl", text = "solid empty\nendsolid emp
 assert(a ~= b and a:sub(-4) == ".stl" and b:sub(-4) == ".stl")
 ```
 
+## file.open
+
+In the window the document opens in a tab of its own, or its tab comes to the
+front when it is open already; the document the script runs in stays as it is.
+An agent's call asks the user first, as reading any other file does.
+
+A `printcad --script` run has one document: the file opened takes its place,
+and the commands after it work on the file. While the run's document has edits
+not saved it refuses, unless `discard = true` lets them go.
+
+See also: `file.save_as`
+
+### Save, then open the file again
+
+```lua
+local path = pc.file.temp_path{name = "kept.prtcad"}
+local body = pc.doc.new_body{name = "Kept"}
+pc.file.save_as{path = path}
+pc.doc.rename{id = body, name = "Changed"}
+assert(not pcall(pc.file.open, {path = path}), "unsaved edits are kept")
+pc.file.open{path = path, discard = true}
+assert(pc.doc.bodies()[1].name == "Kept")
+```
+
 ## doc.parameters
 
 `name` or `key` is what `pc.doc.set_formula` and `pc.doc.set_value` take;

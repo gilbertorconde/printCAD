@@ -804,6 +804,10 @@ fn for_agents(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
 pub(crate) const SCAN_IMPORT_DOC: &str = "true marks the meshes it brings as scans, the measured parts inspection and mesh \
      editing work on";
 
+/// What `file.open`'s `discard` says, the app's and the window-less host's.
+pub(crate) const OPEN_DISCARD_DOC: &str = "Without a window: open even though the run's document has edits not saved, which \
+     are lost. The window opens a tab of its own and loses nothing";
+
 /// What `file.import`'s `units` says.
 pub(crate) const UNITS_IMPORT_DOC: &str = "mm, cm, m or inch: what an STL file's numbers are in, scaled to millimetres as it \
      comes in; Preferences' STL units when left out. Other files say their own units";
@@ -839,8 +843,11 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
              or whose file another version of printCAD wrote, asks the user in the window, and \
              the saves after it wait for the answer.",
         ),
-        Open => path(spec, "The document to open; the dialog when left out")
-            .returns("nothing; the document opens in its tab after the script"),
+        Open => prose().explain(
+            path(spec, "The document to open; the dialog when left out")
+                .optional("discard", ParamKind::Bool, OPEN_DISCARD_DOC)
+                .returns("nothing; the document opens in its tab after the script"),
+        ),
         SaveAs => path(spec, "Where to save; the dialog when left out"),
         Import => path(
             spec,
