@@ -33,6 +33,23 @@ pub enum CurveVars {
 }
 
 impl CurveVars {
+    /// Pushes every variable its point or direction at a parameter reads.
+    pub(crate) fn reads(&self, out: &mut Vec<usize>) {
+        match self {
+            CurveVars::Line { s, e } => out.extend([*s, s + 1, *e, e + 1]),
+            CurveVars::Circle { c, r } => out.extend([*c, c + 1, *r]),
+            CurveVars::Ellipse { c, shape }
+            | CurveVars::Hyperbola { c, shape }
+            | CurveVars::Parabola { c, shape } => {
+                out.extend([*c, c + 1]);
+                shape.reads(out);
+            }
+            CurveVars::Spline { control, .. } => {
+                out.extend(control.iter().flat_map(|&k| [k, k + 1]));
+            }
+        }
+    }
+
     /// Ends whose position is exactly one point's variables, with their
     /// parameters. Closed rings and unclamped spline ends have none.
     pub(crate) fn point_ends(&self) -> Vec<(usize, f64)> {

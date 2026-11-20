@@ -1,5 +1,6 @@
 use crate::compile::System;
 use crate::problem::Settings;
+use crate::sparse::Blocks;
 
 pub fn solve(problem: &crate::problem::Problem) -> Result<Iteration, crate::input::InputError> {
     let compiled = crate::compile::compile(problem)?;
@@ -62,8 +63,9 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
         };
     }
 
+    let blocks = Blocks::of(sys);
     let start = part_coincident_ends(sys);
-    let direct = descend(sys, start.clone(), settings, tolerance, None);
+    let direct = descend(sys, &blocks, start.clone(), settings, tolerance, None);
     if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
@@ -72,7 +74,7 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
     if steps <= 1 {
         return direct;
     }
-    let mut followed = follow(sys, start, settings, tolerance, steps);
+    let mut followed = follow(sys, &blocks, start, settings, tolerance, steps);
     if !matches!(followed.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
@@ -140,6 +142,7 @@ fn farthest_move(sys: &System, from: &[f64], to: &[f64]) -> (f64, f64) {
 /// step starting where the last ended, the last asking them to vanish.
 fn follow(
     sys: &System,
+    blocks: &Blocks,
     mut x: Vec<f64>,
     settings: Settings,
     tolerance: f64,
@@ -153,11 +156,11 @@ fn follow(
         for (o, r) in offset.iter_mut().zip(&start) {
             *o = left * r;
         }
-        let step = descend(sys, x, settings, tolerance * 1e3, Some(&offset));
+        let step = descend(sys, blocks, x, settings, tolerance * 1e3, Some(&offset));
         iterations += step.iterations;
         x = step.values;
     }
-    let mut last = descend(sys, x, settings, tolerance, None);
+    let mut last = descend(sys, blocks, x, settings, tolerance, None);
     last.iterations += iterations;
     last
 }
@@ -202,17 +205,11 @@ pub(crate) fn part_coincident_ends(sys: &System) -> Vec<f64> {
     x
 }
 
-/// The Jacobian a rank is read from: at the system's values, with stacked
-/// points held apart parted ([`part_coincident_ends`]) so what holds them
-/// is counted.
-pub(crate) fn rank_jacobian(sys: &System) -> Vec<Vec<f64>> {
-    jacobian(sys, &part_coincident_ends(sys))
-}
-
 /// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
 /// to `offset` (zero when `None`).
 fn descend(
     sys: &System,
+    blocks: &Blocks,
     mut x: Vec<f64>,
     settings: Settings,
     tolerance: f64,
@@ -237,31 +234,52 @@ fn descend(
     while !converged && iterations < max_iterations {
         iterations += 1;
 
-        let jac = jacobian(sys, &x);
-        let (jtj, jtr) = normal_equations(&jac, &r);
+        // JᵀJ is block diagonal: each block's normal equations alone. A
+        // column no equation reads has none, and its step is zero.
+        let normal: Vec<_> = (blocks.blocks.iter())
+            .zip(blocks.jacobian(sys, &x))
+            .map(|(block, jac)| {
+                let r: Vec<f64> = block.rows.iter().map(|&i| r[i]).collect();
+                normal_equations(&jac, &r)
+            })
+            .collect();
 
         // Each variable is damped by its own curvature plus the average
         // one: with its own alone, a variable the constraints barely feel
         // (a point sliding almost square to the only row that moves it)
         // costs nearly nothing to move, and the step flings it far off.
-        let mean_diag =
-            jtj.iter().enumerate().map(|(i, row)| row[i]).sum::<f64>() / jtj.len().max(1) as f64;
+        // Summed in column order, as one matrix's diagonal would be.
+        let mut diagonal = vec![0.0; sys.free.len()];
+        for (block, (jtj, _)) in blocks.blocks.iter().zip(&normal) {
+            for (i, &column) in block.columns.iter().enumerate() {
+                diagonal[column] = jtj[i][i];
+            }
+        }
+        let mean_diag = diagonal.iter().sum::<f64>() / diagonal.len().max(1) as f64;
         let mut improved = false;
         for _ in 0..settings.max_inner_retries {
             // Damped normal equations: (JᵀJ + λ·D) dx = -Jᵀr, with D the
             // diagonal of JᵀJ raised by its mean.
-            let mut a = jtj.clone();
-            for (i, row) in a.iter_mut().enumerate() {
-                row[i] += lambda * (jtj[i][i] + mean_diag).max(settings.damping_floor);
-            }
-            let rhs: Vec<f64> = jtr.iter().map(|v| -v).collect();
-            let mut step = match solve_linear(a, rhs) {
-                Some(s) => s,
-                None => {
-                    lambda = (lambda * 10.0).min(settings.lambda_max);
-                    continue;
+            let mut step = vec![0.0; sys.free.len()];
+            let mut singular = false;
+            for (block, (jtj, jtr)) in blocks.blocks.iter().zip(&normal) {
+                let mut a = jtj.clone();
+                for (i, row) in a.iter_mut().enumerate() {
+                    row[i] += lambda * (jtj[i][i] + mean_diag).max(settings.damping_floor);
                 }
-            };
+                let rhs: Vec<f64> = jtr.iter().map(|v| -v).collect();
+                let Some(dx) = solve_linear(a, rhs) else {
+                    singular = true;
+                    break;
+                };
+                for (&column, dx) in block.columns.iter().zip(dx) {
+                    step[column] = dx;
+                }
+            }
+            if singular {
+                lambda = (lambda * 10.0).min(settings.lambda_max);
+                continue;
+            }
             cap_step(&mut step, var_scale(&x), settings.maximum_step_scale);
 
             let mut trial = x.clone();
@@ -317,25 +335,13 @@ pub fn eval_residuals(sys: &System, x: &[f64]) -> Vec<f64> {
     out
 }
 
-/// Central-difference Jacobian (m residuals x n variables).
+/// Central-difference Jacobian (m residuals x n variables), worked out
+/// block by block ([`Blocks`]). One column per movable variable: a pinned
+/// reference contributes none, so nothing can trade a constraint against
+/// tilting an axis.
 pub fn jacobian(sys: &System, x: &[f64]) -> Vec<Vec<f64>> {
-    // One column per movable variable: a pinned reference contributes none,
-    // so nothing can trade a constraint against tilting an axis.
-    let mut jac = vec![vec![0.0; sys.free.len()]; sys.residual_len];
-    let mut probe = x.to_vec();
-    for (column, &j) in sys.free.iter().enumerate() {
-        let eps = sys.settings.finite_difference_step * x[j].abs().max(1.0);
-        let original = probe[j];
-        probe[j] = original + eps;
-        let r_plus = eval_residuals(sys, &probe);
-        probe[j] = original - eps;
-        let r_minus = eval_residuals(sys, &probe);
-        probe[j] = original;
-        for (row, (rp, rm)) in jac.iter_mut().zip(r_plus.iter().zip(&r_minus)) {
-            row[column] = (rp - rm) / (2.0 * eps);
-        }
-    }
-    jac
+    let blocks = Blocks::of(sys);
+    blocks.dense(&blocks.jacobian(sys, x), sys.residual_len, sys.free.len())
 }
 
 /// Build JᵀJ and Jᵀr for the normal equations.
@@ -407,18 +413,21 @@ pub(crate) fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<
 /// the relative tolerance times the largest entry are treated as zero, which is
 /// loose enough to flag redundant (dependent) constraint rows near a solution
 /// while keeping genuinely independent rows.
-pub fn jacobian_rank(mut m: Vec<Vec<f64>>, rank_tolerance: f64) -> usize {
-    let rows = m.len();
-    let cols = m.first().map_or(0, Vec::len);
-    if rows == 0 || cols == 0 {
+pub fn jacobian_rank(m: Vec<Vec<f64>>, rank_tolerance: f64) -> usize {
+    if m.first().is_none_or(Vec::is_empty) {
         return 0;
     }
     let max_abs = m.iter().flatten().fold(0.0_f64, |acc, v| acc.max(v.abs()));
     if max_abs == 0.0 || !max_abs.is_finite() {
         return 0;
     }
-    let tol = max_abs * rank_tolerance;
+    rank_within(m, max_abs * rank_tolerance)
+}
 
+/// [`jacobian_rank`] with pivots at or below `tol` treated as zero.
+pub(crate) fn rank_within(mut m: Vec<Vec<f64>>, tol: f64) -> usize {
+    let rows = m.len();
+    let cols = m.first().map_or(0, Vec::len);
     let mut rank = 0;
     let mut row = 0;
     for col in 0..cols {
@@ -483,5 +492,12 @@ fn cap_step(step: &mut [f64], scale: f64, maximum_step_scale: f64) {
 }
 
 pub fn probe_direct(sys: &System, settings: Settings) -> Iteration {
-    descend(sys, sys.vars.clone(), settings, CONVERGENCE_TOL, None)
+    descend(
+        sys,
+        &Blocks::of(sys),
+        sys.vars.clone(),
+        settings,
+        CONVERGENCE_TOL,
+        None,
+    )
 }

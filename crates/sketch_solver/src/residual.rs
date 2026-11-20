@@ -322,6 +322,13 @@ pub enum CurveShape {
 }
 
 impl CurveShape {
+    /// Pushes its variables, when it has any.
+    pub(crate) fn reads(self, out: &mut Vec<usize>) {
+        if let CurveShape::Var(k) = self {
+            out.extend([k, k + 1, k + 2]);
+        }
+    }
+
     /// `(axis x, axis y, minor)`.
     pub(crate) fn get(self, v: &[f64]) -> (f64, f64, f64) {
         match self {
@@ -369,6 +376,15 @@ pub enum Tangent {
 }
 
 impl Tangent {
+    /// Pushes the variables its tangent at a point reads, besides the
+    /// point's own.
+    fn reads(self, out: &mut Vec<usize>) {
+        match self {
+            Tangent::Line { s, e } => out.extend([s, s + 1, e, e + 1]),
+            Tangent::Circle { c } => out.extend([c, c + 1]),
+        }
+    }
+
     /// The (unnormalized) tangent at the point with x-variable `p`.
     fn at(self, v: &[f64], p: usize) -> (f64, f64) {
         match self {
@@ -401,6 +417,125 @@ impl ResidualSpec {
             ResidualSpec::Rigid { .. } => 2,
             ResidualSpec::RigidAxes { minor, .. } => 2 + usize::from(minor.is_some()),
             _ => 1,
+        }
+    }
+
+    /// Pushes every variable its evaluation reads (a variable may come
+    /// more than once): its residuals change with no other.
+    pub fn reads(&self, out: &mut Vec<usize>) {
+        use ResidualSpec as R;
+        let points = |out: &mut Vec<usize>, ps: &[usize]| {
+            out.extend(ps.iter().flat_map(|&p| [p, p + 1]));
+        };
+        match self {
+            R::EllipseRadius { k, major, .. } => {
+                if *major {
+                    out.extend([*k, k + 1]);
+                } else {
+                    out.push(k + 2);
+                }
+            }
+            R::CurveLength { curve, ends, .. } => {
+                curve.reads(out);
+                if let Some((s, e)) = ends {
+                    points(out, &[*s, *e]);
+                }
+            }
+            R::PointOnCurve { p, curve, t } => {
+                points(out, &[*p]);
+                curve.reads(out);
+                out.push(*t);
+            }
+            R::CurvesMeet { a, ta, b, tb, .. } => {
+                a.reads(out);
+                b.reads(out);
+                out.extend([*ta, *tb]);
+            }
+            R::FixedPoint { p, .. } => points(out, &[*p]),
+            R::Coincident { p1, p2 } | R::Distance { p1, p2, .. } => points(out, &[*p1, *p2]),
+            R::SplineFitPoint { p, control } => {
+                points(out, &[*p]);
+                out.extend(control.iter().flat_map(|&(k, _)| [k, k + 1]));
+            }
+            R::Horizontal { s, e } => out.extend([s + 1, e + 1]),
+            R::Vertical { s, e } => out.extend([*s, *e]),
+            R::Length { s, e, .. } | R::AngleToTarget { s, e, .. } => points(out, &[*s, *e]),
+            R::Radius { r, .. } | R::Diameter { r, .. } => out.push(*r),
+            R::CoordDistance { a, b, .. } => {
+                out.push(*a);
+                out.extend(*b);
+            }
+            R::EqualRadius { r1, r2 } => out.extend([*r1, *r2]),
+            R::EqualLength { s1, e1, s2, e2 }
+            | R::Parallel { s1, e1, s2, e2 }
+            | R::Perpendicular { s1, e1, s2, e2 }
+            | R::Angle { s1, e1, s2, e2, .. }
+            | R::GapLines { s1, e1, s2, e2, .. } => points(out, &[*s1, *e1, *s2, *e2]),
+            R::PointOnLine { p, s, e }
+            | R::Midpoint { p, s, e }
+            | R::GapPointLine { p, s, e, .. } => points(out, &[*p, *s, *e]),
+            R::PointOnCircle { p, c, r }
+            | R::ArcEndpoint { p, c, r }
+            | R::GapPointCircle { p, c, r, .. } => {
+                points(out, &[*p, *c]);
+                out.push(*r);
+            }
+            R::PointOnEllipse { p, c, shape }
+            | R::OnConic { p, c, shape, .. }
+            | R::Internal { p, c, shape, .. }
+            | R::Focus { p, c, shape } => {
+                points(out, &[*p, *c]);
+                shape.reads(out);
+            }
+            R::TangentAtEnd { p, c, s, e, .. } => points(out, &[*p, *c, *s, *e]),
+            R::TangentArcsAtEnd { p, c1, c2 } => points(out, &[*p, *c1, *c2]),
+            R::TangentLineCircle { s, e, c, r, .. } | R::GapLineCircle { s, e, c, r, .. } => {
+                points(out, &[*s, *e, *c]);
+                out.push(*r);
+            }
+            R::TangentCircles { c1, r1, c2, r2, .. } | R::GapCircles { c1, r1, c2, r2, .. } => {
+                points(out, &[*c1, *c2]);
+                out.extend([*r1, *r2]);
+            }
+            R::Symmetric { p1, p2, s, e } => points(out, &[*p1, *p2, *s, *e]),
+            R::ArcLength { c, s, e, r, .. } => {
+                points(out, &[*c, *s, *e]);
+                out.push(*r);
+            }
+            R::EqualEllipse { a, b } => out.extend([*a, a + 1, a + 2, *b, b + 1, b + 2]),
+            R::ArcAngle { c, s, e, .. } => points(out, &[*c, *s, *e]),
+            R::AngleThreePoints { a, v, b, .. } => points(out, &[*a, *v, *b]),
+            R::Step { a0, a1, .. } => points(out, &[*a0, *a1]),
+            R::SameStep { a0, a1, b0, b1 } => points(out, &[*a0, *a1, *b0, *b1]),
+            R::AngleAtPoint { t1, t2, p, .. } => {
+                points(out, &[*p]);
+                t1.reads(out);
+                t2.reads(out);
+            }
+            R::Refraction {
+                near1,
+                far1,
+                near2,
+                far2,
+                interface,
+                p,
+                ..
+            } => {
+                points(out, &[*near1, *far1, *near2, *far2, *p]);
+                interface.reads(out);
+            }
+            R::Rigid { p, frame, .. } => {
+                points(out, &[*p]);
+                out.extend([*frame, frame + 1, frame + 2]);
+            }
+            R::RigidAxes {
+                k, frame, minor, ..
+            } => {
+                out.extend([*k, k + 1, *frame, frame + 1, frame + 2]);
+                if minor.is_some() {
+                    out.push(k + 2);
+                }
+            }
         }
     }
 
