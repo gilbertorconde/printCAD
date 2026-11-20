@@ -3843,3 +3843,40 @@ mod heavy {
         assert!(crate::common::is_sound(&built.brep_blob));
     }
 }
+
+/// A thickness that opens no face hollows the block into a sealed shell:
+/// inward, the block less a box 2 mm smaller each way; outward, a box
+/// 2 mm larger less the block, which becomes the cavity; both ways, the
+/// larger box less the smaller. Each is one solid with a second shell, the
+/// cavity's, inside it.
+#[test]
+fn a_thickness_opening_no_face_seals_a_hollow() {
+    let shell = |inward: bool, both_sides: bool| SolidOp::Thickness {
+        value: 1.0,
+        open_faces: Vec::new(),
+        open_face_names: Vec::new(),
+        inward,
+        join: kernel_api::ThicknessJoin::Intersection,
+        both_sides,
+    };
+    let (block_v, inner, outer) = (4000.0, 18.0 * 18.0 * 8.0, 22.0 * 22.0 * 12.0);
+    for (inward, both, want) in [
+        (true, false, block_v - inner),
+        (false, false, outer - block_v),
+        (true, true, outer - inner),
+    ] {
+        let built = chain(&[block(), shell(inward, both)]);
+        let what = format!("inward {inward}, both sides {both}");
+        let got = volume(&built.brep_blob);
+        assert!(
+            (got - want).abs() < 1e-6 * want,
+            "{what}: {got}, want {want}"
+        );
+        assert_eq!(
+            count_shapes(&built.brep_blob, ogeom::topo::ShapeType::Shell),
+            2,
+            "{what}: an outer skin and the cavity's"
+        );
+        assert!(is_sound(&built.brep_blob), "{what}");
+    }
+}

@@ -524,10 +524,8 @@ impl DesignWorkbench {
             }
             "design.thickness" => {
                 need_material(has_solid)?;
+                // With no face picked, a sealed hollow.
                 let faces = Self::selected_face_picks(ctx, body);
-                if faces.is_empty() {
-                    return Err("Click the faces to open in the viewport first".into());
-                }
                 (
                     DesignFeature::Thickness {
                         both_sides: false,

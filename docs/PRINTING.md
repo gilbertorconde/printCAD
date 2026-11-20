@@ -122,6 +122,17 @@ for the usual pocket at the mouth, or a table, `{side = "Bottom",
 clearance = 0.4, depth = 3, across_flats = 7, turn_deg = 30, standard =
 "Din934"}`, each field left out taking its usual value.
 
+## Hollow parts
+
+Design's **Thickness** hollows a solid into walls of a set thickness.
+With faces picked it opens them: an open box from a block with its top
+picked. With no face picked it seals the hollow, a closed shell: a resin
+part printed hollow to save material, or a light FDM part. A resin print
+needs a way out for the liquid trapped inside; add a hole or a small
+pocket through the wall after the Thickness as its drain. The walls go
+inward by default; **Inward** off puts them outside the solid, which
+becomes the cavity, and **Both sides** puts them on both.
+
 ## Print layout
 
 The layout lays out bodies, not the pieces inside one: a body whose solid

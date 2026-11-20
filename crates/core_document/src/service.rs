@@ -691,7 +691,8 @@ impl DocumentService {
     }
 
     /// What the bench that claimed `node`'s kind warns of on it and what
-    /// its last build warned of, if anything.
+    /// its last build warned of, if anything: a build that found it changed
+    /// nothing says so by its kind ("this pocket removes nothing: ...").
     pub fn feature_warning(
         &self,
         document: &Document,
@@ -699,13 +700,25 @@ impl DocumentService {
         id: FeatureId,
         node: &FeatureNode,
     ) -> Option<String> {
-        let said = self
-            .owner_of(&node.workbench_id)
-            .and_then(|bench| bench.feature_warning(document, kernel, id));
-        match (said, node.warning.clone()) {
-            (Some(said), Some(built)) => Some(format!("{said}; {built}")),
-            (said, built) => said.or(built),
-        }
+        let bench = self.owner_of(&node.workbench_id);
+        let said = bench.and_then(|bench| bench.feature_warning(document, kernel, id));
+        let unchanged = node.unchanged.as_ref().map(|what| {
+            let kind = bench.map(|bench| bench.feature_info(node).kind_label);
+            // A kind's label may carry a detail after a dot ("Hole · M6
+            // thread"); the kind is what comes before it.
+            let kind = kind
+                .as_deref()
+                .and_then(|k| k.split(" · ").next())
+                .filter(|k| !k.is_empty())
+                .unwrap_or("feature")
+                .to_lowercase();
+            format!("this {kind} {what}")
+        });
+        let parts: Vec<String> = [said, unchanged, node.warning.clone()]
+            .into_iter()
+            .flatten()
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("; "))
     }
 
     /// The visible feature nearest the cursor within `tolerance_px`, asked

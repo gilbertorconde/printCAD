@@ -306,11 +306,11 @@ assert(math.abs(bodies[1].material.density - 1.24) < 1e-6)
 `pc.doc.features`: List the features in build order.
 
 - `body` (id, optional): Only this body's
-- Returns a list of {id, name, kind, body, visible, suppressed, error}
+- Returns a list of {id, name, kind, body, visible, suppressed, error, warning}
 
 Notes:
 
-- `error` is set only on a feature the last `pc.doc.rebuild()` could not build. Variable sets and the configurations table are listed too, with no body.
+- `error` is set only on a feature the last `pc.doc.rebuild()` could not build. `warning` is set on one that built but should be told: a face or edge found by where it was picked once its name was lost, or a feature that adds or removes material and left the solid as it was ("this pocket removes nothing: it may point away from the material"). Variable sets and the configurations table are listed too, with no body.
 - A `body` that is not a body of the document gives an empty list, not an error.
 
 See also `pc.doc.feature`, `pc.doc.bodies`.
@@ -332,7 +332,7 @@ assert(not list[1].visible, "a pad hides its sketch")
 `pc.doc.feature`: A feature with its fields.
 
 - `id` (id)
-- Returns {id, name, kind, body, visible, suppressed, error, fields, unset, values}: unset names the fields holding no value, which fields leaves out; values is the data as the feature is built now (formulas worked out, a plane following what it stands on), given when it differs from fields
+- Returns {id, name, kind, body, visible, suppressed, error, warning, fields, unset, values}: unset names the fields holding no value, which fields leaves out; values is the data as the feature is built now (formulas worked out, a plane following what it stands on), given when it differs from fields
 
 Notes:
 
@@ -3890,7 +3890,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `keep_inside = true` keeps only what the pocket's prism shares with the body instead of cutting it away (Groove, and a cutting Loft, Pipe or primitive take it too); a pattern cannot repeat such a feature.
-- It cuts against its sketch's normal: from a sketch at the top face's height it digs down into the solid. From a sketch on the bottom (XY at 0 under a pad) it cuts away from the material and removes nothing, without an error; `reversed = true` turns it.
+- It cuts against its sketch's normal: from a sketch at the top face's height it digs down into the solid. From a sketch on the bottom (XY at 0 under a pad) it cuts away from the material and removes nothing: it builds, and its `warning` in `pc.doc.feature` says so; `reversed = true` turns it.
 - `through_all = true` cuts through everything; else `depth`, 5 mm when left out.
 - It is refused in a body with no solid feature yet. Its sketch must be in the padded body: `pc.sketch.new{body = ...}`, since a sketch made without `body` starts a new one.
 
@@ -4276,7 +4276,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - It drills at every circle's centre and every point of its sketch, its own `diameter` across. Left out, the diameter is the sketch's circles': the most common size when they differ (the larger of equally common ones, and the log says so), or 5 mm for a sketch of points alone.
 - Given no sketch, `face_point` and `face_normal` place one hole on a flat face where the point is: it drills from a hidden sketch of its own on that face, a point at the place, and starts on the face. More places are points added to that sketch.
-- It drills against the sketch's normal, `depth` deep (10 mm) or `through_all = true`. A sketch on the bottom of a pad drills away from the material and removes nothing, without an error; `reversed = true` turns it.
+- It drills against the sketch's normal, `depth` deep (10 mm) or `through_all = true`. A sketch on the bottom of a pad drills away from the material and removes nothing: it builds with a `warning` saying so; `reversed = true` turns it.
 - Counterbores, countersinks and threads are fields too (`cut`, `threaded`, `thread`): `describe` and `help("design.hole")` list every field with its forms, docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` shows a hole's fields.
 - `nut_trap = true` cuts a hexagonal pocket for a captive nut at the hole's mouth, sized from the ISO 4032 nut of its metric `thread` with 0.3 mm clearance; give a table for more: `{side = "Bottom", clearance, depth, across_flats, turn_deg, standard = "Din934"}`. At the bottom it ends where a hole with a `depth` ends; through all, it is refused.
 - For printing, `shape = "Teardrop"` or `"FlatTop"` gives a hole lying across the build direction a point toward the body's +Z (`{Teardrop = {angle_deg, up}}` for another angle or way), and `bridge = 0.2` leaves a layer that thick across the hole at the floor of its counterbore or countersink, to drill out after printing.
@@ -4425,7 +4425,7 @@ assert(math.abs(m.volume - (2000 + lean * 10 / 2 * 10)) < 1e-3, m.volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- `face_point` and `face_normal` name the face it opens and are required; `faces = {{point = .., normal = ..}, ...}` opens several, replacing that one.
+- `face_point` and `face_normal` name the face it opens; `faces = {{point = .., normal = ..}, ...}` opens several, replacing that one. With neither, it opens no face and seals the hollow: a closed shell, for a drain hole to follow.
 - `value` is the wall, 1 mm when left out and above zero, inside the solid; `inward = false` puts the walls outside it, `both_sides = true` on both.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.draft`.
@@ -4704,7 +4704,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
-- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - The plane is YZ through the body's origin when left out; `plane = "XY"` or `"XZ"` takes another, and `face_point` with `face_normal` a flat face of the solid.
 
@@ -4740,7 +4740,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
-- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - `axis` is X when left out (Y, Z, or `{Custom = {origin = {x, y, z}, dir = {x, y, z}}}`); `occurrences` (3) counts the original; `length` (30 mm) runs from the first to the last, or is the gap between them with `spacing_mode = true`. `spacings` sets the gaps one by one; over the overall span, gaps left unlisted share what the listed ones leave, and a full list that does not add up to `length` is refused.
 
@@ -4788,7 +4788,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
-- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - `axis` is Z through the body's origin when left out; `occurrences` (4) counts the original. `angle_deg` of 360 (the default) spreads them evenly round the turn; less puts the first and the last at its two ends. With `step_mode = true` it is the angle from one occurrence to the next, and occurrences whose steps run past a whole turn are refused rather than laid over the first. `angles` sets the steps one by one; over the overall angle, steps left unlisted (round a whole turn, the one back to the original among them) share what the listed ones leave, and a full list that does not add up to `angle_deg` is refused.
 
@@ -4825,7 +4825,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
-- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - Rings about `axis` (Z through the body's origin when left out): ring i is moved i × `spacing` (10 mm) along `outward` (X), then spread evenly round the axis, `counts[i]` occurrences in it ({6, 12}). The original is the first of the first ring, which turns it in place, so `outward` should run from the axis through it.
 
@@ -4868,7 +4868,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
-- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - `sketch` gives the points: a copy stands at each of its points after the first, moved by how far that point is from the first, so the original should stand at the first point drawn. Construction points are left out; a curve's ends and centres count as points.
 
@@ -4909,7 +4909,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
-- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - `sketch` gives the path, its first chain of curves (`path = {Sketch = {sketch = id, chain = n}}` another, counted from 0); `path = {Edge = {point = {x, y, z}, direction = {x, y, z}}}` an edge of the solid near the point, in the body's own frame, found on the solid as it stands where the pattern does.
 - `occurrences` (4) counts the original, spread over the whole path, evenly round a closed one; `spacing_mode = true` places them `spacing` mm apart along it instead. The original stands for the path's start (its end with `reversed = true`): each copy is moved from there to its place, and turned as the path turns with `align = true`, so round a circle an aligned copy goes round its centre wherever the original is.
@@ -4955,7 +4955,7 @@ Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
-- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - It makes a Multi Transform whose fields are `originals` and `steps`, one `{Scale = {factor, center, occurrences}}`: 1.5 about the body's origin, 2 occurrences, when left out. The occurrences count the original and grow evenly up to `factor`. A `factor` given on its own is refused.
 - `steps` may hold any of `{Linear = {axis, length, occurrences}}`, `{Polar = {axis, angle_deg, occurrences}}`, `{Mirror = {plane}}`, `{Scale = ...}`, `{Circular = {axis, outward, spacing, counts}}` (concentric rings about `axis`, ring i moved i × `spacing` along `outward`, `counts[i]` round it) and `{Points = {sketch}}` (a copy at each of the sketch's points after its first, moved by how far it is from the first) and `{Path = {path, occurrences, spacing_mode, spacing, reversed, align}}` (as `design.path_pattern` takes them), each applied to every result of the steps before.

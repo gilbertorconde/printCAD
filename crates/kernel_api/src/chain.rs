@@ -133,6 +133,12 @@ pub struct RoundSide {
 pub struct OpWarning {
     pub op_index: usize,
     pub message: String,
+    /// The warning is that the op's feature, which adds or removes
+    /// material, left the solid as it was: `message` then says what it
+    /// did not do and why that may be ("removes nothing: it may point away
+    /// from the material"), for the feature's kind to be put before it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unchanged: bool,
 }
 
 /// What a feature being edited does to its body, beside the body without

@@ -644,12 +644,12 @@ fn make(
             surface: None,
         });
     }
-    // A thickness opens a face, a draft turns about one, and a deletion,
-    // offset or move works on one: in a script that face is an argument.
+    // A draft turns about a face, and a deletion, offset or move works on
+    // one: in a script that face is an argument. A thickness opens the
+    // face given, or none.
     if matches!(
         id,
-        "design.thickness"
-            | "design.draft"
+        "design.draft"
             | "design.delete_faces"
             | "design.offset_faces"
             | "design.move_faces"
@@ -658,8 +658,8 @@ fn make(
     {
         return Err(CommandError::bad(
             "face_point",
-            "is required with face_normal: a point on the face (the one to open or to \
-             delete, or the neutral plane) and its outward normal, in the body's own frame",
+            "is required with face_normal: a point on the face (the one to delete, or the \
+             neutral plane) and its outward normal, in the body's own frame",
         ));
     }
     if id == "design.project" && ctx.selected_face.is_none() && !a.has("faces") {

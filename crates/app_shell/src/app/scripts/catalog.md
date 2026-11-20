@@ -68,6 +68,10 @@ assert(math.abs(bodies[1].material.density - 1.24) < 1e-6)
 ## doc.features
 
 `error` is set only on a feature the last `pc.doc.rebuild()` could not build.
+`warning` is set on one that built but should be told: a face or edge found by
+where it was picked once its name was lost, or a feature that adds or removes
+material and left the solid as it was ("this pocket removes nothing: it may
+point away from the material").
 Variable sets and the configurations table are listed too, with no body.
 
 A `body` that is not a body of the document gives an empty list, not an error.

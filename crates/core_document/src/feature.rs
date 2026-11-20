@@ -103,6 +103,12 @@ pub struct FeatureNode {
     /// position because its name was lost. Derived state, as `error` is.
     #[serde(skip)]
     pub warning: Option<String>,
+    /// The last build found it, a feature that adds or removes material,
+    /// left the solid as it was: what it did not do and why that may be
+    /// (`OpWarning::unchanged`), its kind to be put before it. Derived
+    /// state, as `error` is.
+    #[serde(skip)]
+    pub unchanged: Option<String>,
     /// Type-erased feature data (serialized JSON)
     pub data: serde_json::Value,
     /// Which `data` this is: a new one each time it is written.
@@ -231,6 +237,7 @@ impl FeatureNode {
             error: None,
             refused_edges: Default::default(),
             warning: None,
+            unchanged: None,
             data: feature.to_json(),
             data_revision: DataRevision::default(),
             formulas: Default::default(),
@@ -500,6 +507,7 @@ mod tests {
             error: None,
             refused_edges: Default::default(),
             warning: None,
+            unchanged: None,
             data: serde_json::Value::Null,
             data_revision: DataRevision::default(),
             formulas: Default::default(),

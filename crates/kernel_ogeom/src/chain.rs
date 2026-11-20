@@ -64,6 +64,18 @@ struct Saved {
     projected: Vec<(ChainProjection, Projected)>,
     /// The warnings of the ops before `at`.
     warned: Vec<OpWarning>,
+    /// The solid before the first op of the feature `at` belongs to, and
+    /// what that feature's ops so far would say if it changed nothing.
+    feature: FeatureStart,
+}
+
+/// The solid a feature's ops began with, and what the first of them that
+/// adds or removes material says if the feature changes nothing
+/// ([`crate::unchanged::said_of`]).
+#[derive(Clone, Default)]
+struct FeatureStart {
+    solid: Option<Shape>,
+    said: Option<&'static str>,
 }
 
 /// What a projection came to: its curves, or why there are none.
@@ -480,6 +492,12 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         .map(|p| (Err(unanswered(p.after_op)), None))
         .collect();
     let mut warnings: Vec<OpWarning> = Vec::new();
+    let mut feature = FeatureStart::default();
+    // Two ops of one feature carry the same tag, and stand together.
+    let one_feature = |a: usize, b: usize| match (tags.get(a), tags.get(b)) {
+        (Some(x), Some(y)) => *x != 0 && x == y,
+        _ => false,
+    };
     let mut size_limit: Option<kernel_api::SizeLimit> = None;
 
     // Where the last builds left a state this one agrees with, it starts
@@ -503,6 +521,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             tools = saved.tools.clone();
             touched = saved.touched.clone();
             warnings = saved.warned.clone();
+            feature = saved.feature.clone();
             for (probe, answer) in probes.iter().zip(answers.iter_mut()) {
                 if let Some((_, known)) = saved.answered.iter().find(|(q, _)| q == probe) {
                     *answer = known.clone();
@@ -558,6 +577,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 .cloned()
                 .collect();
             roots.extend(preview_tools.iter().cloned());
+            roots.extend(feature.solid.iter().cloned());
             roots.extend(tools.iter().flatten().filter_map(|t| t.solid.clone()));
             compact(&mut model, &roots);
             cache.keep(Saved {
@@ -571,9 +591,16 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 answered: answered_before(probes, &answers, index),
                 projected: answered_before(projections, &projected, index),
                 warned: warnings.clone(),
+                feature: feature.clone(),
             });
         }
         let tag = op_tags[index];
+        if index == 0 || !one_feature(index - 1, index) {
+            feature = FeatureStart {
+                solid: current.clone(),
+                said: None,
+            };
+        }
         // A stated tolerance holds for the op's booleans, the op itself
         // read out of the wrapper that states it.
         let _tolerance = ops::ToleranceScope::state(solid_op.boolean_tolerance());
@@ -1130,6 +1157,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 .map(|message| OpWarning {
                     op_index: index,
                     message,
+                    unchanged: false,
                 }),
         );
         if withheld[index] {
@@ -1155,6 +1183,25 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             }
         };
         current = Some(next);
+        feature.said = feature.said.or_else(|| {
+            crate::unchanged::said_of(solid_op, withheld[index], |o| {
+                tools.get(o)?.as_ref().map(|t| t.subtractive)
+            })
+        });
+        // A feature that adds or removes material and leaves the solid as
+        // it was builds, warned of on its last op.
+        let feature_ends = index + 1 == ops_list.len() || !one_feature(index, index + 1);
+        if feature_ends
+            && let (Some(said), Some(before), Some(after)) =
+                (feature.said, feature.solid.as_ref(), current.as_ref())
+            && crate::unchanged::left_alone(&model, before, after)
+        {
+            warnings.push(OpWarning {
+                op_index: index,
+                message: said.to_string(),
+                unchanged: true,
+            });
+        }
         tracing::debug!(
             target: "printcad.chain",
             "op {index} {}: {:.1} ms, naming {:.1} ms",
@@ -1308,6 +1355,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         let mut model = model;
         let mut roots = vec![final_shape.clone()];
         roots.extend(tools.iter().flatten().filter_map(|t| t.solid.clone()));
+        roots.extend(feature.solid.iter().cloned());
         compact(&mut model, &roots);
         cache.keep(Saved {
             at: ops_list.len(),
@@ -1320,6 +1368,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             answered,
             projected,
             warned: result.warnings.clone(),
+            feature,
         });
     }
     Ok(result)
@@ -1441,7 +1490,11 @@ fn noted<T>(answered: &[Answered<T>]) -> Vec<OpWarning> {
         .iter()
         .enumerate()
         .filter_map(|(op_index, (_, note))| {
-            note.clone().map(|message| OpWarning { op_index, message })
+            note.clone().map(|message| OpWarning {
+                op_index,
+                message,
+                unchanged: false,
+            })
         })
         .collect()
 }
