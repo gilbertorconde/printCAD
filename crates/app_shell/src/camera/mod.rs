@@ -1182,6 +1182,9 @@ mod navigation_tests;
 #[cfg(test)]
 mod integration_tests;
 
+#[cfg(test)]
+mod parity_tests;
+
 /// The view direction nearest `forward` among the cube of views' 26 (its
 /// faces, edges and corners), and the up to keep with it: `vertical` made
 /// square to it, or for a view along `vertical` the axis nearest `up`.

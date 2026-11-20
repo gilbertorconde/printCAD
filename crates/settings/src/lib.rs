@@ -1219,6 +1219,30 @@ impl Default for CameraSettings {
     }
 }
 
+impl CameraSettings {
+    /// The preferences the view's camera maths reads.
+    pub fn view_settings(&self) -> viewport_camera::focal_view::ViewSettings {
+        viewport_camera::focal_view::ViewSettings {
+            min_focal_distance: self.min_focal_distance,
+            max_focal_distance: self.max_focal_distance,
+            projection: self.projection,
+            fov_degrees: self.fov_degrees,
+            ortho_height: self.ortho_height_mm,
+            keep_horizon: self.orbit_yaw_axis == OrbitYawAxis::WorldUp,
+            orbit_sensitivity: self.orbit_sensitivity,
+            pan_sensitivity: self.pan_sensitivity,
+            wheel_zoom_factor: self.wheel_zoom_factor,
+            invert_zoom: self.invert_zoom,
+            zoom_to_cursor: self.zoom_to_cursor,
+            auto_near_far: self.auto_near_far,
+            near_far_near_ratio: self.near_far_near_ratio,
+            near_far_depth_ratio_cap: self.near_far_depth_ratio_cap,
+            near_far_margin: self.near_far_margin,
+            view_transition_ms: self.view_transition_ms,
+        }
+    }
+}
+
 /// How the pointer moves the view.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum NavigationStyle {
@@ -1237,11 +1261,7 @@ pub enum OrbitYawAxis {
     CameraUp,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ProjectionMode {
-    Perspective,
-    Orthographic,
-}
+pub use viewport_camera::focal_view::ProjectionMode;
 
 pub struct SettingsStore {
     path: PathBuf,
