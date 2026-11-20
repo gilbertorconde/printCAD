@@ -1,7 +1,7 @@
 //! Live mesh tasks, their declared controls and build measurements.
 use super::*;
 use bench_api::{Check, Dim, PanelEvent, Quantity, Select, Widget};
-use core_document::{TaskOutcome, TaskRequest};
+use core_document::{BenchBuild, TaskOutcome, TaskRequest};
 use kernel_api::{MeshFairing, MeshStepReport};
 
 pub(super) struct Task {

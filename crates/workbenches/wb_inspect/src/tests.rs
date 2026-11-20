@@ -1,7 +1,7 @@
 use super::*;
 use crate::construction_export::construction_of;
 use crate::registration::tool_id;
-use core_document::{BenchCommands, Workbench};
+use core_document::{BenchBuild, BenchCommands, Workbench};
 use std::sync::Arc;
 
 /// A kernel that fits every request as a unit sphere and keeps all

@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BenchCommands, BenchOutput, BenchParameters, BodyId, Chord, CommandArgs,
-    CommandError, CommandResult, CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode,
-    InputResult, MarkKind, MenuItem, MenuScope, OverlayMesh, Parameter, PropertyHints,
+    ActionDescriptor, BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, Chord,
+    CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId, FeatureInfo,
+    FeatureNode, InputResult, MarkKind, MenuItem, MenuScope, OverlayMesh, Parameter, PropertyHints,
     ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior,
     ToolDescriptor, ToolHint, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
@@ -900,152 +900,6 @@ impl Workbench for WasmWorkbench {
         .unwrap_or(false)
     }
 
-    fn settle(&self, node: &FeatureNode, values: &mut serde_json::Value) {
-        let Ok(json) = serde_json::to_string(&convert::bare_node(node, values)) else {
-            return;
-        };
-        let mut inner = self.inner();
-        if let Some((json, _)) = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.settle(&json))
-            && let Some(settled) = parse::<serde_json::Value>(self.id(), "settled data", &json)
-        {
-            *values = settled;
-        }
-    }
-
-    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
-        let dirty: Vec<(FeatureId, Option<BodyId>)> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.dirty && self.package.owns(n.workbench_id.as_str()))
-            .map(|(id, n)| (*id, n.body))
-            .collect();
-        if dirty.is_empty() {
-            return Vec::new();
-        }
-        let mut bodies: Vec<BodyId> = Vec::new();
-        for (id, body) in &dirty {
-            match body {
-                Some(body) if !bodies.contains(body) => bodies.push(*body),
-                Some(_) => {}
-                None => document.clear_feature_dirty(*id),
-            }
-        }
-        let request = bench_api::RebuildRequest {
-            bodies: bodies
-                .iter()
-                .map(|body| body_history(document, &self.package, *body))
-                .collect(),
-        };
-        // Settled before planning, or a plan that fails comes back every
-        // frame: the features planned and the dirty features they read.
-        for body in &bodies {
-            for id in owned_in_body(document, &self.package, *body) {
-                for dep in document.feature_tree().dependencies(id) {
-                    if document.get_feature_meta(dep).is_some_and(|n| n.dirty) {
-                        document.clear_feature_dirty(dep);
-                    }
-                }
-                document.clear_feature_dirty(id);
-            }
-        }
-        let Ok(json) = serde_json::to_string(&request) else {
-            return Vec::new();
-        };
-        let mut inner = self.inner();
-        let answer = self.read_call(&mut inner, document, Budget::Long, |b| b.rebuild(&json));
-        let Some(rebuilds) = answer.and_then(|json| {
-            parse::<Vec<bench_api::Rebuild>>(self.id(), "the rebuild plans", &json)
-        }) else {
-            return bodies
-                .into_iter()
-                .map(|body| RebuildJob {
-                    body,
-                    plan: Err(BuildError {
-                        feature: owned_in_body(document, &self.package, body).last().copied(),
-                        message: format!("the workbench {} could not plan the rebuild", self.id()),
-                    }),
-                })
-                .collect();
-        };
-        let seq = document.mutation_seq();
-        for history in &request.bodies {
-            let Ok(body) = crate::host::body_id(&history.body) else {
-                continue;
-            };
-            let declared = rebuilds
-                .iter()
-                .find(|r| r.body == history.body)
-                .map(|r| r.threads.clone())
-                .unwrap_or_default();
-            inner.threads.insert(
-                body,
-                Threads {
-                    seq,
-                    history: history_key(history),
-                    declared,
-                    drawn: None,
-                },
-            );
-        }
-        rebuilds
-            .into_iter()
-            .filter_map(|rebuild| {
-                let body = crate::host::body_id(&rebuild.body).ok()?;
-                if !bodies.contains(&body) {
-                    return None;
-                }
-                let plan = match rebuild.plan {
-                    bench_api::Plan::Ops { ops, op_features } => {
-                        let features: Result<Vec<FeatureId>, String> = op_features
-                            .iter()
-                            .map(|f| crate::host::feature_id(f))
-                            .collect();
-                        match features {
-                            Ok(op_features) if op_features.len() == ops.len() => Ok(BuildPlan {
-                                ops,
-                                op_features,
-                                ..BuildPlan::default()
-                            }),
-                            Ok(_) => Err(BuildError {
-                                feature: None,
-                                message: "the plan names a feature for each op, and it does not"
-                                    .into(),
-                            }),
-                            Err(e) => Err(BuildError {
-                                feature: None,
-                                message: e,
-                            }),
-                        }
-                    }
-                    bench_api::Plan::Empty => Ok(BuildPlan::default()),
-                    bench_api::Plan::Error { feature, message } => Err(BuildError {
-                        feature: feature.and_then(|f| crate::host::feature_id(&f).ok()),
-                        message,
-                    }),
-                };
-                Some(RebuildJob { body, plan })
-            })
-            .collect()
-    }
-
-    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
-        invalidate_owned(document, &self.package, body);
-    }
-
-    fn invalidate_all(&self, document: &mut Document) {
-        let ids: Vec<FeatureId> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| self.package.owns(n.workbench_id.as_str()))
-            .map(|(id, _)| *id)
-            .collect();
-        for id in ids {
-            document.mark_feature_dirty(id);
-        }
-    }
-
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         let mut inner = self.inner();
         inner.active = true;
@@ -1307,6 +1161,154 @@ impl Workbench for WasmWorkbench {
             invalidate_owned(ctx.document, &self.package, body);
         }
         removed
+    }
+}
+
+impl BenchBuild for WasmWorkbench {
+    fn settle(&self, node: &FeatureNode, values: &mut serde_json::Value) {
+        let Ok(json) = serde_json::to_string(&convert::bare_node(node, values)) else {
+            return;
+        };
+        let mut inner = self.inner();
+        if let Some((json, _)) = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.settle(&json))
+            && let Some(settled) = parse::<serde_json::Value>(self.id(), "settled data", &json)
+        {
+            *values = settled;
+        }
+    }
+
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
+        let dirty: Vec<(FeatureId, Option<BodyId>)> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.dirty && self.package.owns(n.workbench_id.as_str()))
+            .map(|(id, n)| (*id, n.body))
+            .collect();
+        if dirty.is_empty() {
+            return Vec::new();
+        }
+        let mut bodies: Vec<BodyId> = Vec::new();
+        for (id, body) in &dirty {
+            match body {
+                Some(body) if !bodies.contains(body) => bodies.push(*body),
+                Some(_) => {}
+                None => document.clear_feature_dirty(*id),
+            }
+        }
+        let request = bench_api::RebuildRequest {
+            bodies: bodies
+                .iter()
+                .map(|body| body_history(document, &self.package, *body))
+                .collect(),
+        };
+        // Settled before planning, or a plan that fails comes back every
+        // frame: the features planned and the dirty features they read.
+        for body in &bodies {
+            for id in owned_in_body(document, &self.package, *body) {
+                for dep in document.feature_tree().dependencies(id) {
+                    if document.get_feature_meta(dep).is_some_and(|n| n.dirty) {
+                        document.clear_feature_dirty(dep);
+                    }
+                }
+                document.clear_feature_dirty(id);
+            }
+        }
+        let Ok(json) = serde_json::to_string(&request) else {
+            return Vec::new();
+        };
+        let mut inner = self.inner();
+        let answer = self.read_call(&mut inner, document, Budget::Long, |b| b.rebuild(&json));
+        let Some(rebuilds) = answer.and_then(|json| {
+            parse::<Vec<bench_api::Rebuild>>(self.id(), "the rebuild plans", &json)
+        }) else {
+            return bodies
+                .into_iter()
+                .map(|body| RebuildJob {
+                    body,
+                    plan: Err(BuildError {
+                        feature: owned_in_body(document, &self.package, body).last().copied(),
+                        message: format!("the workbench {} could not plan the rebuild", self.id()),
+                    }),
+                })
+                .collect();
+        };
+        let seq = document.mutation_seq();
+        for history in &request.bodies {
+            let Ok(body) = crate::host::body_id(&history.body) else {
+                continue;
+            };
+            let declared = rebuilds
+                .iter()
+                .find(|r| r.body == history.body)
+                .map(|r| r.threads.clone())
+                .unwrap_or_default();
+            inner.threads.insert(
+                body,
+                Threads {
+                    seq,
+                    history: history_key(history),
+                    declared,
+                    drawn: None,
+                },
+            );
+        }
+        rebuilds
+            .into_iter()
+            .filter_map(|rebuild| {
+                let body = crate::host::body_id(&rebuild.body).ok()?;
+                if !bodies.contains(&body) {
+                    return None;
+                }
+                let plan = match rebuild.plan {
+                    bench_api::Plan::Ops { ops, op_features } => {
+                        let features: Result<Vec<FeatureId>, String> = op_features
+                            .iter()
+                            .map(|f| crate::host::feature_id(f))
+                            .collect();
+                        match features {
+                            Ok(op_features) if op_features.len() == ops.len() => Ok(BuildPlan {
+                                ops,
+                                op_features,
+                                ..BuildPlan::default()
+                            }),
+                            Ok(_) => Err(BuildError {
+                                feature: None,
+                                message: "the plan names a feature for each op, and it does not"
+                                    .into(),
+                            }),
+                            Err(e) => Err(BuildError {
+                                feature: None,
+                                message: e,
+                            }),
+                        }
+                    }
+                    bench_api::Plan::Empty => Ok(BuildPlan::default()),
+                    bench_api::Plan::Error { feature, message } => Err(BuildError {
+                        feature: feature.and_then(|f| crate::host::feature_id(&f).ok()),
+                        message,
+                    }),
+                };
+                Some(RebuildJob { body, plan })
+            })
+            .collect()
+    }
+
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        invalidate_owned(document, &self.package, body);
+    }
+
+    fn invalidate_all(&self, document: &mut Document) {
+        let ids: Vec<FeatureId> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| self.package.owns(n.workbench_id.as_str()))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            document.mark_feature_dirty(id);
+        }
     }
 }
 

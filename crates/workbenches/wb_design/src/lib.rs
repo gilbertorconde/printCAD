@@ -78,9 +78,9 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BenchCommands, BenchOutput, BenchParameters, BodyId, Document, FeatureId, FeatureInfo,
-    InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id,
+    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, Document, FeatureId,
+    FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id,
 };
 use features::datum_icon;
 use making::{Given, ToolMade, take_base};
@@ -353,18 +353,6 @@ impl Workbench for DesignWorkbench {
         ])
     }
 
-    fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {
-        build::rebuild_jobs(document)
-    }
-
-    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
-        build::invalidate_body(document, body);
-    }
-
-    fn invalidate_all(&self, document: &mut Document) {
-        build::mark_all_design_features_dirty(document);
-    }
-
     fn editing_feature(&self) -> Option<FeatureId> {
         self.task_feature()
     }
@@ -563,6 +551,20 @@ impl Workbench for DesignWorkbench {
 
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
         Some(&mut self.tab)
+    }
+}
+
+impl BenchBuild for DesignWorkbench {
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {
+        build::rebuild_jobs(document)
+    }
+
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        build::invalidate_body(document, body);
+    }
+
+    fn invalidate_all(&self, document: &mut Document) {
+        build::mark_all_design_features_dirty(document);
     }
 
     /// A primitive attached by a mode, or a feature starting on a face,

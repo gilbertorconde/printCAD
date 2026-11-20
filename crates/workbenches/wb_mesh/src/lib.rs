@@ -9,10 +9,10 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
 
 use core_document::{
-    Args, BenchCommands, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec,
+    Args, BenchBuild, BenchCommands, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec,
     CommandTable, Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind,
-    ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
-    WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    ToolDescriptor, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
 use serde::{Deserialize, Serialize};
@@ -437,40 +437,6 @@ impl core_document::Workbench for MeshWorkbench {
         }
     }
 
-    fn mesh_plans(&self, document: &Document) -> Vec<MeshPlan> {
-        let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<(u64, FeatureId, MeshOp)>> =
-            Default::default();
-        for (id, node) in document
-            .feature_tree()
-            .ordered_nodes(|node| node.workbench_id.as_str() == KIND && !node.suppressed)
-        {
-            let Some(f) = document.feature_as::<MeshFeature>(*id) else {
-                continue;
-            };
-            by_body
-                .entry(f.scan.0)
-                .or_default()
-                .push((node.seq, *id, f.step()));
-        }
-        by_body
-            .into_iter()
-            .map(|(body, mut steps)| {
-                // Steps after the body's tip are left out.
-                let tip = document
-                    .body(BodyId(body))
-                    .and_then(|b| b.tip)
-                    .and_then(|t| document.get_feature_meta(t))
-                    .map(|n| n.seq);
-                steps.retain(|(seq, _, _)| tip.is_none_or(|t| *seq <= t));
-                MeshPlan {
-                    body: BodyId(body),
-                    features: steps.iter().map(|(_, id, _)| *id).collect(),
-                    ops: steps.into_iter().map(|(_, _, op)| op).collect(),
-                }
-            })
-            .collect()
-    }
-
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         let Some(body) = ctx.selected_body_id.map(BodyId) else {
             return false;
@@ -579,6 +545,42 @@ impl core_document::Workbench for MeshWorkbench {
             return InputResult::consumed();
         }
         InputResult::ignored()
+    }
+}
+
+impl core_document::BenchBuild for MeshWorkbench {
+    fn mesh_plans(&self, document: &Document) -> Vec<MeshPlan> {
+        let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<(u64, FeatureId, MeshOp)>> =
+            Default::default();
+        for (id, node) in document
+            .feature_tree()
+            .ordered_nodes(|node| node.workbench_id.as_str() == KIND && !node.suppressed)
+        {
+            let Some(f) = document.feature_as::<MeshFeature>(*id) else {
+                continue;
+            };
+            by_body
+                .entry(f.scan.0)
+                .or_default()
+                .push((node.seq, *id, f.step()));
+        }
+        by_body
+            .into_iter()
+            .map(|(body, mut steps)| {
+                // Steps after the body's tip are left out.
+                let tip = document
+                    .body(BodyId(body))
+                    .and_then(|b| b.tip)
+                    .and_then(|t| document.get_feature_meta(t))
+                    .map(|n| n.seq);
+                steps.retain(|(seq, _, _)| tip.is_none_or(|t| *seq <= t));
+                MeshPlan {
+                    body: BodyId(body),
+                    features: steps.iter().map(|(_, id, _)| *id).collect(),
+                    ops: steps.into_iter().map(|(_, _, op)| op).collect(),
+                }
+            })
+            .collect()
     }
 }
 
@@ -761,7 +763,7 @@ impl MeshWorkbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{BenchCommands, Workbench};
+    use core_document::{BenchBuild, BenchCommands, Workbench};
 
     #[test]
     fn every_section_of_the_mesh_prose_names_a_command() {

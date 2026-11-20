@@ -271,6 +271,64 @@ impl core_document::Workbench for InspectionWorkbench {
         }
     }
 
+    fn feature_solid(
+        &self,
+        document: &Document,
+        id: core_document::FeatureId,
+    ) -> Option<kernel_api::MeshOperand> {
+        let e = element_at(document, id)?;
+        e.result.solid(document.body_placement(e.scan).rows())
+    }
+
+    /// A section offers its first cut's plane, a fitted or constructed
+    /// plane its own, where the scan stands.
+    fn feature_plane(
+        &self,
+        document: &Document,
+        id: core_document::FeatureId,
+        node: &FeatureNode,
+    ) -> Option<kernel_api::ProfilePlane> {
+        let (scan, origin, normal) = if node.workbench_id.as_str() == section::KIND {
+            let s = document.feature_as::<section::Section>(id)?;
+            let n = DVec3::from(s.normal);
+            vec::unit(n)?;
+            let shift = n * (s.offset / n.length());
+            (s.scan, (DVec3::from(s.origin) + shift).to_array(), s.normal)
+        } else {
+            let e = element_at(document, id)?;
+            match e.result.shape {
+                kernel_api::FittedShape::Plane { origin, normal } => (e.scan, origin, normal),
+                _ => return None,
+            }
+        };
+        let rows = document.body_placement(scan).rows();
+        let place = |p: [f64; 3], w: f64| -> [f64; 3] {
+            std::array::from_fn(|r| {
+                rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + w * rows[r][3]
+            })
+        };
+        // A plane with no normal offers nothing to sketch on.
+        let n = vec::unit(normal.into())?;
+        let (x, y) = vec::basis(n)?;
+        Some(kernel_api::ProfilePlane {
+            origin: place(origin, 1.0),
+            normal: place(n.to_array(), 0.0),
+            x_axis: place(x.to_array(), 0.0),
+            y_axis: place(y.to_array(), 0.0),
+        })
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        self.handle_input(event, active_tool, ctx)
+    }
+}
+
+impl core_document::BenchBuild for InspectionWorkbench {
     /// A shown comparison's reference draws see-through, so the scan's map
     /// shows where the reference would cover it.
     /// A shadow's outline follows the scan's mesh, where it stands and the
@@ -345,62 +403,6 @@ impl core_document::Workbench for InspectionWorkbench {
         for id in all {
             document.mark_feature_dirty(id);
         }
-    }
-
-    fn feature_solid(
-        &self,
-        document: &Document,
-        id: core_document::FeatureId,
-    ) -> Option<kernel_api::MeshOperand> {
-        let e = element_at(document, id)?;
-        e.result.solid(document.body_placement(e.scan).rows())
-    }
-
-    /// A section offers its first cut's plane, a fitted or constructed
-    /// plane its own, where the scan stands.
-    fn feature_plane(
-        &self,
-        document: &Document,
-        id: core_document::FeatureId,
-        node: &FeatureNode,
-    ) -> Option<kernel_api::ProfilePlane> {
-        let (scan, origin, normal) = if node.workbench_id.as_str() == section::KIND {
-            let s = document.feature_as::<section::Section>(id)?;
-            let n = DVec3::from(s.normal);
-            vec::unit(n)?;
-            let shift = n * (s.offset / n.length());
-            (s.scan, (DVec3::from(s.origin) + shift).to_array(), s.normal)
-        } else {
-            let e = element_at(document, id)?;
-            match e.result.shape {
-                kernel_api::FittedShape::Plane { origin, normal } => (e.scan, origin, normal),
-                _ => return None,
-            }
-        };
-        let rows = document.body_placement(scan).rows();
-        let place = |p: [f64; 3], w: f64| -> [f64; 3] {
-            std::array::from_fn(|r| {
-                rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + w * rows[r][3]
-            })
-        };
-        // A plane with no normal offers nothing to sketch on.
-        let n = vec::unit(normal.into())?;
-        let (x, y) = vec::basis(n)?;
-        Some(kernel_api::ProfilePlane {
-            origin: place(origin, 1.0),
-            normal: place(n.to_array(), 0.0),
-            x_axis: place(x.to_array(), 0.0),
-            y_axis: place(y.to_array(), 0.0),
-        })
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        self.handle_input(event, active_tool, ctx)
     }
 }
 

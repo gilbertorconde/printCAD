@@ -2,10 +2,10 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    BenchCommands, BenchOutput, BenchParameters, CameraOrientRequest, Document, DocumentError,
-    DocumentService, FeatureId, FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope,
-    PassiveGeometry, PropertyHints, ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
+    BenchBuild, BenchCommands, BenchOutput, BenchParameters, CameraOrientRequest, Document,
+    DocumentError, DocumentService, FeatureId, FeatureNode, HookOutcome, HostRequest, MenuItem,
+    MenuScope, PassiveGeometry, PropertyHints, ViewportPick, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
 
@@ -106,6 +106,8 @@ impl Workbench for FakeBench {
         self.items.contains(&id)
     }
 }
+
+impl BenchBuild for FakeBench {}
 
 impl BenchParameters for FakeBench {
     fn property_hints(&self) -> PropertyHints {
@@ -386,6 +388,9 @@ impl Workbench for Panicky {
         WorkbenchDescriptor::new("panicky", "Panicky", "").feature_kinds(["panicky.thing"])
     }
     fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
+}
+
+impl BenchBuild for Panicky {
     fn rebuild_jobs(&self, _document: &mut Document) -> Vec<core_document::RebuildJob> {
         let sizes: Vec<u32> = Vec::new();
         vec![sizes[999] as usize; 0]
@@ -454,6 +459,8 @@ impl Workbench for Importer {
         context.register_import(core_document::FileImport::new("Drawing", ["DRW"], command));
     }
 }
+
+impl BenchBuild for Importer {}
 
 impl BenchParameters for Importer {}
 

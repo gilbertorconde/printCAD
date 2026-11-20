@@ -65,9 +65,10 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BenchCommands, BenchOutput, BenchParameters, BodyId, FeatureId, FeatureInfo, HostRequest,
-    InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, FeatureId, FeatureInfo,
+    HostRequest, InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
 use feature::SketchFeature;
@@ -1521,161 +1522,6 @@ impl Workbench for SketchWorkbench {
         }
     }
 
-    fn settle(&self, _node: &core_document::FeatureNode, values: &mut serde_json::Value) {
-        params::settle(values);
-    }
-
-    /// A sketch drawn on a datum sits on the datum's plane as the datum is
-    /// now, and its geometry from other sketches and datums stands where
-    /// their working data places it.
-    fn derive(
-        &self,
-        node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
-        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
-        document: &core_document::Document,
-    ) -> bool {
-        let Ok(mut feature) = SketchFeature::from_json(values) else {
-            return false;
-        };
-        let mut moved = false;
-        if let Some(plane) = feature
-            .support
-            .as_ref()
-            .and_then(|s| values_of(s.datum).and_then(|data| s.plane_from(&data)))
-            && (feature.plane != plane || feature.sketch.plane != plane)
-        {
-            feature.plane = plane;
-            feature.sketch.plane = plane;
-            moved = true;
-        }
-        moved |= follow_references(&mut feature, node.id, values_of, document);
-        // Text an older file stored as outlines, in a font the document
-        // keeps, reads its letters from it.
-        moved |= crate::text::upgrade_stored(&mut feature.sketch, document);
-        if moved {
-            *values = feature.to_json();
-        }
-        moved
-    }
-
-    /// A sketch's geometry projected from solids' edges and faces follows
-    /// the solids: projected again when what it comes from changed, and
-    /// moved in place where it is the same kinds of curve. What comes from
-    /// the sketch's own body is what the body's build projected of its
-    /// solid where the sketch stands in the history, so the features built
-    /// from the sketch never move it; until a build has, a solid built
-    /// from the sketch waits. An edge gone or one now another kind of
-    /// curve waits for the sketch to be edited.
-    fn derive_on_geometry(
-        &self,
-        node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
-        document: &core_document::Document,
-        kernel: Option<&dyn kernel_api::KernelQueries>,
-    ) -> bool {
-        let Ok(mut feature) = SketchFeature::from_json(values) else {
-            return false;
-        };
-        let built = document.projected_references(node.id);
-        let groups: Vec<_> = crate::sketch::external_groups(&feature.sketch)
-            .into_iter()
-            .filter(|(source, _)| source.reference.is_none())
-            .filter_map(|(source, group)| {
-                let answered = (node.body == Some(BodyId(source.body)))
-                    .then(|| built?.answer(&feature::projection_probe(&feature.plane, &source)))
-                    .flatten()
-                    .cloned();
-                if answered.is_none() && solid_built_from(document, node.id, BodyId(source.body)) {
-                    return None;
-                }
-                Some((source, group, answered))
-            })
-            .collect();
-        if groups.is_empty() {
-            return false;
-        }
-        let plane = placed_plane(&feature.plane, &sketch_placement(document, node.id));
-        let Ok(mut cache) = self.tab.solid_projections.lock() else {
-            return false;
-        };
-        let known = cache.remove(&node.id).unwrap_or_default();
-        let mut kept = HashMap::new();
-        let mut moved = false;
-        for (source, group, answered) in groups {
-            let projected = match answered {
-                Some(answered) => answered,
-                None => {
-                    let Some(kernel) = kernel else {
-                        continue;
-                    };
-                    let key = projection_key(document, &plane, &source);
-                    let projected = known.get(&key).cloned().unwrap_or_else(|| {
-                        project_source_in(document, Some(kernel), &plane, &source)
-                    });
-                    kept.insert(key, projected.clone());
-                    projected
-                }
-            };
-            if let Ok(curves) = &projected
-                && !external::already_holds(&feature.sketch, &group, curves)
-            {
-                let was = feature.sketch.geometry.clone();
-                if external::refresh_in_place(&mut feature.sketch, &group, curves) {
-                    moved = true;
-                } else {
-                    feature.sketch.geometry = was;
-                }
-            }
-        }
-        cache.insert(node.id, kept);
-        if moved {
-            *values = feature.to_json();
-        }
-        moved
-    }
-
-    fn derive_on_solid(
-        &self,
-        _node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
-        probed: &core_document::ProbedReferences,
-    ) -> bool {
-        let Ok(mut feature) = SketchFeature::from_json(values) else {
-            return false;
-        };
-        // Attached by a mode: the plane the attachment makes of what the
-        // solid answered.
-        if let Some(attached) = feature.attached {
-            if probed.probes != attached.probes() {
-                return false;
-            }
-            let plane = feature
-                .offset
-                .apply(attached.answered(&probed.answers).plane());
-            if feature.plane == plane && feature.sketch.plane == plane {
-                return false;
-            }
-            feature.plane = plane;
-            feature.sketch.plane = plane;
-            *values = feature.to_json();
-            return true;
-        }
-        let (Some(face), Some(Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }))) =
-            (feature.face, probed.answers.first())
-        else {
-            return false;
-        };
-        let plane = feature.offset.apply(face.plane_at(*point, *normal));
-        if feature.plane == plane && feature.sketch.plane == plane {
-            return false;
-        }
-        feature.plane = plane;
-        feature.sketch.plane = plane;
-        *values = feature.to_json();
-        true
-    }
-
     fn passive_geometry(
         &self,
         document: &core_document::Document,
@@ -2076,6 +1922,163 @@ impl Workbench for SketchWorkbench {
     /// Edges are being found in a reference picture.
     fn busy(&self) -> bool {
         self.tab.picture_edges.running()
+    }
+}
+
+impl BenchBuild for SketchWorkbench {
+    fn settle(&self, _node: &core_document::FeatureNode, values: &mut serde_json::Value) {
+        params::settle(values);
+    }
+
+    /// A sketch drawn on a datum sits on the datum's plane as the datum is
+    /// now, and its geometry from other sketches and datums stands where
+    /// their working data places it.
+    fn derive(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+        document: &core_document::Document,
+    ) -> bool {
+        let Ok(mut feature) = SketchFeature::from_json(values) else {
+            return false;
+        };
+        let mut moved = false;
+        if let Some(plane) = feature
+            .support
+            .as_ref()
+            .and_then(|s| values_of(s.datum).and_then(|data| s.plane_from(&data)))
+            && (feature.plane != plane || feature.sketch.plane != plane)
+        {
+            feature.plane = plane;
+            feature.sketch.plane = plane;
+            moved = true;
+        }
+        moved |= follow_references(&mut feature, node.id, values_of, document);
+        // Text an older file stored as outlines, in a font the document
+        // keeps, reads its letters from it.
+        moved |= crate::text::upgrade_stored(&mut feature.sketch, document);
+        if moved {
+            *values = feature.to_json();
+        }
+        moved
+    }
+
+    /// A sketch's geometry projected from solids' edges and faces follows
+    /// the solids: projected again when what it comes from changed, and
+    /// moved in place where it is the same kinds of curve. What comes from
+    /// the sketch's own body is what the body's build projected of its
+    /// solid where the sketch stands in the history, so the features built
+    /// from the sketch never move it; until a build has, a solid built
+    /// from the sketch waits. An edge gone or one now another kind of
+    /// curve waits for the sketch to be edited.
+    fn derive_on_geometry(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        document: &core_document::Document,
+        kernel: Option<&dyn kernel_api::KernelQueries>,
+    ) -> bool {
+        let Ok(mut feature) = SketchFeature::from_json(values) else {
+            return false;
+        };
+        let built = document.projected_references(node.id);
+        let groups: Vec<_> = crate::sketch::external_groups(&feature.sketch)
+            .into_iter()
+            .filter(|(source, _)| source.reference.is_none())
+            .filter_map(|(source, group)| {
+                let answered = (node.body == Some(BodyId(source.body)))
+                    .then(|| built?.answer(&feature::projection_probe(&feature.plane, &source)))
+                    .flatten()
+                    .cloned();
+                if answered.is_none() && solid_built_from(document, node.id, BodyId(source.body)) {
+                    return None;
+                }
+                Some((source, group, answered))
+            })
+            .collect();
+        if groups.is_empty() {
+            return false;
+        }
+        let plane = placed_plane(&feature.plane, &sketch_placement(document, node.id));
+        let Ok(mut cache) = self.tab.solid_projections.lock() else {
+            return false;
+        };
+        let known = cache.remove(&node.id).unwrap_or_default();
+        let mut kept = HashMap::new();
+        let mut moved = false;
+        for (source, group, answered) in groups {
+            let projected = match answered {
+                Some(answered) => answered,
+                None => {
+                    let Some(kernel) = kernel else {
+                        continue;
+                    };
+                    let key = projection_key(document, &plane, &source);
+                    let projected = known.get(&key).cloned().unwrap_or_else(|| {
+                        project_source_in(document, Some(kernel), &plane, &source)
+                    });
+                    kept.insert(key, projected.clone());
+                    projected
+                }
+            };
+            if let Ok(curves) = &projected
+                && !external::already_holds(&feature.sketch, &group, curves)
+            {
+                let was = feature.sketch.geometry.clone();
+                if external::refresh_in_place(&mut feature.sketch, &group, curves) {
+                    moved = true;
+                } else {
+                    feature.sketch.geometry = was;
+                }
+            }
+        }
+        cache.insert(node.id, kept);
+        if moved {
+            *values = feature.to_json();
+        }
+        moved
+    }
+
+    fn derive_on_solid(
+        &self,
+        _node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        probed: &core_document::ProbedReferences,
+    ) -> bool {
+        let Ok(mut feature) = SketchFeature::from_json(values) else {
+            return false;
+        };
+        // Attached by a mode: the plane the attachment makes of what the
+        // solid answered.
+        if let Some(attached) = feature.attached {
+            if probed.probes != attached.probes() {
+                return false;
+            }
+            let plane = feature
+                .offset
+                .apply(attached.answered(&probed.answers).plane());
+            if feature.plane == plane && feature.sketch.plane == plane {
+                return false;
+            }
+            feature.plane = plane;
+            feature.sketch.plane = plane;
+            *values = feature.to_json();
+            return true;
+        }
+        let (Some(face), Some(Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }))) =
+            (feature.face, probed.answers.first())
+        else {
+            return false;
+        };
+        let plane = feature.offset.apply(face.plane_at(*point, *normal));
+        if feature.plane == plane && feature.sketch.plane == plane {
+            return false;
+        }
+        feature.plane = plane;
+        feature.sketch.plane = plane;
+        *values = feature.to_json();
+        true
     }
 }
 

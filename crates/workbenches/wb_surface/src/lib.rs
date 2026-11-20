@@ -31,8 +31,8 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BenchCommands, BenchOutput, BenchParameters, BodyId, CommandArgs, CommandResult, Document,
-    FeatureId, FeatureInfo, HostRequest, InputResult, Parameter, RebuildJob, TaskInfo,
+    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, CommandArgs, CommandResult,
+    Document, FeatureId, FeatureInfo, HostRequest, InputResult, Parameter, RebuildJob, TaskInfo,
     ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
@@ -883,18 +883,6 @@ impl Workbench for SurfaceWorkbench {
         });
     }
 
-    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
-        build::rebuild_jobs(document)
-    }
-
-    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
-        build::invalidate_body(document, body);
-    }
-
-    fn invalidate_all(&self, document: &mut Document) {
-        build::invalidate_all(document);
-    }
-
     fn has_settings(&self) -> bool {
         true
     }
@@ -911,6 +899,20 @@ impl Workbench for SurfaceWorkbench {
 
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
         Some(&mut self.tab)
+    }
+}
+
+impl BenchBuild for SurfaceWorkbench {
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
+        build::rebuild_jobs(document)
+    }
+
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        build::invalidate_body(document, body);
+    }
+
+    fn invalidate_all(&self, document: &mut Document) {
+        build::invalidate_all(document);
     }
 }
 

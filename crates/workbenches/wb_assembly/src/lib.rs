@@ -46,9 +46,9 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BenchCommands, BenchOutput, BenchParameters, BodyId, BodyPlacement, FeatureId, FeatureInfo,
-    FeatureNode, HostRequest, InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchBuild, BenchCommands, BenchOutput, BenchParameters, BodyId, BodyPlacement, FeatureId,
+    FeatureInfo, FeatureNode, HostRequest, InputResult, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
@@ -522,69 +522,6 @@ impl AssemblyWorkbench {
 }
 
 impl Workbench for AssemblyWorkbench {
-    /// A joint's ends picked on named faces follow those faces: a body
-    /// rebuilt with a face moved is searched for the face by name, and the
-    /// end moves onto it, so the joint holds to the face wherever the rebuild put it.
-    fn derive_on_geometry(
-        &self,
-        node: &FeatureNode,
-        values: &mut serde_json::Value,
-        document: &core_document::Document,
-        _kernel: Option<&dyn kernel_api::KernelQueries>,
-    ) -> bool {
-        if node.workbench_id.as_str() != JOINT_KIND {
-            return false;
-        }
-        let Ok(mut joint) = serde_json::from_value::<JointFeature>(values.clone()) else {
-            return false;
-        };
-        let mut changed = false;
-        for (end, body) in [(0, node.body), (1, Some(joint.other_body))] {
-            let name = joint.names[end];
-            let Some(body) = body.filter(|_| name != 0) else {
-                continue;
-            };
-            let Some((mesh, _)) = document.local_geometry(body) else {
-                continue;
-            };
-            let Some(surface) = mesh
-                .face_names
-                .iter()
-                .position(|n| *n == name)
-                .and_then(|i| mesh.face_surfaces.get(i))
-            else {
-                continue;
-            };
-            let candidate = match *surface {
-                kernel_api::FaceSurface::Plane { origin, normal } => Anchor::Plane {
-                    point: origin,
-                    normal,
-                },
-                kernel_api::FaceSurface::Sphere { center, .. } => Anchor::Point { point: center },
-                other => match other.axis() {
-                    Some((point, direction)) => Anchor::Axis { point, direction },
-                    None => continue,
-                },
-            };
-            let anchor = if end == 0 {
-                &mut joint.moving
-            } else {
-                &mut joint.fixed
-            };
-            if let Some(found) = replace::nearest_like(anchor, &[candidate]) {
-                let ((p, d), (q, e)) = (anchor.parts(), found.parts());
-                if p.distance(q) > 1e-5 || d.distance(e) > 1e-6 {
-                    *anchor = found;
-                    changed = true;
-                }
-            }
-        }
-        if changed {
-            *values = joint.to_json();
-        }
-        changed
-    }
-
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
         core_document::ViewportOutput {
             meshes: self.overlay_meshes(ctx, ctx.active_document_object),
@@ -797,6 +734,71 @@ impl Workbench for AssemblyWorkbench {
         self.tab.measuring = None;
         self.put_back_explosion(ctx);
         self.tab.task = None;
+    }
+}
+
+impl BenchBuild for AssemblyWorkbench {
+    /// A joint's ends picked on named faces follow those faces: a body
+    /// rebuilt with a face moved is searched for the face by name, and the
+    /// end moves onto it, so the joint holds to the face wherever the rebuild put it.
+    fn derive_on_geometry(
+        &self,
+        node: &FeatureNode,
+        values: &mut serde_json::Value,
+        document: &core_document::Document,
+        _kernel: Option<&dyn kernel_api::KernelQueries>,
+    ) -> bool {
+        if node.workbench_id.as_str() != JOINT_KIND {
+            return false;
+        }
+        let Ok(mut joint) = serde_json::from_value::<JointFeature>(values.clone()) else {
+            return false;
+        };
+        let mut changed = false;
+        for (end, body) in [(0, node.body), (1, Some(joint.other_body))] {
+            let name = joint.names[end];
+            let Some(body) = body.filter(|_| name != 0) else {
+                continue;
+            };
+            let Some((mesh, _)) = document.local_geometry(body) else {
+                continue;
+            };
+            let Some(surface) = mesh
+                .face_names
+                .iter()
+                .position(|n| *n == name)
+                .and_then(|i| mesh.face_surfaces.get(i))
+            else {
+                continue;
+            };
+            let candidate = match *surface {
+                kernel_api::FaceSurface::Plane { origin, normal } => Anchor::Plane {
+                    point: origin,
+                    normal,
+                },
+                kernel_api::FaceSurface::Sphere { center, .. } => Anchor::Point { point: center },
+                other => match other.axis() {
+                    Some((point, direction)) => Anchor::Axis { point, direction },
+                    None => continue,
+                },
+            };
+            let anchor = if end == 0 {
+                &mut joint.moving
+            } else {
+                &mut joint.fixed
+            };
+            if let Some(found) = replace::nearest_like(anchor, &[candidate]) {
+                let ((p, d), (q, e)) = (anchor.parts(), found.parts());
+                if p.distance(q) > 1e-5 || d.distance(e) > 1e-6 {
+                    *anchor = found;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            *values = joint.to_json();
+        }
+        changed
     }
 }
 
