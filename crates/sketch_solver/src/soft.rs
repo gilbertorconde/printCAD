@@ -16,7 +16,7 @@ use crate::problem::{
     Constraint, ConstraintId, CurveReference, Geometry, Point, PointId, PointReference, Problem,
     Relation, Vector,
 };
-use crate::solve::{Iteration, SolveOutcome, eval_residuals, iterate_in};
+use crate::solve::{Dense, Iteration, SolveOutcome, eval_residuals, iterate_in};
 use crate::sparse::{Block, Blocks, Matrix};
 use crate::trace::EquationSource;
 
@@ -89,6 +89,7 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
     let rows = Rows::of(&sys, &ids);
     let mut again = hard.clone();
     again.settings = settings;
+    let mut dense = Dense::default();
     for _ in 0..STEPS {
         if fit.residual_len == 0 || n == 0 {
             break;
@@ -113,11 +114,11 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
             let mut singular = false;
             for (block, part) in blocks.blocks.iter().zip(&parts) {
                 let damping = |d: f64| lambda * (d + mean).max(settings.damping_floor);
-                let Some(dx) = part.step(damping) else {
+                if !part.step(damping, &mut dense) {
                     singular = true;
                     break;
-                };
-                for (&column, dx) in block.columns.iter().zip(dx) {
+                }
+                for (&column, &dx) in block.columns.iter().zip(&dense.x) {
                     step[column] = dx;
                 }
             }
@@ -322,27 +323,28 @@ impl Part {
     }
 
     /// The block's step from its damped KKT system, each variable damped
-    /// by `damping` of its curvature.
-    fn step(&self, damping: impl Fn(f64) -> f64) -> Option<Vec<f64>> {
+    /// by `damping` of its curvature, solved in `dense`: its first
+    /// variables' entries of `dense.x`.
+    fn step(&self, damping: impl Fn(f64) -> f64, dense: &mut Dense) -> bool {
         let (n, m) = (self.g.len(), self.rh.len());
-        let mut k = vec![vec![0.0; n + m]; n + m];
+        let w = n + m;
+        dense.zeroed(w);
+        let k = &mut dense.a;
         for i in 0..n {
-            k[i][..n].copy_from_slice(&self.jtj[i]);
-            k[i][i] += damping(self.jtj[i][i]);
+            k[i * w..i * w + n].copy_from_slice(&self.jtj[i]);
+            k[i * w + i] += damping(self.jtj[i][i]);
             for (row, h) in self.jh.iter().enumerate() {
-                k[i][n + row] = h[i];
-                k[n + row][i] = h[i];
+                k[i * w + n + row] = h[i];
+                k[(n + row) * w + i] = h[i];
             }
         }
         for row in 0..m {
-            k[n + row][n + row] = -RIDGE;
+            k[(n + row) * w + n + row] = -RIDGE;
         }
-        let rhs: Vec<f64> = (self.g.iter().map(|v| -v))
-            .chain(self.rh.iter().map(|v| -v))
-            .collect();
-        let mut step = crate::solve::solve_linear(k, rhs)?;
-        step.truncate(n);
-        Some(step)
+        for (to, v) in dense.b.iter_mut().zip(self.g.iter().chain(&self.rh)) {
+            *to = -v;
+        }
+        dense.solve()
     }
 }
 
