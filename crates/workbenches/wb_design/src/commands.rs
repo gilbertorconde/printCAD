@@ -1207,7 +1207,8 @@ mod tests {
 
     /// Draft and thickness read their face from the viewport's pick; a
     /// script passes it instead, in the body's own frame, wherever the body
-    /// has been moved to.
+    /// has been moved to. A thickness given none opens no face (a sealed
+    /// shell); a draft given none is refused.
     #[test]
     fn a_script_gives_a_thickness_or_a_draft_its_face() {
         let mut s = Session::new();
@@ -1221,8 +1222,11 @@ mod tests {
         );
         s.run("design.pad", json!({"sketch": sketch, "length": 10.0}))
             .unwrap();
-        let without = s.run("design.thickness", json!({"body": body}));
-        assert!(without.is_err(), "no face, no thickness");
+        let sealed = s.run("design.thickness", json!({"body": body})).unwrap();
+        let sealed = s.fields(&sealed);
+        assert_eq!(sealed["Thickness"]["faces"], json!([]), "{sealed}");
+        let without = s.run("design.draft", json!({"body": body}));
+        assert!(without.is_err(), "no face, no draft");
         let near = |pick: &Value, want: [f64; 3]| {
             let point: Vec<f64> = pick["point"]
                 .as_array()

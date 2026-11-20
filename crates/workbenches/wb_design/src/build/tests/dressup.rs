@@ -119,3 +119,32 @@ fn a_chamfer_s_second_size_and_angle_and_a_thickness_are_checked() {
     let error = body_build_ops(&doc, body).unwrap_err().message;
     assert!(error.contains("thickness must be positive"), "{error}");
 }
+
+/// A thickness that opens no face plans a sealed hollow: its op carries
+/// no open faces, which the kernel takes as a shell with nothing removed.
+#[test]
+fn a_thickness_with_no_open_face_plans_a_closed_shell() {
+    let (mut doc, body, sketch) = doc_with_body_sketch();
+    add(&mut doc, body, pad(sketch, 5.0), "Pad");
+    let shell = DesignFeature::Thickness {
+        value: 1.0,
+        faces: Vec::new(),
+        inward: true,
+        join: Default::default(),
+        both_sides: false,
+    };
+    add(&mut doc, body, shell, "Thickness");
+    let ops = body_build_ops(&doc, body).unwrap().ops;
+    match ops.last() {
+        Some(SolidOp::Thickness {
+            value,
+            open_faces,
+            inward,
+            ..
+        }) => {
+            assert_eq!((*value, *inward), (1.0, true));
+            assert!(open_faces.is_empty(), "{open_faces:?}");
+        }
+        other => panic!("a thickness op, not {other:?}"),
+    }
+}

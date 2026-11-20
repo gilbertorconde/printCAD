@@ -4401,7 +4401,7 @@ assert(math.abs(m.volume - (2000 + lean * 10 / 2 * 10)) < 1e-3, m.volume)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- `face_point` and `face_normal` name the face it opens and are required; `faces = {{point = .., normal = ..}, ...}` opens several, replacing that one.
+- `face_point` and `face_normal` name the face it opens; `faces = {{point = .., normal = ..}, ...}` opens several, replacing that one. With neither, it opens no face and seals the hollow: a closed shell, for a drain hole to follow.
 - `value` is the wall, 1 mm when left out and above zero, inside the solid; `inward = false` puts the walls outside it, `both_sides = true` on both.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.draft`.

@@ -430,9 +430,7 @@ pub(super) fn plan_dressup(
             join,
             both_sides,
         } => {
-            if faces.is_empty() {
-                return Err(fail("select at least one face to open".into()));
-            }
+            // No face opened seals the hollow: a closed shell.
             if !(*value > 0.0 && value.is_finite()) {
                 return Err(fail("the thickness must be positive".into()));
             }

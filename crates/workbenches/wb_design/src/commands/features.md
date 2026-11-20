@@ -698,8 +698,9 @@ assert(math.abs(m.volume - (2000 + lean * 10 / 2 * 10)) < 1e-3, m.volume)
 
 ## design.thickness
 
-`face_point` and `face_normal` name the face it opens and are required; `faces
-= {{point = .., normal = ..}, ...}` opens several, replacing that one.
+`face_point` and `face_normal` name the face it opens; `faces = {{point = ..,
+normal = ..}, ...}` opens several, replacing that one. With neither, it opens
+no face and seals the hollow: a closed shell, for a drain hole to follow.
 
 `value` is the wall, 1 mm when left out and above zero, inside the solid;
 `inward = false` puts the walls outside it, `both_sides = true` on both.
@@ -718,6 +719,28 @@ pc.design.thickness{body = body, face_point = {10, 5, 10}, face_normal = {0, 0, 
 assert(#pc.doc.rebuild() == 0, "the shell builds")
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (2000 - 18 * 8 * 9)) < 1e-3, volume)
+```
+
+### A block hollowed into a sealed shell with a drain hole
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+-- No face opened: 1 mm walls all round a closed cavity.
+pc.design.thickness{body = body}
+assert(#pc.doc.rebuild() == 0, "the shell builds")
+local sealed = 2000 - 18 * 8 * 8
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - sealed) < 1e-3, volume)
+-- A 2 mm drain hole through the 1 mm floor, from a point under it.
+local drain = pc.sketch.new{body = body, plane = "XY"}
+pc.sketch.point{sketch = drain, x = 10, y = 5}
+pc.design.hole{sketch = drain, diameter = 2, depth = 1, reversed = true}
+assert(#pc.doc.rebuild() == 0, "the drain builds")
+volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (sealed - math.pi)) < 1e-2, volume)
 ```
 
 ## design.delete_faces

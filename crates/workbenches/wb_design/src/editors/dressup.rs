@@ -305,6 +305,13 @@ pub(super) fn dressup_editor(
         } => {
             changed |= mm_drag(f, fx, value, ("Thickness:", "thickness"));
             changed |= face_list_editor(f, ctx, faces, "Faces to open:");
+            if faces.is_empty() {
+                taper_note(
+                    f,
+                    "No face open: the solid is hollowed into a sealed shell. Add a drain \
+                     hole for resin or powder to leave by.",
+                );
+            }
             changed |= f.check(
                 both_sides,
                 "Both sides",
