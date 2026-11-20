@@ -7,6 +7,10 @@ use core_document::Document;
 use core_document::server::{ClientMessage, DocumentServer, ServerMessage};
 use doc_server::DaemonClient;
 
+/// How long any wait in these tests lasts before it fails, naming what it
+/// waited for: a stall on one platform is a failure, never a hung run.
+const PATIENCE: Duration = Duration::from_secs(30);
+
 /// Each test gets its own socket + document dir, torn down with the daemon.
 struct TestHome {
     dir: PathBuf,
@@ -23,6 +27,13 @@ impl TestHome {
 
     fn socket(&self) -> PathBuf {
         self.dir.join("doc.sock")
+    }
+
+    /// Whether the socket's file is there. Asked of the entry itself: on
+    /// Windows a socket file cannot be opened, so `exists`, which follows
+    /// it, says no while a daemon listens on it.
+    fn socket_present(&self) -> bool {
+        std::fs::symlink_metadata(self.socket()).is_ok()
     }
 
     fn document(&self) -> PathBuf {
@@ -66,12 +77,25 @@ fn start_daemon(home: &TestHome, args: &[&str]) -> std::process::Child {
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("daemon starts");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !home.socket().exists() {
+    let deadline = Instant::now() + PATIENCE;
+    while !home.socket_present() {
         assert!(Instant::now() < deadline, "the daemon never listened");
         std::thread::sleep(Duration::from_millis(10));
     }
     child
+}
+
+/// Wait for a daemon this test started to exit, killing it if it does not.
+fn wait_for_exit(daemon: &mut std::process::Child, why: &str) {
+    let deadline = Instant::now() + PATIENCE;
+    while daemon.try_wait().expect("daemon status").is_none() {
+        if Instant::now() >= deadline {
+            let _ = daemon.kill();
+            let _ = daemon.wait();
+            panic!("timed out waiting for the daemon to exit {why}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Messages polled but not yet consumed by a `wait_for`. Poll batches can
@@ -96,7 +120,7 @@ fn wait_for<T>(
     what: &str,
     mut pick: impl FnMut(&ServerMessage) -> Option<T>,
 ) -> T {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
         while let Some(message) = inbox.next(client) {
             if let Some(found) = pick(&message) {
@@ -140,7 +164,7 @@ fn two_documents_do_not_swap_their_unsaved_history() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join("printcad");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
         let mut seen_a = false;
         let mut seen_b = false;
@@ -185,7 +209,7 @@ fn two_documents_do_not_swap_their_unsaved_history() {
 
     let read = |home: &TestHome| -> String {
         let log = home.document().with_extension("oplog.jsonl");
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + PATIENCE;
         loop {
             let text = std::fs::read_to_string(&log).unwrap_or_default();
             if !text.is_empty() || Instant::now() > deadline {
@@ -255,7 +279,7 @@ fn a_session_round_trips_through_the_daemon() {
     let oplog = home.document().with_extension("oplog.jsonl");
     doc.rename_body(body, "Renamed again");
     client.send(ClientMessage::Ops(doc.take_pending_ops()));
-    let log_deadline = Instant::now() + Duration::from_secs(30);
+    let log_deadline = Instant::now() + PATIENCE;
     loop {
         if oplog.is_file() {
             let text = std::fs::read_to_string(&oplog).expect("read oplog");
@@ -290,7 +314,7 @@ fn a_session_round_trips_through_the_daemon() {
 
     // Rebase truncates the op log.
     client.send(ClientMessage::Rebase);
-    let truncate_deadline = Instant::now() + Duration::from_secs(30);
+    let truncate_deadline = Instant::now() + PATIENCE;
     loop {
         let len = std::fs::read_to_string(&oplog)
             .map(|t| t.len())
@@ -304,8 +328,8 @@ fn a_session_round_trips_through_the_daemon() {
 
     client.flush();
     drop(client); // disconnect; the daemon should exit and remove its socket
-    let gone_deadline = Instant::now() + Duration::from_secs(30);
-    while home.socket().exists() {
+    let gone_deadline = Instant::now() + PATIENCE;
+    while home.socket_present() {
         assert!(
             Instant::now() < gone_deadline,
             "daemon did not clean up its socket on disconnect"
@@ -370,8 +394,8 @@ fn a_peers_edits_relay_and_the_replicas_converge() {
 
     drop(bob);
     drop(alice); // last client out; the daemon exits and removes its socket
-    let gone = Instant::now() + Duration::from_secs(30);
-    while home.socket().exists() {
+    let gone = Instant::now() + PATIENCE;
+    while home.socket_present() {
         assert!(Instant::now() < gone, "daemon lingered after last client");
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -424,7 +448,7 @@ fn large_blobs_are_extracted_and_deduplicated() {
 
     let oplog = home.document().with_extension("oplog.jsonl");
     let blob_dir = home.document().with_extension("oplog.blobs");
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + PATIENCE;
     loop {
         let log_ok = std::fs::read_to_string(&oplog)
             .map(|t| t.lines().count() >= 2 && t.contains("blob:sha256:") && t.len() < 64 * 1024)
@@ -516,7 +540,7 @@ fn a_late_joiner_catches_up_to_the_unsaved_present() {
     // log) so bob's join deterministically exercises the TAIL path rather
     // than the live-relay path.
     let oplog = home.document().with_extension("oplog.jsonl");
-    let seen = Instant::now() + Duration::from_secs(30);
+    let seen = Instant::now() + PATIENCE;
     while !std::fs::read_to_string(&oplog)
         .map(|t| t.contains("Edited after save"))
         .unwrap_or(false)
@@ -635,7 +659,7 @@ fn saves_sent_back_to_back_land_in_the_order_sent() {
             });
         }
         server.flush();
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + PATIENCE;
         let mut order = Vec::new();
         while order.len() < 2 && Instant::now() < deadline {
             order.extend(server.poll().into_iter().filter_map(|m| match m {
@@ -714,7 +738,7 @@ impl Replica {
 
     /// Take in what the server sends until `done` holds.
     fn take_until(&mut self, what: &str, done: impl Fn(&Self) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + PATIENCE;
         while !done(self) {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             match self.inbox.next(&mut self.client) {
@@ -958,7 +982,7 @@ fn a_restarted_daemon_gives_joiners_the_unsaved_tail() {
     alice.send();
     alice.settle();
     daemon.kill().expect("the daemon stops");
-    daemon.wait().expect("reaped");
+    wait_for_exit(&mut daemon, "once killed");
 
     let mut bob = Replica::open(&home, &home.document());
     assert_eq!(
@@ -988,8 +1012,8 @@ fn a_daemon_everyone_left_starts_again_from_the_file() {
     alice.send();
     alice.settle();
     drop(alice);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while home.socket().exists() {
+    let deadline = Instant::now() + PATIENCE;
+    while home.socket_present() {
         assert!(Instant::now() < deadline, "the daemon never exited");
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -1032,15 +1056,31 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     alice.take_until("the stalled editor dropped", |r| r.peers == Some(0));
     let last = alice.settle();
 
+    // What was written before the disconnect, then the end of the stream.
+    stalled
+        .set_read_timeout(Some(PATIENCE))
+        .expect("read timeout");
     let mut relayed = 0;
     loop {
         match doc_server::framing::read_frame::<_, ServerMessage>(&mut stalled) {
             Ok(ServerMessage::Ops { .. }) => relayed += 1,
             Ok(_) => {}
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                panic!("timed out waiting for the dropped client's stream to end")
+            }
             Err(_) => break,
         }
     }
     assert!(relayed < rounds, "the stream ended before the edits did");
+    // Closed from this end too: a daemon's reader blocked on the socket
+    // ends at the latest when its peer closes, whatever the platform's
+    // shutdown does to a read already waiting.
+    drop(stalled);
 
     let mut again = Replica::open(&home, &home.document());
     again.catch_up(last);
@@ -1051,7 +1091,5 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     );
     drop(again);
     drop(alice);
-    daemon
-        .wait()
-        .expect("the daemon exits with its last client");
+    wait_for_exit(&mut daemon, "with its last client");
 }
