@@ -378,7 +378,8 @@ fn thumbnails() -> &'static [bench_api::Tile] {
                 for y in 0..PX {
                     for x in 0..PX {
                         let (u, v) = (x as f32 / PX as f32 * 2.0, 2.0 - y as f32 / PX as f32 * 2.0);
-                        let g = (40.0 + pattern.height(u, v, None) * 200.0) as u8;
+                        let g =
+                            (40.0 + surface_texture::height(*pattern, u, v, None) * 200.0) as u8;
                         rgba.extend([g, g, g, 255]);
                     }
                 }

@@ -4,7 +4,7 @@
 
 use core_document::WorkbenchFeature as _;
 use core_document::{BodyId, Document, ImportedGeometry};
-use kernel_api::{Kernel, TessellationSettings};
+use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use scripting::ScriptEngine;
 use wb_design::DesignFeature;

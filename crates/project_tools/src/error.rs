@@ -1,6 +1,5 @@
 //! Failure stages stay distinct from conversion losses.
 
-use kernel_api::KernelError;
 use project_archive::archive::FcstdError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -11,7 +10,6 @@ pub enum ErrorCategory {
     Archive,
     Parse,
     Conversion,
-    KernelInitialization,
     Rebuild,
     Stationarity,
     Panic,
@@ -20,14 +18,12 @@ pub enum ErrorCategory {
 #[derive(Debug)]
 pub enum ImportError {
     Source(FcstdError),
-    KernelInitialization(KernelError),
 }
 
 impl ImportError {
     pub fn category(&self) -> ErrorCategory {
         match self {
             Self::Source(_) => ErrorCategory::Conversion,
-            Self::KernelInitialization(_) => ErrorCategory::KernelInitialization,
         }
     }
 }
@@ -42,17 +38,15 @@ impl fmt::Display for ImportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Source(error) => error.fmt(f),
-            Self::KernelInitialization(error) => write!(f, "kernel initialization: {error}"),
         }
     }
 }
 
 impl std::error::Error for ImportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(match self {
-            Self::Source(error) => error,
-            Self::KernelInitialization(error) => error,
-        })
+        match self {
+            Self::Source(error) => Some(error),
+        }
     }
 }
 

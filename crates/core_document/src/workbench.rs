@@ -310,7 +310,7 @@ pub struct ViewportHud {
     /// readout card (one with a `hint`) the host draws as it draws
     /// [`Workbench::floating_card`]'s, beside its `screen` point, and only
     /// while that offers no card, since one card shows at a time.
-    pub card: Option<bench_api::FloatingCard>,
+    pub card: Option<panel_api::FloatingCard>,
 }
 
 /// An input of a feature that can be swapped for another, as the property
@@ -1247,16 +1247,16 @@ pub trait Workbench: std::any::Any + Send {
     /// task panel's, with OK and Cancel. Only for a quick edit of a value
     /// or two (a dimension, a corner's size); a feature with more to set
     /// is a task. Asked every frame; edits wait in the bench until OK.
-    fn floating_card(&mut self, _ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+    fn floating_card(&mut self, _ctx: &WorkbenchRuntimeContext) -> Option<panel_api::FloatingCard> {
         None
     }
 
     /// A change on the floating card: its widgets' events, and its OK or
-    /// Cancel as [`bench_api::PanelEvent::CardClose`], after which the
+    /// Cancel as [`panel_api::PanelEvent::CardClose`], after which the
     /// bench puts the card away. OK writes what the card holds; the host
     /// closes it as one undo step, and on Cancel takes back anything
     /// written while the card was open.
-    fn card_event(&mut self, _ctx: &mut WorkbenchRuntimeContext, _event: &bench_api::PanelEvent) {}
+    fn card_event(&mut self, _ctx: &mut WorkbenchRuntimeContext, _event: &panel_api::PanelEvent) {}
 
     /// Called every frame while this workbench is not active and
     /// [`Self::busy`]: the work it runs away from the window ends whatever

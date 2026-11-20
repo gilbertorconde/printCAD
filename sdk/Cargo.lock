@@ -125,6 +125,7 @@ name = "printcad-bench-api"
 version = "0.1.8"
 dependencies = [
  "printcad-kernel-api",
+ "printcad-panel-api",
  "serde",
  "serde_json",
 ]
@@ -146,6 +147,13 @@ dependencies = [
  "anyhow",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "printcad-panel-api"
+version = "0.1.8"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

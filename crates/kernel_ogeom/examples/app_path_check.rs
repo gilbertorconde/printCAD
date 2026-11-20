@@ -1,11 +1,10 @@
 //! Mesh files exactly as the app does; count vertices escaping body bounds.
-use kernel_api::{Kernel, TessellationSettings};
+use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 
 fn main() {
     for path in std::env::args().skip(1) {
-        let mut kernel = OgeomKernel::new();
-        kernel.initialize().expect("init");
+        let kernel = OgeomKernel::new();
         let imported = kernel
             .import_step(
                 std::path::Path::new(&path),

@@ -98,10 +98,15 @@ walkthrough. Colors reach the workbenches through
   builds for wasm32-wasip2): manifest, registration, nodes, rebuild plans,
   input and pointer, the `Frame` a bench draws, declared panel `Widget`s
   and `PanelEvent`s, menus, requests, the `calls` a package may make. The
+  declared panel vocabulary (`Widget` and its blocks, `PanelEvent`,
+  `FloatingCard`, `Dim`) lives in `panel_api`, beneath `core_document`,
+  which takes the card types for the `Workbench` trait from there;
+  `bench_api` re-exports all of it at its root (`pub use panel_api::*`),
+  so packages and benches name it through `bench_api` as before. The
   WIT world is `bench_api/wit/workbench.wit`; its values cross as JSON of
   these types, bulk data as lists. Published on crates.io with
-  `kernel_api` and the SDK as `printcad-bench-api`, `printcad-kernel-api`
-  (library names unchanged, dependents use the `[workspace.dependencies]`
+  `kernel_api`, `panel_api` and the SDK as `printcad-bench-api`,
+  `printcad-kernel-api`, `printcad-panel-api` (library names unchanged, dependents use the `[workspace.dependencies]`
   entries) and `printcad-bench-sdk`, versioned by the contract (0.1.x is
   `printcad:workbench@0.1`) and released by a tag `sdk-vX.Y.Z`
   (`.github/workflows/sdk-publish.yml`). A patch release only adds

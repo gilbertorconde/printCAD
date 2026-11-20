@@ -748,7 +748,6 @@ impl Headless {
                 "a printCAD file comes in as a linked part, which needs the app",
             ));
         }
-        use kernel_api::Kernel;
         let detail = kernel_api::TessellationSettings::default();
         let mut model = kernel_ogeom::OgeomKernel::new()
             .import_step(path, &detail)

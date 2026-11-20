@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use kernel_api::{ImportedModel, Kernel, TessellationSettings, TriMesh};
+use kernel_api::{ImportedModel, TessellationSettings, TriMesh};
 use kernel_ogeom::OgeomKernel;
 use kernel_ogeom::export::{ExportBody, ExportFormat, export};
 

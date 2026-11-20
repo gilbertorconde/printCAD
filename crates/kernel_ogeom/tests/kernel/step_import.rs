@@ -5,7 +5,7 @@
 //! by default; set `PRINTCAD_TEST_STEP_FILE` to exercise a richer model (an
 //! assembly with colours, say).
 
-use kernel_api::{Kernel, TessellationSettings};
+use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use std::path::PathBuf;
 
@@ -34,8 +34,7 @@ fn locate_sample() -> PathBuf {
 #[test]
 fn imports_a_step_file_with_surface_curves() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/box.step");
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
     let imported = kernel
         .import_step(&fixture, &TessellationSettings::default())
         .expect("STEP import with SURFACE_CURVE edges");
@@ -46,8 +45,7 @@ fn imports_a_step_file_with_surface_curves() {
 fn imports_real_world_step_file() {
     let sample = locate_sample();
 
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
 
     let detail = TessellationSettings::default();
     let imported = kernel
@@ -119,8 +117,7 @@ fn imports_real_world_step_file() {
 fn imported_node_body_indices_dont_collide_across_branches() {
     let sample = locate_sample();
 
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
     let detail = TessellationSettings::default();
     let imported = kernel
         .import_step(&sample, &detail)
@@ -176,7 +173,6 @@ fn deferred_pipeline_approximates_monolithic_tessellation() {
     let sample = locate_sample();
 
     let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
     // Force snapshot persistence so we exercise read → blob → tessellate
     // (deferred) in this test.
     let detail = TessellationSettings {
@@ -211,8 +207,7 @@ fn deferred_pipeline_approximates_monolithic_tessellation() {
 fn snapshot_blob_round_trips_through_native_format() {
     let sample = locate_sample();
 
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
     let detail = TessellationSettings {
         persist_brep_snapshot: true,
         ..TessellationSettings::default()
@@ -249,8 +244,7 @@ fn the_import_is_identical_at_any_thread_count() {
 
     let import_with = |threads: usize| {
         ogeom::core::parallel::set_threads(threads);
-        let mut kernel = OgeomKernel::new();
-        kernel.initialize().expect("initialize ogeom kernel");
+        let kernel = OgeomKernel::new();
         kernel.import_step(&sample, &detail).expect("import")
     };
 
@@ -293,8 +287,7 @@ fn assembly_parts_arrive_in_world_space() {
         return;
     }
 
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
     let imported = kernel
         .import_step(&sample, &TessellationSettings::default())
         .expect("assembly import");
@@ -398,8 +391,7 @@ END-ISO-10303-21;
     let path = dir.join(format!("printcad_heal_{}.step", std::process::id()));
     std::fs::write(&path, step).expect("write fixture");
 
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize");
+    let kernel = OgeomKernel::new();
     let imported = kernel
         .import_step(&path, &TessellationSettings::default())
         .expect("import with healing");
@@ -421,8 +413,7 @@ END-ISO-10303-21;
 fn bolt_faces_stay_inside_their_boundaries() {
     let sample = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data/M5x16_BHCS_original_encoding.step");
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
     let imported = kernel
         .import_step(&sample, &TessellationSettings::default())
         .expect("import fixture");
@@ -451,8 +442,7 @@ fn bolt_faces_stay_inside_their_boundaries() {
 #[test]
 fn triangles_know_their_faces_and_a_curved_face_is_whole() {
     let sample = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/box_native.step");
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
     let imported = kernel
         .import_step(&sample, &TessellationSettings::default())
         .expect("import fixture");

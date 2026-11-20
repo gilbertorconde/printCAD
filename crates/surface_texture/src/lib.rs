@@ -14,114 +14,24 @@ use std::collections::HashMap;
 
 use glam::{Vec2, Vec3};
 use kernel_api::TriMesh;
-use serde::{Deserialize, Serialize};
 
-pub use pattern::{HeightMap, Pattern};
+pub use core_document::texture::{Axis, Projection, Texture};
+pub use pattern::{HeightMap, Pattern, height};
 
-/// An axis of the body's own frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Axis {
-    X,
-    Y,
-    Z,
-}
-
-impl Axis {
-    pub const ALL: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Axis::X => "X",
-            Axis::Y => "Y",
-            Axis::Z => "Z",
-        }
-    }
-
-    fn vector(self) -> Vec3 {
-        match self {
-            Axis::X => Vec3::X,
-            Axis::Y => Vec3::Y,
-            Axis::Z => Vec3::Z,
-        }
-    }
-
-    /// Two directions square to the axis and to each other: a plane's.
-    fn plane(self) -> (Vec3, Vec3) {
-        match self {
-            Axis::X => (Vec3::Y, Vec3::Z),
-            Axis::Y => (Vec3::Z, Vec3::X),
-            Axis::Z => (Vec3::X, Vec3::Y),
-        }
+fn axis_vector(axis: Axis) -> Vec3 {
+    match axis {
+        Axis::X => Vec3::X,
+        Axis::Y => Vec3::Y,
+        Axis::Z => Vec3::Z,
     }
 }
 
-/// How the pattern's flat tile is laid on the faces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Projection {
-    /// Three flat projections, each weighted by how squarely a face looks
-    /// along its axis: good on any shape.
-    Triplanar,
-    /// One flat projection along an axis.
-    Planar(Axis),
-    /// Wrapped round an axis, a whole number of tiles round.
-    Cylindrical(Axis),
-    /// Wrapped round a centre, a whole number of tiles round its equator.
-    Spherical,
-}
-
-impl Projection {
-    pub fn label(self) -> String {
-        match self {
-            Projection::Triplanar => "Triplanar".to_string(),
-            Projection::Planar(axis) => format!("Flat along {}", axis.label()),
-            Projection::Cylindrical(axis) => format!("Round {}", axis.label()),
-            Projection::Spherical => "Spherical".to_string(),
-        }
-    }
-
-    /// Every projection, in the order a list shows them.
-    pub fn all() -> Vec<Projection> {
-        let mut out = vec![Projection::Triplanar];
-        out.extend(Axis::ALL.map(Projection::Planar));
-        out.extend(Axis::ALL.map(Projection::Cylindrical));
-        out.push(Projection::Spherical);
-        out
-    }
-}
-
-/// A texture as it is set: its pattern, how it lies and how deep it goes.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Texture {
-    pub pattern: Pattern,
-    pub projection: Projection,
-    /// One tile's size, mm.
-    pub tile_mm: f32,
-    /// The tile's turn on the surface, degrees.
-    #[serde(default)]
-    pub rotation_deg: f32,
-    /// How far the pattern's high points stand from the surface, mm.
-    pub depth_mm: f32,
-    /// Into the surface rather than out of it.
-    #[serde(default)]
-    pub inward: bool,
-    /// Faces within this many degrees of facing straight up or down stay
-    /// smooth (a print's top and the side it stands on); 0 textures them
-    /// too.
-    #[serde(default)]
-    pub keep_flat_deg: f32,
-}
-
-impl Default for Texture {
-    fn default() -> Self {
-        Self {
-            pattern: Pattern::Knurl,
-            projection: Projection::Triplanar,
-            tile_mm: 3.0,
-            rotation_deg: 0.0,
-            depth_mm: 0.4,
-            inward: false,
-            keep_flat_deg: 0.0,
-        }
+/// Two directions square to the axis and to each other: a plane's.
+fn axis_plane(axis: Axis) -> (Vec3, Vec3) {
+    match axis {
+        Axis::X => (Vec3::Y, Vec3::Z),
+        Axis::Y => (Vec3::Z, Vec3::X),
+        Axis::Z => (Vec3::X, Vec3::Y),
     }
 }
 
@@ -467,7 +377,7 @@ impl Frame {
         };
         let radius = match texture.projection {
             Projection::Cylindrical(axis) => {
-                let along = axis.vector();
+                let along = axis_vector(axis);
                 mean(mine.iter().map(|p| {
                     let d = *p - centre;
                     (d - along * d.dot(along)).length()
@@ -488,10 +398,10 @@ impl Frame {
         let tile = texture.tile_mm.max(1e-3);
         let sample = |uv: Vec2| {
             let uv = Vec2::from_angle(texture.rotation_deg.to_radians()).rotate(uv);
-            texture.pattern.height(uv.x, uv.y, job.image)
+            height(texture.pattern, uv.x, uv.y, job.image)
         };
         let flat = |axis: Axis| {
-            let (a, b) = axis.plane();
+            let (a, b) = axis_plane(axis);
             Vec2::new(p.dot(a), p.dot(b)) / tile
         };
         match texture.projection {
@@ -505,11 +415,11 @@ impl Frame {
                     / total
             }
             Projection::Cylindrical(axis) => {
-                let (a, b) = axis.plane();
+                let (a, b) = axis_plane(axis);
                 let d = p - self.centre;
                 let angle = d.dot(b).atan2(d.dot(a));
                 let u = angle / std::f32::consts::TAU * self.round;
-                sample(Vec2::new(u, d.dot(axis.vector()) / tile))
+                sample(Vec2::new(u, d.dot(axis_vector(axis)) / tile))
             }
             Projection::Spherical => {
                 let d = (p - self.centre).normalize_or_zero();

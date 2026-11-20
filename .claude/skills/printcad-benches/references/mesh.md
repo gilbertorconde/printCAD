@@ -46,8 +46,10 @@
   reduced vertex marked when every start vertex merged into it is
   (`Editable::simplify` keeps them).
 - `surface_texture`: patterns pressed into chosen faces of a mesh for
-  printing (`Texture`: pattern, projection, tile, depth, turn, inward,
-  keep flat; `apply` welds, splits the chosen faces' triangles and their
+  printing. The description a body keeps (`Texture`: pattern, projection,
+  tile, depth, turn, inward, keep flat) is `core_document::texture`,
+  re-exported by `surface_texture`, which holds the evaluation
+  (`height`, `HeightMap`) and `apply`, and sits above the document. `apply` welds, splits the chosen faces' triangles and their
   neighbours along shared edges so no crack opens, then moves each point
   along its normal, the rim fixed). The document keeps them on the body
   (`Body::textures`, `FaceTexture` with `FaceKey`s found by name like face

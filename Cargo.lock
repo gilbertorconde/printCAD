@@ -841,12 +841,11 @@ dependencies = [
  "flate2",
  "glam 0.33.7",
  "metrology",
- "printcad-bench-api",
  "printcad-kernel-api",
+ "printcad-panel-api",
  "rmp-serde",
  "serde",
  "serde_json",
- "surface_texture",
  "tar",
  "thiserror 2.0.20",
  "tracing",
@@ -3834,6 +3833,7 @@ name = "printcad-bench-api"
 version = "0.1.8"
 dependencies = [
  "printcad-kernel-api",
+ "printcad-panel-api",
  "serde",
  "serde_json",
 ]
@@ -3846,6 +3846,13 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "printcad-panel-api"
+version = "0.1.8"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -4837,11 +4844,10 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "surface_texture"
 version = "0.1.0"
 dependencies = [
+ "core_document",
  "glam 0.33.7",
  "image",
  "printcad-kernel-api",
- "serde",
- "uuid",
 ]
 
 [[package]]

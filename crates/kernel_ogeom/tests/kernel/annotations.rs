@@ -7,7 +7,7 @@
 //! on level 7, a model-space linear dimension reading `40.00` with its
 //! leaders and witness lines, and a note.
 
-use kernel_api::{AnnotationKind, ImportedModel, Kernel, TessellationSettings};
+use kernel_api::{AnnotationKind, ImportedModel, TessellationSettings};
 use kernel_ogeom::OgeomKernel;
 use std::path::PathBuf;
 
@@ -15,8 +15,7 @@ fn import(name: &str) -> ImportedModel {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data")
         .join(name);
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize ogeom kernel");
+    let kernel = OgeomKernel::new();
     kernel
         .import_step(&path, &TessellationSettings::default())
         .unwrap_or_else(|err| panic!("import of {name} failed: {err}"))

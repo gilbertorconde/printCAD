@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use kernel_api::{Kernel, TessellationSettings};
+use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 
 fn main() {

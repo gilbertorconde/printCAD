@@ -9,6 +9,7 @@ members = [
   "crates/metrology",
   "crates/image_edges",
   "crates/bench_api",
+  "crates/panel_api",
   "crates/doc_server",
   "crates/doc_render",
   "crates/kernel_api",
@@ -89,6 +90,7 @@ mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
 # app, which makes every variant it sends, match without a wildcard.
 kernel_api = { package = "printcad-kernel-api", path = "crates/kernel_api", version = "0.1.8", features = ["exhaustive"] }
 bench_api = { package = "printcad-bench-api", path = "crates/bench_api", version = "0.1.8", features = ["exhaustive"] }
+panel_api = { package = "printcad-panel-api", path = "crates/panel_api", version = "0.1.8", features = ["exhaustive"] }
 
 # The geometry kernel is numeric code that runs unoptimized in a plain
 # `cargo run`, where it is ~26x slower — enough to make a large STEP import

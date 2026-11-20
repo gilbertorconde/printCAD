@@ -8,17 +8,18 @@ import { members } from "./lib/workspace.mjs";
 
 const LAYERS = [
   // Foundations: nothing of the workspace beneath them.
-  ["axes", "feature_walk", "image_edges", "local_ipc", "metrology", "printcad-kernel-api", "project_archive", "sketch_solver",
-   "transform_gizmo", "ui_kit", "viewport_camera"],
+  ["axes", "feature_walk", "image_edges", "local_ipc", "metrology", "printcad-kernel-api", "printcad-panel-api",
+   "project_archive", "sketch_solver", "transform_gizmo", "ui_kit", "viewport_camera"],
   // Contracts and services over the foundations.
-  ["printcad-bench-api", "surface_texture", "kernel_ogeom", "render_wgpu", "settings", "agents"],
+  ["printcad-bench-api", "kernel_ogeom", "render_wgpu", "settings", "agents"],
   // The document.
   ["core_document"],
   // What the benches share over the document: the declared panels drawn
   // for the benches and the app, and the sketch model.
   ["bench_panel", "sketch_model"],
   // What works on the document: the server, scripting and the benches.
-  ["doc_server", "doc_render", "scripting", "wb_sketch", "wb_assembly", "wb_inspect", "wb_mesh", "wb_wasm"],
+  ["doc_server", "doc_render", "scripting", "surface_texture", "wb_sketch", "wb_assembly", "wb_inspect", "wb_mesh",
+   "wb_wasm"],
   // Benches built on the sketcher's.
   ["wb_design", "wb_surface"],
   // What composes benches.

@@ -1,79 +1,28 @@
 //! The patterns: each a height from 0 (the surface as it is) to 1 (the
 //! full depth) over a tile one unit on a side, repeating seamlessly.
 
-use serde::{Deserialize, Serialize};
+pub use core_document::texture::Pattern;
 
-/// What a texture presses into its faces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Pattern {
-    /// Pyramids in a diamond grid, as a knurled grip has.
-    Knurl,
-    /// Straight ridges.
-    Ribs,
-    /// Round bumps in a square grid.
-    Dots,
-    /// Hexagonal cells parted by grooves.
-    Hex,
-    /// Bricks in offset rows, parted by grooves.
-    Bricks,
-    /// Smooth waves across the tile.
-    Waves,
-    /// Rough, even noise.
-    Noise,
-    /// Criss-cross grooves, as a file's face.
-    Crosshatch,
-    /// A greyscale picture, white high: a document asset.
-    Image { asset: uuid::Uuid },
-}
-
-impl Pattern {
-    /// Every pattern made by code, in the order a gallery shows them.
-    pub const BUILT_IN: [Pattern; 8] = [
-        Pattern::Knurl,
-        Pattern::Ribs,
-        Pattern::Dots,
-        Pattern::Hex,
-        Pattern::Bricks,
-        Pattern::Waves,
-        Pattern::Noise,
-        Pattern::Crosshatch,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Pattern::Knurl => "Knurl",
-            Pattern::Ribs => "Ribs",
-            Pattern::Dots => "Dots",
-            Pattern::Hex => "Hexagons",
-            Pattern::Bricks => "Bricks",
-            Pattern::Waves => "Waves",
-            Pattern::Noise => "Noise",
-            Pattern::Crosshatch => "Crosshatch",
-            Pattern::Image { .. } => "Picture",
+/// The height of `pattern` at `(u, v)`, in tiles, from 0 to 1. A
+/// picture's comes from its height map, which the caller supplies.
+pub fn height(pattern: Pattern, u: f32, v: f32, image: Option<&HeightMap>) -> f32 {
+    let (fu, fv) = (fract(u), fract(v));
+    let h = match pattern {
+        Pattern::Knurl => tri(u + v).min(tri(u - v)),
+        Pattern::Ribs => smooth(tri(u)),
+        Pattern::Dots => {
+            let d = ((fu - 0.5).powi(2) + (fv - 0.5).powi(2)).sqrt();
+            let r = (1.0 - d / 0.38).max(0.0);
+            (r * (2.0 - r)).sqrt()
         }
-    }
-
-    /// The height at `(u, v)`, in tiles, from 0 to 1. A picture's comes
-    /// from its height map, which the caller supplies.
-    pub fn height(self, u: f32, v: f32, image: Option<&HeightMap>) -> f32 {
-        let (fu, fv) = (fract(u), fract(v));
-        let h = match self {
-            Pattern::Knurl => tri(u + v).min(tri(u - v)),
-            Pattern::Ribs => smooth(tri(u)),
-            Pattern::Dots => {
-                let d = ((fu - 0.5).powi(2) + (fv - 0.5).powi(2)).sqrt();
-                let r = (1.0 - d / 0.38).max(0.0);
-                (r * (2.0 - r)).sqrt()
-            }
-            Pattern::Hex => hex(u, v),
-            Pattern::Bricks => bricks(u, v),
-            Pattern::Waves => 0.5 + 0.5 * (std::f32::consts::TAU * u).sin(),
-            Pattern::Noise => noise(u, v),
-            Pattern::Crosshatch => 1.0 - groove(tri(u + v)).max(groove(tri(u - v))),
-            Pattern::Image { .. } => image.map_or(0.0, |map| map.sample(u, v)),
-        };
-        h.clamp(0.0, 1.0)
-    }
+        Pattern::Hex => hex(u, v),
+        Pattern::Bricks => bricks(u, v),
+        Pattern::Waves => 0.5 + 0.5 * (std::f32::consts::TAU * u).sin(),
+        Pattern::Noise => noise(u, v),
+        Pattern::Crosshatch => 1.0 - groove(tri(u + v)).max(groove(tri(u - v))),
+        Pattern::Image { .. } => image.map_or(0.0, |map| map.sample(u, v)),
+    };
+    h.clamp(0.0, 1.0)
 }
 
 /// A picture's heights, row by row from the top, each 0..=1.
@@ -232,12 +181,13 @@ mod tests {
             for i in 0..=40 {
                 let t = i as f32 / 40.0;
                 for (u, v) in [(t, 0.3), (0.7, t), (t * 3.0, -t)] {
-                    let h = pattern.height(u, v, None);
+                    let h = height(pattern, u, v, None);
                     assert!((0.0..=1.0).contains(&h), "{pattern:?} at {u},{v}: {h}");
                 }
                 let e = 1e-4;
-                let across = (pattern.height(e, t, None) - pattern.height(1.0 - e, t, None)).abs();
-                let down = (pattern.height(t, e, None) - pattern.height(t, 1.0 - e, None)).abs();
+                let across =
+                    (height(pattern, e, t, None) - height(pattern, 1.0 - e, t, None)).abs();
+                let down = (height(pattern, t, e, None) - height(pattern, t, 1.0 - e, None)).abs();
                 assert!(
                     across < 0.05 && down < 0.05,
                     "{pattern:?} seams: {across} {down}"

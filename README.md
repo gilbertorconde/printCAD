@@ -380,6 +380,7 @@ Preferences (Ctrl+,).
 | `project_archive` | Reads `.FCStd` archives: their objects and sketch geometry, within size limits |
 | `project_tools` | Turns such a file into sketches, features and bodies: File › Import's FreeCAD file, and the `project-tool` program |
 | `bench_api` | What a workbench package and the app exchange (on crates.io as `printcad-bench-api`) |
+| `panel_api` | The declared panel widgets, card and events, re-exported by `bench_api` (on crates.io as `printcad-panel-api`) |
 | `local_ipc` | Local sockets and helpers the app's processes talk through |
 | `scripting` | The Lua engine scripts and the console run in |
 | `agents` | Agent Client Protocol client and MCP server core |

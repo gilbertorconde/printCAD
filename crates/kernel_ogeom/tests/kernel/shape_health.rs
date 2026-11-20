@@ -1,7 +1,7 @@
 //! Every imported body carries the kernel checker's verdict, and a body's
 //! snapshot can be run through the kernel's repair.
 
-use kernel_api::{ImportedModel, Kernel, TessellationSettings};
+use kernel_api::{ImportedModel, TessellationSettings};
 use kernel_ogeom::OgeomKernel;
 use std::path::PathBuf;
 
@@ -15,7 +15,7 @@ fn import(name: &str) -> (OgeomKernel, ImportedModel) {
     if name == "drive_frame_upper.step" {
         return (OgeomKernel::new(), crate::real_part().clone());
     }
-    let mut kernel = OgeomKernel::new();
+    let kernel = OgeomKernel::new();
     let model = kernel
         .import_step(&fixture(name), &TessellationSettings::default())
         .expect("fixture imports");
@@ -80,7 +80,7 @@ fn an_iges_file_imports_like_a_step_file() {
     let assembly = dir.join("assembly.igs");
     std::fs::write(&assembly, referencing_deck("model.igs", 50.0)).expect("staged");
 
-    let mut kernel = OgeomKernel::new();
+    let kernel = OgeomKernel::new();
     let from_iges = kernel
         .import_step(&path, &TessellationSettings::default())
         .expect("the IGES file imports");

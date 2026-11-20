@@ -11,7 +11,7 @@
 
 use std::time::Instant;
 
-use kernel_api::{Kernel, TessellationSettings};
+use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 
 fn main() {
@@ -64,8 +64,7 @@ fn main() {
     // number to trust. This binary prints no subtraction across phases:
     // load variance between the two parses makes (total − phase-2 parse)
     // show regressions of several times that are not there.
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize kernel");
+    let kernel = OgeomKernel::new();
     let mut detail = TessellationSettings::default();
     if std::env::var("BENCH_NO_BLOBS").is_ok() {
         detail.persist_brep_snapshot = false;

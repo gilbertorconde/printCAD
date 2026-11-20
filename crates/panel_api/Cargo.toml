@@ -1,0 +1,26 @@
+[package]
+name = "printcad-panel-api"
+version = "0.1.8"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The declared panel widgets, card and events a printCAD workbench and the app exchange"
+repository = "https://github.com/gilbertorconde/printCAD"
+homepage = "https://github.com/gilbertorconde/printCAD"
+documentation = "https://docs.rs/printcad-panel-api"
+readme = "README.md"
+keywords = ["cad", "printcad", "plugin", "wasm"]
+categories = ["api-bindings", "wasm"]
+include = ["src/**/*.rs", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[lib]
+name = "panel_api"
+
+[features]
+# For printCAD itself: the enums it sends a package match without a
+# wildcard arm. A package leaves it off.
+exhaustive = []
+
+# Kept to what builds for wasm32-wasip2: guests depend on it.
+[dependencies]
+serde.workspace = true

@@ -1,7 +1,7 @@
 //! Mesh files import as bodies with no shape snapshot, and a mesh body
 //! converts to a B-rep solid on request.
 
-use kernel_api::{Kernel, TessellationSettings};
+use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use ogeom::math::{Point, Vector};
 use ogeom::topo::Triangulation;
@@ -50,7 +50,7 @@ fn staged(name: &str, bytes: &[u8]) -> PathBuf {
 
 /// Import a file `staged` wrote, and remove it: only for staged copies.
 fn import(path: &PathBuf) -> kernel_api::ImportedModel {
-    let mut kernel = OgeomKernel::new();
+    let kernel = OgeomKernel::new();
     let model = kernel
         .import_step(path, &TessellationSettings::default())
         .expect("the mesh file imports");

@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use std::sync::{Arc, Mutex};
 
-use kernel_api::{ImportedModel, Kernel, SolidBuildResult, SolidOp, TessellationSettings};
+use kernel_api::{ImportedModel, SolidBuildResult, SolidOp, TessellationSettings};
 use kernel_ogeom::{Canceller, OgeomKernel, Watch};
 use tracing::info;
 use uuid::Uuid;

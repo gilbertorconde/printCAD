@@ -19,10 +19,11 @@ name = "bench_api"
 [features]
 # For printCAD itself: the enums it sends a package match without a
 # wildcard arm. A package leaves it off.
-exhaustive = ["kernel_api/exhaustive"]
+exhaustive = ["kernel_api/exhaustive", "panel_api/exhaustive"]
 
 # Kept to what builds for wasm32-wasip2: guests depend on it.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 kernel_api = { package = "printcad-kernel-api", path = "../kernel_api", version = "0.1.8" }
+panel_api = { package = "printcad-panel-api", path = "../panel_api", version = "0.1.8" }

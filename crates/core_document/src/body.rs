@@ -164,7 +164,7 @@ impl Body {
 /// else by its index; no faces means every face.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FaceTexture {
-    pub texture: surface_texture::Texture,
+    pub texture: crate::texture::Texture,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub faces: Vec<FaceKey>,
 }

@@ -40,6 +40,7 @@ pub mod stamp;
 pub mod steps;
 #[cfg(feature = "test-support")]
 pub mod testing;
+pub mod texture;
 pub mod threads;
 pub mod units;
 pub mod variables;
