@@ -764,8 +764,10 @@ impl SketchWorkbench {
         &self,
         ctx: &WorkbenchRuntimeContext,
     ) -> Option<std::sync::Arc<SketchFeature>> {
-        self.frame
-            .active(self.active_key(ctx), || self.read_active_sketch(ctx))
+        let feature = self
+            .frame
+            .active(self.active_key(ctx), || self.read_active_sketch(ctx));
+        feature.inspect(snap::share)
     }
 
     /// What [`Self::frame_sketch`] reads the sketch under.
@@ -785,11 +787,13 @@ impl SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
     ) -> Option<std::sync::Arc<SketchFeature>> {
         let key = frame_memo::SketchKey::of(self.tab.stamp(), ctx);
-        self.frame
+        let feature = self
+            .frame
             .displayed(key, || match self.drafted_sketch(ctx) {
                 Some(draft) => Some(std::sync::Arc::new(draft)),
                 None => self.frame_sketch(ctx),
-            })
+            });
+        feature.inspect(snap::share)
     }
 
     /// [`relations::Relations::of`] `feature`'s sketch, worked out once

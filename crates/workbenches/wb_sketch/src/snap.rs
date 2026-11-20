@@ -733,16 +733,69 @@ struct Scene {
     centres: HashSet<Uuid, BuildHasherDefault<IdHasher>>,
 }
 
+/// A sketch shared through an `Arc` ([`share`]) and the scenes built from
+/// it, without and with the text outlines. Kept with a clone of its
+/// `Arc`, the sketch can neither change nor give its place to another
+/// while it is here, so a sketch found at its address is this one as it
+/// was: its scenes hold.
+struct Shared {
+    feature: std::sync::Arc<crate::SketchFeature>,
+    scenes: [std::cell::OnceCell<std::rc::Rc<Scene>>; 2],
+}
+
+/// How many shared sketches are kept: the stored one and the one shown.
+const SHARED_KEPT: usize = 2;
+
+thread_local! {
+    static SHARED: std::cell::RefCell<Vec<Shared>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Keeps the scenes of `feature`'s sketch for every pointer query on it
+/// while it stays one of the last sketches shared: each query on a
+/// sketch otherwise looks the whole sketch up again.
+pub(crate) fn share(feature: &std::sync::Arc<crate::SketchFeature>) {
+    SHARED.with_borrow_mut(|shared| {
+        if let Some(at) = shared
+            .iter()
+            .position(|s| std::sync::Arc::ptr_eq(&s.feature, feature))
+        {
+            let kept = shared.remove(at);
+            shared.push(kept);
+            return;
+        }
+        if shared.len() >= SHARED_KEPT {
+            shared.remove(0);
+        }
+        shared.push(Shared {
+            feature: std::sync::Arc::clone(feature),
+            scenes: Default::default(),
+        });
+    });
+}
+
 impl Scene {
     /// The sketch's elements a tool snaps to and constrains: everything
     /// but the outlines made from text, which are the text's alone.
-    fn of(sketch: &Sketch) -> Self {
+    fn of(sketch: &Sketch) -> std::rc::Rc<Self> {
         Self::with(sketch, false)
     }
 
     /// [`Self::of`], with the text outlines' curves too (a click on one
-    /// takes its text), `text` given.
-    fn with(sketch: &Sketch, text: bool) -> Self {
+    /// takes its text), `text` given; the one kept for a shared sketch.
+    fn with(sketch: &Sketch, text: bool) -> std::rc::Rc<Self> {
+        let kept = SHARED.with_borrow(|shared| {
+            let found = shared
+                .iter()
+                .find(|s| std::ptr::eq(&s.feature.sketch, sketch))?;
+            Some(std::rc::Rc::clone(
+                found.scenes[usize::from(text)]
+                    .get_or_init(|| std::rc::Rc::new(Self::build(sketch, text))),
+            ))
+        });
+        kept.unwrap_or_else(|| std::rc::Rc::new(Self::build(sketch, text)))
+    }
+
+    fn build(sketch: &Sketch, text: bool) -> Self {
         let mut points: IdMap<Vec2D> =
             HashMap::with_capacity_and_hasher(sketch.geometry.len(), Default::default());
         for geom in &sketch.geometry {
@@ -1137,7 +1190,7 @@ pub fn snap_to_point(sketch: &Sketch, cursor: Vec2D, tol: f64, exclude: &[Uuid])
 /// snaps of one click or one preview: [`snap_to_point`] and
 /// [`snap_to_curve`] each read the whole sketch again. Valid until the
 /// sketch changes.
-pub struct Lookup(Scene);
+pub struct Lookup(std::rc::Rc<Scene>);
 
 impl Lookup {
     pub fn of(sketch: &Sketch) -> Self {
@@ -1506,6 +1559,34 @@ mod tests {
         let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
         let l = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
         (sketch, a, b, l)
+    }
+
+    /// A shared sketch's scene serves every query on it; the next shared
+    /// sketch, edited, answers from what it holds, and a copy of a shared
+    /// sketch is looked up afresh.
+    #[test]
+    fn a_shared_sketch_keeps_its_scene_and_an_edited_one_gets_its_own() {
+        let (sketch, _, b, _) = sketch_with_line();
+        let shared = std::sync::Arc::new(crate::SketchFeature::new(sketch, Default::default()));
+        share(&shared);
+        let first = Scene::of(&shared.sketch);
+        assert!(std::rc::Rc::ptr_eq(&first, &Scene::of(&shared.sketch)));
+        let copy = shared.sketch.clone();
+        assert!(!std::rc::Rc::ptr_eq(&first, &Scene::of(&copy)));
+
+        let mut edited = (*shared).clone();
+        edited.sketch.geometry.retain(|g| g.id() != b);
+        let edited = std::sync::Arc::new(edited);
+        share(&edited);
+        let near_b = Vec2D::new(10.0, 0.1);
+        assert_eq!(
+            snap_to_point(&edited.sketch, near_b, 0.5, &[]),
+            SnapTarget::New(near_b)
+        );
+        assert_eq!(
+            snap_to_point(&shared.sketch, near_b, 0.5, &[]),
+            SnapTarget::Existing(b)
+        );
     }
 
     #[test]
