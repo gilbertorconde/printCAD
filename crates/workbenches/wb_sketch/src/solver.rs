@@ -65,7 +65,7 @@ fn solve_soft(sketch: &mut Sketch) -> (SolveOutcome, Option<i32>) {
     let soft: Vec<sketch_solver::soft::SoftPoint> = sketch
         .soft
         .iter()
-        .filter(|s| sketch.geometry.iter().any(|g| g.id() == s.element))
+        .filter(|s| sketch.get_geometry(s.element).is_some())
         .flat_map(|s| {
             s.points.iter().map(|p| sketch_solver::soft::SoftPoint {
                 curve: adapter::curve(s.element),
