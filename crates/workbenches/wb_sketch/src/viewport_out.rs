@@ -103,7 +103,7 @@ impl SketchWorkbench {
         } else if !resting {
             key("Esc", "cancel");
         }
-        let verdict = self.solver_verdict(&feature.sketch);
+        let verdict = self.solver_verdict(&feature);
         let zoom = 1.0 / proj.units_per_px().max(1e-6);
         let card = self.tab.cursor.and_then(|cursor| {
             // The card reads where the click lands, snapped, and stands
@@ -217,7 +217,7 @@ impl SketchWorkbench {
     pub(crate) fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
         let feature = self.frame_displayed(ctx)?;
         let pal = ctx.sketch_palette;
-        let verdict = self.solver_verdict(&feature.sketch);
+        let verdict = self.solver_verdict(&feature);
         // Elements are named by their ordinals, worked out only when one
         // is selected.
         let mut names: Vec<String> = if self.tab.selected.is_empty() {
@@ -875,7 +875,7 @@ impl SketchWorkbench {
                 &feature.sketch,
                 &key.selected,
                 &referenced,
-                &self.locked_elements(&feature.sketch),
+                &self.locked_elements(feature),
                 key.hovered,
                 key.idle,
                 key.drawing,

@@ -223,8 +223,7 @@ impl SketchWorkbench {
             return true;
         };
         if nodes::set_kind(&mut feature.sketch, &node, kind) {
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
             ctx.request(HostRequest::JournalLabel(format!("{} node", kind.label())));
         }
         true

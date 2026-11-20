@@ -155,8 +155,7 @@ impl SketchWorkbench {
         if !done.is_empty() {
             self.tab.selected.clear();
             self.tab.selected_constraints.clear();
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
             ctx.record(
                 "sketch.repair",
                 commands::object(serde_json::json!({
@@ -333,8 +332,7 @@ impl SketchWorkbench {
                     commands::made_since(&feature.sketch, &before),
                 );
             }
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
         } else {
             ctx.log_warn("Select geometry and give the array at least two rows or columns");
         }
@@ -388,8 +386,7 @@ impl SketchWorkbench {
             .map(GeometryElement::id)
             .collect();
         self.tab.selected.retain(|id| alive.contains(id));
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         InputResult::consumed()
     }
 
@@ -456,8 +453,7 @@ impl SketchWorkbench {
             .map(GeometryElement::id)
             .collect();
         self.tab.selected.retain(|id| alive.contains(id));
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         InputResult::consumed()
     }
 
@@ -493,8 +489,7 @@ impl SketchWorkbench {
                 );
             }
             self.tab.selected.clear();
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+            self.solve_and_store(ctx, feature);
             ctx.log_info(format!("Cut {count} element(s)"));
         } else {
             ctx.log_info(format!("Copied {count} element(s)"));
@@ -565,8 +560,7 @@ impl SketchWorkbench {
             .map(GeometryElement::id)
             .filter(|id| !before.contains(id) && !feature.sketch.derived.contains(id))
             .collect();
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         ctx.log_info(format!("Pasted {count} element(s)"));
         true
     }
@@ -578,13 +572,13 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         conflicting: bool,
     ) -> InputResult {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.frame_sketch(ctx) else {
             return InputResult::ignored();
         };
         let diag = match &self.tab.last_diagnosis {
             Some(d) => d.clone(),
             None => {
-                let d = self.diagnose(&feature.sketch);
+                let d = self.diagnose(&feature);
                 self.tab.last_diagnosis = Some(d.clone());
                 d
             }
@@ -654,8 +648,7 @@ impl SketchWorkbench {
         self.tab.selected_constraints.clear();
         self.tab.hovered = None;
         self.tab.tool_state = ToolState::Idle;
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.solve_and_store(ctx, feature);
         InputResult::consumed()
     }
 }
