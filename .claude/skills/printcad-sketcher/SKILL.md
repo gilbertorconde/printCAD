@@ -51,7 +51,9 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   `operations.rs`, `style.rs` (icons and names per element/constraint
   kind).
 - `workbenches/wb_sketch`: the sketcher bench over `sketch_model`:
-  `tools.rs` + `tools/{draw,modify,transform}.rs` (state machine), `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
+  `lib.rs` (its state and own methods; the `Workbench` impls are in
+  `bench.rs`), `tools.rs` + `tools/{draw,transform}.rs` and
+  `tools/modify/{corner,trim,general,offset}.rs` (state machine), `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
   looked up into a `Scene`, kept for the sketches the frame shares
   through `snap::share` and built per query for any other, the kinds in a fixed order,
   ties settled by `Rank` from what the candidates are, never by ids,
