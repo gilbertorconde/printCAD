@@ -339,6 +339,8 @@ impl DesignWorkbench {
                         point_in_depth: false,
                         taper_deg: 0.0,
                         nut_trap: None,
+                        shape: Default::default(),
+                        bridge: None,
                         reversed: false,
                     },
                     "Hole",

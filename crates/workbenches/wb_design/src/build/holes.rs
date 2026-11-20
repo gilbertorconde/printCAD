@@ -4,7 +4,7 @@ use super::{
     Mat4, compose_steps, design_features_of_body, distance_to_plane, face_pick_plane, load_sketch,
     normalize, occurrence_steps, start_plane, transform_point,
 };
-use crate::feature::{DesignFeature, DrillPoint, HoleCut, NutSide, NutTrap, ThreadSpec};
+use crate::feature::{DesignFeature, DrillPoint, HoleCut, HoleShape, NutSide, NutTrap, ThreadSpec};
 use core_document::{BodyId, Document, FeatureId};
 use kernel_api::{
     BooleanOp, ExtrudeTermination, Profile, ProfileSegment, ProfileWire, SolidOp, SweepKind,
@@ -461,6 +461,8 @@ pub(super) fn hole_ops(
         drill_point,
         point_in_depth,
         nut_trap,
+        shape,
+        bridge,
         ..
     } = feature
     else {
@@ -486,22 +488,31 @@ pub(super) fn hole_ops(
     // The drill's radius `down` into the material.
     let radius_at = |down: f64| radius - down * tan_taper;
 
-    let circles_profile = |radius: f64| Profile {
-        plane,
-        wires: centers
-            .iter()
-            .map(|center| ProfileWire {
-                names: Vec::new(),
-                segments: vec![ProfileSegment::Circle {
-                    center: *center,
-                    radius,
-                }],
-            })
-            .collect(),
+    let outline = Outline::of(shape, &plane)?;
+    // The bores' outlines `down` into the material, `radius` across.
+    let bores_profile = |down: f64, radius: f64, outline: Outline| {
+        let mut at = plane;
+        for (origin, into) in at.origin.iter_mut().zip(into) {
+            *origin += into * down;
+        }
+        Profile {
+            plane: at,
+            wires: centers
+                .iter()
+                .map(|center| ProfileWire {
+                    names: Vec::new(),
+                    segments: outline.segments(*center, radius),
+                })
+                .collect(),
+        }
     };
-    let cut_extrude = |termination: ExtrudeTermination, taper_deg: f64, radius: f64| {
+    let bore_extrude = |down: f64,
+                        termination: ExtrudeTermination,
+                        taper_deg: f64,
+                        radius: f64,
+                        outline: Outline| {
         SolidOp::Sweep {
-            profile: circles_profile(radius),
+            profile: bores_profile(down, radius, outline),
             kind: SweepKind::Extrude {
                 termination,
                 second_side: None,
@@ -515,6 +526,9 @@ pub(super) fn hole_ops(
             op: BooleanOp::Cut,
         }
     };
+    let cut_extrude = |termination: ExtrudeTermination, taper_deg: f64, radius: f64| {
+        bore_extrude(0.0, termination, taper_deg, radius, outline)
+    };
     // A cone at every center, `down` into the material, from `wide` there
     // to `narrow` `height` further in.
     let cones = |down: f64, wide: f64, narrow: f64, height: f64| {
@@ -524,9 +538,40 @@ pub(super) fn hole_ops(
             .collect::<Vec<_>>()
     };
 
+    let cut = match cut {
+        HoleCut::Seat { seat } => {
+            let (spec, size) = thread
+                .as_ref()
+                .zip(size.as_ref())
+                .filter(|(spec, _)| spec.standard.is_metric())
+                .ok_or("a screw seat needs the hole sized from an ISO metric thread")?;
+            seat.cut(size.major)
+                .ok_or_else(|| format!("there is no {} for {}", seat.label(), spec.size))?
+        }
+        other => *other,
+    };
+    // How far down the drill starts: below the cut's floor and the bridge
+    // layer left across the hole there, when it has one.
+    let skip = match bridge {
+        None => 0.0,
+        Some(layer) if *layer <= 0.0 => {
+            return Err("the bridge layer must be thicker than zero".into());
+        }
+        Some(layer) => {
+            let floor = cut_floor(&cut, radius, &radius_at).ok_or(
+                "a bridge layer sits at the floor of a counterbore, spotface, countersink or \
+                 counterdrill; give the hole one of them",
+            )?;
+            floor + f64::from(*layer)
+        }
+    };
+    let drill = |termination: ExtrudeTermination| {
+        bore_extrude(skip, termination, -taper, radius_at(skip), outline)
+    };
+
     let mut ops = Vec::new();
     if *through_all {
-        ops.push(cut_extrude(ExtrudeTermination::ThroughAll, -taper, radius));
+        ops.push(drill(ExtrudeTermination::ThroughAll));
     } else {
         if *depth <= 0.0 {
             return Err("hole depth must be positive".into());
@@ -537,11 +582,12 @@ pub(super) fn hole_ops(
                 if radius_at(depth) <= 0.0 {
                     return Err("the taper closes the hole before its bottom".into());
                 }
-                ops.push(cut_extrude(
-                    ExtrudeTermination::Blind { distance: depth },
-                    -taper,
-                    radius,
-                ));
+                if depth <= skip {
+                    return Err(bridge_too_deep());
+                }
+                ops.push(drill(ExtrudeTermination::Blind {
+                    distance: depth - skip,
+                }));
             }
             DrillPoint::Angled { angle_deg } => {
                 if *angle_deg <= 0.0 || *angle_deg >= 180.0 {
@@ -566,28 +612,17 @@ pub(super) fn hole_ops(
                 if bottom <= 0.0 {
                     return Err("the taper closes the hole before its bottom".into());
                 }
-                ops.push(cut_extrude(
-                    ExtrudeTermination::Blind { distance: wall },
-                    -taper,
-                    radius,
-                ));
+                if wall <= skip {
+                    return Err(bridge_too_deep());
+                }
+                ops.push(drill(ExtrudeTermination::Blind {
+                    distance: wall - skip,
+                }));
                 ops.extend(cones(wall, bottom, 0.0, bottom / tan_half));
             }
         }
     }
 
-    let cut = match cut {
-        HoleCut::Seat { seat } => {
-            let (spec, size) = thread
-                .as_ref()
-                .zip(size.as_ref())
-                .filter(|(spec, _)| spec.standard.is_metric())
-                .ok_or("a screw seat needs the hole sized from an ISO metric thread")?;
-            seat.cut(size.major)
-                .ok_or_else(|| format!("there is no {} for {}", seat.label(), spec.size))?
-        }
-        other => *other,
-    };
     match cut {
         HoleCut::None | HoleCut::Seat { .. } => {}
         HoleCut::Counterbore {
@@ -632,10 +667,12 @@ pub(super) fn hole_ops(
             let half_angle = f64::from(angle_deg) * 0.5;
             let cs_depth = (f64::from(cs_diameter) - f64::from(diameter)) * 0.5
                 / half_angle.to_radians().tan();
-            ops.push(cut_extrude(
+            ops.push(bore_extrude(
+                0.0,
                 ExtrudeTermination::Blind { distance: cs_depth },
                 -half_angle,
                 f64::from(cs_diameter) * 0.5,
+                Outline::Round,
             ));
         }
         HoleCut::Counterdrill {
@@ -754,6 +791,153 @@ pub(super) fn hole_ops(
         }
     }
     Ok(ops)
+}
+
+fn bridge_too_deep() -> String {
+    "the bridge layer reaches the bottom of the hole; deepen the hole or thin the layer".into()
+}
+
+/// How far down the floor of `cut` lies, where the hole of `radius`
+/// (`radius_at` a depth, as its taper narrows it) narrows from the cut:
+/// a counterbore's or spotface's depth, a countersink's cone run down to
+/// the hole, a counterdrill's bore and cone. `None` for a hole with no
+/// cut.
+fn cut_floor(cut: &HoleCut, radius: f64, radius_at: &dyn Fn(f64) -> f64) -> Option<f64> {
+    match *cut {
+        HoleCut::None | HoleCut::Seat { .. } => None,
+        HoleCut::Counterbore { depth, .. } | HoleCut::Spotface { depth, .. } => {
+            Some(f64::from(depth))
+        }
+        HoleCut::Countersink {
+            diameter,
+            angle_deg,
+        } => {
+            let half = (f64::from(angle_deg) * 0.5).to_radians();
+            Some((f64::from(diameter) * 0.5 - radius) / half.tan())
+        }
+        HoleCut::Counterdrill {
+            diameter,
+            depth,
+            angle_deg,
+        } => {
+            let depth = f64::from(depth);
+            let half = (f64::from(angle_deg) * 0.5).to_radians();
+            Some(depth + (f64::from(diameter) * 0.5 - radius_at(depth)) / half.tan())
+        }
+    }
+}
+
+/// A bore's outline across its axis, in its sketch plane's coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Outline {
+    Round,
+    /// The circle and a point toward `up` (a unit vector in the plane),
+    /// its sides leaning `lean` radians from it, tangent to the circle;
+    /// cut off at the circle's top when `flat`.
+    Point {
+        up: [f64; 2],
+        lean: f64,
+        flat: bool,
+    },
+}
+
+impl Outline {
+    /// The outline `shape` gives a hole drilled on `plane`: its point's up
+    /// direction carried into the plane. An error for a point whose up
+    /// direction runs along the hole, which leaves it no side to face.
+    fn of(shape: &HoleShape, plane: &kernel_api::ProfilePlane) -> Result<Self, String> {
+        let Some((angle_deg, up)) = shape.point() else {
+            return Ok(Outline::Round);
+        };
+        if !(angle_deg > 0.0 && angle_deg < 90.0) {
+            return Err(format!(
+                "the {} angle must lie between 0° and 90°",
+                shape.label().to_lowercase()
+            ));
+        }
+        let up = up.map(f64::from);
+        let dot = |a: [f64; 3]| up[0] * a[0] + up[1] * a[1] + up[2] * a[2];
+        let across = [dot(plane.x_axis), dot(plane.y_axis)];
+        let length = across[0].hypot(across[1]);
+        let whole = dot(up).sqrt();
+        if whole <= 0.0 || !whole.is_finite() {
+            return Err(format!(
+                "the {}'s up direction is none",
+                shape.label().to_lowercase()
+            ));
+        }
+        if length <= 1e-6 * whole {
+            return Err(format!(
+                "the hole runs along its up direction, so a {} has no side to point to: \
+                 drill it across that direction, turn the up direction, or make it round",
+                shape.label().to_lowercase()
+            ));
+        }
+        Ok(Outline::Point {
+            up: across.map(|c| c / length),
+            lean: f64::from(angle_deg).to_radians(),
+            flat: matches!(shape, HoleShape::FlatTop { .. }),
+        })
+    }
+
+    /// The outline about `center`, `radius` across the circle: a circle,
+    /// or an arc round the bottom from tangent to tangent closed by the
+    /// point's sides (and its flat).
+    fn segments(&self, center: [f64; 2], radius: f64) -> Vec<ProfileSegment> {
+        let Outline::Point { up, lean, flat } = *self else {
+            return vec![ProfileSegment::Circle { center, radius }];
+        };
+        let across = [up[1], -up[0]];
+        // `a` along up, `b` across it, from the centre.
+        let at = |a: f64, b: f64| {
+            [
+                center[0] + a * up[0] + b * across[0],
+                center[1] + a * up[1] + b * across[1],
+            ]
+        };
+        let (sin, cos) = lean.sin_cos();
+        let (left, right) = (
+            at(radius * sin, radius * cos),
+            at(radius * sin, -radius * cos),
+        );
+        let mut segments = vec![ProfileSegment::Arc {
+            start: left,
+            mid: at(-radius, 0.0),
+            end: right,
+        }];
+        let tip = radius / sin;
+        if flat {
+            let half = (tip - radius) * lean.tan();
+            let (flat_right, flat_left) = (at(radius, -half), at(radius, half));
+            segments.extend([
+                ProfileSegment::Line {
+                    start: right,
+                    end: flat_right,
+                },
+                ProfileSegment::Line {
+                    start: flat_right,
+                    end: flat_left,
+                },
+                ProfileSegment::Line {
+                    start: flat_left,
+                    end: left,
+                },
+            ]);
+        } else {
+            let apex = at(tip, 0.0);
+            segments.extend([
+                ProfileSegment::Line {
+                    start: right,
+                    end: apex,
+                },
+                ProfileSegment::Line {
+                    start: apex,
+                    end: left,
+                },
+            ]);
+        }
+        segments
+    }
 }
 
 /// The plane a hole starts drilling on, in its body's frame, and the way

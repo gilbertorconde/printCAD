@@ -120,6 +120,42 @@ ISO metric thread; [PRINTING.md](PRINTING.md#nut-traps) has the sizes,
 the clearance, the depth and the side it sits on. A hole sized otherwise
 takes a nut trap of its own size.
 
+## For printing
+
+The **Printing** section shapes a hole for the printer.
+
+**Shape** is the bore's outline across its axis:
+
+- **Round:** a plain circle.
+- **Teardrop:** the circle with a point on its upper side, for a hole
+  that prints lying down. The point's sides are tangent to the circle and
+  lean the **Point angle** (45° by default) from the way it **Points
+  to**, so its roof prints as two slopes rather than an overhang.
+- **Flat top:** the teardrop cut off flat at the circle's top: a short
+  bridge between the slopes, with the bore no taller than round.
+
+The point faces the body's +Z, the build direction, unless you choose
+another axis. The shape is the drill's, and a counterbore's, spotface's or
+counterdrill's bore takes it too; a countersink and a drill point stay
+round. A hole drilled along its up direction has no side for a point, and
+says so. A mirror or a pattern turns the point with the copy.
+
+**Bridge layer** leaves a thin layer (0.2 mm by default, a layer or two)
+across the hole at the floor of its counterbore, spotface, countersink or
+counterdrill. Printed with the cut facing down, the cut's floor is then
+one bridge across its whole width rather than a ring hanging round the
+hole. Drill the layer out after printing. A hole with no cut has no floor
+to bridge, and says so.
+
+```lua
+pc.design.hole{sketch = s, diameter = 5, through_all = true, shape = "Teardrop"}
+pc.design.hole{sketch = s, diameter = 3.4, through_all = true, bridge = 0.2,
+  cut = {Counterbore = {diameter = 6.5, depth = 3.4}}}
+```
+
+`shape` is `"Round"`, `"Teardrop"` or `"FlatTop"`, or a table for more:
+`shape = {FlatTop = {angle_deg = 40, up = {0, 1, 0}}}`.
+
 ## Your own cuts
 
 Cuts you use often go in `hole_cuts.json` in the application's

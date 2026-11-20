@@ -4251,6 +4251,7 @@ Notes:
 - It drills against the sketch's normal, `depth` deep (10 mm) or `through_all = true`. A sketch on the bottom of a pad drills away from the material and removes nothing, without an error; `reversed = true` turns it.
 - Counterbores, countersinks and threads are fields too (`cut`, `threaded`, `thread`): `describe` and `help("design.hole")` list every field with its forms, docs/HOLES.md describes them, and `pc.doc.feature{id = ...}` shows a hole's fields.
 - `nut_trap = true` cuts a hexagonal pocket for a captive nut at the hole's mouth, sized from the ISO 4032 nut of its metric `thread` with 0.3 mm clearance; give a table for more: `{side = "Bottom", clearance, depth, across_flats, turn_deg, standard = "Din934"}`. At the bottom it ends where a hole with a `depth` ends; through all, it is refused.
+- For printing, `shape = "Teardrop"` or `"FlatTop"` gives a hole lying across the build direction a point toward the body's +Z (`{Teardrop = {angle_deg, up}}` for another angle or way), and `bridge = 0.2` leaves a layer that thick across the hole at the floor of its counterbore or countersink, to drill out after printing.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.circle`, `pc.design.pocket`.
 

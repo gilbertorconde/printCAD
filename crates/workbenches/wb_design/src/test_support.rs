@@ -72,6 +72,8 @@ pub(crate) fn hole(sketch: FeatureId, edit: impl FnOnce(&mut HoleFields)) -> Des
         point_in_depth: false,
         taper_deg: 0.0,
         nut_trap: None,
+        shape: Default::default(),
+        bridge: None,
         reversed: false,
     };
     set_hole(&mut hole, edit);
@@ -94,6 +96,8 @@ pub(crate) struct HoleFields<'a> {
     pub drill_point: &'a mut DrillPoint,
     pub point_in_depth: &'a mut bool,
     pub taper_deg: &'a mut f32,
+    pub shape: &'a mut crate::feature::HoleShape,
+    pub bridge: &'a mut Option<f32>,
 }
 
 /// Change a hole's fields through `edit`.
@@ -113,6 +117,8 @@ pub(crate) fn set_hole(feature: &mut DesignFeature, edit: impl FnOnce(&mut HoleF
         drill_point,
         point_in_depth,
         taper_deg,
+        shape,
+        bridge,
         ..
     } = feature
     else {
@@ -133,6 +139,8 @@ pub(crate) fn set_hole(feature: &mut DesignFeature, edit: impl FnOnce(&mut HoleF
         drill_point,
         point_in_depth,
         taper_deg,
+        shape,
+        bridge,
     });
 }
 

@@ -413,6 +413,12 @@ clearance; give a table for more: `{side = "Bottom", clearance, depth,
 across_flats, turn_deg, standard = "Din934"}`. At the bottom it ends where a
 hole with a `depth` ends; through all, it is refused.
 
+For printing, `shape = "Teardrop"` or `"FlatTop"` gives a hole lying across
+the build direction a point toward the body's +Z (`{Teardrop = {angle_deg,
+up}}` for another angle or way), and `bridge = 0.2` leaves a layer that thick
+across the hole at the floor of its counterbore or countersink, to drill out
+after printing.
+
 See also: `sketch.circle`, `design.pocket`
 
 ### An M3 clearance hole with a nut trap at its mouth
@@ -474,6 +480,24 @@ end
 assert(bores == 2)
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (40 * 20 - 2 * math.pi * 9) * 4) < 1e-3, volume)
+```
+
+### A teardrop hole through a block, lying across the build direction
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local pad = pc.design.pad{sketch = s, length = 10}
+local body = pc.doc.feature{id = pad}.body
+local at = pc.sketch.new{body = body, plane = "XZ"}
+pc.sketch.point{sketch = at, x = 5, y = 5}
+pc.design.hole{sketch = at, diameter = 4, through_all = true, shape = "Teardrop"}
+assert(#pc.doc.rebuild() == 0, "the teardrop builds")
+-- The circle, and the 45° point's kite less the sector it covers.
+local r = 2
+local section = math.pi * r * r + r * r - r * r * math.pi / 4
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1000 - section * 10)) < 1e-3, volume)
 ```
 
 ## design.fillet, design.chamfer
