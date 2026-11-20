@@ -221,7 +221,10 @@ yet. The log starts a new part every 64 MB and keeps every part back to
 the last save that left nothing unsaved (at most 16), so even a long run
 of unsaved edits can come back whole. When every copy has closed the
 document, saved or letting its edits go, the unsaved edits are gone with
-them, and the next server starts from the file.
+them, and the next server starts from the file. An imported file's bytes
+are kept once, beside the log, for as long as a part of the log still
+names them. A document that never had a file keeps its log in the runtime
+folder until its last copy closes it or saves it under a name.
 
 When the application crashed, or its server stopped without warning,
 the unsaved edits stay in the log. The start page lists such documents

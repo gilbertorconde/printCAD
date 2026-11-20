@@ -480,6 +480,13 @@ impl Document {
         }
     }
 
+    /// Name the document after the file it is read from or written to.
+    /// The name is derived from the file's, not an edit: every copy that
+    /// opens the file derives the same, so it records no op.
+    pub fn name_after_file(&mut self, name: impl Into<String>) {
+        self.metadata.name = name.into();
+    }
+
     pub fn metadata(&self) -> &DocumentMetadata {
         &self.metadata
     }
