@@ -131,28 +131,42 @@ pub struct ElementNames<'a> {
 
 impl<'a> ElementNames<'a> {
     pub fn new(sketch: &'a Sketch) -> Self {
-        let mut counts: Vec<(std::mem::Discriminant<GeometryElement>, usize)> = Vec::new();
-        let mut ordinals = std::collections::HashMap::with_capacity(sketch.geometry.len());
-        for g in drawn(sketch) {
-            let kind = std::mem::discriminant(g);
-            let ordinal = match counts.iter_mut().find(|(k, _)| *k == kind) {
-                Some((_, n)) => {
-                    *n += 1;
-                    *n
-                }
-                None => {
-                    counts.push((kind, 1));
-                    1
-                }
-            };
-            ordinals.insert(g.id(), ordinal);
+        Self {
+            sketch,
+            ordinals: ordinals(sketch),
         }
-        Self { sketch, ordinals }
     }
 
     pub fn name(&self, id: Uuid) -> String {
         named(self.sketch, id, |_| self.ordinals.get(&id).copied())
     }
+}
+
+/// Each named element's place among the elements of its kind, from 1:
+/// the number its name carries.
+pub fn ordinals(sketch: &Sketch) -> std::collections::HashMap<Uuid, usize> {
+    let mut counts: Vec<(std::mem::Discriminant<GeometryElement>, usize)> = Vec::new();
+    let mut ordinals = std::collections::HashMap::with_capacity(sketch.geometry.len());
+    for g in drawn(sketch) {
+        let kind = std::mem::discriminant(g);
+        let ordinal = match counts.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, n)) => {
+                *n += 1;
+                *n
+            }
+            None => {
+                counts.push((kind, 1));
+                1
+            }
+        };
+        ordinals.insert(g.id(), ordinal);
+    }
+    ordinals
+}
+
+/// The name of `id` given its [`ordinals`] entry.
+pub fn name_with(sketch: &Sketch, id: Uuid, ordinal: Option<usize>) -> String {
+    named(sketch, id, |_| ordinal)
 }
 
 /// The elements that take a name of their own: all but a text's letters.

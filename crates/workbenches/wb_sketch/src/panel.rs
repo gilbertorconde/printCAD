@@ -22,7 +22,7 @@ use ui_kit::tokens::*;
 use crate::boundary::widen3;
 use crate::relations::{Related, Relations};
 use crate::sketch::{self, Constraint, Sketch, SketchPlane};
-use crate::style::{ElementNames, constraint_icon, element_kind, element_row_icon};
+use crate::style::{constraint_icon, element_kind, element_row_icon};
 use crate::{ConstraintFilter, ElementFilter, SketchWorkbench, overlay};
 
 /// The panel's id among the app's declared panels.
@@ -56,6 +56,10 @@ pub(crate) struct PanelState {
     /// only when the key changes. Their rows stay in `elements` and
     /// `constraints` meanwhile.
     lists: Option<(ListKey, Option<Vec<Widget>>)>,
+    /// What each element row of the lists' widgets was declared from, in
+    /// their order (none for the reference rows): a row whose key holds
+    /// is taken over when the lists are declared again.
+    element_keys: Vec<Option<ElementRowKey>>,
     /// Where the lists stand among the widgets of the panel being drawn.
     list_range: std::ops::Range<usize>,
     /// The font choice of the text tool and of the selected text, while
@@ -96,6 +100,66 @@ struct ListKey {
 struct ElementRow {
     id: Uuid,
     badges: Vec<Uuid>,
+}
+
+/// Everything an element's row is declared from: the element, a line's
+/// ends (its length), its number among its kind, how it is drawn
+/// (projected, itself or as a projected curve's point, and whether as
+/// defining, construction, locked, the palette's colours and whether
+/// the sketch is fully constrained) and lit (selected, related, hovered),
+/// whether it is lost, and each constraint badge's kind, name, light
+/// and tint.
+#[derive(PartialEq)]
+struct ElementRowKey {
+    geom: sketch::GeometryElement,
+    ends: Option<[sketch::Vec2D; 2]>,
+    ordinal: Option<usize>,
+    style: (
+        bool,
+        Option<bool>,
+        bool,
+        bool,
+        bool,
+        core_document::SketchPalette,
+    ),
+    lit: (bool, bool, bool, bool),
+    badges: Vec<BadgeKey>,
+}
+
+/// The element rows last declared with their keys, in their order, each
+/// taken once: the next in order is looked at first, as rows mostly
+/// stand where they stood, and the rest by element.
+struct KeptRows {
+    rows: Vec<Option<(ElementRowKey, Item)>>,
+    next: usize,
+    index: Option<std::collections::HashMap<Uuid, usize>>,
+}
+
+impl KeptRows {
+    fn take(&mut self, id: Uuid) -> Option<(ElementRowKey, Item)> {
+        let at = match self.rows.get(self.next) {
+            Some(Some((key, _))) if key.geom.id() == id => self.next,
+            _ => {
+                let rows = &self.rows;
+                let index = self.index.get_or_insert_with(|| {
+                    (rows.iter().enumerate())
+                        .filter_map(|(i, row)| row.as_ref().map(|(key, _)| (key.geom.id(), i)))
+                        .collect()
+                });
+                *index.get(&id)?
+            }
+        };
+        self.next = at + 1;
+        self.rows[at].take()
+    }
+}
+
+#[derive(PartialEq)]
+struct BadgeKey {
+    kind: sketch::ConstraintKind,
+    name: Option<String>,
+    lit: bool,
+    tint: (Tone, Option<[u8; 3]>),
 }
 
 /// A constraint's row: the constraint, and the element behind each tag.
@@ -1031,7 +1095,10 @@ impl SketchWorkbench {
         {
             return widgets;
         }
-        let widgets = self.build_list_widgets(ctx, feature);
+        let kept = tab.panel.lists.take().and_then(|(_, widgets)| widgets);
+        let kept_rows =
+            kept.map_or_else(Vec::new, |mut widgets| take_items(&mut widgets, "elements"));
+        let widgets = self.build_list_widgets(ctx, feature, kept_rows);
         self.tab.panel.lists = Some((key, None));
         widgets
     }
@@ -1054,6 +1121,7 @@ impl SketchWorkbench {
         &mut self,
         ctx: &WorkbenchRuntimeContext,
         feature: &std::sync::Arc<crate::SketchFeature>,
+        kept_rows: Vec<Item>,
     ) -> Vec<Widget> {
         let sketch = &feature.sketch;
         let choice = if self.tab.element_filter != ElementFilter::All {
@@ -1078,7 +1146,7 @@ impl SketchWorkbench {
             element: self.tab.hovered,
             constraint: self.tab.hovered_constraint,
         };
-        let elements = self.element_items(ctx, sketch, &hand);
+        let elements = self.element_items(ctx, sketch, &hand, kept_rows);
         let mut constraint_children = Vec::new();
         let shown = self.listed_constraints(sketch);
         // While a filter narrows the list, what it shows can go at once.
@@ -1153,13 +1221,23 @@ impl SketchWorkbench {
 
     /// The element rows: the sketch's reference geometry, then its
     /// elements as the filter passes them, each with its size and a badge
-    /// per constraint on it.
+    /// per constraint on it. A row whose [`ElementRowKey`] is the one
+    /// `kept` was declared from is taken over as it stands.
     fn element_items(
         &mut self,
         ctx: &WorkbenchRuntimeContext,
         sketch: &Sketch,
         hand: &InHand,
+        kept: Vec<Item>,
     ) -> Vec<Item> {
+        let mut kept = KeptRows {
+            rows: (std::mem::take(&mut self.tab.panel.element_keys).into_iter())
+                .zip(kept)
+                .map(|(key, item)| key.map(|key| (key, item)))
+                .collect(),
+            next: 0,
+            index: None,
+        };
         self.tab.panel.elements.clear();
         let mut items = Vec::new();
         if sketch.geometry.is_empty() {
@@ -1182,6 +1260,7 @@ impl SketchWorkbench {
                     id,
                     badges: Vec::new(),
                 });
+                self.tab.panel.element_keys.push(None);
                 items.push(Item {
                     icon: Some(
                         if reference.is_point() {
@@ -1204,10 +1283,7 @@ impl SketchWorkbench {
         }
         let pal = ctx.sketch_palette;
         let diagnosis = self.tab.last_diagnosis.clone().unwrap_or_default();
-        let formulas = Formulas {
-            document: ctx.document,
-            sketch_id: self.tab.active_sketch_id,
-        };
+        let formulas = Formulas::of(ctx.document, self.tab.active_sketch_id);
         // Projected elements whose edge, face, element or datum is gone.
         let lost: std::collections::HashSet<Uuid> = self
             .tab
@@ -1218,18 +1294,77 @@ impl SketchWorkbench {
             .collect();
         let external = sketch.external_ids();
         let locked = self.locked_elements(sketch);
-        let text = self
+        let rows = self
             .frame
             .row_text(self.active_key(ctx).without_label(), || RowText::of(sketch));
         let by_id: std::collections::HashMap<Uuid, &Constraint> =
             sketch.constraints.iter().map(|c| (c.id, c)).collect();
+        let anchors: std::collections::HashSet<Uuid> =
+            sketch.texts.iter().map(|b| b.anchor).collect();
         for geom in &sketch.geometry {
             let id = geom.id();
             if sketch.derived.contains(&id) || !self.tab.element_filter.accepts(sketch, id) {
                 continue;
             }
-            let name = text.name(sketch, id);
-            if !named(&name) {
+            if !text.is_empty() && !named(&rows.name(sketch, id)) {
+                continue;
+            }
+            // A badge for each constraint on the element or its points.
+            let on: Vec<&Constraint> = hand
+                .relations
+                .constraints_on(id)
+                .iter()
+                .filter_map(|c| by_id.get(c).copied())
+                .collect();
+            let selected = self.tab.selected.contains(&id);
+            let key = ElementRowKey {
+                geom: geom.clone(),
+                ends: match geom {
+                    sketch::GeometryElement::Line(l) => sketch
+                        .point_position(l.start)
+                        .zip(sketch.point_position(l.end))
+                        .map(|(a, b)| [a, b]),
+                    _ => None,
+                },
+                ordinal: rows.ordinal(id),
+                style: (
+                    external.contains(&id),
+                    sketch.external.get(&id).map(|source| source.defining),
+                    sketch.is_construction(id),
+                    sketch.is_fully_constrained,
+                    locked.contains(&id),
+                    pal,
+                ),
+                lit: (
+                    selected,
+                    hand.related.elements.contains(&id),
+                    hand.element == Some(id),
+                    lost.contains(&id),
+                ),
+                badges: on
+                    .iter()
+                    .map(|c| BadgeKey {
+                        kind: c.kind.clone(),
+                        name: c.name.clone(),
+                        lit: hand.constraint == Some(c.id)
+                            || self.tab.selected_constraints.contains(&c.id),
+                        tint: constraint_tint(c, &diagnosis, &formulas),
+                    })
+                    .collect(),
+            };
+            self.tab.panel.elements.push(ElementRow {
+                id,
+                badges: on.iter().map(|c| c.id).collect(),
+            });
+            // A text's point is named after its text, which the key leaves
+            // out; a row to be brought into view is declared anew, and kept
+            // by no key, as it is brought into view once.
+            let reveal = self.reveal(id);
+            let reused =
+                (kept.take(id)).filter(|(was, _)| *was == key && !anchors.contains(&id) && !reveal);
+            if let Some((_, item)) = reused {
+                self.tab.panel.element_keys.push(Some(key));
+                items.push(item);
                 continue;
             }
             let style = overlay::element_style(sketch, id, &self.tab.selected, None, &locked, &pal);
@@ -1241,25 +1376,15 @@ impl SketchWorkbench {
             } else {
                 None
             };
-            // A badge for each constraint on the element or its points.
-            let on: Vec<&Constraint> = hand
-                .relations
-                .constraints_on(id)
-                .iter()
-                .filter_map(|c| by_id.get(c).copied())
-                .collect();
             let badges = on
                 .iter()
-                .map(|c| {
-                    let (tone, color) = constraint_tint(c, &diagnosis, &formulas);
-                    Badge {
-                        icon: constraint_icon(&c.kind).into(),
-                        hint: crate::constraint_row_label(c),
-                        lit: hand.constraint == Some(c.id)
-                            || self.tab.selected_constraints.contains(&c.id),
-                        tone,
-                        color,
-                    }
+                .zip(&key.badges)
+                .map(|(c, badge)| Badge {
+                    icon: constraint_icon(&c.kind).into(),
+                    hint: crate::constraint_row_label(c),
+                    lit: badge.lit,
+                    tone: badge.tint.0,
+                    color: badge.tint.1,
                 })
                 .collect();
             let construction = if sketch.is_construction(id) {
@@ -1267,36 +1392,32 @@ impl SketchWorkbench {
             } else {
                 "Make construction"
             };
-            self.tab.panel.elements.push(ElementRow {
-                id,
-                badges: on.iter().map(|c| c.id).collect(),
-            });
             items.push(Item {
                 icon: Some(element_row_icon(geom, external.contains(&id)).into()),
                 color: Some([color[0], color[1], color[2]]),
-                label: name,
+                label: rows.name(sketch, id),
                 secondary: detail.map(String::from),
-                value: Some(text.value(sketch, geom)),
+                value: Some(element_value(sketch, geom)),
                 flag: lost.contains(&id).then(|| StatusLine {
                     text: "lost".into(),
                     tone: Tone::Warning,
                     detail: "What it was projected from is gone: it stays where it was".into(),
                 }),
                 badges,
-                selected: self.tab.selected.contains(&id),
-                related: hand.related.elements.contains(&id),
-                lit: hand.element == Some(id),
-                reveal: self.reveal(id),
+                selected,
+                related: key.lit.1,
+                lit: key.lit.2,
+                reveal,
                 menu: vec![
                     action("construction", construction, "", false),
                     action("delete", "Delete", "", true),
                 ],
                 ..Default::default()
             });
+            self.tab.panel.element_keys.push((!reveal).then_some(key));
         }
         items
     }
-
     /// The constraint rows the filter shows: each names the elements it
     /// ties, and a dimension's value is a field while the row is in hand.
     fn constraint_items(
@@ -1308,10 +1429,7 @@ impl SketchWorkbench {
     ) -> Vec<Item> {
         self.tab.panel.constraints.clear();
         let diagnosis = self.tab.last_diagnosis.clone().unwrap_or_default();
-        let formulas = Formulas {
-            document: ctx.document,
-            sketch_id: self.tab.active_sketch_id,
-        };
+        let formulas = Formulas::of(ctx.document, self.tab.active_sketch_id);
         let listed: std::collections::HashSet<&Uuid> = shown.iter().collect();
         let text = self
             .frame
@@ -2559,49 +2677,34 @@ fn image_field(id: &str) -> Option<(usize, &str)> {
     Some((n.parse().ok()?, key))
 }
 
-/// An element's size as its row shows it: a line's length, a round's
-/// radius, a point's place; else its kind.
-/// The element list's text for each element of a sketch: its name and
-/// its value, worked out once per read of the sketch.
+/// What the lists name each element of a sketch by: its place among the
+/// elements of its kind, worked out once per read of the sketch.
 pub(crate) struct RowText {
-    names: std::collections::HashMap<Uuid, String>,
-    values: std::collections::HashMap<Uuid, String>,
+    ordinals: std::collections::HashMap<Uuid, usize>,
 }
 
 impl RowText {
     pub(crate) fn of(sketch: &Sketch) -> Self {
-        let named = ElementNames::new(sketch);
-        let drawn = sketch
-            .geometry
-            .iter()
-            .filter(|g| !sketch.derived.contains(&g.id()));
-        let (names, values) = drawn
-            .map(|g| {
-                (
-                    (g.id(), named.name(g.id())),
-                    (g.id(), element_value(sketch, g)),
-                )
-            })
-            .unzip();
-        Self { names, values }
+        Self {
+            ordinals: crate::style::ordinals(sketch),
+        }
     }
 
     /// [`crate::style::element_name`] of `id`.
     fn name(&self, sketch: &Sketch, id: Uuid) -> String {
-        match self.names.get(&id) {
-            Some(name) => name.clone(),
+        match self.ordinals.get(&id) {
+            Some(&n) => crate::style::name_with(sketch, id, Some(n)),
             None => crate::style::element_name(sketch, id),
         }
     }
 
-    fn value(&self, sketch: &Sketch, geom: &sketch::GeometryElement) -> String {
-        match self.values.get(&geom.id()) {
-            Some(value) => value.clone(),
-            None => element_value(sketch, geom),
-        }
+    fn ordinal(&self, id: Uuid) -> Option<usize> {
+        self.ordinals.get(&id).copied()
     }
 }
 
+/// An element's size as its row shows it: a line's length, a round's
+/// radius, a point's place; else its kind.
 fn element_value(sketch: &Sketch, geom: &sketch::GeometryElement) -> String {
     use sketch::GeometryElement as G;
     let at = |id| sketch.point_position(id);
@@ -2697,10 +2800,24 @@ fn dimension_cell(
 }
 
 /// What a constraint's colour reads besides the constraint: the
-/// document's formulas on the open sketch.
-struct Formulas<'a> {
-    document: &'a core_document::Document,
-    sketch_id: Option<FeatureId>,
+/// constraints a formula of the open sketch sets.
+struct Formulas {
+    set: std::collections::HashSet<Uuid>,
+}
+
+impl Formulas {
+    fn of(document: &core_document::Document, sketch_id: Option<FeatureId>) -> Self {
+        let node = sketch_id.and_then(|id| document.feature_tree().get_node(id));
+        let set = (node.into_iter())
+            .flat_map(|node| node.formulas.keys())
+            .filter_map(|key| {
+                Uuid::parse_str(key)
+                    .ok()
+                    .filter(|id| id.to_string() == *key)
+            })
+            .collect();
+        Self { set }
+    }
 }
 
 /// How a constraint's icon reads: a conflict, a redundancy, an inactive
@@ -2720,12 +2837,7 @@ fn constraint_tint(
         (Tone::Muted, None)
     } else if constraint.kind.is_dimensional() && !constraint.driving {
         (Tone::Accent, None)
-    } else if formulas.sketch_id.is_some_and(|id| {
-        formulas
-            .document
-            .feature_formula(id, &constraint.id.to_string())
-            .is_some()
-    }) {
+    } else if formulas.set.contains(&constraint.id) {
         palette(SKETCH_FORMULA)
     } else {
         palette(SKETCH_CONSTRAINT)
@@ -3328,6 +3440,24 @@ fn section(
     .into()
 }
 
+/// The rows of the item list `id` among `widgets` and their sections,
+/// taken out of it.
+fn take_items(widgets: &mut [Widget], id: &str) -> Vec<Item> {
+    for widget in widgets {
+        match widget {
+            Widget::Items(list) if list.id == id => return std::mem::take(&mut list.items),
+            Widget::Section(section) => {
+                let items = take_items(&mut section.children, id);
+                if !items.is_empty() {
+                    return items;
+                }
+            }
+            _ => {}
+        }
+    }
+    Vec::new()
+}
+
 fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
     FieldGrid {
         id: id.into(),
@@ -3565,6 +3695,7 @@ mod kept_lists {
     #[test]
     fn the_lists_are_declared_again_only_when_what_they_show_changes() {
         let mut sketch = Sketch::new("s");
+        let lone = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(9.0, 9.0))));
         let [a, b] = [0.0, 5.0]
             .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
         let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
@@ -3586,20 +3717,55 @@ mod kept_lists {
         let again = draw(&mut wb, &mut ctx);
         assert_eq!(again.len(), first.len() + 1);
         assert!(again.contains(&planted));
-        let changes: [(&str, &Change); 4] = [
+        let edit = |change: fn(&mut Sketch, [Uuid; 3])| {
+            move |wb: &mut SketchWorkbench, ctx: &mut WorkbenchRuntimeContext| {
+                let mut feature = wb.get_active_sketch(ctx).unwrap();
+                change(&mut feature.sketch, [lone, b, line]);
+                wb.store_sketch(ctx, feature);
+            }
+        };
+        let moved = edit(|sketch, [_, b, _]| {
+            if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(b) {
+                p.position = Vec2D::new(7.0, 3.0);
+            }
+        });
+        let added = edit(|sketch, _| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 2.0))));
+        });
+        let construction = edit(|sketch, [_, _, line]| sketch.set_construction(line, true));
+        // Its points' rows read projected too.
+        let projected = edit(|sketch, [_, _, line]| {
+            let datum = sketch::ExternalReference::Datum {
+                datum: Uuid::from_u128(7),
+            };
+            (sketch.external).insert(line, sketch::ExternalSource::of_reference(datum));
+        });
+        // The lone point gone, the other points' names count down.
+        let removed = edit(|sketch, [lone, _, _]| {
+            sketch.remove_geometry_cascade(&[lone]);
+        });
+        let changes: [(&str, &Change); 10] = [
             ("a selection", &move |wb, _| {
                 wb.tab.selected.insert(line);
             }),
             ("a constraint in hand", &move |wb, _| {
                 wb.tab.hovered_constraint = Some(length);
             }),
-            ("a filter", &|wb, _| {
-                wb.tab.constraint_filter = "length".into();
+            ("an element hovered", &move |wb, _| {
+                wb.tab.hovered = Some(a);
             }),
+            ("a point moved", &moved),
+            ("an element added", &added),
+            ("an element made construction", &construction),
+            ("a line projected", &projected),
+            ("an element removed", &removed),
             ("an edit", &|wb, ctx| {
                 let mut feature = wb.get_active_sketch(ctx).unwrap();
                 feature.sketch.constraints.clear();
                 wb.store_sketch(ctx, feature);
+            }),
+            ("a filter", &|wb, _| {
+                wb.tab.constraint_filter = "length".into();
             }),
         ];
         for (what, change) in changes {
