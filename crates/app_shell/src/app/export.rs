@@ -1556,6 +1556,8 @@ mod tests {
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
         }
 
+        impl core_document::BenchParameters for Bench {}
+
         impl core_document::BenchOutput for Bench {
             fn semantic_pmi(
                 &self,
@@ -1642,6 +1644,8 @@ mod tests {
             }
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
         }
+
+        impl core_document::BenchParameters for Bought {}
 
         impl core_document::BenchOutput for Bought {
             fn not_printed(

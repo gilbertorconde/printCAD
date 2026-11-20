@@ -31,10 +31,10 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BenchCommands, BenchOutput, BodyId, CommandArgs, CommandResult, Document, FeatureId,
-    FeatureInfo, HostRequest, InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BenchCommands, BenchOutput, BenchParameters, BodyId, CommandArgs, CommandResult, Document,
+    FeatureId, FeatureInfo, HostRequest, InputResult, Parameter, RebuildJob, TaskInfo,
+    ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -883,6 +883,38 @@ impl Workbench for SurfaceWorkbench {
         });
     }
 
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
+        build::rebuild_jobs(document)
+    }
+
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        build::invalidate_body(document, body);
+    }
+
+    fn invalidate_all(&self, document: &mut Document) {
+        build::invalidate_all(document);
+    }
+
+    fn has_settings(&self) -> bool {
+        true
+    }
+
+    fn settings_json(&self) -> Option<Value> {
+        serde_json::to_value(&self.options).ok()
+    }
+
+    fn apply_settings_json(&mut self, value: &Value) {
+        if let Ok(options) = serde_json::from_value(value.clone()) {
+            self.options = options;
+        }
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchParameters for SurfaceWorkbench {
     fn parameters(&self, node: &core_document::FeatureNode) -> Vec<Parameter> {
         use core_document::expr::Dim;
         let Ok(feature) = SurfaceFeature::from_json(&node.data) else {
@@ -918,36 +950,6 @@ impl Workbench for SurfaceWorkbench {
             }
             _ => Vec::new(),
         }
-    }
-
-    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
-        build::rebuild_jobs(document)
-    }
-
-    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
-        build::invalidate_body(document, body);
-    }
-
-    fn invalidate_all(&self, document: &mut Document) {
-        build::invalidate_all(document);
-    }
-
-    fn has_settings(&self) -> bool {
-        true
-    }
-
-    fn settings_json(&self) -> Option<Value> {
-        serde_json::to_value(&self.options).ok()
-    }
-
-    fn apply_settings_json(&mut self, value: &Value) {
-        if let Ok(options) = serde_json::from_value(value.clone()) {
-            self.options = options;
-        }
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 

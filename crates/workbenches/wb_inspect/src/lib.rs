@@ -206,10 +206,6 @@ impl core_document::Workbench for InspectionWorkbench {
             || (self.tab.armed.is_some() && kind_of_tool(tool_id) == self.tab.armed)
     }
 
-    fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
-        self.parameters_of(node)
-    }
-
     fn delete_feature(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -405,6 +401,12 @@ impl core_document::Workbench for InspectionWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         self.handle_input(event, active_tool, ctx)
+    }
+}
+
+impl core_document::BenchParameters for InspectionWorkbench {
+    fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
+        self.parameters_of(node)
     }
 }
 

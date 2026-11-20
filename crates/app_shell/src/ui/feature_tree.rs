@@ -1401,7 +1401,8 @@ mod tests {
     #[test]
     fn a_linked_feature_shows_under_the_body_it_acts_on() {
         use core_document::{
-            BenchCommands, BenchOutput, Workbench, WorkbenchContext, WorkbenchDescriptor,
+            BenchCommands, BenchOutput, BenchParameters, Workbench, WorkbenchContext,
+            WorkbenchDescriptor,
         };
         struct Bench;
         impl Workbench for Bench {
@@ -1418,6 +1419,8 @@ mod tests {
                     .collect()
             }
         }
+
+        impl BenchParameters for Bench {}
 
         impl BenchOutput for Bench {}
 
@@ -1521,7 +1524,8 @@ mod tests {
     #[test]
     fn a_feature_row_tooltip_names_the_feature_as_its_bench_does() {
         use core_document::{
-            BenchCommands, BenchOutput, Workbench, WorkbenchContext, WorkbenchDescriptor,
+            BenchCommands, BenchOutput, BenchParameters, Workbench, WorkbenchContext,
+            WorkbenchDescriptor,
         };
         struct Bench;
         impl Workbench for Bench {
@@ -1538,6 +1542,8 @@ mod tests {
                 }
             }
         }
+
+        impl BenchParameters for Bench {}
 
         impl BenchOutput for Bench {}
 
@@ -1577,7 +1583,8 @@ mod tests {
     #[test]
     fn each_problem_row_names_its_problem_and_the_jump_walks_them() {
         use core_document::{
-            BenchCommands, BenchOutput, Workbench, WorkbenchContext, WorkbenchDescriptor,
+            BenchCommands, BenchOutput, BenchParameters, Workbench, WorkbenchContext,
+            WorkbenchDescriptor,
         };
         struct Bench;
         impl Workbench for Bench {
@@ -1586,6 +1593,8 @@ mod tests {
             }
             fn configure(&self, _context: &mut WorkbenchContext) {}
         }
+
+        impl BenchParameters for Bench {}
 
         impl BenchOutput for Bench {}
 
@@ -1846,7 +1855,8 @@ mod tests {
     #[test]
     fn only_a_consumed_feature_holds_a_row_under_it() {
         use core_document::{
-            BenchCommands, BenchOutput, Workbench, WorkbenchContext, WorkbenchDescriptor,
+            BenchCommands, BenchOutput, BenchParameters, Workbench, WorkbenchContext,
+            WorkbenchDescriptor,
         };
         struct Bench;
         impl Workbench for Bench {
@@ -1862,6 +1872,8 @@ mod tests {
                 serde_json::from_value(node.data.get("consumes")?.clone()).ok()
             }
         }
+
+        impl BenchParameters for Bench {}
 
         impl BenchOutput for Bench {}
 

@@ -2,9 +2,9 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    BenchCommands, BenchOutput, CameraOrientRequest, Document, DocumentError, DocumentService,
-    FeatureId, FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry,
-    PropertyHints, ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    BenchCommands, BenchOutput, BenchParameters, CameraOrientRequest, Document, DocumentError,
+    DocumentService, FeatureId, FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope,
+    PassiveGeometry, PropertyHints, ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor,
     WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
@@ -105,6 +105,9 @@ impl Workbench for FakeBench {
     ) -> bool {
         self.items.contains(&id)
     }
+}
+
+impl BenchParameters for FakeBench {
     fn property_hints(&self) -> PropertyHints {
         PropertyHints {
             length_keys: self.lengths.clone(),
@@ -392,6 +395,8 @@ impl Workbench for Panicky {
     }
 }
 
+impl BenchParameters for Panicky {}
+
 impl BenchOutput for Panicky {}
 
 impl BenchCommands for Panicky {}
@@ -449,6 +454,8 @@ impl Workbench for Importer {
         context.register_import(core_document::FileImport::new("Drawing", ["DRW"], command));
     }
 }
+
+impl BenchParameters for Importer {}
 
 impl BenchOutput for Importer {}
 

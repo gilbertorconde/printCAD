@@ -8,12 +8,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BenchCommands, BenchOutput, BodyId, Chord, CommandArgs, CommandError,
-    CommandResult, CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode, InputResult,
-    MarkKind, MenuItem, MenuScope, OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel,
-    ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior, ToolDescriptor,
-    ToolHint, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    ActionDescriptor, BenchCommands, BenchOutput, BenchParameters, BodyId, Chord, CommandArgs,
+    CommandError, CommandResult, CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode,
+    InputResult, MarkKind, MenuItem, MenuScope, OverlayMesh, Parameter, PropertyHints,
+    ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior,
+    ToolDescriptor, ToolHint, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::de::DeserializeOwned;
 
@@ -900,55 +900,6 @@ impl Workbench for WasmWorkbench {
         .unwrap_or(false)
     }
 
-    fn parameters(&self, node: &FeatureNode) -> Vec<Parameter> {
-        let key = hash_of((
-            node.workbench_id.as_str(),
-            core_document::feature::node_revision(node),
-        ));
-        let mut inner = self.inner();
-        if let Some(params) = inner.params.get(&key) {
-            return params.clone();
-        }
-        let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
-        let params: Vec<Parameter> = inner
-            .guest
-            .call(Budget::Frame, Access::None, |b| b.parameters(&json))
-            .and_then(|(json, _)| {
-                parse::<Vec<bench_api::Parameter>>(self.id(), "parameters", &json)
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .map(convert::parameter)
-            .collect();
-        if inner.params.len() > CACHE_LIMIT {
-            inner.params.clear();
-        }
-        inner.params.insert(key, params.clone());
-        params
-    }
-
-    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
-        let owned: Vec<String> = moved
-            .iter()
-            .filter(|id| {
-                ctx.document
-                    .get_feature_meta(**id)
-                    .is_some_and(|n| self.package.owns(n.workbench_id.as_str()))
-            })
-            .map(|id| id.0.to_string())
-            .collect();
-        if owned.is_empty() {
-            return;
-        }
-        let input = bench_api::Input {
-            event: bench_api::Event::ValuesMoved { features: owned },
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        let mut inner = self.inner();
-        self.deliver(&mut inner, ctx, input);
-    }
-
     fn settle(&self, node: &FeatureNode, values: &mut serde_json::Value) {
         let Ok(json) = serde_json::to_string(&convert::bare_node(node, values)) else {
             return;
@@ -960,18 +911,6 @@ impl Workbench for WasmWorkbench {
             && let Some(settled) = parse::<serde_json::Value>(self.id(), "settled data", &json)
         {
             *values = settled;
-        }
-    }
-
-    fn property_hints(&self) -> PropertyHints {
-        PropertyHints {
-            length_keys: self
-                .registration
-                .length_keys
-                .iter()
-                .map(|k| intern(k))
-                .collect(),
-            reference_keys: Vec::new(),
         }
     }
 
@@ -1368,6 +1307,69 @@ impl Workbench for WasmWorkbench {
             invalidate_owned(ctx.document, &self.package, body);
         }
         removed
+    }
+}
+
+impl BenchParameters for WasmWorkbench {
+    fn parameters(&self, node: &FeatureNode) -> Vec<Parameter> {
+        let key = hash_of((
+            node.workbench_id.as_str(),
+            core_document::feature::node_revision(node),
+        ));
+        let mut inner = self.inner();
+        if let Some(params) = inner.params.get(&key) {
+            return params.clone();
+        }
+        let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
+        let params: Vec<Parameter> = inner
+            .guest
+            .call(Budget::Frame, Access::None, |b| b.parameters(&json))
+            .and_then(|(json, _)| {
+                parse::<Vec<bench_api::Parameter>>(self.id(), "parameters", &json)
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(convert::parameter)
+            .collect();
+        if inner.params.len() > CACHE_LIMIT {
+            inner.params.clear();
+        }
+        inner.params.insert(key, params.clone());
+        params
+    }
+
+    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
+        let owned: Vec<String> = moved
+            .iter()
+            .filter(|id| {
+                ctx.document
+                    .get_feature_meta(**id)
+                    .is_some_and(|n| self.package.owns(n.workbench_id.as_str()))
+            })
+            .map(|id| id.0.to_string())
+            .collect();
+        if owned.is_empty() {
+            return;
+        }
+        let input = bench_api::Input {
+            event: bench_api::Event::ValuesMoved { features: owned },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        self.deliver(&mut inner, ctx, input);
+    }
+
+    fn property_hints(&self) -> PropertyHints {
+        PropertyHints {
+            length_keys: self
+                .registration
+                .length_keys
+                .iter()
+                .map(|k| intern(k))
+                .collect(),
+            reference_keys: Vec::new(),
+        }
     }
 }
 

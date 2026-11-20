@@ -437,63 +437,6 @@ impl core_document::Workbench for MeshWorkbench {
         }
     }
 
-    fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
-        use core_document::{evaluate::Parameter, expr::Dim};
-        match MeshFeature::from_json(&node.data).map(|f| f.op) {
-            Ok(MeshOp::RemoveIslands { .. }) => {
-                vec![Parameter::new(
-                    "smaller_than",
-                    "Smaller than",
-                    Dim::LENGTH,
-                    "/op/RemoveIslands/smaller_than",
-                )]
-            }
-            Ok(MeshOp::Cut { .. }) => vec![
-                Parameter::new("offset", "Offset", Dim::LENGTH, "/offset"),
-                Parameter::new("bridge", "Bridge gaps up to", Dim::LENGTH, "/op/Cut/bridge"),
-            ],
-            Ok(MeshOp::Fill { .. }) => vec![Parameter::new(
-                "holes_up_to",
-                "Holes up to",
-                Dim::LENGTH,
-                "/op/Fill/holes_up_to",
-            )],
-            Ok(MeshOp::Smooth { .. }) => vec![
-                Parameter::new(
-                    "bumps_up_to",
-                    "Bumps up to",
-                    Dim::LENGTH,
-                    "/op/Smooth/bumps_up_to",
-                ),
-                Parameter::new(
-                    "move_at_most",
-                    "Move at most",
-                    Dim::LENGTH,
-                    "/op/Smooth/move_at_most",
-                ),
-            ],
-            Ok(MeshOp::Offset { .. }) => vec![Parameter::new(
-                "distance",
-                "Distance",
-                Dim::LENGTH,
-                "/op/Offset/distance",
-            )],
-            Ok(MeshOp::Reduce { .. }) => vec![Parameter::new(
-                "tolerance",
-                "Tolerance",
-                Dim::LENGTH,
-                "/op/Reduce/tolerance",
-            )],
-            Ok(MeshOp::Remesh { .. }) => vec![Parameter::new(
-                "edge_length",
-                "Edge length",
-                Dim::LENGTH,
-                "/op/Remesh/edge_length",
-            )],
-            _ => Vec::new(),
-        }
-    }
-
     fn mesh_plans(&self, document: &Document) -> Vec<MeshPlan> {
         let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<(u64, FeatureId, MeshOp)>> =
             Default::default();
@@ -636,6 +579,65 @@ impl core_document::Workbench for MeshWorkbench {
             return InputResult::consumed();
         }
         InputResult::ignored()
+    }
+}
+
+impl core_document::BenchParameters for MeshWorkbench {
+    fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
+        use core_document::{evaluate::Parameter, expr::Dim};
+        match MeshFeature::from_json(&node.data).map(|f| f.op) {
+            Ok(MeshOp::RemoveIslands { .. }) => {
+                vec![Parameter::new(
+                    "smaller_than",
+                    "Smaller than",
+                    Dim::LENGTH,
+                    "/op/RemoveIslands/smaller_than",
+                )]
+            }
+            Ok(MeshOp::Cut { .. }) => vec![
+                Parameter::new("offset", "Offset", Dim::LENGTH, "/offset"),
+                Parameter::new("bridge", "Bridge gaps up to", Dim::LENGTH, "/op/Cut/bridge"),
+            ],
+            Ok(MeshOp::Fill { .. }) => vec![Parameter::new(
+                "holes_up_to",
+                "Holes up to",
+                Dim::LENGTH,
+                "/op/Fill/holes_up_to",
+            )],
+            Ok(MeshOp::Smooth { .. }) => vec![
+                Parameter::new(
+                    "bumps_up_to",
+                    "Bumps up to",
+                    Dim::LENGTH,
+                    "/op/Smooth/bumps_up_to",
+                ),
+                Parameter::new(
+                    "move_at_most",
+                    "Move at most",
+                    Dim::LENGTH,
+                    "/op/Smooth/move_at_most",
+                ),
+            ],
+            Ok(MeshOp::Offset { .. }) => vec![Parameter::new(
+                "distance",
+                "Distance",
+                Dim::LENGTH,
+                "/op/Offset/distance",
+            )],
+            Ok(MeshOp::Reduce { .. }) => vec![Parameter::new(
+                "tolerance",
+                "Tolerance",
+                Dim::LENGTH,
+                "/op/Reduce/tolerance",
+            )],
+            Ok(MeshOp::Remesh { .. }) => vec![Parameter::new(
+                "edge_length",
+                "Edge length",
+                Dim::LENGTH,
+                "/op/Remesh/edge_length",
+            )],
+            _ => Vec::new(),
+        }
     }
 }
 

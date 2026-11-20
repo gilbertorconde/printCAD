@@ -4290,6 +4290,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
 /// from the toolbar the way a user makes them.
 mod curve_constraints {
     use super::*;
+    use core_document::BenchParameters;
     use sketch_model::sketch::{ConstraintKind, X_AXIS_ID};
 
     /// Draw an arc about `(cx, cy)` from `radius` right of it, a quarter

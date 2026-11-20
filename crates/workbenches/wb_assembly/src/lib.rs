@@ -46,9 +46,9 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BenchCommands, BenchOutput, BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode,
-    HostRequest, InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchCommands, BenchOutput, BenchParameters, BodyId, BodyPlacement, FeatureId, FeatureInfo,
+    FeatureNode, HostRequest, InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
@@ -522,10 +522,6 @@ impl AssemblyWorkbench {
 }
 
 impl Workbench for AssemblyWorkbench {
-    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
-        self.parameters_of(node)
-    }
-
     /// A joint's ends picked on named faces follow those faces: a body
     /// rebuilt with a face moved is searched for the face by name, and the
     /// end moves onto it, so the joint holds to the face wherever the rebuild put it.
@@ -587,20 +583,6 @@ impl Workbench for AssemblyWorkbench {
             *values = joint.to_json();
         }
         changed
-    }
-
-    /// A joint or coupling whose numbers a formula moved: the bodies
-    /// follow.
-    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
-        let joint_moved = moved.iter().any(|id| {
-            ctx.document
-                .get_feature_meta(*id)
-                .is_some_and(|n| matches!(n.workbench_id.as_str(), JOINT_KIND | COUPLING_KIND))
-        });
-        if joint_moved {
-            self.solve_and_apply(ctx);
-            self.note_left(ctx.document);
-        }
     }
 
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
@@ -815,6 +797,26 @@ impl Workbench for AssemblyWorkbench {
         self.tab.measuring = None;
         self.put_back_explosion(ctx);
         self.tab.task = None;
+    }
+}
+
+impl BenchParameters for AssemblyWorkbench {
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        self.parameters_of(node)
+    }
+
+    /// A joint or coupling whose numbers a formula moved: the bodies
+    /// follow.
+    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
+        let joint_moved = moved.iter().any(|id| {
+            ctx.document
+                .get_feature_meta(*id)
+                .is_some_and(|n| matches!(n.workbench_id.as_str(), JOINT_KIND | COUPLING_KIND))
+        });
+        if joint_moved {
+            self.solve_and_apply(ctx);
+            self.note_left(ctx.document);
+        }
     }
 }
 

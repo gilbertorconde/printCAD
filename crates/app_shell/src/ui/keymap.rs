@@ -998,7 +998,8 @@ fn toggle_visibility(document: &core_document::Document, item: TreeItemId) -> Op
 mod tests {
     use super::*;
     use core_document::{
-        ActionDescriptor, BenchCommands, BenchOutput, ToolDescriptor, Workbench, WorkbenchContext,
+        ActionDescriptor, BenchCommands, BenchOutput, BenchParameters, ToolDescriptor, Workbench,
+        WorkbenchContext,
     };
 
     struct Bench {
@@ -1026,6 +1027,8 @@ mod tests {
             );
         }
     }
+
+    impl BenchParameters for Bench {}
 
     impl BenchOutput for Bench {}
 

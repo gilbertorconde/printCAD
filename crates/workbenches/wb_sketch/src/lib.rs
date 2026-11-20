@@ -65,9 +65,9 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BenchCommands, BenchOutput, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem,
-    MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
-    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BenchCommands, BenchOutput, BenchParameters, BodyId, FeatureId, FeatureInfo, HostRequest,
+    InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
 use feature::SketchFeature;
@@ -1521,10 +1521,6 @@ impl Workbench for SketchWorkbench {
         }
     }
 
-    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
-        params::parameters(node)
-    }
-
     fn settle(&self, _node: &core_document::FeatureNode, values: &mut serde_json::Value) {
         params::settle(values);
     }
@@ -2080,6 +2076,12 @@ impl Workbench for SketchWorkbench {
     /// Edges are being found in a reference picture.
     fn busy(&self) -> bool {
         self.tab.picture_edges.running()
+    }
+}
+
+impl BenchParameters for SketchWorkbench {
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        params::parameters(node)
     }
 }
 

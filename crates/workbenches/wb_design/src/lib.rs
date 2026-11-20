@@ -78,9 +78,9 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BenchCommands, BenchOutput, BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem,
-    MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
-    WorkbenchRuntimeContext, base_tool_id,
+    BenchCommands, BenchOutput, BenchParameters, BodyId, Document, FeatureId, FeatureInfo,
+    InputResult, MenuItem, MenuScope, TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id,
 };
 use features::datum_icon;
 use making::{Given, ToolMade, take_base};
@@ -369,25 +369,6 @@ impl Workbench for DesignWorkbench {
         self.task_feature()
     }
 
-    fn references(
-        &self,
-        document: &Document,
-        id: FeatureId,
-        node: &core_document::FeatureNode,
-    ) -> Vec<core_document::FeatureReference> {
-        references::references(document, id, node)
-    }
-
-    fn set_reference(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        id: FeatureId,
-        key: &str,
-        to: core_document::ReferenceChoice,
-    ) -> Result<(), String> {
-        references::set_reference(ctx, id, key, to)
-    }
-
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
         #[cfg(feature = "egui")]
         if task::task_kind(ctx, id).is_some() {
@@ -584,6 +565,51 @@ impl Workbench for DesignWorkbench {
         Some(&mut self.tab)
     }
 
+    /// A primitive attached by a mode, or a feature starting on a face,
+    /// takes what the last build found of what it stands on.
+    fn derive_on_solid(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        probed: &core_document::rebuild::ProbedReferences,
+    ) -> bool {
+        self.follow_solid(node, values, probed)
+    }
+
+    /// A datum made from a sketch's points or lines takes where they stand
+    /// now; so does a primitive attached by a mode, which follows the
+    /// datums it stands on too.
+    fn derive(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+        _document: &core_document::Document,
+    ) -> bool {
+        self.derive_values(node, values, values_of, _document)
+    }
+}
+
+impl BenchParameters for DesignWorkbench {
+    fn references(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Vec<core_document::FeatureReference> {
+        references::references(document, id, node)
+    }
+
+    fn set_reference(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        key: &str,
+        to: core_document::ReferenceChoice,
+    ) -> Result<(), String> {
+        references::set_reference(ctx, id, key, to)
+    }
+
     /// A Text whose formulas changed, however they were set: its hidden
     /// sketch reads the size, spacing and turn they set.
     fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
@@ -615,30 +641,6 @@ impl Workbench for DesignWorkbench {
     ) -> (Option<f64>, Option<f64>) {
         let most = size_limit::drag_most(document, feature, &parameter.pointer);
         (None, most.map(f64::from))
-    }
-
-    /// A primitive attached by a mode, or a feature starting on a face,
-    /// takes what the last build found of what it stands on.
-    fn derive_on_solid(
-        &self,
-        node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
-        probed: &core_document::rebuild::ProbedReferences,
-    ) -> bool {
-        self.follow_solid(node, values, probed)
-    }
-
-    /// A datum made from a sketch's points or lines takes where they stand
-    /// now; so does a primitive attached by a mode, which follows the
-    /// datums it stands on too.
-    fn derive(
-        &self,
-        node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
-        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
-        _document: &core_document::Document,
-    ) -> bool {
-        self.derive_values(node, values, values_of, _document)
     }
 
     fn property_hints(&self) -> core_document::PropertyHints {

@@ -763,7 +763,7 @@ mod tests {
         let sketch = FeatureId(sketch.as_str().unwrap().parse().unwrap());
         let moved = s.doc.take_moved_values();
         let mut ctx = core_document::testing::ctx(&mut s.doc);
-        core_document::Workbench::values_moved(&mut s.bench, &mut ctx, &moved);
+        core_document::BenchParameters::values_moved(&mut s.bench, &mut ctx, &moved);
         let formulas = &s.doc.get_feature_meta(sketch).unwrap().formulas;
         assert!(
             formulas.values().any(|f| f.ends_with(".size")),
