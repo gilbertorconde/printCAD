@@ -997,7 +997,9 @@ fn toggle_visibility(document: &core_document::Document, item: TreeItemId) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{ActionDescriptor, ToolDescriptor, Workbench, WorkbenchContext};
+    use core_document::{
+        ActionDescriptor, BenchCommands, ToolDescriptor, Workbench, WorkbenchContext,
+    };
 
     struct Bench {
         id: &'static str,
@@ -1024,6 +1026,8 @@ mod tests {
             );
         }
     }
+
+    impl BenchCommands for Bench {}
 
     fn registry() -> DocumentService {
         let mut registry = DocumentService::default();

@@ -11,6 +11,9 @@ use crate::rebuild::RebuildJob;
 use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 use crate::{Document, FeatureId};
 
+mod commands;
+pub use commands::BenchCommands;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct WorkbenchId(String);
 
@@ -834,7 +837,7 @@ impl<T: Default + Send + 'static> TabSlot for T {
 /// the view) is a drawing-side trait of a host that draws, which reaches
 /// the bench as `dyn Any` through the registry's drawing side
 /// ([`crate::DocumentService::set_drawing_side`]).
-pub trait Workbench: std::any::Any + Send {
+pub trait Workbench: std::any::Any + Send + BenchCommands {
     /// Returns metadata describing this workbench.
     fn descriptor(&self) -> WorkbenchDescriptor;
 
@@ -1017,19 +1020,6 @@ pub trait Workbench: std::any::Any + Send {
         _ctx: &mut WorkbenchRuntimeContext,
     ) -> bool {
         false
-    }
-
-    /// Run one of the commands this bench registered with
-    /// `WorkbenchContext::register_command`. The host has checked `args`
-    /// against the command's spec. A command that makes something answers
-    /// its id; it never opens a task or waits for a click.
-    fn run_command(
-        &mut self,
-        id: &str,
-        _args: &crate::CommandArgs,
-        _ctx: &mut WorkbenchRuntimeContext,
-    ) -> crate::CommandResult {
-        Err(crate::CommandError::Unknown(id.to_string()))
     }
 
     /// The numbers of an owned feature that formulas may set and read:

@@ -31,9 +31,10 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BodyId, CommandArgs, CommandResult, Document, FeatureId, FeatureInfo, HostRequest, InputResult,
-    Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchCommands, BodyId, CommandArgs, CommandResult, Document, FeatureId, FeatureInfo,
+    HostRequest, InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -931,15 +932,6 @@ impl Workbench for SurfaceWorkbench {
         build::invalidate_all(document);
     }
 
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> CommandResult {
-        commands::run(self, id, args, ctx)
-    }
-
     fn has_settings(&self) -> bool {
         true
     }
@@ -956,6 +948,17 @@ impl Workbench for SurfaceWorkbench {
 
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
         Some(&mut self.tab)
+    }
+}
+
+impl BenchCommands for SurfaceWorkbench {
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> CommandResult {
+        commands::run(self, id, args, ctx)
     }
 }
 

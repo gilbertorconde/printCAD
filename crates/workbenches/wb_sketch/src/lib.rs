@@ -65,9 +65,9 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope, TaskInfo,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BenchCommands, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope,
+    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
 use feature::SketchFeature;
@@ -1493,15 +1493,6 @@ impl Workbench for SketchWorkbench {
         }
     }
 
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &core_document::CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> core_document::CommandResult {
-        commands::run_on(self, id, args, ctx)
-    }
-
     /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
     /// open for editing. The Edit menu's clipboard entries act on the
     /// selection of the sketch under edit.
@@ -2089,6 +2080,17 @@ impl Workbench for SketchWorkbench {
     /// Edges are being found in a reference picture.
     fn busy(&self) -> bool {
         self.tab.picture_edges.running()
+    }
+}
+
+impl BenchCommands for SketchWorkbench {
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        commands::run_on(self, id, args, ctx)
     }
 }
 

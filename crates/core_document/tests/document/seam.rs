@@ -2,9 +2,9 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    CameraOrientRequest, Document, DocumentError, DocumentService, FeatureId, FeatureNode,
-    HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints, ViewportPick,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    BenchCommands, CameraOrientRequest, Document, DocumentError, DocumentService, FeatureId,
+    FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints,
+    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
     WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
@@ -112,6 +112,8 @@ impl Workbench for FakeBench {
         }
     }
 }
+
+impl BenchCommands for FakeBench {}
 
 /// A feature of a second kind, for a second bench.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -388,6 +390,8 @@ impl Workbench for Panicky {
     }
 }
 
+impl BenchCommands for Panicky {}
+
 #[test]
 fn a_bench_that_panics_planning_a_rebuild_marks_its_features_and_spares_the_app() {
     let mut registry = registry(vec![FakeBench::new("a")]);
@@ -441,6 +445,8 @@ impl Workbench for Importer {
         context.register_import(core_document::FileImport::new("Drawing", ["DRW"], command));
     }
 }
+
+impl BenchCommands for Importer {}
 
 #[test]
 fn a_file_goes_to_the_first_bench_importing_its_extension() {

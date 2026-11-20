@@ -1570,6 +1570,8 @@ mod tests {
                 }
             }
         }
+
+        impl core_document::BenchCommands for Bench {}
         let mut registry = core_document::DocumentService::default();
         registry.register_workbench(Box::new(Bench)).unwrap();
         let path = std::env::temp_dir().join(format!("export-pmi-{}.step", uuid::Uuid::new_v4()));
@@ -1644,6 +1646,8 @@ mod tests {
                 document.bodies().iter().map(|b| b.id).collect()
             }
         }
+
+        impl core_document::BenchCommands for Bought {}
         let doc = textured_box(true);
         let body = doc.bodies()[0].id;
         let mut registry = core_document::DocumentService::default();

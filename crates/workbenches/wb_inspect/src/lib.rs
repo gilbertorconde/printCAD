@@ -458,7 +458,9 @@ impl core_document::Workbench for InspectionWorkbench {
     ) -> InputResult {
         self.handle_input(event, active_tool, ctx)
     }
+}
 
+impl core_document::BenchCommands for InspectionWorkbench {
     fn run_command(
         &mut self,
         id: &str,

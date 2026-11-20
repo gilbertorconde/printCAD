@@ -6,7 +6,7 @@
 use super::Harness;
 use super::recording::{assert_replays, session_on_a_sketch};
 use crate::{all_lines, all_points};
-use core_document::{KeyCode, Workbench, WorkbenchInputEvent};
+use core_document::{BenchCommands, KeyCode, Workbench, WorkbenchInputEvent};
 use sketch_model::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 
 const LINE: &str = "sketch.line";

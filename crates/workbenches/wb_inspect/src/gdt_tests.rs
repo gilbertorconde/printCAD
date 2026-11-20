@@ -1,5 +1,5 @@
 use super::*;
-use core_document::{FeatureId, ImportedGeometry, MarkedSurface, Workbench};
+use core_document::{BenchCommands, FeatureId, ImportedGeometry, MarkedSurface, Workbench};
 use std::sync::Arc;
 use tolerance::Characteristic as C;
 

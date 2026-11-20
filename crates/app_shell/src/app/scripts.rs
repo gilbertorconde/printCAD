@@ -1712,6 +1712,17 @@ mod tests {
             core_document::WorkbenchDescriptor::new("test.counted", "Counted", "")
         }
         fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
+        fn suspend_session(&mut self) -> BenchState {
+            self.0
+                .take()
+                .map(|n| Box::new(n) as Box<dyn std::any::Any + Send>)
+        }
+        fn resume_session(&mut self, state: BenchState) {
+            self.0 = state.and_then(|s| s.downcast::<u64>().ok()).map(|n| *n);
+        }
+    }
+
+    impl core_document::BenchCommands for Counted {
         fn run_command(
             &mut self,
             _id: &str,
@@ -1721,14 +1732,6 @@ mod tests {
             let was = self.0;
             self.0 = Some(was.unwrap_or(0) + 1);
             Ok(json!(was))
-        }
-        fn suspend_session(&mut self) -> BenchState {
-            self.0
-                .take()
-                .map(|n| Box::new(n) as Box<dyn std::any::Any + Send>)
-        }
-        fn resume_session(&mut self, state: BenchState) {
-            self.0 = state.and_then(|s| s.downcast::<u64>().ok()).map(|n| *n);
         }
     }
 

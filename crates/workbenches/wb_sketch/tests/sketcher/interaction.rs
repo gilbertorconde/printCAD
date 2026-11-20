@@ -8,8 +8,9 @@ use crate::{
     line_of, number_text, spline_of, view_proj, view_proj_from,
 };
 use core_document::{
-    Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette,
-    ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchCommands, Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark,
+    SketchPalette, ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 use sketch_model::SketchFeature;
 use sketch_model::sketch::{GeometryElement, Sketch};

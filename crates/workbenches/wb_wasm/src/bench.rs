@@ -8,11 +8,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BodyId, Chord, CommandArgs, CommandError, CommandResult, CommandSpec,
-    Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem, MenuScope,
-    OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay,
-    StatusItems, TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    ActionDescriptor, BenchCommands, BodyId, Chord, CommandArgs, CommandError, CommandResult,
+    CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem,
+    MenuScope, OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark,
+    ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::de::DeserializeOwned;
 
@@ -935,25 +935,6 @@ impl Workbench for WasmWorkbench {
         .unwrap_or(false)
     }
 
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> CommandResult {
-        let args = serde_json::to_string(args).map_err(|e| CommandError::failed(e.to_string()))?;
-        let mut inner = self.inner();
-        let answer = self
-            .write_call(&mut inner, ctx, Budget::Long, |b| b.run_command(id, &args))
-            .ok_or_else(|| CommandError::failed(format!("the workbench {} failed", self.id())))?;
-        match answer {
-            Ok(json) if json.trim().is_empty() => Ok(serde_json::Value::Null),
-            Ok(json) => serde_json::from_str(&json)
-                .map_err(|e| CommandError::failed(format!("the answer is not JSON: {e}"))),
-            Err(message) => Err(CommandError::failed(message)),
-        }
-    }
-
     fn parameters(&self, node: &FeatureNode) -> Vec<Parameter> {
         let key = hash_of((
             node.workbench_id.as_str(),
@@ -1422,6 +1403,27 @@ impl Workbench for WasmWorkbench {
             invalidate_owned(ctx.document, &self.package, body);
         }
         removed
+    }
+}
+
+impl BenchCommands for WasmWorkbench {
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> CommandResult {
+        let args = serde_json::to_string(args).map_err(|e| CommandError::failed(e.to_string()))?;
+        let mut inner = self.inner();
+        let answer = self
+            .write_call(&mut inner, ctx, Budget::Long, |b| b.run_command(id, &args))
+            .ok_or_else(|| CommandError::failed(format!("the workbench {} failed", self.id())))?;
+        match answer {
+            Ok(json) if json.trim().is_empty() => Ok(serde_json::Value::Null),
+            Ok(json) => serde_json::from_str(&json)
+                .map_err(|e| CommandError::failed(format!("the answer is not JSON: {e}"))),
+            Err(message) => Err(CommandError::failed(message)),
+        }
     }
 }
 

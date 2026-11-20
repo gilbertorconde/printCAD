@@ -6,8 +6,9 @@
 use super::Harness;
 use crate::{CAM_POS, VIEWPORT, all_points};
 use core_document::{
-    CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId, HookOutcome,
-    KeyCode, Recorded, Workbench, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
+    BenchCommands, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId,
+    HookOutcome, KeyCode, Recorded, Workbench, WorkbenchContext, WorkbenchFeature,
+    WorkbenchRuntimeContext,
 };
 use sketch_model::SketchFeature;
 use sketch_model::sketch::{GeometryElement, Sketch};

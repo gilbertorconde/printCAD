@@ -2,7 +2,7 @@
 //! `wb_design::body_build_ops` → `OgeomKernel::execute_solid_chain` → mesh.
 //! This exercises the exact pipeline the app's recompute driver runs.
 
-use core_document::{BodyId, Document, FeatureId};
+use core_document::{BenchCommands, BodyId, Document, FeatureId};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use sketch_model::SketchFeature;
@@ -4426,7 +4426,7 @@ fn a_rectangle_wraps_onto_a_torus() {
 /// the sketch grows with it. What the sketch stores is left as it was.
 #[test]
 fn a_counting_projected_edge_follows_its_pad_without_the_sketch_opened() {
-    use core_document::{CommandArgs, Workbench, WorkbenchFeature, WorkbenchRuntimeContext};
+    use core_document::{CommandArgs, WorkbenchFeature, WorkbenchRuntimeContext};
     let mut registry = registry();
     registry.set_kernel(&kernel_ogeom::QUERIES);
 
@@ -4993,7 +4993,7 @@ fn a_tube_primitive_adds_and_cuts_its_wall_and_refuses_a_closed_bore() {
 /// section padded; two more cuts each make a sketch of their own.
 #[test]
 fn a_section_through_a_holed_plate_is_a_closed_sketch_that_pads() {
-    use core_document::{CommandArgs, Workbench};
+    use core_document::CommandArgs;
     let (mut doc, plate, _) = setup(1.0, 1.0);
     let mut outline = rect_at(SketchPlane::xy(), 0.0, 0.0, 40.0, 20.0);
     let centre = outline

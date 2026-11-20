@@ -78,9 +78,9 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
-    base_tool_id,
+    BenchCommands, BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope,
+    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
+    WorkbenchRuntimeContext, base_tool_id,
 };
 use features::datum_icon;
 use making::{Given, ToolMade, take_base};
@@ -498,18 +498,6 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &core_document::CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> core_document::CommandResult {
-        if generators::is_command(id) {
-            return generators::command(id, args, ctx);
-        }
-        commands::run(self, id, args, ctx)
-    }
-
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         ctx.log_info("Design workbench activated");
     }
@@ -694,6 +682,20 @@ impl Workbench for DesignWorkbench {
                 "tool_body",
             ],
         }
+    }
+}
+
+impl BenchCommands for DesignWorkbench {
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        if generators::is_command(id) {
+            return generators::command(id, args, ctx);
+        }
+        commands::run(self, id, args, ctx)
     }
 }
 

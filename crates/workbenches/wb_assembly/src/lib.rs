@@ -46,9 +46,9 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BenchCommands, BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest,
+    InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
@@ -706,15 +706,6 @@ impl Workbench for AssemblyWorkbench {
         self.register_tools(context);
     }
 
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &core_document::CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> core_document::CommandResult {
-        commands::run(id, args, ctx)
-    }
-
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
         if node.workbench_id.as_str() == MOTION_KIND {
             return FeatureInfo {
@@ -851,6 +842,17 @@ impl Workbench for AssemblyWorkbench {
         self.tab.measuring = None;
         self.put_back_explosion(ctx);
         self.tab.task = None;
+    }
+}
+
+impl BenchCommands for AssemblyWorkbench {
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        commands::run(id, args, ctx)
     }
 }
 

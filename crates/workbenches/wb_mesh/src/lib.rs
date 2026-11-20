@@ -9,10 +9,10 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, Document,
-    FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind, ToolDescriptor,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    Args, BenchCommands, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec,
+    CommandTable, Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind,
+    ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
 use serde::{Deserialize, Serialize};
@@ -637,7 +637,9 @@ impl core_document::Workbench for MeshWorkbench {
         }
         InputResult::ignored()
     }
+}
 
+impl core_document::BenchCommands for MeshWorkbench {
     fn run_command(
         &mut self,
         id: &str,
@@ -755,7 +757,7 @@ impl MeshWorkbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::Workbench;
+    use core_document::{BenchCommands, Workbench};
 
     #[test]
     fn every_section_of_the_mesh_prose_names_a_command() {
