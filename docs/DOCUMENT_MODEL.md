@@ -222,8 +222,15 @@ nothing unsaved (at most 16), so even a long run of unsaved edits comes
 back whole. When every copy has
 closed the document, its unsaved edits are gone with them, and the next
 server starts from the file. A copy that stops taking the server's
-messages is disconnected once thousands are waiting for it; opening the
-document again gives it the file and the unsaved edits.
+messages is disconnected once thousands are waiting for it.
+
+A copy that loses its server (it stopped, or it disconnected the copy)
+connects again, starting a server when none runs. It sends again the
+edits the old server never confirmed, which the server takes once even
+when it had them already, then reads the file and the unsaved edits back,
+so it holds what the server holds; edits made meanwhile stay on top, and
+undo goes on as before. If the new server could not read back the unsaved
+edits the old one held, the copy keeps its own state and says to save it.
 
 When two copies add a feature at the same time, both take the same place
 at the end of the history; the one the server ordered later moves after

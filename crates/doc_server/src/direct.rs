@@ -65,7 +65,7 @@ impl DocumentServer for DirectFiles {
         match msg {
             // No peers without a daemon; presence has no audience.
             ClientMessage::Hello { .. } | ClientMessage::Rebase | ClientMessage::Presence(_) => {}
-            ClientMessage::Ops(ops) => {
+            ClientMessage::Ops { ops, .. } => {
                 self.ops_dropped += ops.len() as u64;
                 self.seq += 1;
                 let _ = self.tx.send(ServerMessage::Acked { seq: self.seq });
@@ -99,7 +99,13 @@ impl DocumentServer for DirectFiles {
                 let tx = self.tx.clone();
                 let handle = std::thread::spawn(move || {
                     let reply = match std::fs::read(&path) {
-                        Ok(bytes) => ServerMessage::Opened { token, path, bytes },
+                        Ok(bytes) => ServerMessage::Opened {
+                            token,
+                            path,
+                            bytes,
+                            seq: 0,
+                            unsaved_lost: false,
+                        },
                         Err(err) => ServerMessage::OpenFailed {
                             token,
                             path,

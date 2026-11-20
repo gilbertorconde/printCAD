@@ -64,7 +64,22 @@ struct State {
     /// joining client gets after the file.
     tail: Vec<Logged>,
     clients: HashMap<u64, Client>,
+    /// The batches already ordered, by id, with their sequence number
+    /// (`None` for one a daemon before this one ordered, read from the
+    /// log), so a batch sent again is answered rather than ordered twice.
+    ordered: HashMap<uuid::Uuid, Option<u64>>,
+    /// `ordered`'s ids, oldest first, so it forgets the oldest past
+    /// [`REMEMBERED_BATCHES`].
+    ordered_ids: std::collections::VecDeque<uuid::Uuid>,
+    /// This daemon started where another stopped and could not read back
+    /// the unsaved edits that one held; a save or a rebase ends it.
+    unsaved_lost: bool,
 }
+
+/// How many batch ids a daemon remembers to know a batch sent again. A
+/// client sends again only what was unanswered when its connection went,
+/// so the newest few thousand are what matters.
+const REMEMBERED_BATCHES: usize = 1 << 16;
 
 struct Client {
     actor: uuid::Uuid,
@@ -172,6 +187,19 @@ impl State {
         }
     }
 
+    /// Remember that batch `id` was ordered, at `seq` when this daemon
+    /// ordered it.
+    fn remember(&mut self, id: uuid::Uuid, seq: Option<u64>) {
+        if self.ordered.insert(id, seq).is_none() {
+            self.ordered_ids.push_back(id);
+        }
+        while self.ordered_ids.len() > REMEMBERED_BATCHES {
+            if let Some(old) = self.ordered_ids.pop_front() {
+                self.ordered.remove(&old);
+            }
+        }
+    }
+
     /// The ids of the batches still unsaved, for the log's mark; an empty
     /// batch has no lines in the log and changes nothing, so it is left out.
     fn unsaved(&self) -> Vec<uuid::Uuid> {
@@ -265,7 +293,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
             ClientMessage::Hello { .. } => {
                 tracing::warn!("repeated Hello mid-session; ignoring");
             }
-            ClientMessage::Ops(ops) => order_batch(hub, id, actor, ops),
+            ClientMessage::Ops { batch, ops } => order_batch(hub, id, actor, batch, ops),
             ClientMessage::Presence(state) => {
                 // Now-state, not history: relayed, never logged.
                 lock(&hub.state).tell_others(id, limit, || ServerMessage::PresencePeer {
@@ -287,6 +315,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                         tracing::error!("op log truncate failed: {err}");
                     }
                     state.tail.clear();
+                    state.unsaved_lost = false;
                 }
             }
             ClientMessage::SaveDocument {
@@ -314,6 +343,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                             None => false,
                         });
                         mark_unsaved(&state.unsaved(), Some(&path));
+                        state.unsaved_lost = false;
                         ServerMessage::SaveCompleted { path, at_seq }
                     }
                     Err(err) => ServerMessage::SaveFailed {
@@ -337,7 +367,16 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                         // that orders batches: every batch heard before
                         // `Opened` is in one of them, every one after is
                         // newer than both.
-                        state.reply(id, ServerMessage::Opened { token, path, bytes });
+                        state.reply(
+                            id,
+                            ServerMessage::Opened {
+                                token,
+                                path,
+                                bytes,
+                                seq: state.seq,
+                                unsaved_lost: state.unsaved_lost,
+                            },
+                        );
                         for logged in &state.tail {
                             state.reply(
                                 id,
@@ -369,10 +408,12 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
 /// Give a client's batch its place in the document's order: the next
 /// sequence number, the log, the tail and every client's queue, all under
 /// one lock, so no two clients ever hear two batches in different orders.
-fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, ops: Vec<DocumentOp>) {
+/// A batch already ordered (sent again by a client whose connection went
+/// before its answer came) is only answered, with its place when this
+/// daemon ordered it.
+fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, batch_id: uuid::Uuid, ops: Vec<DocumentOp>) {
     let mut state = lock(&hub.state);
-    state.seq += 1;
-    let seq = state.seq;
+    let limit = hub.queue_limit;
     let batch = match state.clients.get_mut(&id) {
         Some(client) => {
             client.batches += 1;
@@ -380,11 +421,17 @@ fn order_batch(hub: &Hub, id: u64, actor: uuid::Uuid, ops: Vec<DocumentOp>) {
         }
         None => return,
     };
-    let batch_id = uuid::Uuid::new_v4();
+    if let Some(&known) = state.ordered.get(&batch_id) {
+        let seq = known.unwrap_or(state.seq);
+        state.tell(id, limit, ServerMessage::Acked { seq });
+        return;
+    }
+    state.seq += 1;
+    let seq = state.seq;
+    state.remember(batch_id, Some(seq));
     if let Err(err) = append_ops(actor, batch_id, &ops) {
         tracing::error!("op log append failed: {err}");
     }
-    let limit = hub.queue_limit;
     let stalled: Vec<u64> = state
         .clients
         .iter()
@@ -748,15 +795,9 @@ struct Restored {
     ops: Vec<DocumentOp>,
 }
 
-/// The batches `log` holds that `document` does not: those its last mark
-/// names, then every batch after it (every batch, before any mark). None
-/// when the log cannot say: a line no batch id names where the tail would
-/// be (a daemon that marks nothing wrote it, so a save may have taken
-/// it), a file changed since the mark, a batch it names that the log no
-/// longer holds (its generation dropped past the cap), a blob or an op
-/// that does not read. The generations are read oldest first, so a tail
-/// the log rotated over is still found.
-fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
+/// Every line of `log` that reads, its generations first, so a tail the
+/// log rotated over is still found.
+fn read_log(log: &Path) -> Vec<serde_json::Value> {
     let mut lines = Vec::new();
     let mut sources = generations(log);
     sources.push(log.to_path_buf());
@@ -768,6 +809,33 @@ fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
             );
         }
     }
+    lines
+}
+
+/// The ids of the batches the log's lines hold, oldest first.
+fn logged_batches(lines: &[serde_json::Value]) -> Vec<uuid::Uuid> {
+    let mut ids: Vec<uuid::Uuid> = lines
+        .iter()
+        .filter_map(|line| line["batch"].as_str()?.parse().ok())
+        .collect();
+    ids.dedup();
+    ids
+}
+
+/// The batches the log's `lines` hold that `document` does not: those its
+/// last mark names, then every batch after it (every batch, before any
+/// mark). None when the log cannot say: a line no batch id names where
+/// the tail would be (a daemon that marks nothing wrote it, so a save may
+/// have taken it), a file changed since the mark, a batch it names that
+/// the log no longer holds (its generation dropped past the cap), a blob
+/// or an op that does not read. A batch whose lines come again later
+/// (sent once more to a daemon that did not know it had been logged) is
+/// taken once, where it first stands.
+fn restore_tail_from(
+    lines: &[serde_json::Value],
+    log: &Path,
+    document: &Path,
+) -> Option<Vec<Restored>> {
     let mark = lines.iter().rposition(|line| line.get("unsaved").is_some());
     let (listed, after) = match mark {
         Some(at) => {
@@ -788,6 +856,7 @@ fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
     let blob_dir = log.with_extension("blobs");
     let mut tail: Vec<Restored> = Vec::new();
     let mut found = std::collections::HashSet::new();
+    let mut taken = std::collections::HashSet::new();
     for (at, line) in lines.iter().enumerate() {
         if line.get("op").is_none() {
             continue;
@@ -806,6 +875,10 @@ fn restore_tail(log: &Path, document: &Path) -> Option<Vec<Restored>> {
             );
             return None;
         };
+        let current = tail.last().map(|last| last.id);
+        if current != Some(batch) && !taken.insert(batch) {
+            continue;
+        }
         let mut op = line["op"].clone();
         if !inline_blobs(&mut op, &blob_dir) {
             tracing::warn!("a blob the op log names is missing; no unsaved tail");
@@ -870,15 +943,26 @@ fn inline_blobs(value: &mut serde_json::Value, blob_dir: &Path) -> bool {
 /// document's log home and the unsaved tail the log holds, numbered from
 /// the start of this daemon's order.
 fn resume(state: &mut State, note: &Path) {
-    let Some(document) = noted_home(note) else {
+    let Some(document) = noted_home(note).filter(|document| document.is_file()) else {
+        // A daemon on a document with no file yet writes on where the one
+        // before it stopped; what it ordered is in the log already.
+        for id in logged_batches(&read_log(&oplog_path())) {
+            state.remember(id, None);
+        }
         return;
     };
-    if !document.is_file() {
-        return;
+    let log = document_oplog(&document);
+    let lines = read_log(&log);
+    for id in logged_batches(&lines) {
+        state.remember(id, None);
     }
-    let tail = restore_tail(&document_oplog(&document), &document).unwrap_or_default();
+    let tail = restore_tail_from(&lines, &log, &document).unwrap_or_else(|| {
+        state.unsaved_lost = true;
+        Vec::new()
+    });
     for batch in tail {
         state.seq += 1;
+        state.remember(batch.id, Some(state.seq));
         state.tail.push(Logged {
             seq: state.seq,
             id: batch.id,
@@ -1095,6 +1179,8 @@ mod tests {
                 })
                 .collect()
         };
+        let restore_tail =
+            |log: &Path, document: &Path| restore_tail_from(&read_log(log), log, document);
         let tail = restore_tail(&log, &document).expect("a tail");
         assert_eq!(
             names(tail),

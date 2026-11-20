@@ -237,6 +237,19 @@ impl<T> SaveQueue<T> {
 }
 
 /// The tab's document server connection and what crosses it.
+/// A message the server sent after a file it opened, waiting for the file
+/// to be read.
+#[derive(Debug)]
+pub(crate) enum Heard {
+    /// Another's batch, number `seq` in the order.
+    Ops {
+        seq: u64,
+        ops: Vec<core_document::op::DocumentOp>,
+    },
+    /// The answer to this client's oldest unanswered batch.
+    Acked { seq: u64 },
+}
+
 pub(crate) struct Connection {
     /// The document server connection: the local daemon by default, direct
     /// files when no daemon can run. Everything that crosses it is the wire
@@ -258,14 +271,25 @@ pub(crate) struct Connection {
     /// What each peer has selected, keyed by actor. Bodies in here render
     /// with the peer tint; entries die with their peer.
     pub peer_presence: HashMap<Uuid, core_document::server::PresenceState>,
-    /// The server's batches heard after the Opened reply while the opened
-    /// document is still being parsed: they follow the file, so they wait
-    /// here and apply in order right after the new document lands.
-    pub held_remote_ops: Vec<(Uuid, u64, Vec<core_document::op::DocumentOp>)>,
+    /// What the server said after the Opened reply while the opened
+    /// document is still being parsed: others' batches and the answers to
+    /// this client's own. They follow the file, so they wait here and are
+    /// taken in order right after the new document lands.
+    pub held_remote_ops: Vec<Heard>,
     /// An open was asked of this connection and its Opened (or
     /// OpenFailed) reply has not come yet. Batches heard meanwhile are
     /// already in the file or the tail that follows the reply.
     pub awaiting_open: bool,
+    /// The tab is opening its own file again on a new connection after
+    /// the old one went (`DocumentSession::rejoin`): its edits keep going
+    /// to the server meanwhile, and the file and tail, once read, take
+    /// the document's place with those edits carried over.
+    pub rejoining: bool,
+    /// The server could not give back the unsaved edits it held when it
+    /// stopped, so this tab keeps its own copy: the tail it sent after the
+    /// file, up to this sequence number, is already in that copy or lacks
+    /// what it holds, and is let go.
+    pub skip_through: Option<u64>,
     /// The newest sequence number heard in the server's order, from
     /// another's batch applied or an ack of this client's own: a save
     /// tells the server its snapshot holds the others' batches up to here.
@@ -730,6 +754,8 @@ impl Connection {
             peer_presence: HashMap::new(),
             held_remote_ops: Vec::new(),
             awaiting_open: false,
+            rejoining: false,
+            skip_through: None,
             server_seq: 0,
             batches_sent: 0,
             last_sent_presence: None,

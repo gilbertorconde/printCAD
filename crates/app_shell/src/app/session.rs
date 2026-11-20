@@ -10,8 +10,8 @@ use core_document::{BodyId, Document, FeatureId};
 use uuid::Uuid;
 
 pub(crate) use crate::app::session_state::{
-    Builds, Connection, Drawn, FileState, HostTools, Hover, KeptSelection, KernelJobs, Selection,
-    ViewState,
+    Builds, Connection, Drawn, FileState, Heard, HostTools, Hover, KeptSelection, KernelJobs,
+    Selection, ViewState,
 };
 use crate::camera::CameraController;
 use crate::ui::{ActiveTool, ActiveWorkbench, Screen, TreeItemId};
@@ -83,19 +83,77 @@ impl DocumentSession {
     /// ends calls it, so a held gesture's ops are never left behind. While
     /// a file is being opened into the tab they are let go instead.
     pub(crate) fn send_outbox(&mut self) {
-        let ops = self.document.take_pending_ops();
-        if self.connection.awaiting_open || self.file.open_rx.is_some() {
+        let opening = self.connection.awaiting_open || self.file.open_rx.is_some();
+        let batch = self.document.take_pending_batch();
+        if opening && !self.connection.rejoining {
             // The connection already serves the file being opened, which
             // these edits of the document it replaces do not describe.
             self.document.forget_sent_ops();
             return;
         }
-        if !ops.is_empty() {
+        if let Some((batch, ops)) = batch {
             self.connection
                 .server
-                .send(core_document::server::ClientMessage::Ops(ops));
+                .send(core_document::server::ClientMessage::Ops { batch, ops });
             self.connection.batches_sent += 1;
         }
+    }
+
+    /// The connection went and `server` takes its place: the same daemon,
+    /// or one started where it stopped. The batches the old connection
+    /// never answered go again under their ids (the server answers those
+    /// it already ordered without ordering them twice), then the outbox;
+    /// a tab with a file of its own on this server then opens it again,
+    /// and the file and tail take the document's place with the edits sent
+    /// meanwhile carried over (`PrintCadApp::apply_rejoined_document`).
+    /// The undo history stays: the server's copy holds every edit of this
+    /// user's, so the inverses still hold. Answers false when a file was
+    /// being opened into the tab: that open went to the old connection,
+    /// and the edits of the document it replaces leave with it.
+    pub(crate) fn rejoin(
+        &mut self,
+        server: Box<dyn core_document::server::DocumentServer>,
+    ) -> bool {
+        let opening = (self.connection.awaiting_open || self.file.open_rx.is_some())
+            && !self.connection.rejoining;
+        self.connection.server = server;
+        self.connection.held_remote_ops.clear();
+        self.connection.server_seq = 0;
+        self.connection.batches_sent = 0;
+        self.connection.skip_through = None;
+        self.connection.last_sent_presence = None;
+        // A read of the file for a rejoin cut short is let go.
+        self.file.open_rx = None;
+        if opening {
+            self.document.forget_sent_ops();
+            self.connection.awaiting_open = false;
+            return false;
+        }
+        for (batch, ops) in self.document.sent_batches() {
+            self.connection
+                .server
+                .send(core_document::server::ClientMessage::Ops { batch, ops });
+            self.connection.batches_sent += 1;
+        }
+        let path = self
+            .file
+            .path
+            .clone()
+            .filter(|path| crate::app::server::socket_for(path) == self.connection.socket);
+        self.connection.rejoining = path.is_some();
+        self.connection.awaiting_open = false;
+        self.send_outbox();
+        if let Some(path) = path {
+            self.connection.load_epoch += 1;
+            self.connection
+                .server
+                .send(core_document::server::ClientMessage::OpenDocument {
+                    path,
+                    token: self.connection.load_epoch,
+                });
+            self.connection.awaiting_open = true;
+        }
+        true
     }
 
     /// The connection was replaced (a switch to another server, a
@@ -105,6 +163,8 @@ impl DocumentSession {
         self.document.forget_sent_ops();
         self.connection.held_remote_ops.clear();
         self.connection.awaiting_open = false;
+        self.connection.rejoining = false;
+        self.connection.skip_through = None;
         self.connection.server_seq = 0;
         self.connection.batches_sent = 0;
     }
@@ -376,7 +436,7 @@ mod tests {
             "recording"
         }
         fn send(&mut self, msg: core_document::server::ClientMessage) {
-            if let core_document::server::ClientMessage::Ops(ops) = msg {
+            if let core_document::server::ClientMessage::Ops { ops, .. } = msg {
                 self.0.lock().unwrap().push(ops);
             }
         }
@@ -463,6 +523,73 @@ mod tests {
         session.send_outbox();
         assert_eq!(sent.lock().unwrap().len(), 1);
         assert_eq!(session.connection.batches_sent, 1);
+    }
+
+    /// A server that notes what it is sent: each batch's id, or the file
+    /// asked for.
+    struct Said(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl core_document::server::DocumentServer for Said {
+        fn name(&self) -> &str {
+            "said"
+        }
+        fn send(&mut self, msg: core_document::server::ClientMessage) {
+            use core_document::server::ClientMessage;
+            let said = match msg {
+                ClientMessage::Ops { batch, .. } => format!("ops {batch}"),
+                ClientMessage::OpenDocument { path, .. } => format!("open {}", path.display()),
+                _ => return,
+            };
+            self.0.lock().unwrap().push(said);
+        }
+        fn poll(&mut self) -> Vec<core_document::server::ServerMessage> {
+            Vec::new()
+        }
+        fn status(&self) -> core_document::server::ServerStatus {
+            core_document::server::ServerStatus {
+                connected: true,
+                ..Default::default()
+            }
+        }
+        fn flush(&mut self) {}
+    }
+
+    /// A tab rejoining a server after its connection went sends again what
+    /// was never answered, under the same id, then its outbox, then asks
+    /// for its own file; its edits go on to the server while it reads. A
+    /// tab whose file was still opening lets that document's edits go.
+    #[test]
+    fn a_tab_rejoining_sends_what_was_unanswered_then_reads_its_file() {
+        let said = std::sync::Arc::<std::sync::Mutex<Vec<String>>>::default();
+        let speaker = || Box::new(Said(std::sync::Arc::clone(&said)));
+        let mut session = session_on(speaker());
+        let path = PathBuf::from("rejoin.prtcad");
+        session.file.path = Some(path.clone());
+        session.connection.socket = crate::app::server::socket_for(&path);
+        session.document.create_body(Some("sent".into()));
+        session.send_outbox();
+        let unanswered = session.document.sent_batches()[0].0;
+        session.document.create_body(Some("not sent".into()));
+        said.lock().unwrap().clear();
+
+        assert!(session.rejoin(speaker()));
+        let heard = std::mem::take(&mut *said.lock().unwrap());
+        assert_eq!(heard.len(), 3, "{heard:?}");
+        assert_eq!(heard[0], format!("ops {unanswered}"));
+        assert!(heard[1].starts_with("ops "));
+        assert_eq!(heard[2], "open rejoin.prtcad");
+        assert!(session.connection.rejoining && session.connection.awaiting_open);
+        assert_eq!(session.connection.batches_sent, 2);
+        session.document.create_body(Some("while reading".into()));
+        session.send_outbox();
+        assert_eq!(said.lock().unwrap().len(), 1, "edits go on meanwhile");
+
+        session.connection.rejoining = false;
+        session.connection.awaiting_open = true;
+        said.lock().unwrap().clear();
+        assert!(!session.rejoin(speaker()));
+        assert!(said.lock().unwrap().is_empty());
+        assert_eq!(session.document.sent_ops_unconfirmed(), 0);
     }
 
     /// A body that went takes every pick on it along, faces and edges

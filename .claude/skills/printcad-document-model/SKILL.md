@@ -64,9 +64,23 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   sent, unconfirmed batch with its inverse, and
   `Document::apply_server_ops` rolls those back, applies the server's
   batch and replays them; an unconfirmed op without an inverse (an
-  import) makes it apply over them instead and return false. The
+  import) makes it apply over them instead and return false. Each batch
+  goes out under a client-made id (`take_pending_batch`, `Ops { batch,
+  ops }`); the daemon remembers the ids it ordered (and those its log
+  holds, on a restart) and answers one sent again with `Acked` alone. A
+  lost connection rejoins (`DocumentSession::rejoin`): `sent_batches` go
+  again, then the outbox, then a tab with its own file opens it again
+  (`rejoining`); `Acked` and `Ops` heard while it is read wait in
+  `held_remote_ops`, and `apply_rejoined_document` puts the read copy in
+  place with `carry_unconfirmed_to` (the edits sent after the open on
+  top, the journal's open pairs with them), keeping the undo journal,
+  view and selection. `Opened` carries the order's `seq` and
+  `unsaved_lost` (a restarted daemon that could not read the tail back),
+  on which a rejoining tab keeps its copy and lets the tail through `seq`
+  go. The
   `Replica` harness in `tests/daemon.rs` drives clients the way the app
-  does (`settle` waits for acks, `catch_up` for a sequence number).
+  does (`settle` waits for acks, `catch_up` for a sequence number,
+  `rejoin` as `DocumentSession::rejoin` does).
   Each log line carries its batch's id; every save, homing and last
   leave appends a mark (`{"unsaved": [ids], "file": stamp}`), and a
   daemon started on a socket whose `<socket>.home` names a document reads

@@ -243,6 +243,57 @@ fn server_ops_land_beneath_unconfirmed_ones_that_roll_back() {
     assert_eq!(alice.bodies()[0].name, "bob");
 }
 
+/// A replica rejoining its server carries the edits the server has not
+/// confirmed onto the server's copy: they stay on top and unconfirmed
+/// under the same ids, a gesture still open closes there, and undo steps
+/// back through the user's own edits, the confirmed one too, leaving a
+/// peer's edit alone.
+#[test]
+fn edits_carried_onto_the_servers_copy_stay_unconfirmed_and_still_undo() {
+    let mut alice = Document::new("Rejoin");
+    let mut journal = core_document::history::OpJournal::new(16);
+    let body = alice.create_body(Some("Frame".into()));
+    journal.note(&mut alice);
+    let _ = alice.take_pending_ops();
+    alice.confirm_sent_ops();
+    let mut server = alice.clone();
+
+    alice.rename_body(body, "confirmed");
+    journal.note(&mut alice);
+    let confirmed = alice.take_pending_ops();
+    alice.confirm_sent_ops();
+    let in_flight = alice.create_body(Some("in flight".into()));
+    journal.note(&mut alice);
+    let (batch, _) = alice.take_pending_batch().expect("a batch");
+    alice.set_name("pending");
+
+    // The server's copy: the file and its tail, which holds the confirmed
+    // edit and a peer's.
+    for op in &confirmed {
+        server.apply_remote_op(op);
+    }
+    let mut peer = server.clone();
+    let peers = peer.create_body(Some("peer".into()));
+    for op in &peer.take_pending_ops() {
+        server.apply_remote_op(op);
+    }
+    let carried = alice.carry_unconfirmed_to(&mut server);
+    let mut alice = server;
+    assert_eq!(carried.len(), 2);
+    assert_eq!(alice.name(), "pending");
+    assert!(alice.body(in_flight).is_some() && alice.body(peers).is_some());
+    assert_eq!(alice.body(body).expect("frame").name, "confirmed");
+    assert_eq!(alice.sent_batches()[0].0, batch, "the same id goes again");
+
+    for _ in 0..3 {
+        assert!(journal.undo(&mut alice).is_some());
+    }
+    assert_eq!(alice.name(), "Rejoin");
+    assert!(alice.body(in_flight).is_none());
+    assert_eq!(alice.body(body).expect("frame").name, "Frame");
+    assert!(alice.body(peers).is_some(), "a peer's edit is not undone");
+}
+
 #[test]
 fn removing_a_body_takes_its_features_and_its_geometry() {
     let mut doc = Document::new("t");

@@ -31,7 +31,7 @@ use crate::op::DocumentOp;
 
 /// Version of the client↔server protocol; the `Hello` handshake refuses a
 /// mismatch loudly rather than misreading frames quietly.
-pub const SERVER_PROTOCOL_VERSION: u32 = 4;
+pub const SERVER_PROTOCOL_VERSION: u32 = 5;
 
 /// A message whose container bytes travel beside it rather than inside it.
 ///
@@ -86,8 +86,14 @@ pub enum ClientMessage {
     Hello { protocol: u32, actor: uuid::Uuid },
     /// User edits drained from the document's outbox, in order: one
     /// batch, answered by [`ServerMessage::Acked`] once it has its place in
-    /// the document's order.
-    Ops(Vec<DocumentOp>),
+    /// the document's order. `batch` names it in the op log; a batch sent
+    /// again under an id the server already ordered (a client that lost
+    /// its connection before the answer came) is answered without being
+    /// ordered twice.
+    Ops {
+        batch: uuid::Uuid,
+        ops: Vec<DocumentOp>,
+    },
     /// The client put another document in place of the one it had (a new
     /// document, a recovered copy): the ops logged so far do not describe
     /// its state. The server clears its log and unsaved tail only while
@@ -177,12 +183,23 @@ pub enum ServerMessage {
     PresenceGone {
         actor: uuid::Uuid,
     },
+    /// The document's file, followed by its unsaved tail as
+    /// [`ServerMessage::Ops`].
     Opened {
         token: u64,
         path: PathBuf,
         /// Carried beside the message, not inside it (see [`Payload`]).
         #[serde(skip)]
         bytes: Vec<u8>,
+        /// The newest sequence number in the order when the file was read:
+        /// the tail that follows runs up to it.
+        #[serde(default)]
+        seq: u64,
+        /// The server started where another stopped and could not read
+        /// back the unsaved edits that one held: the file and tail lack
+        /// them, and only a client that held them still has them.
+        #[serde(default)]
+        unsaved_lost: bool,
     },
     OpenFailed {
         token: u64,
