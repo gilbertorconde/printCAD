@@ -6,6 +6,9 @@ use wb_mesh::MeshWorkbench;
 use wb_sketch::SketchWorkbench;
 use wb_surface::SurfaceWorkbench;
 
+mod coupon;
+pub use coupon::{Coupon, CouponSizes, coupon};
+
 /// The built-in workbenches the UI lists, each with its drawing side.
 macro_rules! listed {
     ($($workbench:ty),* $(,)?) => {

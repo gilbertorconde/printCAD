@@ -328,13 +328,13 @@ pub(crate) fn document_command(
                     Some(_) => Err(CommandError::bad(key, "is a list of numbers")),
                 }
             };
-            let defaults = bench_fixtures::CouponSizes::default();
-            let sizes = bench_fixtures::CouponSizes {
+            let defaults = workbenches::CouponSizes::default();
+            let sizes = workbenches::CouponSizes {
                 diameters: numbers("diameters", defaults.diameters)?,
                 gaps: numbers("gaps", defaults.gaps)?,
                 overhangs: numbers("overhangs", defaults.overhangs)?,
             };
-            let c = bench_fixtures::coupon(document, &sizes).map_err(CommandError::failed)?;
+            let c = workbenches::coupon(document, &sizes).map_err(CommandError::failed)?;
             let at = |list: &[([f64; 3], f64)], what: &str| -> Value {
                 list.iter()
                     .map(|(p, v)| json!({"at": {"x": p[0], "y": p[1], "z": p[2]}, what: v}))

@@ -1158,11 +1158,12 @@ impl PrintCadApp {
 
 impl PrintCadApp {
     /// A fresh document from a start-page card: one body in the landing
-    /// bench, plus an XY sketch open for editing when asked.
+    /// bench, plus an XY sketch open for editing when asked, or one of the
+    /// shipped examples.
     fn start_new_document(&mut self, kind: StartKind) {
         let walkthrough = kind == StartKind::ExportWalkthrough;
         let kind = if walkthrough {
-            StartKind::Example(bench_fixtures::Scene::Pocket)
+            StartKind::Example(crate::app::examples::Example::DesignWorkflow)
         } else {
             kind
         };
@@ -1180,9 +1181,9 @@ impl PrintCadApp {
         self.session.return_workbench = None;
         self.session.view.before_edit = None;
         if kind == StartKind::Coupon {
-            match bench_fixtures::coupon(
+            match workbenches::coupon(
                 &mut self.session.document,
-                &bench_fixtures::CouponSizes::default(),
+                &workbenches::CouponSizes::default(),
             ) {
                 Ok(c) => {
                     self.session.active_body_id = Some(c.body);
@@ -1193,28 +1194,21 @@ impl PrintCadApp {
             crate::app::crash::forget(self.session.tab);
             return;
         }
+        if let StartKind::Example(example) = kind {
+            self.open_example(example);
+            crate::app::crash::forget(self.session.tab);
+            return;
+        }
         self.create_new_body();
         match kind {
             StartKind::Bench { workbench, command } => {
                 self.switch_workbench_for_flow(workbench.clone());
                 self.run_bench_command(workbench, &command, core_document::MenuScope::StartPage);
             }
-            StartKind::Example(scene) => {
-                match bench_fixtures::open_sketch_scene(
-                    &mut self.session.document,
-                    self.session.active_body_id,
-                    scene,
-                ) {
-                    // The bare sketch opens in the sketcher; a padded or
-                    // pocketed example is selected, ready to look at.
-                    Ok(handles) if scene == bench_fixtures::Scene::Sketch => {
-                        self.apply_tree_activation(TreeItemId::Feature(handles.feature));
-                    }
-                    Ok(handles) => self.apply_tree_selection(TreeItemId::Feature(handles.feature)),
-                    Err(err) => app_log::error(format!("Example: {err}")),
-                }
-            }
-            StartKind::Landing | StartKind::ExportWalkthrough | StartKind::Coupon => {}
+            StartKind::Landing
+            | StartKind::ExportWalkthrough
+            | StartKind::Coupon
+            | StartKind::Example(_) => {}
         }
         // What the card made is no call: a crash replays from it as made.
         crate::app::crash::forget(self.session.tab);

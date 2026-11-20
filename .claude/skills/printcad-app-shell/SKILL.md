@@ -36,7 +36,11 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   the server connection after the file's save and open receivers and the
   threaded caches after both, as they stood. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
-  `recompute.rs` (parametric rebuild driver), `links.rs` (parts linked from other
+  `recompute.rs` (parametric rebuild driver), `examples.rs` (the start
+  page's examples: `.prtcad` files under `assets/examples/` embedded in
+  the binary and opened into an untitled tab as a recovered copy is,
+  unsaved with no undo history; `PRINTCAD_WRITE_EXAMPLES=1 cargo test -p
+  app_shell examples` rewrites them from `bench_fixtures`' scenes), `links.rs` (parts linked from other
   `.prtcad` files: `Body.link` names the file and body, the shape is read
   from it on a thread and never saved here, a changed modified time marks
   the part stale until Reload; `FileLink::relative`, written by every save

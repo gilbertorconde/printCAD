@@ -191,11 +191,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
 - `workbenches` facade: `register_all_workbenches` (built-in benches, the
   listed ones then `ProjectImportBench`) and
   `register_packages` (installed packages, after them, as the user allowed;
-  `PackageStatus` for the Preferences page).
+  `PackageStatus` for the Preferences page), and `coupon` (the calibration
+  coupon the start page card and `pc.doc.coupon` build, `src/coupon.rs`).
 - `workbenches/fixtures` (`bench_fixtures`): ready-made scenes built from
   the benches' feature types (a dimensioned sketch, padded, pocketed) for
-  the app's `PRINTCAD_BENCH_SKETCH` hook and tests; the host composes
-  benches only through it, never by naming them. `scripts/check-workbench-seam.mjs`
+  the app's `PRINTCAD_BENCH_SKETCH` hook and tests; with the facade, the
+  only way the host composes benches, never by naming them. Nothing users
+  open is built here: the start page's examples are shipped documents
+  (`app_shell/assets/examples`, written from these scenes and held equal
+  to them by `app/examples.rs`'s test). `scripts/check-workbench-seam.mjs`
   rejects concrete bench references in `app_shell/src` and direct bench
   dependencies; local gates and CI run the same checker.
 
