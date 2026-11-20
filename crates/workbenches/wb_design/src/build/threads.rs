@@ -1,7 +1,7 @@
 //! Threads cut into a cylindrical face, and where a thread sits on the
 //! face as the view draws it.
 
-use core_document::{BodyId, Document};
+use core_document::{BodyId, Document, FeatureId};
 use kernel_api::{FaceProbe, FaceSurface, FaceThread, SolidOp};
 
 use crate::feature::{DesignFeature, FacePick};
@@ -295,13 +295,19 @@ pub(crate) fn thread_lines(
     body: BodyId,
     feature: &DesignFeature,
 ) -> kernel_api::TriMesh {
+    match thread_seat(document, body, feature) {
+        Some(seat) => seat_lines(feature, &seat),
+        None => kernel_api::TriMesh::default(),
+    }
+}
+
+/// [`thread_lines`] for cosmetic thread `feature` sitting at `seat`.
+pub(crate) fn seat_lines(feature: &DesignFeature, seat: &ThreadSeat) -> kernel_api::TriMesh {
     let mut mesh = kernel_api::TriMesh::default();
     let DesignFeature::Thread { cosmetic: true, .. } = feature else {
         return mesh;
     };
-    let (Some(seat), Ok((pitch, _, _))) =
-        (thread_seat(document, body, feature), thread_form(feature))
-    else {
+    let Ok((pitch, _, _)) = thread_form(feature) else {
         return mesh;
     };
     let radius = if seat.external {
@@ -333,4 +339,118 @@ pub(crate) fn thread_lines(
         }
     }
     mesh
+}
+
+/// The cosmetic threads on faces that feature `id` of `body` copies (a
+/// mirror's or a pattern's, of the threads among its originals or of
+/// their copies), each with the seat its copy stands at: the thread's
+/// seat moved as the copy is. A copy whose face the body's solid does not
+/// show is left out, as is a pattern whose places only the built solid
+/// says.
+pub(crate) fn copied_thread_seats(
+    document: &Document,
+    body: BodyId,
+    id: FeatureId,
+) -> Vec<(DesignFeature, ThreadSeat)> {
+    let features = super::design_features_of_body(document, body);
+    let mut seen = Vec::new();
+    let seats = seats_of(document, body, &features, id, &mut seen);
+    let Some((mesh, _)) = document.local_geometry(body) else {
+        return seats;
+    };
+    seats
+        .into_iter()
+        .filter(|(_, seat)| seat_drawn(&mesh, seat))
+        .collect()
+}
+
+/// The seats of the cosmetic threads feature `id` stands for: its own,
+/// for a thread; its copies', for a mirror or a pattern. `seen` is the
+/// way down, which guards originals that point the other way.
+fn seats_of(
+    document: &Document,
+    body: BodyId,
+    features: &[(FeatureId, DesignFeature)],
+    id: FeatureId,
+    seen: &mut Vec<FeatureId>,
+) -> Vec<(DesignFeature, ThreadSeat)> {
+    if seen.contains(&id) {
+        return Vec::new();
+    }
+    let Some(at) = features.iter().position(|(f, _)| *f == id) else {
+        return Vec::new();
+    };
+    let feature = &features[at].1;
+    if let DesignFeature::Thread { cosmetic: true, .. } = feature {
+        return thread_seat(document, body, feature)
+            .map(|seat| vec![(feature.clone(), seat)])
+            .unwrap_or_default();
+    }
+    let Some(originals) = feature.originals() else {
+        return Vec::new();
+    };
+    let Some(copies) = super::occurrence_steps(document, feature)
+        .ok()
+        .and_then(|steps| super::compose_steps(&steps))
+    else {
+        return Vec::new();
+    };
+    let skipped = feature.skipped().unwrap_or(&[]);
+    let sources: Vec<FeatureId> = if originals.is_empty() {
+        features[..at].iter().map(|(f, _)| *f).collect()
+    } else {
+        originals.to_vec()
+    };
+    seen.push(id);
+    let own: Vec<(DesignFeature, ThreadSeat)> = sources
+        .iter()
+        .flat_map(|source| seats_of(document, body, features, *source, seen))
+        .collect();
+    seen.pop();
+    copies
+        .iter()
+        .zip(0u32..)
+        .skip(1)
+        .filter(|(_, index)| !skipped.contains(index))
+        .flat_map(|(m, _)| {
+            own.iter()
+                .filter_map(move |(thread, seat)| Some((thread.clone(), moved_seat(m, seat)?)))
+        })
+        .collect()
+}
+
+/// `seat` where transform `m` puts it: its start moved, its directions
+/// turned, and its sizes grown as `m` grows them.
+fn moved_seat(m: &super::Mat4, seat: &ThreadSeat) -> Option<ThreadSeat> {
+    let turn = |v: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2])
+    };
+    let (into, across) = (turn(seat.into), turn(seat.across));
+    let grow = dot(across, across).sqrt();
+    let into_len = dot(into, into).sqrt();
+    if grow < 1e-12 || into_len < 1e-12 {
+        return None;
+    }
+    Some(ThreadSeat {
+        start: super::transform_point(m, seat.start),
+        into: into.map(|c| c / into_len),
+        across: across.map(|c| c / grow),
+        radius: seat.radius * grow,
+        length: seat.length * grow,
+        face_length: seat.face_length * grow,
+        external: seat.external,
+    })
+}
+
+/// Whether `mesh` shows a round face where `seat` says: a point of it on
+/// the cylinder within the seat's length.
+fn seat_drawn(mesh: &kernel_api::TriMesh, seat: &ThreadSeat) -> bool {
+    let reach = (seat.radius * 0.05).max(0.02);
+    mesh.positions.iter().any(|p| {
+        let rel: [f64; 3] = std::array::from_fn(|k| f64::from(p[k]) - seat.start[k]);
+        let along = dot(rel, seat.into);
+        let off: [f64; 3] = std::array::from_fn(|k| rel[k] - seat.into[k] * along);
+        (-reach..=seat.length + reach).contains(&along)
+            && (dot(off, off).sqrt() - seat.radius).abs() <= reach
+    })
 }

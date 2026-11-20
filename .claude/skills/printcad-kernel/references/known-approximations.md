@@ -101,7 +101,11 @@
   of the chain (across the plane, its ends run on along their tangents; or
   the chain thickened in the plane and swept along the normal), less the
   solid; the piece at the chain is kept where it stays well inside the
-  slab's far side, so a side the solid does not close in adds nothing.
+  slab's far side, so a side the solid does not close in adds nothing; a
+  piece that leaks round walls shorter than the line is tried again with
+  the run-ons cut off where the solid's vertices end along the line
+  (exactly there: a slab a hair past them leaks round the floor, and one
+  flush separates cleanly).
   `docs/HOLES.md` is the user guide. Fill patterns (`ops/fill.rs`): the
   region's edge is laid on its plane as the points of its edges, and a copy
   is whole inside where the convex hull of the original's outline (points

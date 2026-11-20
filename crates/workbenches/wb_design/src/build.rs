@@ -43,8 +43,8 @@ pub(crate) use sweeps::axis_in_sketch;
 use sweeps::{datum_direction, plan_sweep};
 use threads::thread_ops;
 pub(crate) use threads::{
-    nearest_thread_size, thread_designation, thread_form, thread_left_handed, thread_lines,
-    thread_seat,
+    copied_thread_seats, nearest_thread_size, seat_lines, thread_designation, thread_form,
+    thread_left_handed, thread_lines, thread_seat,
 };
 
 use core_document::{BodyId, Document, FeatureId, RebuildJob, WorkbenchFeature};

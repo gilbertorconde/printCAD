@@ -4351,7 +4351,7 @@ assert(cut > ring * 0.3 and cut < ring * 0.7, cut)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- Its sketch is an open line or chain of lines and arcs, `thickness` thick (2 mm), the thickness on both sides of the sketch plane, or `side = "Front"` (the side the normal points to) or `"Back"`. The line's ends run on along its end tangents until they meet the solid, and the web fills between the line and the solid on every side where the solid closes it in. With `along_normal = true` the line, thickened in its plane, runs along the plane's normal instead, either way, until it meets the solid. A rib that meets nothing, or a sketch that closes, fails on the feature.
+- Its sketch is an open line or chain of lines and arcs, `thickness` thick (2 mm), the thickness on both sides of the sketch plane, or `side = "Front"` (the side the normal points to) or `"Back"`. The line's ends run on along its end tangents until they meet the solid, and the web fills between the line and the solid on every side where the solid closes it in; past walls shorter than the line, it ends square where the solid ends along it. With `along_normal = true` the line, thickened in its plane, runs along the plane's normal instead, either way, until it meets the solid. A rib that meets nothing, or a sketch that closes, fails on the feature.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.pad`, `pc.sketch.line`.
 

@@ -6,7 +6,10 @@
 //! the plane's normal; along the normal, the chain thickened in the plane
 //! is extruded far each way. What of each such slab lies outside the solid
 //! and touches the chain is the web on that side, kept where the solid
-//! bounds it: a piece that runs out to the slab's far side met nothing.
+//! bounds it: a piece that runs out to the slab's far side met nothing,
+//! unless its ends ran on past walls shorter than the line, round which it
+//! leaked: the slab cut off square where the solid's corners end along
+//! the line keeps the web within them.
 
 use kernel_api::{
     ExtrudeTermination, Profile, ProfileSegment, ProfileWire, RibForm, RibSide, SweepKind,
@@ -46,6 +49,10 @@ fn left(a: V2) -> V2 {
 
 fn cross(a: V2, b: V2) -> f64 {
     a[0] * b[1] - a[1] * b[0]
+}
+
+fn dot(a: V2, b: V2) -> f64 {
+    a[0] * b[0] + a[1] * b[1]
 }
 
 fn same(a: V2, b: V2) -> bool {
@@ -265,8 +272,39 @@ pub fn tool(
     };
     let mid_thickness = (near_side + far_side) * 0.5;
 
-    let mut kept = Vec::new();
-    for way in [1.0, -1.0] {
+    // How far each end of the chain runs on along its tangent before it
+    // passes the solid's corners: where a web whose line runs on past
+    // short walls is cut off, square to its line, rather than leaking
+    // round them.
+    let corners: Vec<V2> = ogeom::topo::explore_unique(model, base, ShapeType::Vertex)
+        .map_err(|e| e.to_string())?
+        .iter()
+        .filter_map(|v| {
+            let p = v
+                .transform(model.datums())
+                .ok()?
+                .apply(model.node(v)?.data().as_vertex()?.point);
+            let d = [
+                p.x - plane.origin[0],
+                p.y - plane.origin[1],
+                p.z - plane.origin[2],
+            ];
+            let on = |axis: [f64; 3]| d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2];
+            Some([on(plane.x_axis), on(plane.y_axis)])
+        })
+        .collect();
+    let run_past = |from: V2, way: V2| {
+        corners
+            .iter()
+            .map(|c| dot(sub(*c, from), way))
+            .fold(0.0, f64::max)
+    };
+    let (d0, d1) = (first.tangent_at(s0), last.tangent_at(e1));
+    let to_walls = (run_past(s0, scale(d0, -1.0)), run_past(e1, d1));
+
+    // The slab on side `way` of the chain, its ends run on by `runs`, and
+    // a point beside the chain inside it.
+    let slab = |model: &mut Model, way: f64, runs: (f64, f64)| -> Result<(Shape, Point), String> {
         let (slab_profile, kind, near) = if form.along_normal {
             // The chain thickened in the plane, swept far one way along
             // the normal.
@@ -299,10 +337,8 @@ pub fn tool(
         } else {
             // The chain run on along its end tangents and closed far on
             // one side, given the thickness along the normal.
-            let d0 = first.tangent_at(s0);
-            let d1 = last.tangent_at(e1);
             let side = scale(unit(left(sub(e1, s0))), way);
-            let (a, b) = (sub(s0, scale(d0, reach)), add(e1, scale(d1, reach)));
+            let (a, b) = (sub(s0, scale(d0, runs.0)), add(e1, scale(d1, runs.1)));
             let (c, d) = (add(b, scale(side, reach)), add(a, scale(side, reach)));
             let mut pieces = vec![Piece::Line { a, b: s0 }];
             pieces.extend(chain.iter().copied());
@@ -312,6 +348,8 @@ pub fn tool(
                 Piece::Line { a: c, b: d },
                 Piece::Line { a: d, b: a },
             ]);
+            // An end already past the solid's box runs on no further.
+            pieces.retain(|p| !matches!(p, Piece::Line { a, b } if same(*a, *b)));
             let at = add(middle, scale(side, 1e-4));
             (
                 vec![wire(&pieces)],
@@ -337,20 +375,38 @@ pub fn tool(
             },
             &kind,
         )?;
-        let outside = combine_solids(model, &slab, base, kernel_api::BoolKind::Cut)?;
-        // The piece at the chain: none when the chain lies in the solid.
-        let Some((gap, piece)) =
-            crate::probe::by_distance(model, &outside, ShapeType::Solid, near)?
-                .into_iter()
-                .next()
-        else {
-            continue;
-        };
-        let Some((plo, phi)) = tess::robust_bounds(model, &piece) else {
-            continue;
-        };
-        if gap < 1e-3 && (phi - plo).magnitude() < reach * 0.5 {
-            kept.push(piece);
+        Ok((slab, near))
+    };
+    let mut kept = Vec::new();
+    for way in [1.0, -1.0] {
+        let mut runs = (reach, reach);
+        loop {
+            let slab = slab(model, way, runs)?;
+            let outside = combine_solids(model, &slab.0, base, kernel_api::BoolKind::Cut)?;
+            // The piece at the chain: none when the chain lies in the solid.
+            let Some((gap, piece)) =
+                crate::probe::by_distance(model, &outside, ShapeType::Solid, slab.1)?
+                    .into_iter()
+                    .next()
+            else {
+                break;
+            };
+            let Some((plo, phi)) = tess::robust_bounds(model, &piece) else {
+                break;
+            };
+            if gap >= 1e-3 {
+                break;
+            }
+            if (phi - plo).magnitude() < reach * 0.5 {
+                kept.push(piece);
+                break;
+            }
+            // It ran out to the slab's far side: past the ends of short
+            // walls, it is cut off where the solid ends along the line.
+            if form.along_normal || runs == to_walls {
+                break;
+            }
+            runs = to_walls;
         }
     }
     if kept.is_empty() {

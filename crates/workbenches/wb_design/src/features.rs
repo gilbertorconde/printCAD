@@ -72,20 +72,38 @@ impl DesignWorkbench {
                 build::threaded_bores(document, &feature)?.radius,
             ))
         };
-        build::threaded_bores_of(document, body, id)
-            .into_iter()
-            .filter_map(|bore| {
-                let (designation, radius) = hole(bore.hole)?;
-                Some(core_document::ThreadCallout {
-                    feature: id,
-                    body,
-                    designation,
-                    mouth: bore.mouth,
-                    axis: bore.into,
-                    radius,
+        let mut callouts: Vec<core_document::ThreadCallout> =
+            build::threaded_bores_of(document, body, id)
+                .into_iter()
+                .filter_map(|bore| {
+                    let (designation, radius) = hole(bore.hole)?;
+                    Some(core_document::ThreadCallout {
+                        feature: id,
+                        body,
+                        designation,
+                        mouth: bore.mouth,
+                        axis: bore.into,
+                        radius,
+                    })
                 })
-            })
-            .collect()
+                .collect();
+        // The copies of cosmetic threads on faces: each at its face's
+        // starting end, as the thread's own callout stands.
+        callouts.extend(
+            build::copied_thread_seats(document, body, id)
+                .into_iter()
+                .filter_map(|(thread, seat)| {
+                    Some(core_document::ThreadCallout {
+                        feature: id,
+                        body,
+                        designation: thread.cosmetic_thread()?,
+                        mouth: seat.start,
+                        axis: seat.into,
+                        radius: seat.radius,
+                    })
+                }),
+        );
+        callouts
     }
 
     pub(crate) fn passive_of(
@@ -123,7 +141,8 @@ impl DesignWorkbench {
                 regions: Vec::new(),
             });
         }
-        // A mirror's or a pattern's copies of threaded holes: their helices.
+        // A mirror's or a pattern's copies of threaded holes and of cosmetic
+        // threads on faces: their helices.
         if let (Some(body), Some(feature)) = (
             node.body,
             document
@@ -131,18 +150,29 @@ impl DesignWorkbench {
                 .filter(|f| f.originals().is_some()),
         ) {
             let bores = build::threaded_bores_of(document, body, id);
-            if bores.is_empty() {
+            let seats = build::copied_thread_seats(document, body, id);
+            if bores.is_empty() && seats.is_empty() {
                 return None;
             }
-            let mesh = build::copied_thread_lines(document, body, id);
+            let mut mesh = build::copied_thread_lines(document, body, id);
+            for (thread, seat) in &seats {
+                let lines = build::seat_lines(thread, seat);
+                let base = mesh.positions.len() as u32;
+                mesh.positions.extend(lines.positions);
+                mesh.normals.extend(lines.normals);
+                mesh.edges.extend(lines.edges.iter().map(|e| e + base));
+            }
             // What the lines are drawn from: the copies' places, each hole
-            // copied (its thread and depth) and the solid a through hole
-            // runs to.
+            // or thread copied (its size and depth) and the solid a through
+            // hole runs to and a thread's face lies on.
             let mut holes: Vec<FeatureId> = bores.iter().map(|b| b.hole).collect();
             holes.dedup();
+            let threads: Vec<serde_json::Value> =
+                seats.iter().map(|(thread, _)| thread.to_json()).collect();
             let revision = holes
                 .iter()
                 .filter_map(|h| document.feature_values(*h))
+                .chain(&threads)
                 .fold(
                     core_document::data_revision(&feature.to_json()),
                     |r, data| r.rotate_left(7) ^ core_document::data_revision(data),

@@ -3507,13 +3507,21 @@ impl DesignFeature {
     }
 
     /// The numbers the feature holds that change nothing as it stands,
-    /// which its parameters leave out: a honeycomb's row spacing.
+    /// which its parameters leave out: a honeycomb's row spacing, the
+    /// pitch and depth of a thread cut to a standard size, the diameter of
+    /// a hole sized from its thread.
     pub fn idle_numbers(&self) -> &'static [&'static str] {
         match self {
             DesignFeature::FillPattern {
                 lattice: FillKind::Honeycomb,
                 ..
             } => &["row_spacing"],
+            DesignFeature::Thread {
+                thread: Some(_), ..
+            } => &["pitch", "depth"],
+            DesignFeature::Hole {
+                thread: Some(_), ..
+            } => &["diameter"],
             _ => &[],
         }
     }

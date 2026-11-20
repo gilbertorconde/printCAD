@@ -501,8 +501,12 @@ closes it in, **Thickness** thick: on **Both sides** of the sketch plane,
 or all of it on **One side** or the **Other side**. **Along the normal**
 instead thickens the line in its plane and runs it along the plane's
 normal until it meets the solid: a web drawn on a plane above a floor
-stands down onto it, and one drawn between two plates reaches both. A
-line that meets no solid, or a sketch that closes, fails on the feature.
+stands down onto it, and one drawn between two plates reaches both.
+Across the plane, a line drawn above walls shorter than it runs on over
+their tops: the web then fills down between them and onto their tops,
+ending square where the solid ends along the line, flush with the walls'
+outer faces. A line that meets no solid, or a sketch that closes, fails
+on the feature.
 A rib is copied by Mirrored and the patterns like any other feature.
 
 **Scale body** scales the whole solid about a point: by one **Factor**,
