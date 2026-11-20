@@ -155,6 +155,24 @@ pub enum InertiaReference {
 }
 
 impl InertiaReference {
+    /// What a datum offers to take inertia about, in the world: a line
+    /// its axis, a point or coordinate system its origin, a plane nothing.
+    pub fn of_datum(datum: &core_document::PlacedDatum) -> Option<Self> {
+        let wide = |v: [f32; 3]| v.map(f64::from);
+        let name = datum.name.clone();
+        let at = wide(datum.origin());
+        match datum.feature.shape {
+            core_document::DatumShape::Line { .. } => Some(Self::Axis {
+                name,
+                point: at,
+                direction: wide(datum.placement.direction(datum.feature.frame().x_axis)),
+            }),
+            core_document::DatumShape::Point
+            | core_document::DatumShape::CoordinateSystem { .. } => Some(Self::Point { name, at }),
+            core_document::DatumShape::Plane { .. } => None,
+        }
+    }
+
     pub fn name(&self) -> &str {
         match self {
             InertiaReference::CentreOfMass => "Centre of mass",
@@ -352,6 +370,14 @@ pub enum Example {
     SketcherBasics,
     /// The same sketch padded, with a face sketch pocketed into its top.
     DesignWorkflow,
+}
+
+impl Example {
+    /// Whether the example opens its feature for editing rather than
+    /// only selecting it.
+    pub fn opens_for_editing(self) -> bool {
+        self == Example::SketcherBasics
+    }
 }
 
 /// What the bench hooks ask of the UI, read once on the host's side at

@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/app_shell",
+  "crates/app_ui",
   "crates/app_log",
   "crates/app_platform",
   "crates/package_store",

@@ -5,7 +5,7 @@ description: "UI code conventions and the design system: ui_kit (tokens, theme, 
 
 # printCAD: UI conventions
 
-The invariants in `CLAUDE.md` still bind here; this skill never weakens one. UiLayer never owns state the host mutates; adding a UI action is one `contract/commands.rs` variant plus one `fold_command` arm; `ui/` never names `app/` (`scripts/check-ui-boundary.mjs`).
+The invariants in `CLAUDE.md` still bind here; this skill never weakens one. UiLayer never owns state the host mutates; adding a UI action is one `app_ui/src/contract/commands.rs` variant plus one `fold_command` arm; the UI is `app_ui`'s private `ui` module, reached by the app only through `UiLayer` (`scripts/check-ui-boundary.mjs`).
 
 ## UI conventions
 

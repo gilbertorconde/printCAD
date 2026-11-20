@@ -68,7 +68,7 @@ on the start page (`Screen::Start`); the recent list lives in
 
 ## Keyboard shortcuts
 
-**Keyboard shortcuts.** One keymap (`keymap.rs`, beside `ui/` and `app/`) holds the
+**Keyboard shortcuts.** One keymap (`app_ui/src/keymap.rs`, beside the UI, read by the app too) holds the
 application's commands (`HOST`, ids like `file.save`) and every bench's
 tools and registered actions, each with default keys
 (`ToolDescriptor::shortcut`, `WorkbenchContext::register_action`,

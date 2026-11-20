@@ -6,7 +6,7 @@ use kernel_api::{ImportedModel, LengthUnit, TriMesh};
 
 /// Whether `mesh` closes: every edge, its ends welded where they lie at
 /// one spot, shared by exactly two triangles.
-pub(crate) fn closes(mesh: &TriMesh) -> bool {
+pub fn closes(mesh: &TriMesh) -> bool {
     use std::collections::HashMap;
     let mut at: HashMap<[u32; 3], u32> = HashMap::with_capacity(mesh.positions.len());
     let welded: Vec<u32> = mesh
@@ -32,7 +32,7 @@ pub(crate) fn closes(mesh: &TriMesh) -> bool {
 
 /// A scan mesh's size and density.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct MeshFacts {
+pub struct MeshFacts {
     pub triangles: usize,
     pub points: usize,
     /// The median length of its triangles' edges, in millimetres: how far
@@ -44,7 +44,7 @@ pub(crate) struct MeshFacts {
 /// sample spread through the mesh reads the same as over all of it.
 const SPACING_SAMPLE: usize = 20_000;
 
-pub(crate) fn mesh_facts(mesh: &TriMesh) -> MeshFacts {
+pub fn mesh_facts(mesh: &TriMesh) -> MeshFacts {
     let triangles = mesh.indices.len() / 3;
     let step = triangles.div_ceil(SPACING_SAMPLE).max(1);
     let mut lengths: Vec<f64> = mesh
@@ -78,7 +78,7 @@ pub(crate) fn mesh_facts(mesh: &TriMesh) -> MeshFacts {
 
 /// The units an STL can be read in, as the question and Preferences offer
 /// them.
-pub(crate) const MESH_UNITS: [(LengthUnit, &str); 4] = [
+pub const MESH_UNITS: [(LengthUnit, &str); 4] = [
     (LengthUnit::Millimetre, "Millimetres"),
     (LengthUnit::Centimetre, "Centimetres"),
     (LengthUnit::Metre, "Metres"),
@@ -86,7 +86,7 @@ pub(crate) const MESH_UNITS: [(LengthUnit, &str); 4] = [
 ];
 
 /// How many millimetres one of `unit` is.
-pub(crate) fn millimetres_per(unit: LengthUnit) -> f32 {
+pub fn millimetres_per(unit: LengthUnit) -> f32 {
     match unit {
         LengthUnit::Millimetre => 1.0,
         LengthUnit::Centimetre => 10.0,
@@ -97,7 +97,7 @@ pub(crate) fn millimetres_per(unit: LengthUnit) -> f32 {
 }
 
 /// The name a command takes a unit by, and back.
-pub(crate) fn unit_key(unit: LengthUnit) -> &'static str {
+pub fn unit_key(unit: LengthUnit) -> &'static str {
     match unit {
         LengthUnit::Millimetre => "mm",
         LengthUnit::Centimetre => "cm",
@@ -107,7 +107,7 @@ pub(crate) fn unit_key(unit: LengthUnit) -> &'static str {
     }
 }
 
-pub(crate) fn unit_of_key(key: &str) -> Option<LengthUnit> {
+pub fn unit_of_key(key: &str) -> Option<LengthUnit> {
     MESH_UNITS
         .iter()
         .map(|(u, _)| *u)
@@ -117,13 +117,13 @@ pub(crate) fn unit_of_key(key: &str) -> Option<LengthUnit> {
 
 /// Whether a file is one whose units the reader cannot know, so the app
 /// asks: an STL.
-pub(crate) fn has_no_units(path: &std::path::Path) -> bool {
+pub fn has_no_units(path: &std::path::Path) -> bool {
     path.extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("stl"))
 }
 
 /// The meshes of a model read in `unit`, brought to millimetres.
-pub(crate) fn scale_to_millimetres(model: &mut ImportedModel, unit: LengthUnit) {
+pub fn scale_to_millimetres(model: &mut ImportedModel, unit: LengthUnit) {
     let k = millimetres_per(unit);
     if k == 1.0 {
         return;
@@ -140,7 +140,7 @@ pub(crate) fn scale_to_millimetres(model: &mut ImportedModel, unit: LengthUnit) 
 }
 
 /// A unit's name as a sentence says it.
-pub(crate) fn unit_name(unit: LengthUnit) -> &'static str {
+pub fn unit_name(unit: LengthUnit) -> &'static str {
     match unit {
         LengthUnit::Millimetre => "millimetres",
         LengthUnit::Centimetre => "centimetres",
@@ -152,7 +152,7 @@ pub(crate) fn unit_name(unit: LengthUnit) -> &'static str {
 
 /// Mark the mesh bodies among `bodies` as scans, read in `unit`; how
 /// many were.
-pub(crate) fn mark_scans(document: &mut Document, bodies: &[BodyId], unit: LengthUnit) -> usize {
+pub fn mark_scans(document: &mut Document, bodies: &[BodyId], unit: LengthUnit) -> usize {
     let info = ScanInfo {
         read_in: (unit != LengthUnit::Millimetre).then_some(unit),
     };

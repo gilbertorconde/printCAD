@@ -33,7 +33,7 @@ node scripts/gates.mjs            # every gate above in order, stopping at the f
 node scripts/gates.mjs --heavy    # the same, then the heavy tests (--only heavy for them alone)
 node scripts/test-budget.mjs --heavy     # the heavy tests (big models, long builds) behind each package's heavy-tests feature
 node scripts/check-layers.mjs     # each crate depends only on crates of lower layers (the table in the script)
-node scripts/check-ui-boundary.mjs  # app_shell's ui/ and app/ meet only through contract/
+node scripts/check-ui-boundary.mjs  # app_ui hands out only UiLayer of its UI; app_shell never reaches into it
 cargo test -p <crate>             # one crate while iterating; clippy and fmt take -p too
 ```
 
@@ -101,9 +101,10 @@ are in the skill the index below names.
   safety, the unsaved and save-over questions), `package_store`
   (workbench packages, stores, the release check), `kernel_worker` (the
   kernel thread over `build_driver`), `view_camera` (window input steering
-  `viewport_camera`, the clipping plane, kept views); `app_shell`
-  (`printcad`), whose `ui/` and `app/` meet only through `contract/`
-  (`scripts/check-ui-boundary.mjs`).
+  `viewport_camera`, the clipping plane, kept views); `app_ui` (the
+  window's UI, private behind `UiLayer`, and `contract`, what it
+  exchanges with the app, beside the keymap and the helpers both use);
+  `app_shell` (`printcad`: the host, `app/`, over `app_ui`).
 
 The host never names a bench: everything crosses the `Workbench` trait
 (`scripts/check-workbench-seam.mjs`), which keeps a bench's descriptor and
@@ -170,19 +171,21 @@ hacks, no silently degraded feature). Instead:
   `apply_hook_outcome` applies every one, from every hook site (a panel
   hook's arrive as `UiCommand::HostRequest`; a lifecycle hook's switch
   requests are the one thing dropped, since it runs inside a switch).
-- **Adding a UI action** = one variant in `contract/commands.rs` + one arm in
+- **Adding a UI action** = one variant in `app_ui/src/contract/commands.rs` + one arm in
   `app/commands.rs::fold_command`, which acts at once or folds it into a
   `FrameIntents` field that `app/commands/intents.rs` applies in its fixed
   order (two-phase dispatch preserves ordering). A change to settings alone
   needs no variant: the UI pushes `UiCommand::EditSettings` with a
   `SettingsEdit` (`SettingsEdit::set(|s| &mut s.field, value)`), applied in
   phase 1 and saved with the frame's other settings changes. `UiLayer::run`
-  (`ui/frame.rs`) draws one function per region, each pushing its commands
-  in the order it draws. `ui/` never names `app/`, and `app/` names
-  nothing of `ui/` but `UiLayer`: what both read (`UiFrameInputs`,
-  `UiCommand`, `TreeItemId`, `Screen` and the rest) is in `contract/`, which
-  names neither (`scripts/check-ui-boundary.mjs`, a lint gate). A value
-  the UI shows comes in through `UiFrameInputs`, or from a crate below.
+  (`app_ui/src/ui/frame.rs`) draws one function per region, each pushing
+  its commands in the order it draws. The UI is `app_ui`'s private `ui`
+  module: the app names `UiLayer` and nothing else of it, and what both
+  read (`UiFrameInputs`, `UiCommand`, `TreeItemId`, `Screen` and the rest)
+  is `app_ui::contract`, which names nothing of the UI
+  (`scripts/check-ui-boundary.mjs`, a lint gate). A value the UI shows
+  comes in through `UiFrameInputs`, or from a crate below; a version it
+  shows is the app's, named once through `app_ui::build::set`.
 - **Every user-edit mutator on `Document` records exactly one op; derived
   state never does.** Mutators follow validate → resolve (ids, timestamps,
   seq) → build `DocumentOp` → `apply_op` → record; replay runs the same code

@@ -29,6 +29,8 @@ const LAYERS = [
   ["workbenches"],
   // The application's parts beneath the binary: its services and the view camera.
   ["assistant", "doc_export", "file_session", "kernel_worker", "package_store", "view_camera"],
+  // The window's UI and its contract with the application.
+  ["app_ui"],
   // The application.
   ["app_shell"],
 ];

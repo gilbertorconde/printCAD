@@ -56,7 +56,7 @@ Each finding cites the rule it breaks. The slugs name the invariants in
 | `saves-flushed-on-exit` | Every exit path calls `wait_for_all_document_saves()` |
 | `host-names-no-bench` | `crates/app_shell/src` never names a bench crate, id or feature kind (`seam_lint.rs`, the CI grep) |
 | `ui-owns-no-host-state` | `UiLayer` is seeded from `UiFrameInputs`; a bench talks back only through `ctx.request` |
-| `ui-action-two-phase` | A UI action is one variant in `contract/commands.rs` and one arm in `app/commands.rs::apply_ui_commands` |
+| `ui-action-two-phase` | A UI action is one variant in `app_ui/src/contract/commands.rs` and one arm in `app/commands.rs::apply_ui_commands` |
 | `gfx-drop-order` | Field order in `gfx.rs` and the `take()`s in `RendererCore::drop` are the teardown contract |
 | `no-wait-idle` | The renderer hot path has no queue or device wait; buffers retire through the `MeshCache` queue |
 | `scene-fingerprint-complete` | Anything the scene pass reads is hashed in `scene_fingerprint` |

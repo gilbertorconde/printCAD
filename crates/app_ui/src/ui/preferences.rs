@@ -1015,7 +1015,7 @@ fn general_page(
                 vec![
                     PrefRow::text(
                         "Version",
-                        format!("printCAD {} · dev", env!("CARGO_PKG_VERSION")),
+                        format!("printCAD {} · dev", crate::build::version()),
                     ),
                     PrefRow::text("GPU", inputs.gpu_name.unwrap_or("Unknown").to_string()),
                     PrefRow::text(
@@ -1814,7 +1814,7 @@ fn updates_page(
         ui,
         "Version",
         vec![
-            PrefRow::text("This build", env!("CARGO_PKG_VERSION").to_string()),
+            PrefRow::text("This build", crate::build::version().to_string()),
             PrefRow::new("Latest release", |ui| {
                 if ui
                     .add_enabled(!checking, |ui: &mut egui::Ui| {

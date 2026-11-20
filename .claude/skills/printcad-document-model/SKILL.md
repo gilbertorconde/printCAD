@@ -205,7 +205,7 @@ the source re-places them inside `SetBodyPlacement`'s apply, and
 array's occurrence copies every body of it (`ArrayInstance::members`)
 into a rigid component of its own (`group`). A path or point pattern
 carries the stations or points it was read with: the host reads them
-(`app_shell/src/array_paths.rs`: a bench's `BenchFeatures::feature_paths`, chains and
+(`app_ui/src/array_paths.rs`: a bench's `BenchFeatures::feature_paths`, chains and
 free points, through the kernel's `wire_frames`, or a solid edge through
 `edge_frames`) whenever the array is made or edited. The body menu's
 Array of copies… is `ui/array_task.rs` (a component's tree row too;

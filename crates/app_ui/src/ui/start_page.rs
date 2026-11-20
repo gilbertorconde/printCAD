@@ -425,7 +425,7 @@ pub fn draw_start_page(
                     .color(TEXT1),
             );
             ui.label(
-                RichText::new(format!("printCAD {} · dev", env!("CARGO_PKG_VERSION")))
+                RichText::new(format!("printCAD {} · dev", crate::build::version()))
                     .font(sans(FONT_XS))
                     .color(TEXT3),
             );

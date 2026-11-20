@@ -3,18 +3,11 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
-mod array_paths;
-mod console;
-mod contract;
 mod headless;
-mod keymap;
 #[cfg(all(feature = "profile", target_os = "linux"))]
 mod profile;
-mod scans;
-mod script_library;
 #[cfg(test)]
 mod test_support;
-mod ui;
 
 use anyhow::{Context, Result};
 use core_document::{Document, DocumentService, WorkbenchId};
@@ -24,10 +17,11 @@ use render_wgpu::{FrameSubmission, RenderSettings, Renderer};
 use settings::{SettingsStore, UserSettings};
 use std::path::PathBuf;
 
-use contract::{ActiveWorkbench, Screen};
+use app_ui::UiLayer;
+use app_ui::contract::{ActiveWorkbench, Screen};
+use app_ui::{array_paths, console, contract, keymap, scans, script_library};
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use ui::UiLayer;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -35,6 +29,9 @@ use winit::{
     window::{WindowAttributes, WindowId},
 };
 use workbenches::register_all_workbenches;
+
+/// The release notes What's new shows.
+const RELEASE_NOTES: &str = include_str!("../RELEASE_NOTES.md");
 
 fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>>
 {
@@ -87,6 +84,7 @@ fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_bloc
 
 fn main() -> Result<()> {
     core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
+    app_ui::build::set(env!("CARGO_PKG_VERSION"), RELEASE_NOTES);
     app::bench_hooks::hooks();
     #[cfg(all(feature = "profile", target_os = "linux"))]
     profile::start();
@@ -590,5 +588,35 @@ mod icon_tests {
     #[test]
     fn the_window_icon_decodes_from_the_bundled_picture() {
         assert!(super::window_icon().is_some());
+    }
+}
+
+#[cfg(test)]
+mod release_notes_tests {
+    #[test]
+    fn the_running_version_has_notes_and_every_topic_says_something() {
+        let releases = app_ui::build::parse(super::RELEASE_NOTES);
+        assert!(
+            releases
+                .iter()
+                .any(|r| r.version == env!("CARGO_PKG_VERSION")),
+            "RELEASE_NOTES.md has no notes for {}",
+            env!("CARGO_PKG_VERSION")
+        );
+        for release in &releases {
+            assert!(
+                !release.topics.is_empty(),
+                "{} has no topics",
+                release.version
+            );
+            for topic in &release.topics {
+                assert!(
+                    !topic.changes.is_empty(),
+                    "{} › {} is empty",
+                    release.version,
+                    topic.title
+                );
+            }
+        }
     }
 }

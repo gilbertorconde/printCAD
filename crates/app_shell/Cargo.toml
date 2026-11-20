@@ -17,6 +17,7 @@ viewport_camera = { path = "../viewport_camera" }
 view_camera = { path = "../view_camera" }
 local_ipc = { path = "../local_ipc" }
 app_log = { path = "../app_log" }
+app_ui = { path = "../app_ui" }
 app_platform = { path = "../app_platform" }
 package_store = { path = "../package_store" }
 file_session = { path = "../file_session" }

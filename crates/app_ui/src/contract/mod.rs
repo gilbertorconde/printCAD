@@ -3,9 +3,9 @@
 //! rest), the frame's inputs ([`UiFrameInputs`]), what a frame hands back
 //! ([`UiFrameOutput`]) and the actions the UI asks for ([`UiCommand`]).
 //!
-//! `ui/` draws from these and never names `app/`; `app/` fills them and
-//! names nothing of `ui/` but `UiLayer`. `scripts/check-ui-boundary.mjs`
-//! holds both sides to it.
+//! The UI draws from these, and the host (`app_shell`) fills them and
+//! applies the commands, seeing nothing of the UI but `UiLayer`. Nothing
+//! here names the UI (`scripts/check-ui-boundary.mjs`).
 
 mod commands;
 mod inputs;

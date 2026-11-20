@@ -740,7 +740,7 @@ pub struct KeyFocus {
 }
 
 /// Whether `chord` is a key that types a number.
-pub(crate) fn types_number(chord: Chord) -> bool {
+pub fn types_number(chord: Chord) -> bool {
     use KeyCode::*;
     !chord.ctrl
         && !chord.alt
