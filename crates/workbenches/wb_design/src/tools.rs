@@ -4,8 +4,8 @@ use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 
 use crate::feature::{
     ChamferMode, DesignFeature, DrillPoint, EdgePick, ExtrudeDirection, ExtrudeMode, FacePick,
-    HelixMode, HoleCut, HoleFit, MirrorPlane, PatternAxis, PatternPath, PipeCorner,
-    PipeOrientation, RevolveAxis, RevolveMode, ScaleCentre, ThreadSpec, TransformStep,
+    FillArea, FillKind, HelixMode, HoleCut, HoleFit, MirrorPlane, PatternAxis, PatternPath,
+    PipeCorner, PipeOrientation, RevolveAxis, RevolveMode, ScaleCentre, ThreadSpec, TransformStep,
     primitive_preset,
 };
 use crate::hole_tables::ThreadStandard;
@@ -749,6 +749,53 @@ impl DesignWorkbench {
                         layout: Default::default(),
                     },
                     "PathPattern",
+                )
+            }
+            "design.fill_pattern" => {
+                need_material(has_solid)?;
+                let face = crate::text_feature::picked_face(ctx, body);
+                let region = match (sketch, face) {
+                    (Some(sketch), _) => FillArea::Sketch {
+                        sketch,
+                        regions: picked_regions(Some(sketch)),
+                    },
+                    (None, Some(face)) => {
+                        if !matches!(
+                            face.surface,
+                            None | Some(kernel_api::FaceSurface::Plane { .. })
+                        ) {
+                            return Err(given.say(
+                                "A fill covers a flat face: click a flat face, or select a \
+                                 sketch of the area",
+                                "`face_point` must name a flat face",
+                            ));
+                        }
+                        FillArea::Face(FacePick::of(face))
+                    }
+                    (None, None) => {
+                        return Err(given.say(
+                            "Select a sketch of the area to fill in the tree, or click a flat \
+                             face of the solid, first",
+                            "It needs a region: give `sketch`, or `face_point` and \
+                             `face_normal`",
+                        ));
+                    }
+                };
+                (
+                    DesignFeature::FillPattern {
+                        skipped: Vec::new(),
+                        refine: false,
+                        boolean_tolerance: None,
+                        originals: Self::last_shape_feature(ctx, body).into_iter().collect(),
+                        region,
+                        lattice: FillKind::Grid,
+                        spacing: 10.0,
+                        row_spacing: 10.0,
+                        angle_deg: 0.0,
+                        margin: 0.0,
+                        clip: false,
+                    },
+                    "FillPattern",
                 )
             }
             "design.multi_transform" => {

@@ -63,10 +63,11 @@ pub use build::{
 pub use feature::{
     Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DesignFeature,
     DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick,
-    FilletMode, FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, HoleShape,
-    HoleStart, LoftSection, MirrorPlane, NutSide, NutTrap, PathSpacing, PatternAxis, PatternPath,
-    PipeCorner, PipeOrientation, PlaneTarget, RadiusPoint, RevolveAxis, RevolveMode, ScaleCentre,
-    SketchAxis, ThreadSpec, TransformStep, primitive_icon, primitive_preset,
+    FillArea, FillKind, FilletMode, FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut,
+    HoleFit, HoleShape, HoleStart, LoftSection, MirrorPlane, NutSide, NutTrap, PathSpacing,
+    PatternAxis, PatternPath, PipeCorner, PipeOrientation, PlaneTarget, RadiusPoint, RevolveAxis,
+    RevolveMode, ScaleCentre, SketchAxis, ThreadSpec, TransformStep, primitive_icon,
+    primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, NutSize, NutStandard, ScrewSeat, ThreadSize, ThreadStandard,

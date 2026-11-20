@@ -664,7 +664,7 @@ fn edge_pick_row(
 /// when the sketch's curves close more than one. With none chosen the
 /// checks show the regions the whole profile takes; choosing those again
 /// goes back to taking the whole profile.
-fn regions_rows(
+pub(super) fn regions_rows(
     f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     sketch: FeatureId,
@@ -959,6 +959,7 @@ pub fn feature_editor(
         | DesignFeature::CircularPattern { .. }
         | DesignFeature::PointPattern { .. }
         | DesignFeature::PathPattern { .. }
+        | DesignFeature::FillPattern { .. }
         | DesignFeature::MultiTransform { .. } => {
             changed |= transforms::transform_editor(f, ctx, fx, body, feature_id, feature);
         }

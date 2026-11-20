@@ -71,9 +71,11 @@ pub(crate) fn occurrences_of(
         {
             occurrence_transforms(document, &part).ok()
         }
-        Some(kernel) => kernel
-            .pattern_transforms(document.imported_brep_blob(body), &steps)
-            .ok(),
+        Some(kernel) => asked_once(document, body, feature, || {
+            kernel
+                .pattern_transforms(document.imported_brep_blob(body), &steps)
+                .ok()
+        }),
         None => None,
     };
     let Some(transforms) = transforms else {
@@ -94,9 +96,41 @@ pub(crate) fn occurrences_of(
         .collect()
 }
 
+/// What the kernel answers of where `feature`'s occurrences stand, asked
+/// once while the document and its body's solid stay as they are: the
+/// view asks at every move of the pointer, and the kernel reads the whole
+/// solid to answer.
+fn asked_once(
+    document: &Document,
+    body: core_document::BodyId,
+    feature: FeatureId,
+    ask: impl FnOnce() -> Option<Vec<crate::build::Mat4>>,
+) -> Option<Vec<crate::build::Mat4>> {
+    type Key = (FeatureId, (u64, u64, u64), u64);
+    type Kept = Option<(Key, Option<Vec<crate::build::Mat4>>)>;
+    thread_local! {
+        static KEPT: std::cell::RefCell<Kept> = const { std::cell::RefCell::new(None) };
+    }
+    let key = (
+        feature,
+        document.content_stamp(),
+        document.imported_geometry(body).map_or(0, |g| g.revision),
+    );
+    if let Some(answer) = KEPT.with_borrow(|kept| {
+        kept.as_ref()
+            .filter(|(at, _)| *at == key)
+            .map(|(_, answer)| answer.clone())
+    }) {
+        return answer;
+    }
+    let answer = ask();
+    KEPT.with_borrow_mut(|kept| *kept = Some((key, answer.clone())));
+    answer
+}
+
 /// Where the originals stand together, in their body's own frame: the
 /// middle of the places each stands.
-fn anchor_of(document: &Document, originals: &[FeatureId]) -> Option<[f64; 3]> {
+pub(crate) fn anchor_of(document: &Document, originals: &[FeatureId]) -> Option<[f64; 3]> {
     let places: Vec<[f32; 3]> = originals
         .iter()
         .filter_map(|id| place_of(document, *id))
@@ -115,13 +149,25 @@ fn anchor_of(document: &Document, originals: &[FeatureId]) -> Option<[f64; 3]> {
     Some(sum.map(|v| v / n))
 }
 
-/// Where one original stands: the middle of its sketch's drawing, a
-/// primitive's origin, a dress-up's first edge.
+/// Where one original stands: the middle of a hole's centres, of its
+/// sketch's drawing, a primitive's origin, a dress-up's first edge.
 fn place_of(document: &Document, original: FeatureId) -> Option<[f32; 3]> {
     let data = document
         .feature_values(original)
         .or_else(|| document.get_feature_data(original))?;
     let part = DesignFeature::from_json(data).ok()?;
+    if let DesignFeature::Hole { sketch, .. } = &part {
+        let sketch = crate::build::load_sketch(document, *sketch).ok()?;
+        let (plane, _) = crate::build::hole_plane(document, &part, &sketch).ok()?;
+        let centres = crate::build::hole_centers(&sketch.sketch);
+        let n = centres.len().max(1) as f64;
+        let [u, v] = centres
+            .iter()
+            .fold([0.0, 0.0], |[u, v], c| [u + c[0] / n, v + c[1] / n]);
+        return Some(std::array::from_fn(|k| {
+            (plane.origin[k] + plane.x_axis[k] * u + plane.y_axis[k] * v) as f32
+        }));
+    }
     if let Some(sketch) = part.sketch() {
         return crate::handles::sketch_centre(document, sketch).map(|(centre, _)| centre);
     }

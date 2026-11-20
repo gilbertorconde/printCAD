@@ -127,7 +127,11 @@ fn place(
     })
 }
 
-fn build_tool_op(model: &mut Model, base: Option<&Shape>, op: &SolidOp) -> Result<Shape, String> {
+pub(crate) fn build_tool_op(
+    model: &mut Model,
+    base: Option<&Shape>,
+    op: &SolidOp,
+) -> Result<Shape, String> {
     match op {
         SolidOp::Sweep { profile, kind, .. } => {
             super::sweep::build_tool(model, base, profile, kind)

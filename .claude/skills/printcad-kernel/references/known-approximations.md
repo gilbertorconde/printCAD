@@ -102,4 +102,15 @@
   the chain thickened in the plane and swept along the normal), less the
   solid; the piece at the chain is kept where it stays well inside the
   slab's far side, so a side the solid does not close in adds nothing.
-  `docs/HOLES.md` is the user guide.
+  `docs/HOLES.md` is the user guide. Fill patterns (`ops/fill.rs`): the
+  region's edge is laid on its plane as the points of its edges, and a copy
+  is whole inside where the convex hull of the original's outline (points
+  the app reads off the original's sketch or size) lies inside at the
+  margin; with trimming, a copy whose centre, outline or outline's sides'
+  middles reach inside is made and trimmed by the region swept along its
+  normal, moved in by the margin with `offset_wire` (lines and arcs only).
+  Each original's tool is built once and moved; copies whose hulls (of the
+  tool's edges seen along the normal) meet are fused first, since a boolean
+  takes only lumps standing apart, then all go in one boolean. On a face
+  only its outer edge bounds the region, read from the solid as it stands
+  where the pattern does (the view's dots, from the built solid).

@@ -24,7 +24,10 @@
   `threads` (a Thread on a picked cylinder, `SolidOp::Thread`, and a Rib
   from an open chain, `SolidOp::Rib`; the view's seat of a thread, its
   length handle and a cosmetic one's helix and callout read the body's
-  mesh, `thread_seat`),
+  mesh, `thread_seat`); a Fill pattern goes as one `PatternStep::Fill`
+  (`fill_layout`: its region, lattice, and where its originals stand and the
+  outline they make, read from their sketches and sizes), which the kernel
+  lays out and builds itself (`kernel_ogeom/src/ops/fill.rs`),
   its tests in `build/tests/` by the same families). `split.rs`: the body menu's Split… and
   `design.split` make pieces, each a body starting with a Clone of the
   body split and a `Split` keeping one side of a plane

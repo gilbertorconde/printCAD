@@ -63,9 +63,13 @@ pub(crate) fn primitive_placement(placement: &kernel_api::Placement, walker: &mu
 /// (`#[walk(...)]` on its fields, `feature.rs`).
 pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
     use core_document::WorkbenchFeature;
-    crate::feature::DesignFeature::from_json(&node.data)
-        .map(|feature| Walker::of(&feature).parameters)
-        .unwrap_or_default()
+    let Ok(feature) = crate::feature::DesignFeature::from_json(&node.data) else {
+        return Vec::new();
+    };
+    let idle = feature.idle_numbers();
+    let mut parameters = Walker::of(&feature).parameters;
+    parameters.retain(|p| p.name.as_deref().is_none_or(|name| !idle.contains(&name)));
+    parameters
 }
 
 /// Every name Design gives a number, for checks. A `debug_assert!`

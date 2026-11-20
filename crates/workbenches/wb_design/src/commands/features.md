@@ -1076,7 +1076,7 @@ local volume = pc.doc.measure{body = body}.volume
 assert(volume < math.pi * 100 * 20 - 1, "material cut away")
 ```
 
-## design.mirror, design.linear_pattern, design.polar_pattern, design.circular_pattern, design.point_pattern, design.path_pattern, design.scaled
+## design.mirror, design.linear_pattern, design.polar_pattern, design.circular_pattern, design.point_pattern, design.path_pattern, design.fill_pattern, design.scaled
 
 `originals = {id, ...}` are the features it repeats; left out, it takes the
 body's last feature that is not a dress-up, a pattern, a mirror or a boolean.
@@ -1285,6 +1285,47 @@ table.sort(ys)
 assert(#ys == 5 and math.abs(ys[5] - 30) < 1e-6, #ys)
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (6400 - 5 * math.pi * 4) * 4) < 1e-3, volume)
+```
+
+## design.fill_pattern
+
+`sketch` gives the region, the area its curves close (`region = {Sketch =
+{sketch = id, regions = {...}}}` takes regions of it by name); `face_point`
+with `face_normal`, or `region = {Face = {point = {x, y, z}, normal = {x, y,
+z}}}`, a flat face of the solid, the area its outer edge closes, found where
+the pattern stands.
+
+`lattice = "Grid"` (the default) places copies `spacing` mm apart along a row
+and `row_spacing` mm from row to row; `"Honeycomb"` places each `spacing` from
+its six neighbours, every other row moved half a spacing along. The lattice
+runs along the sketch's x axis (on a face, the body's x laid on it) turned by
+`angle_deg`, and passes through where the original stands, which holds one of
+its places. A copy is made where all of it lies inside the region at least
+`margin` mm from its edge; `clip = true` also makes those the edge passes
+through, trimmed to the region less the margin. Occurrences count the original
+first, then the copies row by row, as `skipped` names them.
+
+The copies are the original's tool, built once and moved, cut or fused in one
+boolean. More than 2000 copies are refused.
+
+See also: `design.point_pattern`
+
+### A plate vented with a honeycomb of holes
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local plate = pc.design.pad{sketch = s, length = 4}
+local body = pc.doc.feature{id = plate}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 1.5}
+local hole = pc.design.pocket{sketch = at, through_all = true}
+-- The plate's outline is the region; each hole's rim stays 1 mm inside.
+pc.design.fill_pattern{sketch = s, originals = {hole}, lattice = "Honeycomb",
+  spacing = 8, margin = 1}
+assert(#pc.doc.rebuild() == 0, "the fill builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1200 - 18 * math.pi * 2.25) * 4) < 1e-3, volume)
 ```
 
 ## design.scaled

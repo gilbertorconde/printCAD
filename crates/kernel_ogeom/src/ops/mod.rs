@@ -1,6 +1,7 @@
 //! Per-op translators from `kernel_api::SolidOp` to ogeom calls.
 
 pub mod dressup;
+pub mod fill;
 pub mod loft_pipe;
 pub mod pattern;
 pub mod pattern_steps;

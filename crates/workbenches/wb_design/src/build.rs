@@ -34,7 +34,9 @@ use inputs::{
     answer_lent_faces, boolean_inputs, borrow_inputs, datum_probes, followed_bodies,
     following_datums, sketch_projections, tools_reach,
 };
-pub(crate) use patterns::{Mat4, occurrence_steps, occurrence_transforms, transform_point};
+pub(crate) use patterns::{
+    Mat4, fill_frame, occurrence_steps, occurrence_transforms, transform_point,
+};
 use patterns::{compose_steps, mat_mul, mat_rotation, mat_translation, normalize, plan_pattern};
 use ribs::rib_op;
 pub(crate) use sweeps::axis_in_sketch;
@@ -457,6 +459,7 @@ fn plan_feature(
         | DesignFeature::CircularPattern { .. }
         | DesignFeature::PointPattern { .. }
         | DesignFeature::PathPattern { .. }
+        | DesignFeature::FillPattern { .. }
         | DesignFeature::MultiTransform { .. } => {
             plan_pattern(document, plan, feature_ops, feature, &fail)?;
         }

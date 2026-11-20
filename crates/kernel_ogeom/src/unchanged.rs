@@ -30,7 +30,9 @@ pub(crate) fn said_of(
             BoolKind::Cut => Some("removes nothing: its tool body may not meet the solid"),
             _ => None,
         },
-        SolidOp::Transform { originals, .. } | SolidOp::TransformCopies { originals, .. }
+        SolidOp::Transform { originals, .. }
+        | SolidOp::TransformCopies { originals, .. }
+        | SolidOp::Pattern { originals, .. }
             if !originals.is_empty() =>
         {
             Some(if originals.iter().any(|&o| subtractive(o) == Some(true)) {

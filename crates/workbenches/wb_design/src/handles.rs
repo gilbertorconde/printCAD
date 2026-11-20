@@ -347,6 +347,7 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
         }
         DesignFeature::Draft { .. } => out.push(draft_handle(&maker, &part, eye)),
         DesignFeature::Primitive { .. } => out.extend(primitive_handles(&maker, &part)),
+        DesignFeature::FillPattern { .. } => out.extend(fill_handles(&maker, &part)),
         // A variable fillet's radii are at places along its run, which the
         // view does not know: they are set in the panel.
         DesignFeature::Fillet {
@@ -552,6 +553,24 @@ fn thread_handle(maker: &Maker, part: &DesignFeature) -> Option<Handle> {
         },
         Range::Positive,
     )
+}
+
+/// A fill pattern's spacing along its rows from where its original
+/// stands, and a grid's row spacing across them.
+fn fill_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
+    let Some((anchor, along, across)) = crate::build::fill_frame(maker.document, part) else {
+        return Vec::new();
+    };
+    let origin = maker.world64(anchor);
+    let line = |dir: [f64; 3]| Shape::Line {
+        origin,
+        dir: maker.world_dir64(dir),
+        scale: 1.0,
+    };
+    vec![
+        maker.handle("/spacing", line(along), Range::Positive),
+        maker.handle("/row_spacing", line(across), Range::Positive),
+    ]
 }
 
 /// A revolution's or groove's: where it starts round the axis from the
