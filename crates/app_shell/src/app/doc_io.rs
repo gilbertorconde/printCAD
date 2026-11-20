@@ -39,6 +39,22 @@ pub(crate) fn opened(
     document
 }
 
+/// A document read from `path`, made ready as [`opened`] does and named
+/// after the file.
+pub(crate) fn opened_from(
+    registry: &core_document::DocumentService,
+    document: Document,
+    path: &Path,
+) -> Document {
+    let mut document = opened(registry, document);
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled");
+    document.name_after_file(document_name_from_file_name(file_name));
+    document
+}
+
 /// The on-disk recent list; missing or unreadable means empty.
 pub(crate) fn load_recent() -> settings::recent::RecentStore {
     settings::SettingsStore::recent_file_path()
@@ -246,18 +262,11 @@ impl PrintCadApp {
         // The connection already serves the opened file, which the
         // outgoing document's unsent ops do not describe: they leave with
         // it.
-        self.session.document = opened(&self.registry, document);
+        self.session.document = opened_from(&self.registry, document, &path);
         self.session.file.links_from = path.parent().map(Path::to_path_buf);
         self.session.file.path = Some(path.clone());
         // The chats kept with the file come back, resting until shown.
         self.restore_chats();
-        let file_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Untitled");
-        self.session
-            .document
-            .set_name(document_name_from_file_name(file_name));
         self.session.active_document_object = None;
         self.session.active_body_id = None;
         self.session.selection.tree = Some(TreeItemId::DocumentRoot);
@@ -287,8 +296,7 @@ impl PrintCadApp {
         }
         // No rebase: the file and the tail the server sent after it are the
         // document as every other client on it holds it, unsaved edits and
-        // all. (set_name above records an op into the new document; it
-        // flows normally on the next drain.)
+        // all.
         self.session.journal.reset(&mut self.session.document);
         app_log::info(format!("Opened document from {}", path.display()));
         self.note_opened_file(&path);
@@ -692,7 +700,7 @@ impl PrintCadApp {
         let lowered = file_name.to_ascii_lowercase();
         self.session
             .document
-            .set_name(document_name_from_file_name(file_name));
+            .name_after_file(document_name_from_file_name(file_name));
 
         let ext_lower = path
             .extension()
@@ -1682,7 +1690,24 @@ fn any_case(extension: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{document_name_from_file_name, write_into};
+    use super::{document_name_from_file_name, opened_from, write_into};
+
+    /// Opening a file whose stored name is not its file name's names the
+    /// document after the file without an edit: nothing for the log's
+    /// unsaved tail, nothing sent to the other copies.
+    #[test]
+    fn opening_records_no_name_edit() {
+        let registry = core_document::DocumentService::default();
+        let stored = core_document::Document::new("Stored name");
+        let mut document = opened_from(
+            &registry,
+            stored,
+            std::path::Path::new("/parts/bracket.prtcad"),
+        );
+        assert_eq!(document.name(), "bracket");
+        assert!(document.take_pending_batch().is_none());
+        assert!(!document.metadata().dirty());
+    }
 
     /// Files a bench saves into a folder stay in it: a name with a folder
     /// in it is left out.

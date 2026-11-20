@@ -770,7 +770,7 @@ impl Headless {
     fn save(&mut self, path: &Path) -> Result<()> {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             self.document
-                .set_name(crate::app::doc_io::document_name_from_file_name(name));
+                .name_after_file(crate::app::doc_io::document_name_from_file_name(name));
         }
         let folder = |file: &Path| {
             std::path::absolute(file)
