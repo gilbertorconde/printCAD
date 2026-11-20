@@ -114,7 +114,14 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   and sends `AdoptLog { socket }` before each `SaveDocument` until one
   completes; the file's daemon waits (bounded) for the untitled daemon to
   exit, then carries its log into the document's ahead of the save's mark
-  (`set_oplog_home(document, earlier)`, `carry_log`). A tab closed with
+  (`set_oplog_home(document, earlier)`, `carry_log`). `AdoptLog` also
+  writes an `adopt` line naming that socket into the file daemon's
+  unhomed log. A file daemon that dies before its first save or open
+  leaves its lines there unmarked; the next daemon on that socket sets
+  them aside at start (`set_aside_leftover`): they join the untitled log
+  an `adopt` line names when it is still kept and unserved, else a mark
+  naming none closes them off, so a later open never offers them as the
+  file's. Untitled sockets' logs are left alone. A tab closed with
   the save never written drops it (`discard_untitled_log`). After a crash
   `untitled_logs` lists the untitled logs no daemon serves that hold edits
   and do not begin with a `rebased` line (what a `Rebase` writes in an

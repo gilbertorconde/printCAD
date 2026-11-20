@@ -134,7 +134,9 @@ pub enum ClientMessage {
     /// (the tab's own, while it was untitled) joins this server's log at
     /// the next save that writes, ahead of what this server logged, so the
     /// document's log begins with its first edit. The save holds those
-    /// edits, so the log marks them saved.
+    /// edits, so the log marks them saved. Should this server stop before
+    /// that save writes, the next one on its socket moves what it logged
+    /// into that log.
     AdoptLog { socket: PathBuf },
     /// The edits in the log the daemon on `socket` kept while its document
     /// had no file (an untitled tab's, left by a crash) come back: the log

@@ -1418,6 +1418,122 @@ fn an_untitled_log_after_a_rebase_is_not_offered_and_discard_removes_it() {
     assert!(std::fs::symlink_metadata(unhomed.with_extension("socket")).is_err());
 }
 
+/// A file's daemon that dies before anyone saved or opened through it
+/// leaves its clients' edits in its socket's unhomed log: edits of the
+/// document a tab was saving there (a Save As still packing), which the
+/// file never got. The next open of the file does not offer them as its
+/// own, and the edits made after the open still come back after a crash.
+#[test]
+fn edits_a_file_daemon_logged_before_its_first_save_are_not_another_opens() {
+    daemon_env();
+    let home = TestHome::new("unhomed_scope");
+    let mut alice = Replica::join(&home, Document::new("Saved"));
+    alice.doc.create_body(Some("Base".into()));
+    alice.save(&home.document());
+    alice.leave();
+    wait_for_socket_gone(&home);
+
+    let mut daemon = start_daemon(&home, &[]);
+    let mut elsewhere = Document::new("Elsewhere");
+    let body = elsewhere.create_body(Some("another document".into()));
+    let mut carol = Replica::join(&home, elsewhere.clone());
+    carol.doc.rename_body(body, "carol's, never saved");
+    carol.send();
+    carol.settle();
+    let unhomed = doc_server::unhomed_oplog_for(&home.socket());
+    assert!(
+        std::fs::read_to_string(&unhomed)
+            .expect("the unhomed log")
+            .contains("carol's, never saved"),
+        "logged before the daemon died"
+    );
+    daemon.kill().expect("the daemon stops");
+    wait_for_exit(&mut daemon, "once killed");
+    drop(carol);
+
+    let mut bob = Replica::open(&home, &home.document());
+    assert_eq!(bob.offered, 0, "carol's edit is not the file's");
+    assert_eq!(bob.doc.bodies()[0].name, "Base");
+    bob.doc.set_name("bob's, unsaved");
+    bob.send();
+    bob.settle();
+    drop(bob);
+    wait_for_socket_gone(&home);
+
+    let mut dave = Replica::open(&home, &home.document());
+    assert_eq!(dave.offered, 1, "bob's edit, left by a crash");
+    dave.client.send(ClientMessage::RestoreUnsaved);
+    dave.take_until("bob's edit", |r| r.doc.name() == "bob's, unsaved");
+    assert_eq!(dave.doc.bodies()[0].name, "Base");
+}
+
+/// An untitled tab's first save whose file's daemon dies before the save
+/// writes: the edits that daemon logged join the untitled log the save
+/// was to take up, so the start page offers the whole session back, and
+/// the file's socket keeps none of them.
+#[test]
+fn edits_a_first_saves_daemon_left_join_their_untitled_log() {
+    daemon_env();
+    let home = TestHome::new("unhomed_adopt");
+    let untitled = home.dir.join("untitled-adopt.sock");
+    let mut alice = Replica::join_at(&untitled, Document::new("Untitled"));
+    alice.doc.create_body(Some("before the save".into()));
+    alice.send();
+    alice.settle();
+
+    let mut daemon = start_daemon(&home, &[]);
+    alice.client = DaemonClient::spawn_or_connect(&home.socket()).expect("file's daemon");
+    alice.inbox = Inbox::default();
+    alice.sent = 0;
+    alice.seen = 0;
+    wait_for_gone(&untitled);
+    alice.doc.create_body(Some("while it packed".into()));
+    alice.send();
+    alice.settle();
+    alice.client.send(ClientMessage::AdoptLog {
+        socket: untitled.clone(),
+    });
+    let file_unhomed = doc_server::unhomed_oplog_for(&home.socket());
+    let deadline = Instant::now() + PATIENCE;
+    while !std::fs::read_to_string(&file_unhomed)
+        .unwrap_or_default()
+        .contains("\"adopt\"")
+    {
+        assert!(Instant::now() < deadline, "the adopt never reached the log");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    daemon.kill().expect("the daemon stops");
+    wait_for_exit(&mut daemon, "once killed");
+    drop(alice);
+
+    let mut next = start_daemon(&home, &[]);
+    let bystander = Replica::join(&home, Document::new("Untitled"));
+    assert!(
+        !std::fs::read_to_string(&file_unhomed)
+            .unwrap_or_default()
+            .contains("while it packed"),
+        "gone from the file's socket"
+    );
+    assert!(
+        doc_server::daemon::untitled_logs()
+            .iter()
+            .any(|log| log.socket == untitled),
+        "the untitled session is offered"
+    );
+    bystander.leave();
+    wait_for_exit(&mut next, "once its client left");
+
+    let fresh = home.dir.join("untitled-adopt-fresh.sock");
+    let mut bob = Replica::join_at(&fresh, Document::new("Untitled"));
+    bob.client
+        .send(ClientMessage::RestoreLog { socket: untitled });
+    bob.take_until("both edits", |r| {
+        bodies_named(&r.doc, "before the save") == 1 && bodies_named(&r.doc, "while it packed") == 1
+    });
+    bob.leave();
+    wait_for_gone(&fresh);
+}
+
 /// A log kept beside its document, as older versions kept it, moves into
 /// the log folder on the first open, and the unsaved edits it holds are
 /// offered back.

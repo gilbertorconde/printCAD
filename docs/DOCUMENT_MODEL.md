@@ -227,7 +227,12 @@ names them. A document that never had a file keeps its log in the runtime
 folder until its last copy closes it or saves it under a name. Its first
 save goes to the server of its new file, which takes that log into the
 document's log ahead of the save's mark, so the document's log begins with
-its first edit and counts those edits saved.
+its first edit and counts those edits saved. When that server stops
+before the save is written, the edits it received are the session's, not
+the file's: the next server on that file moves them into the untitled
+log the save was to take up, which the start page offers back, or, when
+there is none (a Save As) or it is gone, sets them aside, so opening the
+file never offers them.
 
 When the application crashed, or its server stopped without warning,
 the unsaved edits stay in the log. The start page lists such documents

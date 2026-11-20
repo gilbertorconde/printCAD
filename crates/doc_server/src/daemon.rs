@@ -355,7 +355,13 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
                 let recoverable = std::mem::take(&mut state.recoverable);
                 state.restore(recoverable, limit);
             }
-            ClientMessage::AdoptLog { socket } => lock(&hub.state).adopt = Some(socket),
+            ClientMessage::AdoptLog { socket } => {
+                let mut state = lock(&hub.state);
+                if state.adopt.as_ref() != Some(&socket) {
+                    note_adopt(&socket);
+                    state.adopt = Some(socket);
+                }
+            }
             ClientMessage::RestoreLog { socket } => restore_log(hub, &socket),
             ClientMessage::DiscardUnsaved => {
                 let mut state = lock(&hub.state);
@@ -1101,8 +1107,8 @@ pub fn unsaved_logs_in(dir: &Path) -> Vec<UnsavedLog> {
     found
 }
 
-/// Whether the log's last line leaves edits unsaved: an edit, or a mark
-/// naming some. Only the end of the log is read.
+/// Whether the log's last edit or mark leaves edits unsaved: an edit, or
+/// a mark naming some. Only the end of the log is read.
 fn log_ends_unsaved(log: &Path) -> bool {
     use std::io::{Read as _, Seek as _};
     let Ok(mut file) = std::fs::File::open(log) else {
@@ -1118,17 +1124,22 @@ fn log_ends_unsaved(log: &Path) -> bool {
         return false;
     }
     let text = String::from_utf8_lossy(&end);
-    let Some(last) = text.lines().rev().find(|line| !line.trim().is_empty()) else {
-        return false;
-    };
-    match serde_json::from_str::<serde_json::Value>(last) {
-        Ok(line) if line.get("unsaved").is_some() => line["unsaved"]
-            .as_array()
-            .is_some_and(|ids| !ids.is_empty()),
-        Ok(line) => line.get("op").is_some(),
-        // A line longer than what was read: an edit's.
-        Err(_) => true,
+    for last in text.lines().rev().filter(|line| !line.trim().is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(last) {
+            Ok(line) if line.get("unsaved").is_some() => {
+                return line["unsaved"]
+                    .as_array()
+                    .is_some_and(|ids| !ids.is_empty());
+            }
+            Ok(line) if line.get("op").is_some() => return true,
+            // A note (the untitled log a save was to take up, a rebase)
+            // says nothing of what is unsaved: the line before it does.
+            Ok(_) => {}
+            // A line longer than what was read: an edit's.
+            Err(_) => return true,
+        }
     }
+    false
 }
 
 /// Whether a daemon serves `document` now.
@@ -1418,13 +1429,16 @@ fn inline_blobs(value: &mut serde_json::Value, blob_dir: &Path) -> bool {
 /// Pick up where a daemon that died on this socket left off: its
 /// document's log home and the unsaved tail the log holds, numbered from
 /// the start of this daemon's order.
-fn resume(state: &mut State, note: &Path) {
+fn resume(state: &mut State, socket: &Path, note: &Path) {
     let Some(document) = noted_home(note).filter(|document| document.is_file()) else {
         // A daemon on a document with no file yet writes on where the one
         // before it stopped; what it ordered is in the log already.
-        for id in logged_batches(&read_log(&oplog_path())) {
+        let log = oplog_path();
+        let lines = read_log(&log);
+        for id in logged_batches(&lines) {
             state.remember(id, None);
         }
+        set_aside_leftover(socket, &log, &lines);
         return;
     };
     let log = document_oplog(&document);
@@ -1444,6 +1458,75 @@ fn resume(state: &mut State, note: &Path) {
         unsaved = state.recoverable.len(),
         "took up a document whose daemon stopped"
     );
+}
+
+/// Note in the unhomed log the untitled log a save is to take up
+/// (`AdoptLog`): what tells the next daemon on this socket, should this
+/// one die before the save writes, whose edits its lines are.
+fn note_adopt(socket: &Path) {
+    let _guard = lock(&OPLOG_WRITE);
+    if lock(&OPLOG_PATH).is_some() {
+        return;
+    }
+    let line = serde_json::json!({
+        "v": core_document::op::OP_PROTOCOL_VERSION,
+        "adopt": socket,
+    });
+    let path = unhomed_oplog();
+    let written = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+        })
+        .and_then(|mut file| writeln!(file, "{line}"));
+    if let Err(err) = written {
+        tracing::warn!("the untitled log a save takes up was not noted: {err}");
+    }
+}
+
+/// The edits a file's daemon that died before its first save or open
+/// left in this socket's unhomed `log` (its `lines`) are the session's
+/// that sent them, never the document this daemon opens or saves next,
+/// which holds none of them. An untitled tab's first save noted the
+/// untitled log it was to take up: when that log is still kept and no
+/// daemon serves it, these edits join it, where the start page offers
+/// them back with the rest of that session. Otherwise a mark naming none
+/// closes them off, so a later open does not offer them. An untitled
+/// socket's log is left alone: it is that session's whole history.
+fn set_aside_leftover(socket: &Path, log: &Path, lines: &[serde_json::Value]) {
+    if crate::is_untitled_socket(socket) {
+        return;
+    }
+    let mark = lines.iter().rposition(|line| line.get("unsaved").is_some());
+    let left = &lines[mark.map_or(0, |at| at + 1)..];
+    if !left.iter().any(|line| line.get("op").is_some()) {
+        return;
+    }
+    let untitled = left
+        .iter()
+        .rev()
+        .find_map(|line| serde_json::from_value::<PathBuf>(line.get("adopt")?.clone()).ok())
+        .filter(|untitled| !listening(untitled))
+        .map(|untitled| crate::unhomed_oplog_for(&untitled))
+        .filter(|into| std::fs::symlink_metadata(into.with_extension("socket")).is_ok());
+    let _guard = lock(&OPLOG_WRITE);
+    match untitled {
+        Some(into) if mark.is_none() => {
+            carry_log(log, &into);
+            tracing::info!(
+                into = %into.display(),
+                "edits left by a daemon that died before its first save joined their untitled log"
+            );
+        }
+        _ => {
+            append_mark(log, &[], None);
+            tracing::info!("edits left by a daemon that died before its first save are set aside");
+        }
+    }
 }
 
 /// Batches read back from the log, as edits waiting to be asked back.
@@ -1522,7 +1605,7 @@ pub fn run_with(socket: &Path, limits: Limits) -> std::io::Result<()> {
     claim_unhomed_oplog(socket);
     let note = socket.with_extension("home");
     let mut state = State::default();
-    resume(&mut state, &note);
+    resume(&mut state, socket, &note);
     *lock(&HOME_NOTE) = Some(note.clone());
     // A stale socket from a dead daemon would make bind fail forever.
     let _ = std::fs::remove_file(socket);
