@@ -170,7 +170,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
 /// A 3MF carries each body's colour, and a face's own over it, so a
 /// slicer shows the bodies in the colours they are drawn in.
 #[test]
-#[ignore = "kernel: the 3MF writer takes no object or triangle colours"]
+#[ignore = "kernel: the 3MF writer takes no object or triangle colours (ogeom-rs#1184)"]
 fn a_3mf_carries_each_body_s_colours() {
     use kernel_ogeom::export::ExportColors;
     let tetra = |x: f32| TriMesh {
