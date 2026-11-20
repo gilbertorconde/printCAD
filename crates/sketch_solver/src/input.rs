@@ -1,8 +1,8 @@
 //! Validation at the public semantic boundary.
 
 use crate::problem::{
-    ConstraintId, CurveReference, Geometry, GroupReference, ItemReference, PointReference, Problem,
-    Relation,
+    ConstraintId, CurveReference, Geometry, GroupReference, Indexed, ItemReference, PointReference,
+    Problem, Relation,
 };
 use std::collections::HashSet;
 
@@ -137,11 +137,12 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
             return Err(InputError::MissingReference(id));
         }
     }
+    let indexed = Indexed::new(problem);
     for c in &problem.constraints {
         if !constraint_ids.insert(c.id) {
             return Err(InputError::DuplicateConstraint(c.id));
         }
-        validate_constraint(problem, c)?;
+        check_constraint(&indexed, c)?;
     }
     Ok(())
 }
@@ -150,6 +151,13 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
 /// supplied geometry. Geometry and settings must be validated separately.
 pub fn validate_constraint(
     problem: &Problem,
+    constraint: &crate::problem::Constraint,
+) -> Result<(), InputError> {
+    check_constraint(&Indexed::new(problem), constraint)
+}
+
+fn check_constraint(
+    problem: &Indexed,
     constraint: &crate::problem::Constraint,
 ) -> Result<(), InputError> {
     for id in constraint.kind.references() {
@@ -166,7 +174,7 @@ pub fn validate_constraint(
 }
 
 fn validate_relation(
-    problem: &Problem,
+    problem: &Indexed,
     id: ConstraintId,
     relation: &Relation,
 ) -> Result<(), InputError> {
@@ -350,7 +358,7 @@ fn validate_relation(
 /// its reference holds exactly the members' points, radii and axes, each
 /// once and finite.
 fn group_valid(
-    problem: &Problem,
+    problem: &Indexed,
     elements: &[ItemReference],
     reference: &[GroupReference],
 ) -> bool {

@@ -1,6 +1,6 @@
 use crate::curves::{CurveVars, nearest_param, nearest_params};
 use crate::problem::{
-    Geometry as GeometryElement, Problem as Sketch, Relation as ConstraintKind, *,
+    Geometry as GeometryElement, Indexed as Sketch, Relation as ConstraintKind, *,
 };
 use crate::residual::{CurveShape, Offset, ResidualSpec, Tangent, segment_length};
 use crate::trace::EquationSource;
@@ -130,7 +130,12 @@ impl System {
 /// Compile an ordered problem, optionally excluding a diagnosis probe's
 /// constraint and including otherwise unconstrained arc endpoints for rank.
 #[doc(hidden)]
-pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_always: bool) -> System {
+pub fn compile_system(
+    problem: &Problem,
+    exclude: Option<ConstraintId>,
+    arcs_always: bool,
+) -> System {
+    let sketch = &Sketch::new(problem);
     let mut vars = Vec::new();
     let mut point_vars = HashMap::new();
     let mut radius_vars = HashMap::new();
@@ -1172,7 +1177,11 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     }
 
     let residual_len = specs.iter().map(ResidualSpec::dim).sum();
-    let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
+    let mut held = vec![false; vars.len()];
+    for &i in &pinned {
+        held[i] = true;
+    }
+    let free: Vec<usize> = (0..vars.len()).filter(|&i| !held[i]).collect();
     System {
         origins,
         settings: sketch.settings,
