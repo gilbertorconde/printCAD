@@ -94,10 +94,25 @@ pub fn diagnose_measured(
     };
     match outcome {
         SolveOutcome::NotConverged { .. } => {
+            // Each probe solves the sketch without one constraint: the
+            // system compiled once with its rows left out where that is
+            // all leaving it out changes, as for redundancy below, its
+            // element maps kept for the solve's continuation.
+            let full = compile_system(problem, None, false);
+            let local = Local::of(problem, &full);
             for c in &problem.constraints {
-                let mut without = problem.clone();
-                without.constraints.retain(|other| other.id != c.id);
-                let system = compile_system(&without, None, false);
+                let system = if local.holds(c) {
+                    let mut system = without(&full, c.id);
+                    system.point_vars.clone_from(&full.point_vars);
+                    system.radius_vars.clone_from(&full.radius_vars);
+                    system.shape_vars.clone_from(&full.shape_vars);
+                    system.derived_foci.clone_from(&full.derived_foci);
+                    system
+                } else {
+                    let mut without = problem.clone();
+                    without.constraints.retain(|other| other.id != c.id);
+                    compile_system(&without, None, false)
+                };
                 if matches!(
                     iterate(&system, problem.settings).outcome,
                     SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve
@@ -465,5 +480,66 @@ mod tests {
             failing += usize::from(stopped.1.starts_with("NotConverged"));
         }
         assert!(failing >= 5, "{failing}");
+    }
+
+    /// The constraints in conflict found by compiling the sketch again
+    /// without each one.
+    fn recompiled_conflicts(problem: &Problem) -> Vec<ConstraintId> {
+        (problem.constraints.iter())
+            .filter(|c| {
+                let mut without = problem.clone();
+                without.constraints.retain(|other| other.id != c.id);
+                let system = compile_system(&without, None, false);
+                matches!(
+                    iterate(&system, problem.settings).outcome,
+                    SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve
+                )
+            })
+            .map(|c| c.id)
+            .collect()
+    }
+
+    /// Probes that leave a constraint's rows out of the one compiled
+    /// system find the conflicts compiling without each constraint finds,
+    /// on sketches that cannot be solved: a corner held at two places, or
+    /// a side held to a second length.
+    #[test]
+    fn probes_by_rows_find_the_conflicts_recompiling_finds() {
+        let mut conflicted = 0;
+        for seed in 1..=12 {
+            let mut problem = drawn(seed * 7919);
+            let second = match problem.constraints.iter().find_map(|c| match c.kind {
+                R::Length { line, length } => Some((line, length)),
+                _ => None,
+            }) {
+                Some((line, length)) if seed % 2 == 0 => vec![R::Length {
+                    line,
+                    length: Length(length.0 + 1.0),
+                }],
+                _ => [7.0, -7.0]
+                    .map(|x| R::FixedPoint {
+                        point: PointReference::Point(PointId(2)),
+                        position: Vector { x, y: 3.0 },
+                    })
+                    .to_vec(),
+            };
+            for (k, kind) in second.into_iter().enumerate() {
+                problem.constraints.push(Constraint {
+                    id: ConstraintId((1 << 60) + k as u128),
+                    kind,
+                });
+            }
+            let outcome =
+                crate::solve::iterate(&compile_system(&problem, None, false), problem.settings)
+                    .outcome;
+            if !matches!(outcome, SolveOutcome::NotConverged { .. }) {
+                continue;
+            }
+            let diagnosis = diagnose_at(&problem, outcome, &problem);
+            let expected = recompiled_conflicts(&problem);
+            assert_eq!(diagnosis.conflicting, expected, "seed {seed}");
+            conflicted += usize::from(!expected.is_empty());
+        }
+        assert!(conflicted >= 3, "{conflicted}");
     }
 }
