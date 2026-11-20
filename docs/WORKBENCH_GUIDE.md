@@ -642,10 +642,10 @@ passing.
 3. An example; the generated reference as above.
 
 **A UI action**
-1. One variant in `ui/commands.rs` and one arm in
+1. One variant in `contract/commands.rs` and one arm in
    `app/commands.rs::fold_command`. A change to settings alone needs no
    variant: push `UiCommand::EditSettings(SettingsEdit::set(..))`.
-2. A keymap entry in `ui/keymap.rs` when it takes a key, which also makes it
+2. A keymap entry in `keymap.rs` when it takes a key, which also makes it
    a command.
 
 **A host request a bench may make**

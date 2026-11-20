@@ -59,7 +59,7 @@ const systemPaths = [
   "crates/render_wgpu/",
   "crates/workbenches/wb_wasm/",
   "crates/app_shell/build.rs",
-  "crates/app_shell/src/platform",
+  "crates/app_platform/",
   "crates/app_shell/src/app/sixdof",
   "crates/app_shell/src/app/mcp.rs",
   "crates/app_shell/src/app/gfx.rs",

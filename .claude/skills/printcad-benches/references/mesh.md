@@ -54,7 +54,7 @@
   along its normal, the rim fixed). The document keeps them on the body
   (`Body::textures`, `FaceTexture` with `FaceKey`s found by name like face
   colours, op `SetBodyTextures`, `doc.set_textures`); the app's
-  `app/textures.rs` resolves faces and pictures (`Pressing`; a linked
+  `doc_export::textures` resolves faces and pictures (`Pressing`; a linked
   copy with none of its own takes its source's, `textures_of`, a mirrored
   copy pressing them into its mesh mirrored back and mirroring the
   result), makes the view's preview on threads (`drive_texture_previews`:

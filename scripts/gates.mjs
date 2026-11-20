@@ -21,6 +21,7 @@ export function gateList({ all = false, testArgs } = {}) {
     ["tooling", "lint", "node", ["--test", "scripts/workspace.test.mjs", "scripts/vendor-icons.test.mjs"]],
     ["layers", "lint", "node", ["scripts/check-layers.mjs"]],
     ["workbench seam", "lint", "node", ["scripts/check-workbench-seam.mjs"]],
+    ["ui boundary", "lint", "node", ["scripts/check-ui-boundary.mjs"]],
     ["solver dependencies", "lint", "node", ["scripts/check-solver-deps.mjs"]],
     ["archive dependencies", "lint", "node", ["scripts/check-archive-deps.mjs"]],
     ...[

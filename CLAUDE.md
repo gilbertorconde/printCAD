@@ -33,6 +33,7 @@ node scripts/gates.mjs            # every gate above in order, stopping at the f
 node scripts/gates.mjs --heavy    # the same, then the heavy tests (--only heavy for them alone)
 node scripts/test-budget.mjs --heavy     # the heavy tests (big models, long builds) behind each package's heavy-tests feature
 node scripts/check-layers.mjs     # each crate depends only on crates of lower layers (the table in the script)
+node scripts/check-ui-boundary.mjs  # app_shell's ui/ and app/ meet only through contract/
 cargo test -p <crate>             # one crate while iterating; clippy and fmt take -p too
 ```
 
@@ -71,13 +72,16 @@ are in the skill the index below names.
 
 - Foundations: `sketch_solver`, `image_edges`, `metrology` (std-only maths),
   `viewport_camera`, `transform_gizmo`, `axes`, `feature_walk`, `local_ipc`,
+  `app_log` (the log panel's lines, also sent to `tracing`),
   `project_archive`, `ui_kit` (design system), `kernel_api` (pure data
   contract: `TriMesh`, `ProfileWire`, `SolidOp`, `ChainError`), `panel_api`
   (declared panel widgets, `FloatingCard`, `PanelEvent`; re-exported by
   `bench_api`).
 - Services: `bench_api` (package contract, wasm32-wasip2),
   `kernel_ogeom` (the only crate on ogeom), `render_wgpu` (data-only:
-  `FrameSubmission` in, pixels out), `settings`, `agents` (agent client, MCP).
+  `FrameSubmission` in, pixels out), `settings`, `agents` (agent client, MCP),
+  `app_platform` (threads beside the window, atomic writes, private
+  folders, termination signals).
 - `core_document`: `Document` (feature tree DAG, bodies with `tip`, tar
   `.prtcad`), ops and undo, the `Workbench` trait and registry, datums, the
   command contract; above it `bench_panel` (declared panels in egui) and
@@ -89,7 +93,14 @@ are in the skill the index below names.
   (pressing the body's `core_document::texture` into a mesh), benches `wb_sketch`,
   `wb_assembly`, `wb_inspect`, `wb_mesh`, `wb_wasm` (packages); then
   `wb_design`, `wb_surface` on `sketch_model`; then `bench_fixtures`,
-  `project_tools`; the `workbenches` facade; `app_shell` (`printcad`).
+  `project_tools`; the `workbenches` facade; what the app keeps beside its
+  window, each without egui or winit: `assistant` (the chat model, chats
+  kept per file, mentions, agents' tool calls), `doc_export` (export,
+  the slicer, pressed textures), `file_session` (recovery copies, file
+  safety, the unsaved and save-over questions), `package_store`
+  (workbench packages, stores, the release check); `app_shell`
+  (`printcad`), whose `ui/` and `app/` meet only through `contract/`
+  (`scripts/check-ui-boundary.mjs`).
 
 The host never names a bench: everything crosses the `Workbench` trait
 (`scripts/check-workbench-seam.mjs`), which keeps a bench's descriptor and
@@ -156,7 +167,7 @@ hacks, no silently degraded feature). Instead:
   `apply_hook_outcome` applies every one, from every hook site (a panel
   hook's arrive as `UiCommand::HostRequest`; a lifecycle hook's switch
   requests are the one thing dropped, since it runs inside a switch).
-- **Adding a UI action** = one variant in `ui/commands.rs` + one arm in
+- **Adding a UI action** = one variant in `contract/commands.rs` + one arm in
   `app/commands.rs::fold_command`, which acts at once or folds it into a
   `FrameIntents` field that `app/commands/intents.rs` applies in its fixed
   order (two-phase dispatch preserves ordering). A change to settings alone
@@ -164,7 +175,11 @@ hacks, no silently degraded feature). Instead:
   `SettingsEdit` (`SettingsEdit::set(|s| &mut s.field, value)`), applied in
   phase 1 and saved with the frame's other settings changes. `UiLayer::run`
   (`ui/frame.rs`) draws one function per region, each pushing its commands
-  in the order it draws.
+  in the order it draws. `ui/` never names `app/`, and `app/` names
+  nothing of `ui/` but `UiLayer`: what both read (`UiFrameInputs`,
+  `UiCommand`, `TreeItemId`, `Screen` and the rest) is in `contract/`, which
+  names neither (`scripts/check-ui-boundary.mjs`, a lint gate). A value
+  the UI shows comes in through `UiFrameInputs`, or from a crate below.
 - **Every user-edit mutator on `Document` records exactly one op; derived
   state never does.** Mutators follow validate → resolve (ids, timestamps,
   seq) → build `DocumentOp` → `apply_op` → record; replay runs the same code
@@ -283,7 +298,8 @@ hacks, no silently degraded feature). Instead:
   file of a larger `CONTAINER_FORMAT` is refused (`stamp::refusal`); a
   change that alters what old data means raises it and adds its step to
   `stamp::UPGRADES`, which loading runs from the file's format up. The
-  app keeps what it learnt on open per tab (`app/file_safety.rs`:
+  app keeps what it learnt on open per tab (`file_session::FileSafety`,
+  `app/file_safety.rs`:
   a newer file's card offering Save As, a read-only file's marks on its
   tab and tree row with Save turned into Save As, the question before
   saving over another version's file, `UserSettings.files`).

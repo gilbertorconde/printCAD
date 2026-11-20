@@ -111,7 +111,7 @@ You MUST complete each phase before proceeding to the next.
    - the script thread (`Event::Call` run on the UI thread in
      `drive_scripts`, pinned to `in_script_tab`, the journal held per run);
    - the MCP relay and chats (`app/mcp.rs`, approvals, `agent_check`,
-     `app/chats.rs`);
+     `app/chats.rs` over the `assistant` crate);
    - the renderer (`scene_fingerprint`, the on-demand frame schedule and
      its pending flags, the mesh cache keyed by id and revision);
    - the kernel itself (a refusal surfaces as `ChainError` with its op

@@ -231,7 +231,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
 
 - Workbench packages build in `sdk/` (`cargo build --release --target
   wasm32-wasip2`, the target named in `rust-toolchain.toml`);
-  `cargo test -p wb_wasm` builds them itself. At start `app/packages.rs`
+  `cargo test -p wb_wasm` builds them itself. At start `package_store::register`
   loads what `settings::workbenches_dir()` holds as
   `UserSettings.packages` allows (Preferences › Workbench packages
   installs from a file or a GitHub address, updates, removes, turns off
@@ -239,7 +239,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   store: `wb_wasm::store` reads registries' indexes, each a store the user
   keeps (`UserSettings.packages.stores`, a new install starting with the
   registry repository `PrintCAD-wb-repo`'s, removable like any;
-  `app/packages.rs::StoreView`, one `StoreState` per address, each kept
+  `package_store::StoreView`, one `StoreState` per address, each kept
   for offline in `settings::store_cache(url)`, fetched as
   `PackageNews::Store`, quietly at start with the update check and again
   when the list changes), and `install_listed` installs a listing's
@@ -256,7 +256,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   makes on its own, packages' updates, the stores' lists and the app's
   latest release, so many runs at once stay within GitHub's limits). Network work and compiling
   (installs, update checks at start, updates, turning one on) runs on
-  threads reporting through `app/packages.rs::PackageNews`, drained each
+  threads reporting through `package_store::PackageNews`, drained each
   frame; the registry then changes on the UI thread: `unload_bench` moves
   every tab off the bench, drops the editing state tabs kept for it and
   keeps its settings, then `DocumentService::unregister_workbench`;

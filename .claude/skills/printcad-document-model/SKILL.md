@@ -150,7 +150,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   unhomed log: its edits apply to a recovered copy, not an empty
   document); `RestoreLog { socket }` on a new untitled tab's daemon
   carries the log into its own and orders its batches like
-  `RestoreUnsaved`. The app's recovery list (`app/recovery.rs`,
+  `RestoreUnsaved`. The app's recovery list (`file_session::recovery`,
   `Source::UntitledLog`) pairs such a log with its tab's autosave copy
   (`socket_path_for_untitled_of(pid, tab)`) and offers only the log. A client with more than
   `--queue-limit` (default 4096) unwritten
@@ -205,7 +205,7 @@ the source re-places them inside `SetBodyPlacement`'s apply, and
 array's occurrence copies every body of it (`ArrayInstance::members`)
 into a rigid component of its own (`group`). A path or point pattern
 carries the stations or points it was read with: the host reads them
-(`app/array_paths.rs`: a bench's `BenchFeatures::feature_paths`, chains and
+(`app_shell/src/array_paths.rs`: a bench's `BenchFeatures::feature_paths`, chains and
 free points, through the kernel's `wire_frames`, or a solid edge through
 `edge_frames`) whenever the array is made or edited. The body menu's
 Array of copies… is `ui/array_task.rs` (a component's tree row too;

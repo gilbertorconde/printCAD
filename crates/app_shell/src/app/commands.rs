@@ -1,5 +1,5 @@
 //! Application of per-frame [`UiCommand`]s. THE place a new UI action lands:
-//! add a variant in `ui/commands.rs` and its arm in
+//! add a variant in `contract/commands.rs` and its arm in
 //! [`PrintCadApp::fold_command`], which either acts at once or folds it
 //! into [`FrameIntents`], applied in their fixed order by
 //! `intents.rs`. A change to settings alone needs no variant of its own:

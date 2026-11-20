@@ -8,6 +8,8 @@ and macOS. It is written in Rust.
 | Layer | Crate | What it does |
 | --- | --- | --- |
 | Application | `app_shell` | Window, frame loop, input, UI, tabs |
+| Application services | `assistant`, `doc_export`, `file_session`, `package_store` | What the application keeps beside its window: chats with agents, export and the slicer, recovery copies and file safety, workbench packages and the release check |
+| Application support | `app_log`, `app_platform` | The log panel's lines; threads beside the window, atomic writes, private folders |
 | Design system | `ui_kit` | Colours, sizes, widgets, icons, fonts |
 | Workbenches | `wb_sketch`, `wb_design`, `wb_surface`, `wb_assembly` | Tools and features, behind the `Workbench` trait |
 | Workbench packages | `wb_wasm`, `bench_api`, `panel_api` | Workbenches built for WebAssembly, run sandboxed, and what they exchange with the app |
@@ -36,6 +38,11 @@ and macOS. It is written in Rust.
   and lifecycle, and its supertraits, one per concern (features, tools and
   input, panels, builds, parameters, output, commands). A test fails if a
   workbench name appears in `app_shell`. See [Writing a workbench](WORKBENCH_GUIDE.md).
+- **The UI and the application meet in one place.** In `app_shell`, `ui/`
+  draws each frame from the inputs the application hands it and answers
+  with commands; `app/` applies them. Both name only `contract/`, never
+  each other (`app/` names `UiLayer` alone); `scripts/check-ui-boundary.mjs`
+  enforces it.
 - **Solids are derived.** A document stores features. The solid of a body is
   rebuilt from them by the kernel on a background thread.
 - **Every edit is an operation.** The document records one operation per

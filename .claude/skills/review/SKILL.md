@@ -37,7 +37,7 @@ Sensitive paths always get `full`:
 - the document and its ops: `crates/core_document/src/{lib.rs,op.rs,history.rs,undo.rs,server.rs}`, persistence (`.prtcad` reading and writing);
 - the document server: `crates/doc_server/`;
 - teardown and the renderer core: `crates/app_shell/src/app/gfx.rs`, `crates/render_wgpu/src/core.rs`;
-- the package sandbox and installs: `crates/workbenches/wb_wasm/src/{host,guest,jobs,package,remote,store}.rs`, `crates/app_shell/src/app/packages.rs`;
+- the package sandbox and installs: `crates/workbenches/wb_wasm/src/{host,guest,jobs,package,remote,store}.rs`, `crates/package_store/src/packages.rs`, `crates/app_shell/src/app/packages.rs`;
 - agents and scripts: `crates/agents/`, `crates/scripting/`, `crates/app_shell/src/app/{mcp,agent_context,scripts,chats}.rs`;
 - file readers on untrusted input: `crates/kernel_ogeom/src/{import,mesh,annotations}.rs`, the DXF, image and tar readers;
 - CI and release: `.github/workflows/`, `scripts/package-release.sh`, `scripts/linux-install.sh`.
@@ -56,7 +56,7 @@ Each finding cites the rule it breaks. The slugs name the invariants in
 | `saves-flushed-on-exit` | Every exit path calls `wait_for_all_document_saves()` |
 | `host-names-no-bench` | `crates/app_shell/src` never names a bench crate, id or feature kind (`seam_lint.rs`, the CI grep) |
 | `ui-owns-no-host-state` | `UiLayer` is seeded from `UiFrameInputs`; a bench talks back only through `ctx.request` |
-| `ui-action-two-phase` | A UI action is one variant in `ui/commands.rs` and one arm in `app/commands.rs::apply_ui_commands` |
+| `ui-action-two-phase` | A UI action is one variant in `contract/commands.rs` and one arm in `app/commands.rs::apply_ui_commands` |
 | `gfx-drop-order` | Field order in `gfx.rs` and the `take()`s in `RendererCore::drop` are the teardown contract |
 | `no-wait-idle` | The renderer hot path has no queue or device wait; buffers retire through the `MeshCache` queue |
 | `scene-fingerprint-complete` | Anything the scene pass reads is hashed in `scene_fingerprint` |

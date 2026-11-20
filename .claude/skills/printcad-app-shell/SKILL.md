@@ -9,6 +9,35 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
 
 ## app_shell
 
+- **Halves.** `ui/` (egui, one module per region) and `app/` (the host:
+  tabs, input, commands, builds) never import each other. What both read
+  is in `contract/`, which names neither: `UiFrameInputs` (`inputs.rs`),
+  `UiCommand` and its payloads (`commands.rs`), and the state both read
+  (`view.rs`: `TreeItemId`, `PickFilter`, the menus, `TabInfo`,
+  `HostCtxParams`, `OpenTask`, the marking tool, the note card,
+  `Example`, `UiHooks`, `RadialView::chosen_ids`; `mod.rs`: `Screen`,
+  `ActiveTool` with `activate`, `ActiveWorkbench`, `PanelLayout`,
+  `UiFrameOutput`). `app/` names `UiLayer` from `ui/` and nothing else;
+  `UiLayer::new` takes the bench hooks the UI plays (`UiHooks`) once.
+  Modules beside both (`keymap.rs`, `scans.rs`, `array_paths.rs`,
+  `camera/`, `orientation_cube/`) may be used by either.
+  `scripts/check-ui-boundary.mjs` (a lint gate) fails on `crate::app` in
+  `ui/`, on `crate::ui` in `app/` beyond `UiLayer`, and on either in
+  `contract/`. A value the UI shows reaches it through `UiFrameInputs` or
+  from a crate below: the window-free halves of the app's features are
+  crates of their own, `assistant` (the chat model and how agent events
+  fold into it, `chat_store`, the text side of mentions, `ToolRequest`
+  and `Approval`), `package_store` (packages loaded at start, the
+  package threads' `PackageWork`, the stores' `StoreView`,
+  `ReleaseCheck`), `file_session` (`recovery`, `FileSafety` and the
+  save-over question, the unsaved question's `Unsaved` and `Then`, a
+  document's name from its file) and `doc_export` (export options and
+  writing, the slicer's command line, pressed textures), over
+  `app_log` and `app_platform`; `app/` keeps the glue that drives them
+  over its tabs (`chats.rs`, `mentions.rs`, `mcp.rs`, `packages.rs`,
+  `updates.rs`, `file_safety.rs`, `unsaved.rs`, `export.rs`,
+  `textures.rs`). A version the app stamps or compares with is passed in
+  (`env!("CARGO_PKG_VERSION")` in a crate would be that crate's).
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,
@@ -118,7 +147,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   handing a `PanelEvent` it gets back to the field it names (`event`),
   which edits through the same document mutators and `UiCommand`s.
   Closing a tab, the window or the app with unsaved edits asks in the
-  window (`app/unsaved.rs`, `ui/unsaved_modal.rs`) and the close waits for
+  window (`app/unsaved.rs` over `file_session::Unsaved`, `ui/unsaved_modal.rs`) and the close waits for
   the answer; quitting asks for each tab with edits in turn. Close other
   tabs, Save all and Revert to saved run through the same questions
   (`unsaved::Then` names what goes on after each answer); a document with
@@ -163,7 +192,7 @@ intersection variant takes picked faces instead and adds the curves where
 each crosses the sketch plane (`KernelQueries::section_face`, the face's
 solid sectioned by the plane's half space and the edges on the face kept;
 `ExternalSource::section`), refreshed the same way. File › Export
-(`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
+(`app/export.rs` over `doc_export` and `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own, in one file or a
 file per body (`ExportDraft::per_body`: a folder from
@@ -177,7 +206,7 @@ names each body that stops at the feature (`Builds::stopped_at_task`).
 A waiting export is written, or logged as not written, when its tab
 closes or the app exits (`settle_waiting_export`). The registry gathers
 `BenchOutput::semantic_pmi` (`kernel_api::SemanticPmi`, re-exported by
-`core_document`); `app/export.rs::export_pmi` takes its world probes into
+`core_document`); `doc_export::export_pmi` takes its world probes into
 each body's frame, and `kernel_ogeom::export::export_with_annotations`
 writes AP242 tolerances, datums and dimensions on the probed faces beside
 the drawn notes. Annotated bodies have distinct parts, and datum letters
