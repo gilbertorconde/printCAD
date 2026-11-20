@@ -90,7 +90,7 @@ impl PrintCadApp {
         self.session
             .view
             .camera
-            .reset_to_fit(center, radius, None, &self.user_settings.camera);
+            .reset_to_fit(center, radius, &self.user_settings.camera);
     }
 
     /// Frame the camera around the imported geometry (or the default box).
@@ -143,9 +143,9 @@ impl PrintCadApp {
         {
             if let Some(aabb) = aabb {
                 let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
-                camera.reset_to_fit(center, radius, Some(aabb), settings);
+                camera.reset_to_fit(center, radius, settings);
             } else {
-                camera.reset_to_fit(Vec3::ZERO, 50.0, None, settings);
+                camera.reset_to_fit(Vec3::ZERO, 50.0, settings);
             }
         }
     }

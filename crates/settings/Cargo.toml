@@ -12,5 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 axes = { path = "../axes" }
+viewport_camera = { path = "../viewport_camera" }
 kernel_api.workspace = true
 

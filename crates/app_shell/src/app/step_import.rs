@@ -558,12 +558,10 @@ impl PrintCadApp {
 
         if let Some((aabb_min, aabb_max)) = landed.bounds {
             let (center, radius) = aabb_fit_center_radius(aabb_min, aabb_max);
-            self.session.view.camera.reset_to_fit(
-                center,
-                radius,
-                Some((aabb_min, aabb_max)),
-                &self.user_settings.camera,
-            );
+            self.session
+                .view
+                .camera
+                .reset_to_fit(center, radius, &self.user_settings.camera);
         }
 
         if let Some(body_id) = landed.bodies.first().copied() {

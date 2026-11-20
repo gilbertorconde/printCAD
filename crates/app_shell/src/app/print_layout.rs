@@ -79,11 +79,9 @@ impl crate::PrintCadApp {
         };
         let aabb = (Vec3::from_array(lo), Vec3::from_array(hi));
         let (center, radius) = crate::app::view_fit::aabb_fit_center_radius(aabb.0, aabb.1);
-        self.session.view.camera.reset_to_fit(
-            center,
-            radius,
-            Some(aabb),
-            &self.user_settings.camera,
-        );
+        self.session
+            .view
+            .camera
+            .reset_to_fit(center, radius, &self.user_settings.camera);
     }
 }

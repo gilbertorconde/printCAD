@@ -24,6 +24,22 @@ impl Ray {
     pub fn point_at(self, distance: f32) -> Vec3 {
         self.origin + self.direction * distance
     }
+
+    /// Where the ray meets the plane through `plane_origin` square to
+    /// `plane_normal`; `None` when it runs along the plane (within 1e-6 of
+    /// square to the normal) or the plane lies behind it.
+    pub fn plane_hit(self, plane_origin: Vec3, plane_normal: Vec3) -> Option<Vec3> {
+        let normal = plane_normal.normalize();
+        let denom = self.direction.dot(normal);
+        if denom.abs() < 1e-6 {
+            return None;
+        }
+        let t = (plane_origin - self.origin).dot(normal) / denom;
+        if t < 0.0 {
+            return None;
+        }
+        Some(self.origin + self.direction * t)
+    }
 }
 
 /// Closest path point to a ray, ranked by angular rather than metric miss.

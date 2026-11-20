@@ -5,6 +5,7 @@
 pub mod camera;
 pub mod controller;
 pub mod fit;
+pub mod focal_view;
 pub mod length;
 pub mod momentum;
 pub mod navigation;

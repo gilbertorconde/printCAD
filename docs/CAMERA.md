@@ -1,12 +1,14 @@
 # Camera
 
-How the viewport camera works. The code is in
-`crates/app_shell/src/camera/`. The numerical core lives in the shared
-`crates/viewport_camera` crate; the app converts its state and routes input.
+How the viewport camera works. The camera maths lives in the shared
+`crates/viewport_camera` crate: its `focal_view` module holds the view's
+state, its matrices, gestures, zoom, fits, near and far planes and
+transitions. The app's `crates/app_shell/src/camera/` routes window and
+device input to it, hands it the settings and keeps views between runs.
 
 ## State
 
-The camera (`state.rs`, `CadCameraState`) holds:
+The camera (`focal_view::ViewState`) holds:
 
 - the eye position and an orientation quaternion
 - the focal distance: how far ahead of the eye the pivot is

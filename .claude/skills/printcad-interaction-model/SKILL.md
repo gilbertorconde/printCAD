@@ -94,9 +94,13 @@ owns the moment.
 
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
-  on `glam` and `serde`; its README describes the copy contract. The app's
-  `camera/core.rs` converts preset-relative orientations, model coordinates
-  and physical pixels; `camera/` owns input routing, clip planes and device input.
+  on `glam` and `serde`; its README describes the copy contract. Its
+  `focal_view` holds the app's view: the preset-relative `f64` state
+  (`ViewState`, the preset as an `AxisFrame`, the settings as `ViewSettings`),
+  the one `view_projection`, the holds converting to the shared camera,
+  zoom, fits, auto near/far planes and tweens. The app's `camera/` owns
+  input routing, settings, device input and kept views, and the clipping
+  plane (`camera/section.rs`).
 - `transform_gizmo`: move, turn and scale handles without a window
   (`gizmo::Gizmo`: layout, hit-test, press/drag/release and the delta from
   the press; `paint::Shape`s in colour roles, `paint::Ink`, for the host to

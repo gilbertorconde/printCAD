@@ -1,28 +1,26 @@
-//! Conversion between the view's preset-relative, f64 model state and the
-//! shared camera's canonical local frame. A hold freezes `origin` at its press.
+//! Conversion between the view's frame-relative `f64` state and the shared
+//! camera's canonical local frame. A hold freezes `origin` at its press.
 
-use axes::AxisSystem;
 use glam::{DVec3, Mat3, Quat, Vec2};
-use settings::{CameraSettings, OrbitYawAxis, ProjectionMode};
-use viewport_camera::camera::{CameraPose, Projection};
-use viewport_camera::controller::{CameraController, CameraControllerConfig, GestureKind};
-use viewport_camera::navigation::{NavigationDrag, NavigationSettings, PanGrip, ScreenPoint};
 
-use super::math::control_horizontal_vec;
-use super::state::CadCameraState;
+use super::{AxisFrame, ProjectionMode, ViewSettings, ViewState};
+use crate::camera::{CameraPose, Projection};
+use crate::controller::{CameraController, CameraControllerConfig, GestureKind};
+use crate::navigation::{NavigationDrag, NavigationSettings, PanGrip, ScreenPoint};
 
-fn basis(axes: &AxisSystem) -> Quat {
+fn basis(frame: &AxisFrame) -> Quat {
     Quat::from_mat3(&Mat3::from_cols(
-        control_horizontal_vec(axes),
-        axes.vertical().vector(),
-        axes.depth().vector(),
+        frame.control_horizontal(),
+        frame.vertical,
+        frame.depth,
     ))
 }
 
-pub(super) fn camera(state: &CadCameraState, axes: &AxisSystem, origin: DVec3) -> CameraController {
+/// The shared camera standing where `state` stands, positions relative to `origin`.
+pub fn camera(state: &ViewState, frame: &AxisFrame, origin: DVec3) -> CameraController {
     let pose = CameraPose {
         position: (state.eye - origin).as_vec3(),
-        orientation: (state.orientation * basis(axes)).normalize(),
+        orientation: (state.orientation * basis(frame)).normalize(),
     };
     let viewport = Vec2::new(
         state.viewport_size.0.max(1) as f32,
@@ -33,7 +31,7 @@ pub(super) fn camera(state: &CadCameraState, axes: &AxisSystem, origin: DVec3) -
             vertical_fov: state.height_angle_rad as f32,
         },
         ProjectionMode::Orthographic => {
-            viewport_camera::controller::orthographic(viewport, state.world_per_pixel() as f32)
+            crate::controller::orthographic(viewport, state.world_per_pixel() as f32)
         }
     };
     CameraController::new(
@@ -44,14 +42,10 @@ pub(super) fn camera(state: &CadCameraState, axes: &AxisSystem, origin: DVec3) -
     )
 }
 
-pub(super) fn apply(
-    state: &mut CadCameraState,
-    axes: &AxisSystem,
-    origin: DVec3,
-    camera: CameraController,
-) {
+/// Put `state` where the shared `camera` stands, relative to `origin`.
+pub fn apply(state: &mut ViewState, frame: &AxisFrame, origin: DVec3, camera: CameraController) {
     state.eye = origin + camera.pose().position.as_dvec3();
-    state.orientation = (camera.pose().orientation * basis(axes).conjugate()).normalize();
+    state.orientation = (camera.pose().orientation * basis(frame).conjugate()).normalize();
     state.focal_distance = f64::from(-camera.pose().world_to_view(camera.pivot()).z);
     match camera.projection() {
         Projection::Perspective { vertical_fov } => {
@@ -66,8 +60,24 @@ pub(super) fn apply(
     state.clip_dirty = true;
 }
 
+/// [`camera`] with the frame's vertical as world-up and the host's focal floor.
+pub fn configured(
+    state: &ViewState,
+    frame: &AxisFrame,
+    settings: &ViewSettings,
+    origin: DVec3,
+) -> CameraController {
+    camera(state, frame, origin).with_config(CameraControllerConfig {
+        world_up: frame.vertical,
+        min_focus_distance: settings.min_focal_distance,
+        ..CameraControllerConfig::default()
+    })
+}
+
+/// One pan or orbit from its press to its release, sampled with absolute
+/// pointer positions in physical pixels.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Hold {
+pub struct Hold {
     origin: DVec3,
     drag: NavigationDrag,
     pointer_scale: f32,
@@ -80,20 +90,20 @@ pub(super) struct Hold {
 }
 
 impl Hold {
-    pub(super) fn begin(
-        state: &CadCameraState,
-        axes: &AxisSystem,
-        settings: &CameraSettings,
+    pub fn begin(
+        state: &ViewState,
+        frame: &AxisFrame,
+        settings: &ViewSettings,
         start: Vec2,
         anchor: DVec3,
         kind: GestureKind,
         pixels_per_point: f32,
     ) -> Self {
         let origin = state.eye;
-        let mut camera = camera(state, axes, origin);
+        let mut camera = camera(state, frame, origin);
         camera.set_viewport(camera.viewport() / pixels_per_point);
         let navigation = NavigationSettings {
-            keep_horizon: settings.orbit_yaw_axis == OrbitYawAxis::WorldUp,
+            keep_horizon: settings.keep_horizon,
             orbit_speed: 1.0,
             pan_grip: PanGrip::PivotDepth,
             ..NavigationSettings::default()
@@ -114,7 +124,7 @@ impl Hold {
                 ScreenPoint(start / pixels_per_point),
                 (anchor - origin).as_vec3(),
                 kind,
-                axes.vertical().vector(),
+                frame.vertical,
             )
             .with_zoom_range([range[0].min(0.0), range[1].max(0.0)]);
         Self {
@@ -134,12 +144,12 @@ impl Hold {
         }
     }
 
-    pub(super) fn sample(self, state: &mut CadCameraState, axes: &AxisSystem, pointer: Vec2) {
+    pub fn sample(self, state: &mut ViewState, frame: &AxisFrame, pointer: Vec2) {
         let start = self.drag.start().0;
         let point = start + (pointer / self.pointer_scale - start) * self.motion_scale;
         apply(
             state,
-            axes,
+            frame,
             self.origin,
             self.drag.sample(ScreenPoint(point)),
         );
@@ -163,24 +173,12 @@ impl Hold {
         }
     }
 
-    pub(super) fn zoomed(mut self, lines: f32, settings: &CameraSettings) -> Self {
+    /// The hold with `lines` wheel lines of zoom added to its total.
+    pub fn zoomed(mut self, lines: f32, settings: &ViewSettings) -> Self {
         let sign = if settings.invert_zoom { -1.0 } else { 1.0 };
         self.drag = self
             .drag
             .zoomed(lines * sign * settings.wheel_zoom_factor.ln());
         self
     }
-}
-
-pub(super) fn configured(
-    state: &CadCameraState,
-    axes: &AxisSystem,
-    settings: &CameraSettings,
-    origin: DVec3,
-) -> CameraController {
-    camera(state, axes, origin).with_config(CameraControllerConfig {
-        world_up: axes.vertical().vector(),
-        min_focus_distance: settings.min_focal_distance,
-        ..CameraControllerConfig::default()
-    })
 }

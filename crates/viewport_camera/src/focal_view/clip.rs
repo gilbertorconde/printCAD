@@ -1,17 +1,15 @@
-//! Near/far adjustment from scene AABB (depth along view forward).
-//!
-//! See `docs/CAMERA.md`, Near and far planes: handles empty/degenerate bounds and caps the `far/near` ratio.
+//! Near and far planes from the scene's box, by depth along the view: empty
+//! or inverted boxes leave the planes alone, and the `far/near` ratio is capped.
 
 use glam::Vec3;
-use settings::{CameraSettings, ProjectionMode};
 
-use crate::camera::state::CadCameraState;
+use super::{AxisFrame, ProjectionMode, ViewSettings, ViewState};
 
 pub fn update_auto_clip(
-    state: &mut CadCameraState,
-    axes: &axes::AxisSystem,
+    state: &mut ViewState,
+    frame: &AxisFrame,
     scene_aabb: Option<(Vec3, Vec3)>,
-    settings: &CameraSettings,
+    settings: &ViewSettings,
 ) {
     if !settings.auto_near_far {
         return;
@@ -24,7 +22,7 @@ pub fn update_auto_clip(
     }
 
     let eye = state.eye_vec3();
-    let forward = state.forward_world(axes);
+    let forward = state.forward_world(frame);
     if forward.length_squared() < 1e-12 {
         return;
     }
