@@ -1193,6 +1193,37 @@ fn wait_for_gone(socket: &std::path::Path) {
     }
 }
 
+/// A connection that goes without a Hello (another daemon or the start
+/// page asking whether the socket is served) before any client joined
+/// leaves the daemon running for the client it was started for, which
+/// ends it when it leaves.
+#[test]
+fn a_look_before_the_first_client_does_not_end_the_daemon() {
+    daemon_env();
+    let home = TestHome::new("probed");
+    let mut daemon = start_daemon(&home, &[]);
+    drop(local_ipc::Stream::connect(home.socket()).expect("the daemon listens"));
+    // A daemon the look ended would be gone well within this.
+    let looked = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < looked {
+        assert!(
+            daemon.try_wait().expect("daemon status").is_none(),
+            "the look ended the daemon"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut alice = Replica::join(&home, Document::new("Untitled"));
+    alice.doc.create_body(Some("Base".into()));
+    alice.send();
+    alice.settle();
+    assert!(
+        daemon.try_wait().expect("daemon status").is_none(),
+        "the daemon it was started for still serves"
+    );
+    alice.leave();
+    wait_for_exit(&mut daemon, "once its client left");
+}
+
 /// An editor that leaves saying it is done takes its unsaved edits with
 /// it: the next daemon starts from the file alone. One that goes without
 /// a word (it crashed) leaves them in the log, and the next open offers

@@ -35,7 +35,7 @@ use local_ipc::{Listener as UnixListener, Stream as UnixStream};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 
@@ -60,6 +60,10 @@ struct Hub {
     /// `state`, never after.
     file: Mutex<()>,
     queue_limit: usize,
+    /// A client has said Hello. Until one has, a connection that goes
+    /// (another daemon or the start page asking whether this socket is
+    /// served) does not end the daemon its client is still to reach.
+    joined: AtomicBool,
 }
 
 #[derive(Default)]
@@ -282,6 +286,7 @@ fn serve_client(stream: UnixStream, id: u64, hub: &Hub) {
             return;
         }
     };
+    hub.joined.store(true, Ordering::Release);
 
     let Ok(socket) = stream.try_clone() else {
         return;
@@ -1616,10 +1621,11 @@ pub fn run_with(socket: &Path, limits: Limits) -> std::io::Result<()> {
         state: Mutex::new(state),
         file: Mutex::new(()),
         queue_limit,
+        joined: AtomicBool::new(false),
     });
     let live = Arc::new(AtomicU64::new(0));
     let ids = AtomicU64::new(0);
-    // The first drop-to-zero ends the daemon.
+    // The first drop-to-zero once a client has joined ends the daemon.
     let (exit_tx, exit_rx) = std::sync::mpsc::channel::<()>();
 
     let accept_hub = Arc::clone(&hub);
@@ -1634,7 +1640,7 @@ pub fn run_with(socket: &Path, limits: Limits) -> std::io::Result<()> {
             live.fetch_add(1, Ordering::AcqRel);
             std::thread::spawn(move || {
                 serve_client(stream, id, &hub);
-                if live.fetch_sub(1, Ordering::AcqRel) == 1 {
+                if live.fetch_sub(1, Ordering::AcqRel) == 1 && hub.joined.load(Ordering::Acquire) {
                     let _ = exit_tx.send(());
                 }
             });

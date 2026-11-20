@@ -108,10 +108,13 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   rebase and when the log is homed. The unhomed log
   (`unhomed_oplog_for(socket)`, with a `<log>.socket` note naming an
   untitled socket) goes when its last client leaves with
-  `Leave`; after a crash it stays for the next daemon on the socket. An
-  untitled tab's first save moves it to its file's daemon without a
-  `Leave` (`DocumentSession::move_to_server`, `Connection::untitled_log`)
-  and sends `AdoptLog { socket }` before each `SaveDocument` until one
+  `Leave`; after a crash it stays for the next daemon on the socket. A
+  daemon ends when its last connection goes once a client has said Hello
+  (`Hub::joined`): a look at the socket before then (`listening`, from
+  another daemon or `untitled_logs`) does not end it. An untitled tab's
+  first save moves it to its file's daemon without a `Leave`
+  (`DocumentSession::move_to_server`, `Connection::untitled_log`) and
+  sends `AdoptLog { socket }` before each `SaveDocument` until one
   completes; the file's daemon waits (bounded) for the untitled daemon to
   exit, then carries its log into the document's ahead of the save's mark
   (`set_oplog_home(document, earlier)`, `carry_log`). `AdoptLog` also
