@@ -5,7 +5,8 @@
 //! view.
 //!
 //! Then, on the grid with a dimension on each cell's bottom side and
-//! circle, an edit (a segment drawn, the task panel drawn too) and a
+//! circle, an edit (a segment drawn, the task panel drawn too; again
+//! with the host's undo steps and outbox, as the app keeps them) and a
 //! dimension's label dragged, with and without the panel; and an edit
 //! with dimensions on 25 cells only, which the diagnosis analyses, and
 //! the same with one side held to two lengths, which it cannot meet; one
@@ -152,6 +153,16 @@ struct Session {
     target: [f32; 3],
     vp: [[f32; 4]; 4],
     panel: Option<egui::Context>,
+    /// With the host's history: each gesture a bench closes is closed
+    /// into an undo step, every frame with no button held closes what is
+    /// open, and the outbox goes to a server that confirms it at once, as
+    /// the app does between a person's clicks.
+    host: Option<Host>,
+}
+
+struct Host {
+    journal: core_document::history::OpJournal,
+    held: bool,
 }
 
 impl Session {
@@ -193,6 +204,18 @@ impl Session {
                 ui_kit::theme::apply_theme(&egui);
                 egui
             }),
+            host: None,
+        }
+    }
+
+    /// [`Self::new`] with the host's history and outbox.
+    fn hosted(sketch: &Sketch, span: f64, panel: bool) -> Self {
+        Self {
+            host: Some(Host {
+                journal: core_document::history::OpJournal::new(100),
+                held: false,
+            }),
+            ..Self::new(sketch, span, panel)
         }
     }
 
@@ -203,14 +226,24 @@ impl Session {
         ctx.view_proj = Some(self.vp);
         ctx.active_document_object = Some(self.id);
         ctx.selected_body_id = Some(uuid::Uuid::nil());
+        if let Some(host) = &self.host {
+            ctx.undo_entry = host.journal.undo_entry_id();
+        }
         (&mut self.wb, ctx)
     }
 
     fn send(&mut self, event: Option<WorkbenchInputEvent>, tool: &str) {
         let panel = self.panel.clone();
+        if let Some(host) = &mut self.host {
+            match event {
+                Some(WorkbenchInputEvent::MousePress { .. }) => host.held = true,
+                Some(WorkbenchInputEvent::MouseRelease { .. }) => host.held = false,
+                _ => {}
+            }
+        }
         let (wb, mut ctx) = self.split();
-        if let Some(event) = event {
-            wb.on_input(&event, Some(tool), &mut ctx);
+        if let Some(event) = &event {
+            wb.on_input(event, Some(tool), &mut ctx);
         }
         wb.on_frame(0.016, &mut ctx);
         std::hint::black_box(wb.viewport(&ctx));
@@ -227,6 +260,38 @@ impl Session {
                 wb.ui_task_panel(ui, &mut ctx, TaskRequest::default());
             });
         }
+        let requests = ctx.take_requests();
+        drop(ctx);
+        self.end_frame(requests);
+    }
+
+    /// What the host does with a frame's requests and at its end.
+    fn end_frame(&mut self, requests: Vec<core_document::HostRequest>) {
+        use core_document::{HostRequest, ToolHistoryReply};
+        let Some(mut host) = self.host.take() else {
+            return;
+        };
+        for request in requests {
+            let reply = match request {
+                HostRequest::CloseToolGesture { .. } => {
+                    ToolHistoryReply::Closed(host.journal.note(&mut self.doc))
+                }
+                HostRequest::UndoToolGesture { entry, .. } => ToolHistoryReply::Undone {
+                    entry,
+                    undone: host.journal.undo_entry(&mut self.doc, entry).is_some(),
+                },
+                _ => continue,
+            };
+            let (wb, mut ctx) = self.split();
+            wb.tool_history(&mut ctx, reply);
+        }
+        if !host.held {
+            host.journal.note(&mut self.doc);
+            if self.doc.take_pending_batch().is_some() {
+                self.doc.confirm_sent_ops();
+            }
+        }
+        self.host = Some(host);
     }
 
     fn px(&mut self, p: Vec2D) -> (f32, f32) {
@@ -378,10 +443,23 @@ fn fitted(mut sketch: Sketch) -> Sketch {
 /// A segment drawn per click with the line tool, each one an edit
 /// stored, solved and shown, the task panel drawn too.
 fn edit(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
+    edit_in(label, sketch, span, queries, false);
+}
+
+/// [`edit`] with the host's history and outbox, as in the app.
+fn edit_hosted(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
+    edit_in(label, sketch, span, queries, true);
+}
+
+fn edit_in(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], hosted: bool) {
     if !wanted(label) {
         return;
     }
-    let mut s = Session::new(sketch, span, true);
+    let mut s = if hosted {
+        Session::hosted(sketch, span, true)
+    } else {
+        Session::new(sketch, span, true)
+    };
     let tool = "sketch.line";
     s.send(Some(WorkbenchInputEvent::ToolActivated), tool);
     let clicks: Vec<_> = queries
@@ -590,6 +668,7 @@ fn main() {
     let marked = dimensioned(sketch.clone(), usize::MAX);
     let edits = &queries[..queries.len().min(100)];
     edit("edit, a segment drawn", &marked, span, edits);
+    edit_hosted("edit, a segment drawn, hosted", &marked, span, edits);
     // Few enough dimensions for the diagnosis to look for redundancy.
     let few = dimensioned(sketch.clone(), 25);
     edit("edit, 50 dimensions", &few, span, edits);
