@@ -1,5 +1,6 @@
 //! Sketch feature implementation for the document feature tree.
 
+use core_document::json_over::{Prints, write_items_over};
 use core_document::{FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
 
@@ -377,6 +378,79 @@ impl SketchFeature {
             section_off: false,
             offset: PlaneShift::default(),
         }
+    }
+}
+
+/// What each element and constraint of a sketch serializes to, for
+/// [`SketchFeature::to_json_over_kept`].
+#[derive(Debug, Default)]
+pub struct SketchPrints {
+    geometry: Prints,
+    constraints: Prints,
+}
+
+impl SketchPrints {
+    pub fn of(sketch: &Sketch) -> Self {
+        Self {
+            geometry: Prints::of(&sketch.geometry),
+            constraints: Prints::of(&sketch.constraints),
+        }
+    }
+}
+
+impl SketchFeature {
+    /// [`WorkbenchFeature::to_json_over`] over `spare`, data written from
+    /// a sketch whose elements and constraints `then` prints, `now`
+    /// printing this one's: each element or constraint printed alike in
+    /// both keeps its node unwalked. Answers exactly what
+    /// [`WorkbenchFeature::to_json`] does.
+    pub fn to_json_over_kept(
+        &mut self,
+        mut spare: serde_json::Value,
+        then: &SketchPrints,
+        now: &SketchPrints,
+    ) -> serde_json::Value {
+        // A sketch with text writes a copy without the text's outlines.
+        if !self.sketch.derived.is_empty() {
+            return self.to_json_over(spare);
+        }
+        let mut lists = [serde_json::Value::Null, serde_json::Value::Null];
+        if let Some(sketch) = spare.get_mut("sketch") {
+            for (list, key) in lists.iter_mut().zip(["geometry", "constraints"]) {
+                if let Some(old) = sketch.get_mut(key) {
+                    *list = old.take();
+                }
+            }
+        }
+        let geometry = std::mem::take(&mut self.sketch.geometry);
+        let constraints = std::mem::take(&mut self.sketch.constraints);
+        let rest = core_document::json_over::write_over(&mut spare, self);
+        self.sketch.geometry = geometry;
+        self.sketch.constraints = constraints;
+        rest.expect("a feature serializes to JSON");
+        let [mut geometry, mut constraints] = lists;
+        let sketch = &self.sketch;
+        write_items_over(
+            &mut geometry,
+            &sketch.geometry,
+            &then.geometry,
+            &now.geometry,
+        )
+        .and_then(|()| {
+            write_items_over(
+                &mut constraints,
+                &sketch.constraints,
+                &then.constraints,
+                &now.constraints,
+            )
+        })
+        .expect("a feature serializes to JSON");
+        let stored = spare
+            .get_mut("sketch")
+            .expect("a sketch feature writes its sketch");
+        stored["geometry"] = geometry;
+        stored["constraints"] = constraints;
+        spare
     }
 }
 

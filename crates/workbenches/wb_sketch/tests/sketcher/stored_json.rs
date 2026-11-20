@@ -1,9 +1,11 @@
 //! A sketch written over the data of an earlier write stores exactly what
-//! writing it afresh stores: over the app's corpus of saved documents and
-//! edits made at random on their sketches.
+//! writing it afresh stores, its unchanged elements and constraints kept
+//! or walked again: over the app's corpus of saved documents and edits
+//! made at random on their sketches.
 
 use core_document::{Document, WorkbenchFeature};
 use sketch_model::SketchFeature;
+use sketch_model::feature::SketchPrints;
 use sketch_model::sketch::{GeometryElement, Vec2D};
 
 /// Every sketch of every document in the app's corpus, by release.
@@ -35,16 +37,27 @@ fn corpus_sketches() -> Vec<SketchFeature> {
 }
 
 /// A small change made at random, as an edit makes one: a point moved,
-/// an element removed with what hangs on it, one added from another
-/// sketch, two swapped, construction toggled, a constraint's settings or
-/// the sketch's own changed.
+/// or put on an axis, a zero turned to the other sign, an element
+/// removed with what hangs on it, one added from another sketch, two
+/// swapped, construction toggled, a constraint's settings or the
+/// sketch's own changed.
 fn edit(feature: &mut SketchFeature, donor: &SketchFeature, roll: &mut impl FnMut(usize) -> usize) {
     let sketch = &mut feature.sketch;
     let n = sketch.geometry.len();
-    match roll(7) {
+    match roll(8) {
         0 if n > 0 => {
             if let GeometryElement::Point(p) = &mut sketch.geometry[roll(n)] {
                 p.position = Vec2D::new(p.position.x + 0.5, p.position.y - 0.25);
+            }
+        }
+        7 if n > 0 => {
+            if let GeometryElement::Point(p) = &mut sketch.geometry[roll(n)] {
+                // A value equal to the last, written differently.
+                p.position.x = if p.position.x == 0.0 {
+                    -p.position.x
+                } else {
+                    0.0
+                };
             }
         }
         1 if n > 0 => {
@@ -78,7 +91,8 @@ fn edit(feature: &mut SketchFeature, donor: &SketchFeature, roll: &mut impl FnMu
 
 /// Each corpus sketch written over the one before, then edited at random
 /// and written over its last write each time, stores the very text a
-/// fresh write of it stores.
+/// fresh write of it stores; so does each write over the last that keeps
+/// the elements and constraints serialized alike.
 #[test]
 fn a_sketch_written_over_earlier_data_stores_what_a_fresh_write_does() {
     let sketches = corpus_sketches();
@@ -91,12 +105,19 @@ fn a_sketch_written_over_earlier_data_stores_what_a_fresh_write_does() {
         ((state >> 33) as usize) % n
     };
     let mut data = serde_json::Value::Null;
+    let mut kept = (serde_json::Value::Null, SketchPrints::default());
     for (k, sketch) in sketches.iter().enumerate() {
         let donor = &sketches[(k + 1) % sketches.len()];
         let mut feature = sketch.clone();
         for _ in 0..12 {
+            let fresh = feature.to_json().to_string();
             data = feature.to_json_over(data);
-            assert_eq!(data.to_string(), feature.to_json().to_string());
+            assert_eq!(data.to_string(), fresh);
+            let (over, then) = std::mem::take(&mut kept);
+            let now = SketchPrints::of(&feature.sketch);
+            let written = feature.to_json_over_kept(over, &then, &now);
+            assert_eq!(written.to_string(), fresh, "kept");
+            kept = (written, now);
             edit(&mut feature, donor, &mut roll);
         }
     }

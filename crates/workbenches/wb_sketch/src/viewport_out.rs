@@ -1236,7 +1236,8 @@ mod tests {
         // Where the sketch's id is kept: a write over earlier data keeps
         // the text standing there, a fresh write makes its own.
         let node = |data: &serde_json::Value| data["sketch"]["id"].as_str().unwrap().as_ptr();
-        let spare = |wb: &SketchWorkbench| wb.tab.spare.borrow().as_deref().map(node);
+        let spare =
+            |wb: &SketchWorkbench| wb.tab.spare.borrow().as_ref().map(|(data, _)| node(data));
 
         write(&mut doc, &mut wb, 1.0);
         write(&mut doc, &mut wb, 2.0);

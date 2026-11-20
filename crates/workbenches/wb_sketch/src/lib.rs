@@ -89,10 +89,17 @@ use uuid::Uuid;
 /// per frame from the current zoom.
 const SNAP_TOLERANCE_PX: f64 = 8.0;
 
+/// Data written earlier, and what each element and constraint it was
+/// written from serializes to.
+type Spare = (std::sync::Arc<serde_json::Value>, Option<Prints>);
+
+type Prints = std::sync::Arc<sketch_model::feature::SketchPrints>;
+
 /// A sketch the sketcher wrote: the data it wrote, kept so the document
 /// holding that very value (not an equal one) can be told, its planes
-/// as stored, and the sketch as a read of that data placed at
-/// `placement` answers it.
+/// as stored, the sketch as a read of that data placed at `placement`
+/// answers it, and what each of its elements and constraints serializes
+/// to.
 #[derive(Clone)]
 struct Written {
     sketch: core_document::FeatureId,
@@ -100,6 +107,7 @@ struct Written {
     stored_planes: (SketchPlane, SketchPlane),
     placement: core_document::BodyPlacement,
     feature: std::sync::Arc<SketchFeature>,
+    prints: Option<Prints>,
 }
 
 /// Elements-panel filter.
@@ -625,8 +633,10 @@ struct Tab {
     /// The data written before [`Self::written`]'s: once nothing else
     /// holds it (the document, its undo steps and its unsent edits have
     /// all moved on), the next write is made over it, keeping its nodes,
-    /// rather than allocated whole and this freed.
-    spare: std::cell::RefCell<Option<std::sync::Arc<serde_json::Value>>>,
+    /// rather than allocated whole and this freed; with what its elements
+    /// and constraints serialized to, those that serialize alike again
+    /// are not walked at all.
+    spare: std::cell::RefCell<Option<Spare>>,
     /// The sketches in construction mode, in which every newly created
     /// element (from any drawing tool) is flagged as construction
     /// geometry. Each sketch keeps its own mode; the `sketch.construction`
@@ -933,10 +943,17 @@ impl SketchWorkbench {
             .tab
             .spare
             .take()
-            .and_then(|s| std::sync::Arc::try_unwrap(s).ok());
-        let data = std::sync::Arc::new(match spare {
-            Some(spare) => feature.to_json_over(spare),
-            None => feature.to_json(),
+            .and_then(|(data, prints)| Some((std::sync::Arc::try_unwrap(data).ok()?, prints)));
+        // A sketch with texts is never kept as written, so never spare.
+        let prints = feature
+            .sketch
+            .texts
+            .is_empty()
+            .then(|| Prints::new(sketch_model::feature::SketchPrints::of(&feature.sketch)));
+        let data = std::sync::Arc::new(match (spare, &prints) {
+            (Some((spare, Some(then))), Some(now)) => feature.to_json_over_kept(spare, &then, now),
+            (Some((spare, _)), _) => feature.to_json_over(spare),
+            (None, _) => feature.to_json(),
         });
         if let Err(e) = ctx
             .document
@@ -963,9 +980,10 @@ impl SketchWorkbench {
                 stored_planes,
                 placement,
                 feature: std::sync::Arc::clone(&feature),
+                prints,
             }),
         );
-        self.tab.spare.replace(replaced.map(|w| w.data));
+        self.tab.spare.replace(replaced.map(|w| (w.data, w.prints)));
         Some(feature)
     }
 
