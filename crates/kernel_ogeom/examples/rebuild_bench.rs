@@ -369,7 +369,7 @@ fn holed_plate(detail: &TessellationSettings, before: bool) {
 
 /// An imported part as the base, a boss beside it, edited.
 fn imported_part(detail: &TessellationSettings, before: bool) {
-    use kernel_api::{BooleanOp, Kernel, Placement, PrimitiveKind, SolidOp};
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/drive_frame_upper.step");
     let model = OgeomKernel::new().import_step(&path, detail).unwrap();

@@ -10,7 +10,7 @@ use crate::numeric::{design_length, frame, sketch_plane};
 use crate::report::{Finding, note};
 use crate::sketch_import::{ImportedSketch, import_sketch};
 use core_document::{BodyId, BodyPlacement, Document, FeatureId, ImportedGeometry};
-use kernel_api::{Kernel, TessellationSettings};
+use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use project_archive::archive::FcstdError;
 use project_archive::document_xml::{FcDocument, FcObject, Placement};
@@ -180,15 +180,6 @@ pub fn import_document(
     shapes: &Shapes,
     name: &str,
 ) -> Result<ImportedProject, ImportError> {
-    import_with_initializer(source, shapes, name, |kernel| kernel.initialize())
-}
-
-fn import_with_initializer(
-    source: &FcDocument,
-    shapes: &Shapes,
-    name: &str,
-    initialize: impl FnOnce(&mut OgeomKernel) -> Result<(), kernel_api::KernelError>,
-) -> Result<ImportedProject, ImportError> {
     let mut document = Document::new(name);
     let conversion = convert_into(source, shapes, &mut document)?;
     let mut project = ImportedProject {
@@ -201,7 +192,6 @@ fn import_with_initializer(
         stood_in: BTreeSet::new(),
     };
     let mut kernel = OgeomKernel::new();
-    initialize(&mut kernel).map_err(ImportError::KernelInitialization)?;
     let detail = TessellationSettings::default();
     // Shapes read from the file first: bodies built from features may
     // start from them.
@@ -2294,34 +2284,5 @@ fn optional_bool(object: &FcObject, name: &str, absent: bool) -> Result<bool, Fc
         object.bool(name)
     } else {
         Ok(absent)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::error::Error;
-
-    #[test]
-    fn initialization_failure_preserves_the_kernel_error_and_its_stage() {
-        let source = FcDocument::parse("<Document><Objects/><ObjectData/></Document>").unwrap();
-        let error = import_with_initializer(&source, &Shapes::new(), "empty", |_| {
-            Err(kernel_api::KernelError::Initialization(
-                "test backend unavailable".into(),
-            ))
-        })
-        .err()
-        .expect("initialization must fail");
-        assert_eq!(error.category(), ErrorCategory::KernelInitialization);
-        assert!(
-            matches!(error.source().unwrap().downcast_ref::<kernel_api::KernelError>(),
-            Some(kernel_api::KernelError::Initialization(reason)) if reason == "test backend unavailable")
-        );
-        let failure = Failure::from(error);
-        assert!(failure.reason.contains("test backend unavailable"));
-        assert_eq!(
-            serde_json::to_value(failure).unwrap()["category"],
-            "kernel_initialization"
-        );
     }
 }

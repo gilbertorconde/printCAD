@@ -1,4 +1,4 @@
-//! ogeom-backed implementation of the [`Kernel`] trait.
+//! The ogeom-backed geometry kernel.
 //!
 //! Pure-Rust kernel adapter: STEP, IGES and mesh import, deferred
 //! tessellation of persisted shape snapshots, and solid-op chain execution
@@ -49,7 +49,7 @@ pub fn stage_for_test(name: &str) {
 use std::path::Path;
 
 use kernel_api::{
-    ChainError, ImportedModel, Kernel, KernelError, KernelResult, SolidBuildResult, SolidOp,
+    ChainError, ImportedModel, KernelError, KernelResult, SolidBuildResult, SolidOp,
     TessellationSettings, TriMesh,
 };
 
@@ -194,6 +194,15 @@ impl OgeomKernel {
         import::read_brep(text, detail)
     }
 
+    /// Read a STEP, IGES or mesh file and return its bodies, meshed.
+    pub fn import_step(
+        &self,
+        path: &Path,
+        detail: &TessellationSettings,
+    ) -> KernelResult<ImportedModel> {
+        import::import_step(path, detail, false)
+    }
+
     /// Read and mesh in one synchronous shot, keeping no shape snapshot:
     /// every body's `brep_blob` is empty.
     pub fn import_step_full_mesh(
@@ -270,23 +279,5 @@ impl<'a> ChainRequest<'a> {
 
     pub fn cache(self, cache: Option<&'a mut ChainCache>) -> Self {
         Self { cache, ..self }
-    }
-}
-
-impl Kernel for OgeomKernel {
-    fn name(&self) -> &str {
-        "ogeom"
-    }
-
-    fn initialize(&mut self) -> KernelResult<()> {
-        Ok(())
-    }
-
-    fn import_step(
-        &mut self,
-        path: &Path,
-        detail: &TessellationSettings,
-    ) -> KernelResult<ImportedModel> {
-        import::import_step(path, detail, false)
     }
 }

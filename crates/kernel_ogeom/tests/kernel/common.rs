@@ -293,10 +293,7 @@ pub fn primitive(kind: PrimitiveKind) -> SolidOp {
 }
 
 pub fn new_kernel() -> OgeomKernel {
-    use kernel_api::Kernel;
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize kernel");
-    kernel
+    OgeomKernel::new()
 }
 
 pub fn xy_plane() -> ProfilePlane {

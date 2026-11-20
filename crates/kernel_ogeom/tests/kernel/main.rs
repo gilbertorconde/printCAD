@@ -44,7 +44,6 @@ mod unchanged;
 /// The bundled real part (`tests/data/drive_frame_upper.step`) at the
 /// default detail, imported once for every test that reads it.
 pub fn real_part() -> &'static kernel_api::ImportedModel {
-    use kernel_api::Kernel;
     static PART: std::sync::OnceLock<kernel_api::ImportedModel> = std::sync::OnceLock::new();
     PART.get_or_init(|| {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

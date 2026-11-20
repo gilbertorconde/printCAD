@@ -1203,8 +1203,8 @@ fn mesh_finishing_steps_measure_their_results() {
         let path =
             std::env::temp_dir().join(format!("mesh-roundtrip-{}.{format}", std::process::id()));
         std::fs::write(&path, bytes).unwrap();
-        let model = kernel_api::Kernel::import_step(
-            &mut super::common::new_kernel(),
+        let model = kernel_ogeom::OgeomKernel::import_step(
+            &super::common::new_kernel(),
             &path,
             &kernel_api::TessellationSettings::default(),
         )
