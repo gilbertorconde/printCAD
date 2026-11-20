@@ -106,6 +106,18 @@ pub struct ExportBody<'a> {
     /// them off made up for, before the scale. STEP writes the body as
     /// drawn, and a body without a solid as it is.
     pub rounds: Option<[f64; 2]>,
+    /// The colours the body shows in, for a format that carries colour.
+    /// The kernel's 3MF writer takes none yet, so no format writes them.
+    pub colors: Option<ExportColors>,
+}
+
+/// The colours a body shows in, sRGB from 0 to 1: its own, and single
+/// faces' over it, each by its index among the shape's faces (the index
+/// `TriMesh::faces` gives a triangle's face).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ExportColors {
+    pub body: [f32; 3],
+    pub faces: Vec<(u32, [f32; 3])>,
 }
 
 /// A note written with a body to STEP: its text, the point its leader

@@ -90,6 +90,8 @@ pub struct UiFrameInputs<'a> {
     pub quick_measure: Vec<String>,
     /// The selected bodies' volumes, for the status bar's mass.
     pub selection_mass: Option<super::SelectionMass>,
+    /// Whether a body is selected, which Send selection to slicer needs.
+    pub bodies_selected: bool,
     /// Volume, area and centre of the body the property panel shows.
     pub physical: Option<Physical>,
     /// That body's bounds where it sits (millimetres, document axes).

@@ -912,6 +912,7 @@ fn a_sheet_exports_as_step() {
         finish: None,
         scale: None,
         rounds: None,
+        colors: None,
     };
     let written = kernel_ogeom::export::export(
         &[body],

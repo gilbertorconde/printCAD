@@ -1,5 +1,6 @@
 //! What the tree's menus set on a body: frozen, selectable, material,
-//! face colours and shading, each one undoable op.
+//! face colours, shading and how it lies for printing, each one undoable
+//! op.
 
 use core_document::{Document, FaceColor, FaceKey, Material, TriMesh, mesh_with_face_colors};
 
@@ -20,6 +21,8 @@ fn body_properties_are_ops_that_replay() {
     doc.set_face_color(body, 2, 77, Some([0.0, 1.0, 0.0]));
     let smooth = core_document::Shading::Smooth { crease_deg: 45.0 };
     doc.set_body_shading(body, smooth);
+    let down = core_document::PrintRest::Face(FaceKey { name: 77, index: 2 });
+    doc.set_body_print_rest(body, Some(down));
     assert!(doc.body_frozen(body));
     assert!(!doc.body_selectable(body));
     let entry = doc.body(body).unwrap();
@@ -27,6 +30,7 @@ fn body_properties_are_ops_that_replay() {
     assert_eq!(entry.face_colors.len(), 1);
     assert_eq!(entry.face_colors[0].color, [0.0, 1.0, 0.0]);
     assert_eq!(entry.shading, smooth);
+    assert_eq!(entry.print_rest, Some(down));
 
     let mut replica = Document::new("t");
     for op in doc.take_pending_ops() {
@@ -36,6 +40,27 @@ fn body_properties_are_ops_that_replay() {
         replica.replicated_projection()["bodies"],
         doc.replicated_projection()["bodies"]
     );
+}
+
+/// How a part lies for printing is one undo step; setting it again as it
+/// is records nothing.
+#[test]
+fn a_chosen_print_rest_undoes() {
+    use core_document::PrintRest;
+    use core_document::history::OpJournal;
+    let mut doc = Document::new("t");
+    let body = doc.create_body(None);
+    let mut journal = OpJournal::new(16);
+    journal.note(&mut doc);
+    doc.set_body_print_rest(body, Some(PrintRest::AsModelled));
+    journal.note(&mut doc);
+    doc.set_body_print_rest(body, Some(PrintRest::AsModelled));
+    journal.note(&mut doc);
+    assert_eq!(doc.body_print_rest(body), Some(PrintRest::AsModelled));
+    assert!(journal.undo(&mut doc).is_some());
+    assert_eq!(doc.body_print_rest(body), None);
+    assert!(journal.redo(&mut doc).is_some());
+    assert_eq!(doc.body_print_rest(body), Some(PrintRest::AsModelled));
 }
 
 /// A colour written as `{name, index, color}` in a file, and a

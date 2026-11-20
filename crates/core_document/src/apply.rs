@@ -114,6 +114,10 @@ impl Document {
                 id: *id,
                 material: self.body(*id)?.material.clone(),
             },
+            Op::SetBodyPrintRest { id, .. } => Op::SetBodyPrintRest {
+                id: *id,
+                rest: self.body(*id)?.print_rest,
+            },
             Op::SetFaceColor { id, face, .. } => Op::SetFaceColor {
                 id: *id,
                 face: *face,
@@ -456,6 +460,11 @@ impl Document {
             Op::SetBodyMaterial { id, material } => {
                 if let Some(entry) = self.body_mut(*id) {
                     entry.material.clone_from(material);
+                }
+            }
+            Op::SetBodyPrintRest { id, rest } => {
+                if let Some(entry) = self.body_mut(*id) {
+                    entry.print_rest = *rest;
                 }
             }
             Op::SetFaceColor { id, face, color } => {

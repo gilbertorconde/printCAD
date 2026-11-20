@@ -159,8 +159,9 @@ impl PrintCadApp {
             }
             UiCommand::File(FileCommand::New) => intents.new_document = true,
             UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
-            UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(false),
-            UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true),
+            UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(false, false),
+            UiCommand::File(FileCommand::SendSelectionToSlicer) => self.send_to_slicer(false, true),
+            UiCommand::File(FileCommand::SendLaidOutToSlicer) => self.send_to_slicer(true, false),
             UiCommand::File(FileCommand::ExportLaidOut) => self.open_export_laid_out(),
             UiCommand::File(FileCommand::SavePicture) => self.save_picture(),
             UiCommand::ConfirmExport => self.confirm_export(),
@@ -912,6 +913,9 @@ impl PrintCadApp {
                 app_log::info("Rebuilding the body");
                 return;
             }
+            BodyEdit::PrintOn(crate::ui::PrintOn::Face(_)) => "Print on this face",
+            BodyEdit::PrintOn(crate::ui::PrintOn::AsModelled) => "Print as modelled",
+            BodyEdit::PrintOn(crate::ui::PrintOn::Auto) => "Print on its best face",
         };
         self.session.journal.label_next(label);
         self.close_gesture();

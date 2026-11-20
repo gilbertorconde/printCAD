@@ -130,6 +130,12 @@ const SHELL: &[ShellEntry] = &[
         action: ShellAction::File(FileCommand::SendToSlicer),
     },
     ShellEntry {
+        label: "Send selection to slicer",
+        icon: "workbench-print",
+        binding: None,
+        action: ShellAction::File(FileCommand::SendSelectionToSlicer),
+    },
+    ShellEntry {
         label: "Print layout…",
         icon: "workbench-print",
         binding: Some("file.print_layout"),

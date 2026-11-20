@@ -18,7 +18,7 @@ use core_document::{
     ParamKind, WorkbenchRuntimeContext,
 };
 use kernel_api::TessellationSettings;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::app::scripts::{doc_commands, document_command, tree_item};
 
@@ -453,13 +453,19 @@ impl Headless {
                 self.rebuild();
                 let layout = draft.layout.then(|| {
                     use doc_render::print_layout::{LayoutSettings, lay_out, parts_to_print};
+                    let parts = parts_to_print(&self.document, &self.registry);
+                    let parts = match &bodies {
+                        Some(bodies) => crate::app::export::parts_of(parts, bodies),
+                        None => parts,
+                    };
                     lay_out(
                         &self.document,
-                        &parts_to_print(&self.document, &self.registry),
+                        &parts,
                         &LayoutSettings::of(&settings::PrintingSettings::default()),
                     )
                 });
-                let (path, exported) = crate::app::export::export_document(
+                let folder = draft.per_body.then(|| path.clone());
+                let files = crate::app::export::export_document(
                     (&self.document, &self.registry),
                     path,
                     &draft,
@@ -468,12 +474,7 @@ impl Headless {
                     None,
                 )
                 .map_err(CommandError::failed)?;
-                Ok(json!({
-                    "path": path.display().to_string(),
-                    "written": exported.written,
-                    "skipped": exported.skipped,
-                    "triangles": exported.triangles,
-                }))
+                Ok(crate::app::export::export_answer(folder.as_deref(), &files))
             }
             _ => {
                 let (bench, _) = self

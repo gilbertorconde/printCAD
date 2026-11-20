@@ -313,6 +313,7 @@ impl UiLayer {
                 scripts: inputs.scripts,
                 recording: inputs.recording,
                 section_on: inputs.section.is_some(),
+                bodies_selected: inputs.bodies_selected,
                 measuring: inputs.measuring,
             },
             &mut out.active_workbench,

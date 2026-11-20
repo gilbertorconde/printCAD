@@ -57,8 +57,8 @@ pub use arrays::{
 };
 pub use asset::{AssetReference, AssetType};
 pub use body::{
-    Body, BodyDisplay, FaceColor, FaceKey, FaceTexture, Material, MirrorPlane, ScanInfo, Shading,
-    StandIn, mesh_with_face_colors,
+    Body, BodyDisplay, FaceColor, FaceKey, FaceTexture, Material, MirrorPlane, PrintRest, ScanInfo,
+    Shading, StandIn, mesh_with_face_colors,
 };
 pub use command::{
     AgentAccess, Args, BenchFn, BenchFnById, CommandArgs, CommandError, CommandFn, CommandFnById,

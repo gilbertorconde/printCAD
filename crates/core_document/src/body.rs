@@ -100,6 +100,20 @@ pub struct Body {
     /// not build (op `SetBodyStandIn`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stand_in: Option<StandIn>,
+    /// How it lies in the print layout when the user chose, over the
+    /// largest flat face the layout finds (op `SetBodyPrintRest`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_rest: Option<PrintRest>,
+}
+
+/// How a part lies on the bed in the print layout, chosen by the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrintRest {
+    /// This flat face of the body down on the bed.
+    Face(FaceKey),
+    /// Unturned, as modelled, its lowest point on the bed.
+    AsModelled,
 }
 
 /// A shape kept to stand in for a body's solid: the asset it is read from,
@@ -126,6 +140,7 @@ impl Body {
             textures: Vec::new(),
             notes: Vec::new(),
             stand_in: None,
+            print_rest: None,
             link: None,
             mirror: None,
             id,
@@ -411,6 +426,19 @@ impl Document {
         if self.body(body).is_some_and(|b| b.material != material) {
             self.record_and_apply(op::DocumentOp::SetBodyMaterial { id: body, material });
         }
+    }
+
+    /// Say how a body lies in the print layout, or `None` to let the
+    /// layout choose its face.
+    pub fn set_body_print_rest(&mut self, body: BodyId, rest: Option<PrintRest>) {
+        if self.body(body).is_some_and(|b| b.print_rest != rest) {
+            self.record_and_apply(op::DocumentOp::SetBodyPrintRest { id: body, rest });
+        }
+    }
+
+    /// How the user chose a body lies in the print layout, if they did.
+    pub fn body_print_rest(&self, body: BodyId) -> Option<PrintRest> {
+        self.body(body)?.print_rest
     }
 
     /// Colour face `index` of `body` (named `name` in its mesh, 0 for

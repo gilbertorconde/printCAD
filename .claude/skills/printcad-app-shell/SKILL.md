@@ -155,7 +155,9 @@ solid sectioned by the plane's half space and the edges on the face kept;
 `ExternalSource::section`), refreshed the same way. File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
-tolerance and welded closed, on a thread of its own. It waits for the tab's
+tolerance and welded closed, on a thread of its own, in one file or a
+file per body (`ExportDraft::per_body`: a folder from
+`FileDialogKind::ExportFolder`, names from `per_body_paths`). It waits for the tab's
 next build cycle, which sends an edit of the same frame, and for the builds
 out (`Builds::built_since`); a body showing a task's preview is written
 whole (`whole_solids`, as a save does). While an open task's preview
@@ -174,14 +176,18 @@ Export for printing walks it on the pocketed example. With
 `PrintingSettings::apply_compensation`, mesh exports scale each body about
 its middle by `compensation` (`ExportBody::scale`; `app.print_compensation`,
 from `inspect.compensation`). File › Send to
-slicer writes the visible bodies to a new file (made exclusively, a
+slicer writes the visible bodies (Send selection to slicer, the
+selected ones: `send_to_slicer(laid_out, selected)`) to a new file (made exclusively, a
 number added on a clash) in this run's own 0700 folder,
 `printcad-slicer-<pid>-<random>` under `$XDG_RUNTIME_DIR` or the
 temporary folder (`FileWork::slicer_folder`), in the
 format of `PrintingSettings::slicer_format` and runs
 `slicer_command` on it (`{file}` places the path, else it goes last;
 empty uses `xdg-open`). File › Print layout (`app/print_layout.rs`, a
-task, its packing `doc_render::print_layout`) lays each part on its largest face it stands on and packs the
+task, its packing `doc_render::print_layout`) lays each part on its largest face it stands on, or as
+`Body::print_rest` chooses (`PrintRest`: a flat face turned down, or as
+modelled; the body menu, the task's rows and `doc.set_body`'s
+`print_on` set it, op `SetBodyPrintRest`), and packs the
 copies on the bed, plate after plate, without moving the bodies; the
 counts come from `Workbench::print_parts` (the Assembly's parts list),
 and export, the slicer and `doc.print_layout` take the layout. The

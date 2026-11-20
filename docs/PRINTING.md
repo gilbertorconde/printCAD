@@ -147,6 +147,17 @@ layout is only where export and the slicer put the copies.
   no such face (a sphere) keeps the up of its own frame. It is then
   turned about the vertical to the smallest rectangle around its
   footprint, the rectangle's longer side along X.
+- **Choosing how a part lies**: a body's menu in the view, opened on a
+  flat face, has **Print on this face**: the layout turns that face down
+  on the bed, then turns the part about the vertical as above. **Print as
+  modelled** drops the part to the bed as it is modelled, unturned, its
+  lowest point on the bed. **Print on its best face** gives the choice
+  back to the layout. The task lists every part under **Lying on the
+  bed** with the same choice, and **Selected face down** turns down the
+  flat faces selected before it opened. The choice is kept with the body
+  in the document and undoes like any edit. A chosen face the body no
+  longer has, or one a rebuild made curved, leaves the part on its best
+  face, and the task names it.
 - **How copies pack**: in rows along X, the deepest footprints first,
   each row as deep as its first copy, the **Gap** (5 mm unless set)
   between copies and half of it from the bed's edges. A copy that fits
@@ -171,8 +182,32 @@ several plates, the file holds them all, side by side.
 From a script, `pc.doc.print_layout{}` answers where each copy goes
 (its body, name, plate, bounds on the bed and the transform from the
 body's own frame), with `bed = {x, y, z}` and `gap` to lay out for
-another printer; `pc.file.export{path = ..., layout = true}` writes the
-layout and `pc.file.send_to_slicer{layout = true}` sends it.
+another printer; `pc.doc.set_body{body = ..., print_on = 3}` lies a part
+on its face 3 (as `pc.doc.faces` numbers them), `print_on = "as_modelled"`
+drops it unturned and `print_on = "auto"` gives the choice back;
+`pc.file.export{path = ..., layout = true}` writes the layout and
+`pc.file.send_to_slicer{layout = true}` sends it.
+
+## Files for the slicer
+
+File › Export (Ctrl+E) writes the visible bodies, or with **Selected body
+only** the selected ones, as STEP, STL or 3MF. **A file per body** writes
+each body in a file of its own instead, named after the body, into a
+folder it asks for; laid out for printing, each copy gets its own file
+("Bracket 1", "Bracket 2"). Files of the same name already in the folder
+are replaced, each written whole or not at all, as every export is.
+
+File › Send to slicer (Ctrl+P) writes the visible bodies to a file of
+the slicer's format and opens it in the slicer. **Send selection to
+slicer** (File menu and command palette) sends only the selected bodies;
+when the layout is sent, it lays out only their parts.
+
+From a script, `pc.file.export{path = folder, per_body = true}` writes a
+file per body and answers each file's path in `files`, and
+`pc.file.send_to_slicer{selected = true}` sends the selection.
+
+A 3MF names each body's object after it. The bodies' colours are not
+written yet: the kernel's 3MF writer takes no colours.
 
 ## Overhangs
 
