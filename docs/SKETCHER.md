@@ -265,7 +265,8 @@ the value of the one there, or make it driving, instead. **Block** fixes an elem
 
 **Coincident** (Shift+C) joins points; on a point and a curve it puts
 the point on the curve, and on two or more circles, arcs or ellipses it
-makes them concentric, each centre on the first one's.
+makes them concentric, each centre on the first one's. Curves that share
+a centre already are left as they are, and the tool says so.
 
 **Collinear** (Shift+J) puts two or more lines on one line: each after
 the first lands on the first one's line, wherever along it.
@@ -417,7 +418,8 @@ curve held on the spline, as long as the point lies on the spline's span.
 **Trim and Extend at the axes.** By default the sketch's axes do not cut.
 Press U while Trim or Extend is in hand, or tick **Cut at the axes (U)**
 in the Tool section, and the two axes cut as curves do; an end left on an
-axis is held on it.
+axis is held on it. Trimming the middle of a line leaves two pieces held
+collinear, so they stay on one line.
 
 **Patterns.** Move, Rotate and Scale take a number of copies. For Move and
 Rotate:

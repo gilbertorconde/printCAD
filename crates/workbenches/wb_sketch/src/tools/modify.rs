@@ -262,11 +262,19 @@ fn curve_resized(sketch: &mut Sketch, curve: Uuid) {
     });
 }
 
-/// `second` is the rest of `first`, cut from it: held on the same line, as
-/// level or plumb as `first` is when it is. `joined` when they share an
-/// end (a split), else the second is held on the first's line by its start
-/// (the far part of a trimmed middle).
+/// `second` is the rest of `first`, cut from it, held on the same line.
+/// `joined` when they share an end (a split): held parallel, or level or
+/// plumb as `first` is when it is, the shared end doing the rest. Else
+/// (the far part of a trimmed middle) held collinear with `first`, which
+/// keeps it level or plumb with it too.
 fn continues(sketch: &mut Sketch, first: Uuid, second: Uuid, joined: bool) {
+    if !joined {
+        sketch.add_constraint(ConstraintKind::Collinear {
+            line1: first,
+            line2: second,
+        });
+        return;
+    }
     let axis: Vec<ConstraintKind> = sketch
         .constraints
         .iter()
@@ -289,13 +297,6 @@ fn continues(sketch: &mut Sketch, first: Uuid, second: Uuid, joined: bool) {
         for kind in axis {
             sketch.add_constraint(kind);
         }
-    }
-    if !joined && let Some(GeometryElement::Line(l)) = sketch.get_geometry(second) {
-        let start = l.start;
-        sketch.add_constraint(ConstraintKind::PointOnLine {
-            point: start,
-            line: first,
-        });
     }
 }
 

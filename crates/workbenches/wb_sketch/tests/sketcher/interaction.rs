@@ -75,6 +75,8 @@ struct Harness {
     /// offset's) gets OK at once, keeping what the click made, as Enter
     /// would; off, a test works the card itself.
     ok_new_dimensions: bool,
+    /// What the bench logged on input, in order.
+    logs: Vec<String>,
 }
 
 impl Harness {
@@ -99,6 +101,7 @@ impl Harness {
             gestures_closed: 0,
             card_open: None,
             ok_new_dimensions: true,
+            logs: Vec::new(),
         }
     }
 
@@ -127,6 +130,8 @@ impl Harness {
         ctx.selected_edges = self.edges.clone();
         ctx.undo_entry = self.journal.undo_entry_id();
         self.consumed = self.wb.on_input(&event, tool, &mut ctx).consumed;
+        let logs = ctx.drain_logs().into_iter().map(|l| l.message);
+        self.logs.extend(logs);
         let outcome = core_document::HookOutcome::take(&mut ctx);
         self.active_object = outcome.active_document_object;
         self.recorded.extend(outcome.recorded);

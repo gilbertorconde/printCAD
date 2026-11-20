@@ -98,6 +98,84 @@ fn pick_two_then(h: &mut Harness, a: (f64, f64), b: (f64, f64), tool: &str) {
     h.key(KeyCode::A, Some(tool));
 }
 
+/// Coincident on circles that share a centre already says so, from the
+/// toolbar and the command, rather than that the selection does not fit.
+#[test]
+fn coincident_on_concentric_circles_says_they_share_a_centre() {
+    let mut h = Harness::sketching();
+    h.click(5.0, 5.0, "sketch.circle");
+    h.click(7.0, 5.0, "sketch.circle");
+    h.click(5.0, 5.0, "sketch.circle");
+    h.click(8.0, 5.0, "sketch.circle");
+    let circles = crate::all_circles(&h.sketch());
+    assert_eq!(circles[0].center, circles[1].center, "the centre is shared");
+    let before = h.sketch().constraints.len();
+    pick_two_then(
+        &mut h,
+        (7.0, 5.0),
+        (8.0, 5.0),
+        "sketch.constrain.coincident",
+    );
+    assert_eq!(h.sketch().constraints.len(), before, "nothing added");
+    let said = h.logs.last().cloned().unwrap_or_default();
+    assert!(said.contains("share a centre"), "{:?}", h.logs);
+
+    let args = serde_json::json!({
+        "sketch": h.active_object.expect("a sketch").0.to_string(),
+        "kind": "coincident",
+        "items": [circles[0].id.to_string(), circles[1].id.to_string()],
+    });
+    let serde_json::Value::Object(args) = args else {
+        unreachable!()
+    };
+    let refused = h.with_ctx(|wb, ctx| wb.run_command("sketch.constrain", &args, ctx));
+    let refused = refused.unwrap_err().to_string();
+    assert!(refused.contains("share a centre"), "{refused}");
+}
+
+/// The far piece of a trimmed line stays on its line through one
+/// Collinear, the freedom the two pieces have left as it was and nothing
+/// redundant, level or not.
+#[test]
+fn the_far_piece_of_a_trimmed_line_is_held_collinear() {
+    for level in [false, true] {
+        let mut h = Harness::sketching();
+        h.line((1.0, 2.0), (21.0, 3.0));
+        h.line((6.0, -3.0), (5.0, 7.0));
+        h.line((16.0, -3.0), (15.0, 7.0));
+        let target = crate::line_of(&h.sketch());
+        if level {
+            h.edit_sketch(|s| s.add_constraint(ConstraintKind::Horizontal { element: target.id }));
+        }
+        h.click(10.75, 2.5, "sketch.trim");
+        let sketch = h.sketch();
+        let count = |name: &str| {
+            sketch
+                .constraints
+                .iter()
+                .filter(|c| format!("{:?}", c.kind).starts_with(name))
+                .count()
+        };
+        assert_eq!(count("Collinear"), 1, "level {level}");
+        assert_eq!(count("PointOnLine"), 0, "level {level}");
+        assert_eq!(count("Horizontal"), usize::from(level), "level {level}");
+        let args =
+            serde_json::json!({ "sketch": h.active_object.expect("a sketch").0.to_string() });
+        let serde_json::Value::Object(args) = args else {
+            unreachable!()
+        };
+        let status = h.with_ctx(|wb, ctx| wb.run_command("sketch.status", &args, ctx));
+        let status = status.unwrap();
+        assert_eq!(status["redundant"], serde_json::json!([]), "{status}");
+        // As free as the far piece held parallel (or level) with its start
+        // on the first's line: the cutters' 8 less the 2 their drawing held,
+        // the first piece's 4 (3 level) and the far one's ends sliding
+        // along it.
+        let free = if level { 11 } else { 12 };
+        assert_eq!(status["dof"], free, "{status}");
+    }
+}
+
 /// Collinear on two separate lines puts both on one line, and the same
 /// pair either way round is not held twice.
 #[test]

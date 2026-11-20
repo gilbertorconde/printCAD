@@ -911,7 +911,11 @@ fn planned<'a>(
         kind
     };
     let kinds = crate::constrain::kinds_for(tool, &shape, sketch).ok_or_else(|| {
-        CommandError::failed(format!("the {tool} constraint does not fit these items"))
+        if tool == "coincident" && crate::constrain::share_a_centre(sketch, &shape) {
+            CommandError::failed("these curves already share a centre")
+        } else {
+            CommandError::failed(format!("the {tool} constraint does not fit these items"))
+        }
     })?;
     Ok((tool, kinds))
 }
