@@ -109,7 +109,7 @@ pub struct Sketch {
 /// Ids hashed by their own bytes: ids are random, so they spread as well
 /// as a keyed hash would spread them, for a fraction of the cost.
 #[derive(Default)]
-pub(crate) struct IdHasher(u64);
+pub struct IdHasher(u64);
 
 impl std::hash::Hasher for IdHasher {
     fn finish(&self) -> u64 {
@@ -125,8 +125,7 @@ impl std::hash::Hasher for IdHasher {
     }
 }
 
-pub(crate) type IdMap<T> =
-    std::collections::HashMap<Uuid, T, std::hash::BuildHasherDefault<IdHasher>>;
+pub type IdMap<T> = std::collections::HashMap<Uuid, T, std::hash::BuildHasherDefault<IdHasher>>;
 
 /// Where each element of a sketch's `geometry` stood when last looked up,
 /// by id: a hint every lookup checks against the list before trusting it,
@@ -442,7 +441,7 @@ impl ExternalSource {
 impl Sketch {
     /// Whether `self` and `other` differ at most in where their
     /// dimensions' labels sit, which nothing the solver works out reads.
-    pub(crate) fn eq_but_labels(&self, other: &Sketch) -> bool {
+    pub fn eq_but_labels(&self, other: &Sketch) -> bool {
         let Sketch {
             id,
             name,

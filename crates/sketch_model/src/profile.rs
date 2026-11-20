@@ -100,7 +100,7 @@ pub fn plane_of(plane: &SketchPlane) -> ProfilePlane {
 /// them. A solid's edges meet at a vertex only within its tolerance, and
 /// the picks they come from are single precision, a few millionths of a
 /// millimetre apart at part sizes.
-pub(crate) const PROJECTED_JOIN: f64 = crate::curves::END_SLACK;
+pub const PROJECTED_JOIN: f64 = crate::curves::END_SLACK;
 
 /// A sketch feature's closed loops on its plane, in its body's frame, as
 /// its formulas leave it; `None` for a feature that is not a sketch or a
@@ -654,7 +654,7 @@ fn spline_segment(b: &crate::sketch::BSpline, control_points: Vec<[f64; 2]>) -> 
 
 /// `segment` run from its end to its start. An arc of an ellipse only runs
 /// counter-clockwise, so it stays as it is.
-pub(crate) fn reversed(segment: &ProfileSegment) -> ProfileSegment {
+pub fn reversed(segment: &ProfileSegment) -> ProfileSegment {
     match segment {
         ProfileSegment::Line { start, end } => ProfileSegment::Line {
             start: *end,
@@ -1046,37 +1046,6 @@ mod tests {
 #[cfg(test)]
 mod external_profile_tests {
     use crate::sketch::{ExternalSource, GeometryElement, Line, Point, Sketch, Vec2D};
-
-    #[test]
-    fn a_projected_edge_closes_a_profile_once_it_counts() {
-        let mut sketch = Sketch::new("t");
-        let mut p = |x: f64, y: f64| {
-            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
-        };
-        let (a, b, c) = (p(0.0, 0.0), p(10.0, 0.0), p(5.0, 8.0));
-        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
-        let edge = sketch.add_geometry(GeometryElement::Line(Line::new(c, a)));
-        sketch.external.insert(
-            edge,
-            ExternalSource {
-                body: uuid::Uuid::new_v4(),
-                point: [0.0; 3],
-                direction: [1.0, 0.0, 0.0],
-                section: false,
-                defining: false,
-                reference: None,
-                faces: [0; 2],
-            },
-        );
-        assert!(
-            super::extract_wires(&sketch).is_err(),
-            "a guide leaves the outline open"
-        );
-        crate::commands::set_external_defining(&mut sketch, &[edge], true);
-        let wires = super::extract_wires(&sketch).expect("closed by the edge");
-        assert_eq!(wires[0].segments.len(), 3);
-    }
 
     /// Projected edges of one solid meet within its tolerance, a few
     /// millionths of a millimetre apart at part sizes: they join there. Ends

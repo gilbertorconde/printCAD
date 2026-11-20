@@ -4635,6 +4635,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sketch_model"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "fontdb",
+ "glam 0.33.7",
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+ "sketch_solver",
+ "ttf-parser",
+ "ui_kit",
+ "uuid",
+]
+
+[[package]]
 name = "sketch_solver"
 version = "0.1.0"
 dependencies = [
@@ -6199,7 +6215,6 @@ dependencies = [
  "bench_panel",
  "core_document",
  "egui",
- "fontdb",
  "glam 0.33.7",
  "image",
  "image_edges",
@@ -6210,8 +6225,8 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sketch_model",
  "sketch_solver",
- "ttf-parser",
  "ui_kit",
  "uuid",
 ]

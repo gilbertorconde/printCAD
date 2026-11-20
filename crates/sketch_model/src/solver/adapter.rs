@@ -4,7 +4,7 @@ use crate::sketch::{self, ConstraintKind as C, GeometryElement as G, Sketch, Vec
 use sketch_solver::problem as core;
 use uuid::Uuid;
 
-pub(super) fn point(id: Uuid) -> core::PointReference {
+pub fn point(id: Uuid) -> core::PointReference {
     if id == sketch::ORIGIN_ID {
         core::PointReference::Origin
     } else {
@@ -12,7 +12,7 @@ pub(super) fn point(id: Uuid) -> core::PointReference {
     }
 }
 
-pub(super) fn curve(id: Uuid) -> core::CurveReference {
+pub fn curve(id: Uuid) -> core::CurveReference {
     match id {
         sketch::X_AXIS_ID => core::CurveReference::XAxis,
         sketch::Y_AXIS_ID => core::CurveReference::YAxis,
@@ -39,7 +39,7 @@ fn radians(v: f64) -> core::Radians {
     core::Radians(v)
 }
 
-pub(super) fn settings(settings: sketch::SolverSettings) -> core::Settings {
+pub fn settings(settings: sketch::SolverSettings) -> core::Settings {
     core::Settings {
         max_iterations: settings.max_iterations.max(1),
         tolerance: if settings.tolerance > 0.0 {
@@ -380,7 +380,7 @@ fn group_reference(
     }
 }
 
-pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
+pub fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
     let fitted = crate::spline::solved_fits(sketch);
     // A text's letters are made from its block where its point stands
     // (`text::refresh` after each solve): nothing in them is the solver's.

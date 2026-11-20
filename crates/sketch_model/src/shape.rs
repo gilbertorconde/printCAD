@@ -34,7 +34,7 @@ pub fn distance_within(
 
 /// One element where it stands.
 #[derive(Debug, Clone)]
-pub(crate) enum Shape {
+pub enum Shape {
     Point(DVec2),
     /// A line, a circle or an arc.
     Prim(Prim),
@@ -45,10 +45,7 @@ pub(crate) enum Shape {
 impl Shape {
     /// `geom` with its points looked up by `point`: `None` where one is
     /// missing, a number is not finite or a circle's radius is negative.
-    pub(crate) fn of(
-        point: &dyn Fn(Uuid) -> Option<Vec2D>,
-        geom: &GeometryElement,
-    ) -> Option<Self> {
+    pub fn of(point: &dyn Fn(Uuid) -> Option<Vec2D>, geom: &GeometryElement) -> Option<Self> {
         let finite = |id| point(id).filter(|p| p.to_glam().is_finite());
         let at = |id| finite(id).map(|p| p.to_glam());
         let shape = match geom {
@@ -78,7 +75,7 @@ impl Shape {
     }
 
     /// Every number finite and a radius not negative.
-    pub(crate) fn is_sound(&self) -> bool {
+    pub fn is_sound(&self) -> bool {
         match self {
             Shape::Point(p) => p.is_finite(),
             Shape::Prim(Prim::Seg { a, b }) => a.is_finite() && b.is_finite(),
@@ -101,7 +98,7 @@ impl Shape {
     /// so a point on it is at no distance whatever the tolerance (a
     /// tessellation's chords sag off a bent span by hundredths of a
     /// millimetre, past a scripted click's tolerance).
-    pub(crate) fn distance(&self, p: DVec2) -> f64 {
+    pub fn distance(&self, p: DVec2) -> f64 {
         match *self {
             Shape::Point(q) => (q - p).length(),
             Shape::Prim(Prim::Seg { a, b }) => (p - nearest_on_segment(p, a, b)).length(),
@@ -120,7 +117,7 @@ impl Shape {
     /// No further from `p` than the shape is: zero, or for a curve the
     /// distance to a circle it lies within, so most curves away from the
     /// cursor are passed over without working out their nearest point.
-    pub(crate) fn distance_at_least(&self, p: DVec2) -> f64 {
+    pub fn distance_at_least(&self, p: DVec2) -> f64 {
         match self {
             Shape::Curve(curve) => curve
                 .bound()
@@ -131,7 +128,7 @@ impl Shape {
 
     /// The numbers that place the shape, for settling ties between
     /// shapes alike in everything else.
-    pub(crate) fn key(&self) -> [f64; 6] {
+    pub fn key(&self) -> [f64; 6] {
         match self {
             Shape::Point(p) => [p.x, p.y, 0.0, 0.0, 0.0, 0.0],
             Shape::Prim(Prim::Seg { a, b }) => [a.x, a.y, b.x, b.y, 0.0, 0.0],
@@ -148,7 +145,7 @@ impl Shape {
     /// Where `p` drops onto a line, a circle or an arc: `None` for a line
     /// with no length, at a circle's centre, off an arc's sweep and for
     /// every other shape.
-    pub(crate) fn project(&self, p: DVec2) -> Option<DVec2> {
+    pub fn project(&self, p: DVec2) -> Option<DVec2> {
         match *self {
             Shape::Prim(Prim::Seg { a, b }) => {
                 ((b - a).length_squared() >= 1e-12).then(|| nearest_on_segment(p, a, b))
@@ -168,7 +165,7 @@ impl Shape {
     /// Where `p` falls on a line's extension past one of its ends, no
     /// further out than half the line's length, or on an arc's circle past
     /// its ends: the foot and how far `p` is from it.
-    pub(crate) fn extension_foot(&self, p: DVec2) -> Option<(DVec2, f64)> {
+    pub fn extension_foot(&self, p: DVec2) -> Option<(DVec2, f64)> {
         match *self {
             Shape::Prim(Prim::Arc { c, r, s, e }) => {
                 let dir = p - c;
@@ -197,7 +194,7 @@ impl Shape {
 
 /// Whether `p` lies within the angles the arc about `c` sweeps from `s` to
 /// `e`, counter-clockwise.
-pub(crate) fn on_sweep(c: DVec2, s: DVec2, e: DVec2, p: DVec2) -> bool {
+pub fn on_sweep(c: DVec2, s: DVec2, e: DVec2, p: DVec2) -> bool {
     let (start, sweep) = arc_angles(s - c, e - c);
     let d = p - c;
     (d.y.atan2(d.x) - start).rem_euclid(std::f64::consts::TAU) <= sweep

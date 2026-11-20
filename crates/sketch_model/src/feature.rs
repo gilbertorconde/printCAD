@@ -414,7 +414,7 @@ impl WorkbenchFeature for SketchFeature {
 
 /// `source` projected onto the sketch plane `plane`, both in the frame of
 /// the body the sketch and the source share.
-pub(crate) fn projection_probe(
+pub fn projection_probe(
     plane: &SketchPlane,
     source: &crate::sketch::ExternalSource,
 ) -> kernel_api::ProjectionProbe {

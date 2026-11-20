@@ -221,7 +221,7 @@ pub fn ellipse_arc_points(
 
 /// A trim/extend-capable curve resolved to positions.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Prim {
+pub enum Prim {
     Seg {
         a: DVec2,
         b: DVec2,
@@ -238,7 +238,7 @@ pub(crate) enum Prim {
     },
 }
 
-pub(crate) fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
+pub fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
     match geom {
         GeometryElement::Line(l) => Some(Prim::Seg {
             a: sketch.point_position(l.start)?.to_glam(),
@@ -265,7 +265,7 @@ pub(crate) fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
 /// Whether `p` lies within the prim's own extent (segments by parameter,
 /// arcs by angular range, either past an end by no more than
 /// [`END_SLACK`]; circles are unbounded).
-pub(crate) fn within(prim: &Prim, p: DVec2) -> bool {
+pub fn within(prim: &Prim, p: DVec2) -> bool {
     match *prim {
         Prim::Seg { a, b } => on_segment(a, b, p),
         Prim::Arc { c, s, e, .. } => on_arc(c, s, e, p),
@@ -275,7 +275,7 @@ pub(crate) fn within(prim: &Prim, p: DVec2) -> bool {
 
 /// Intersections of the *unbounded* carriers of two prims (infinite line /
 /// full circle), before any extent filtering.
-pub(crate) fn raw_hits(a: &Prim, b: &Prim) -> Vec<DVec2> {
+pub fn raw_hits(a: &Prim, b: &Prim) -> Vec<DVec2> {
     match (a, b) {
         (Prim::Seg { a: a1, b: a2 }, Prim::Seg { a: b1, b: b2 }) => {
             line_line(*a1, *a2, *b1, *b2).into_iter().collect()

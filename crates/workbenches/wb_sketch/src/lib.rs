@@ -2,21 +2,20 @@
 // the kernel bench use; the panel-only state and helpers go unused there.
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
-/// The feature kind sketches are stored under.
-pub const KIND: &str = "wb.sketch";
+pub use sketch_model::KIND;
 
 mod actions;
 mod appearance;
-pub mod boundary;
+pub use sketch_model::boundary;
 mod candidates;
 mod chain;
 mod closed_parts;
 mod commands;
-pub mod conic;
+pub use sketch_model::conic;
 mod constrain;
 mod constraint_tools;
 mod corner_task;
-mod curves;
+use sketch_model::curves;
 mod dim_edit;
 mod dimension_task;
 mod drawing;
@@ -29,47 +28,47 @@ use external_follow::{
     Projection, follow_references, project_source_in, projection_key, solid_built_from,
 };
 pub(crate) use external_follow::{project_source, with_edge_names};
-mod feature;
+use sketch_model::feature;
 mod frame_memo;
 pub mod generator;
-pub mod geom2d;
+pub use sketch_model::geom2d;
 mod glyphs;
 mod images;
 mod input;
 pub mod internal;
-mod measure;
+use sketch_model::measure;
 mod model_picks;
 pub mod nodes;
-pub mod operations;
+pub use sketch_model::operations;
 mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
 mod panel;
-mod params;
+use sketch_model::params;
 mod picture_edges;
 mod placement;
-pub mod profile;
+pub use sketch_model::profile;
 mod rect;
-pub mod regions;
+pub use sketch_model::regions;
 mod registration;
 mod relations;
-pub mod render;
-pub mod repair;
+pub use sketch_model::render;
+pub use sketch_model::repair;
 mod reuse;
 mod scan;
 mod selection;
 #[cfg(feature = "egui")]
 mod settings;
-pub mod shape;
-pub mod sketch;
+pub use sketch_model::shape;
+pub use sketch_model::sketch;
 pub mod snap;
-mod solver;
+use sketch_model::solver;
+pub use sketch_model::spline;
 pub use solver::report as solver_report;
-pub mod spline;
 pub mod spline_edit;
 mod step;
-pub mod style;
-pub mod text;
+pub use sketch_model::style;
+pub use sketch_model::text;
 mod tools;
 mod verdict;
 mod viewport_out;

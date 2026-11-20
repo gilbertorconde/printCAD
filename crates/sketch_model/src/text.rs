@@ -24,15 +24,15 @@ use crate::sketch::{BSpline, GeometryElement, Line, Point, Sketch, TextBlock, Ve
 pub const FONTS: &[(&str, &[u8])] = &[
     (
         "IBM Plex Sans",
-        include_bytes!("../../../ui_kit/fonts/IBMPlexSans-Regular.ttf"),
+        include_bytes!("../../ui_kit/fonts/IBMPlexSans-Regular.ttf"),
     ),
     (
         "IBM Plex Sans SemiBold",
-        include_bytes!("../../../ui_kit/fonts/IBMPlexSans-SemiBold.ttf"),
+        include_bytes!("../../ui_kit/fonts/IBMPlexSans-SemiBold.ttf"),
     ),
     (
         "IBM Plex Mono",
-        include_bytes!("../../../ui_kit/fonts/IBMPlexMono-Regular.ttf"),
+        include_bytes!("../../ui_kit/fonts/IBMPlexMono-Regular.ttf"),
     ),
 ];
 
@@ -686,11 +686,11 @@ pub fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
 
-pub(crate) fn one() -> f64 {
+pub fn one() -> f64 {
     1.0
 }
 
-pub(crate) fn is_one(value: &f64) -> bool {
+pub fn is_one(value: &f64) -> bool {
     *value == 1.0
 }
 
@@ -1809,32 +1809,6 @@ mod tests {
         let block = &read.texts[0];
         assert!(!block.glyphs.is_empty() && read.derived.len() == block.elements.len());
         assert!(lowest(&read).abs() < 1e-3);
-    }
-
-    /// Copied and pasted, a text stays text: a second block on its own
-    /// point and outlines.
-    #[test]
-    fn a_pasted_text_is_text_of_its_own() {
-        let mut sketch = Sketch::new("t");
-        add(&mut sketch, Vec2D::new(0.0, 0.0), &spec("L")).unwrap();
-        let first = sketch.texts[0].clone();
-        let mut clip = Sketch::new("clipboard");
-        crate::tools::copy_from(
-            &sketch,
-            &mut clip,
-            &first.elements[1..2].iter().copied().collect(),
-            &crate::tools::Similarity::translation(glam::DVec2::ZERO),
-        );
-        assert_eq!(clip.texts.len(), 1, "the clipboard holds the text");
-        assert_eq!(clip.geometry.len(), 1 + first.elements.len());
-        crate::commands::paste(&mut sketch, &clip, Vec2D::new(30.0, 0.0));
-
-        assert_eq!(sketch.texts.len(), 2);
-        let pasted = sketch.texts[1].clone();
-        assert_ne!(pasted.anchor, first.anchor);
-        assert!(pasted.elements.iter().all(|e| !first.elements.contains(e)));
-        let at = sketch.point_position(pasted.anchor).unwrap();
-        assert!((at.x - 30.0).abs() < 1e-4 && at.y.abs() < 1e-4, "{at:?}");
     }
 
     /// A family the machine lists is found by its name in any case and
