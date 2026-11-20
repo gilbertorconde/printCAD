@@ -15,6 +15,8 @@ use crate::style::constraint_icon;
 
 mod layout;
 
+pub(crate) use layout::Arrangement;
+
 /// The label size the symbol measures below are given at; [`symbol_px`]
 /// keeps them in that proportion to the labels at any other.
 const SYMBOL_BASE_LABEL_PX: f32 = 12.0;
@@ -1047,9 +1049,10 @@ fn curve_dimension_lines(
 /// viewport pixels: the parked constraints' (`parked`) or the others'.
 /// `bound` are the dimensions a formula sets: drawn in the formula colour,
 /// their value marked `ƒ`; `label_size` sizes the pills a default
-/// placement keeps clear.
+/// placement keeps clear; `kept` is the last arrangement of the labels
+/// ([`layout::arrange`]).
 #[allow(clippy::too_many_arguments)]
-pub fn build(
+pub(crate) fn build(
     sketch: &Sketch,
     proj: &SketchProjector,
     selected: &HashSet<Uuid>,
@@ -1058,6 +1061,7 @@ pub fn build(
     parked: bool,
     labels: DimensionLabels,
     label_size: f32,
+    kept: &mut Arrangement,
 ) -> Vec<Glyph> {
     let shown = || sketch.constraints.iter().filter(|c| c.parked == parked);
     // Repeated relational kinds get a shared 1-based index suffix.
@@ -1182,7 +1186,7 @@ pub fn build(
             }
         }
     }
-    layout::arrange(&mut out, sketch, proj, label_size);
+    layout::arrange(&mut out, sketch, proj, label_size, kept);
     out
 }
 

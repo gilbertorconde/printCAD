@@ -340,6 +340,7 @@ pub(crate) struct FrameMemo {
     landing: Slot<(DrawKey, [u64; 2]), Landing>,
     #[cfg(feature = "egui")]
     row_text: Slot<ActiveKey, Arc<crate::panel::RowText>>,
+    arrangement: RefCell<crate::glyphs::Arrangement>,
 }
 
 /// Where a click at the pointer lands, and the snap that took it there.
@@ -435,6 +436,13 @@ impl FrameMemo {
         self.landing.clear();
         #[cfg(feature = "egui")]
         self.row_text.clear();
+        *self.arrangement.get_mut() = Default::default();
+    }
+
+    /// The last arrangement of the constraint glyphs, which the next
+    /// starts from.
+    pub(crate) fn arrangement(&self) -> std::cell::RefMut<'_, crate::glyphs::Arrangement> {
+        self.arrangement.borrow_mut()
     }
 }
 
