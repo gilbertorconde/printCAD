@@ -1211,6 +1211,91 @@ fn unsaved_edits_go_with_a_clean_leave_and_are_offered_after_a_crash() {
     assert_eq!(dave.offered, 0, "let go");
 }
 
+/// The files in the blob store `dir`.
+fn blobs_in(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    found.sort();
+    found
+}
+
+/// The blob store keeps what the log's kept generations name: a save
+/// that leaves nothing unsaved drops the older generations, and a blob
+/// only they named goes with them. A daemon taking up the document drops
+/// a blob no line names.
+#[test]
+fn blobs_no_kept_line_names_are_pruned() {
+    let home = TestHome::new("blob_prune");
+    let mut daemon = start_daemon(&home, &["--log-bytes", "1"]);
+    let mut alice = Replica::join(&home, Document::new("Pruned"));
+    alice.save(&home.document());
+    // Each batch rotates the log first: the first import's line ends in a
+    // generation of its own, the second's in the live log.
+    for fill in [0xA5u8, 0x5A] {
+        alice.doc.add_asset_with_data(
+            core_document::AssetReference::new(
+                format!("assets/{fill}.step"),
+                core_document::AssetType::Step,
+                serde_json::json!({}),
+            ),
+            vec![fill; 512 * 1024],
+        );
+        alice.send();
+    }
+    alice.settle();
+    let store = home.log().with_extension("blobs");
+    assert_eq!(blobs_in(&store).len(), 2, "one blob per import");
+
+    alice.save(&home.document());
+    let kept = blobs_in(&store);
+    assert_eq!(kept.len(), 1, "the dropped generation's blob went");
+    assert_eq!(std::fs::read(&kept[0]).expect("blob")[0], 0x5A);
+    alice.leave();
+    wait_for_exit(&mut daemon, "once its client left");
+
+    let stray = store.join("0".repeat(64));
+    std::fs::write(&stray, b"named by no line").expect("stray blob");
+    let _bob = Replica::open(&home, &home.document());
+    assert_eq!(
+        blobs_in(&store),
+        kept,
+        "the stray blob went, the named one stayed"
+    );
+}
+
+/// An untitled document's log stays while a daemon on its socket may
+/// write on where it stopped (its client went without a word, as a crash
+/// does) and goes once its last client leaves saying it is done.
+#[test]
+fn an_untitled_log_goes_with_a_clean_leave() {
+    daemon_env();
+    let home = TestHome::new("unhomed_gone");
+    let unhomed = doc_server::unhomed_oplog_for(&home.socket());
+    let mut alice = Replica::join(&home, Document::new("Untitled"));
+    alice.doc.create_body(Some("Base".into()));
+    alice.send();
+    alice.settle();
+    assert!(unhomed.is_file(), "the edit is logged");
+    drop(alice);
+    wait_for_socket_gone(&home);
+    assert!(unhomed.is_file(), "kept after a crash");
+
+    let mut bob = Replica::join(&home, Document::new("Untitled"));
+    bob.doc.create_body(Some("More".into()));
+    bob.send();
+    bob.settle();
+    bob.leave();
+    wait_for_socket_gone(&home);
+    assert!(
+        std::fs::symlink_metadata(&unhomed).is_err(),
+        "gone on a clean leave"
+    );
+}
+
 /// A log kept beside its document, as older versions kept it, moves into
 /// the log folder on the first open, and the unsaved edits it holds are
 /// offered back.

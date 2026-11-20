@@ -102,7 +102,12 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   The log rotates past `--log-bytes` (default 64 MB) into numbered
   generations (`<log>.1`, `<log>.2`, ..., read oldest first), all kept
   until a mark names nothing unsaved, at most `MAX_GENERATIONS`; homing
-  the unhomed log takes the log's write lock. A client with more than
+  the unhomed log takes the log's write lock. The blob store
+  (`<log>.blobs`, imports' bytes by hash) keeps what a kept generation
+  names: `prune_blobs` runs when such a mark drops generations, on a
+  rebase and when the log is homed. The unhomed log
+  (`unhomed_oplog_for(socket)`) goes when its last client leaves with
+  `Leave`; after a crash it stays for the next daemon on the socket. A client with more than
   `--queue-limit` (default 4096) unwritten
   messages is disconnected; an open's file and tail never count. An
   `AddFeature` or `SetFeatureBody` whose `seq` another feature holds takes

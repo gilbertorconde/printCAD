@@ -530,10 +530,7 @@ static OPLOG_WRITE: Mutex<()> = Mutex::new(());
 static UNHOMED_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 fn claim_unhomed_oplog(socket: &Path) {
-    // The whole path distinguishes equal socket names in different directories.
-    let key = crate::path_key(socket);
-    *lock(&UNHOMED_PATH) =
-        Some(crate::runtime_dir_for_logs().join(format!("unhomed-{key:016x}.oplog.jsonl")));
+    *lock(&UNHOMED_PATH) = Some(crate::unhomed_oplog_for(socket));
 }
 
 fn unhomed_oplog() -> PathBuf {
@@ -644,6 +641,7 @@ fn set_oplog_home(document: &Path) -> bool {
         }
         Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
     }
+    prune_blobs(&home);
     *slot = Some(home);
     true
 }
@@ -739,11 +737,75 @@ fn rotate(log: &Path) {
 }
 
 /// Take away every rotated generation: nothing before the live log is
-/// needed to restore the unsaved edits.
-fn drop_generations(log: &Path) {
-    for generation in generations(log) {
+/// needed to restore the unsaved edits. True when there were some.
+fn drop_generations(log: &Path) -> bool {
+    let older = generations(log);
+    for generation in &older {
         let _ = std::fs::remove_file(generation);
     }
+    !older.is_empty()
+}
+
+/// Remove the blobs in `log`'s store that no line of the log or its kept
+/// generations names. Run under the log's write lock, so no append is
+/// storing a blob its line has not named yet.
+fn prune_blobs(log: &Path) {
+    use std::io::BufRead as _;
+    let store = log.with_extension("blobs");
+    let Ok(entries) = std::fs::read_dir(&store) else {
+        return;
+    };
+    let mut named = std::collections::HashSet::new();
+    let mut sources = generations(log);
+    sources.push(log.to_path_buf());
+    for source in sources {
+        let Ok(file) = std::fs::File::open(&source) else {
+            continue;
+        };
+        let mut reader = std::io::BufReader::new(file);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) => break,
+                Ok(_) => named.extend(blob_names(&line)),
+                Err(err) => {
+                    tracing::warn!("the op log was not read whole; its blobs stay: {err}");
+                    return;
+                }
+            }
+        }
+    }
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_str().is_some_and(|name| named.contains(name)) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// The hashes of the `blob:sha256:<hex>` markers in a log line.
+fn blob_names(line: &[u8]) -> Vec<String> {
+    const MARKER: &[u8] = b"blob:sha256:";
+    let mut names = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.windows(MARKER.len()).position(|w| w == MARKER) {
+        rest = &rest[at + MARKER.len()..];
+        let hex = rest.iter().take_while(|b| b.is_ascii_hexdigit()).count();
+        names.push(String::from_utf8_lossy(&rest[..hex]).into_owned());
+        rest = &rest[hex..];
+    }
+    names
+}
+
+/// Remove this daemon's unhomed log, its generations and its blobs: its
+/// document never got a file and its last client let its edits go.
+fn remove_unhomed_log() {
+    let _guard = lock(&OPLOG_WRITE);
+    let log = unhomed_oplog();
+    drop_generations(&log);
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_dir_all(log.with_extension("blobs"));
 }
 
 fn oplog_path() -> PathBuf {
@@ -848,8 +910,9 @@ fn truncate_oplog() -> std::io::Result<()> {
     let path = oplog_path();
     drop_generations(&path);
     if path.exists() {
-        std::fs::write(path, b"")?;
+        std::fs::write(&path, b"")?;
     }
+    prune_blobs(&path);
     Ok(())
 }
 
@@ -914,7 +977,11 @@ fn append_mark(path: &Path, unsaved: &[uuid::Uuid], document: Option<&Path>) {
         .open(path)
         .and_then(|mut file| writeln!(file, "{mark}"));
     match written {
-        Ok(()) if unsaved.is_empty() => drop_generations(path),
+        Ok(()) if unsaved.is_empty() => {
+            if drop_generations(path) {
+                prune_blobs(path);
+            }
+        }
         Ok(()) => {}
         Err(err) => tracing::error!("the op log's unsaved mark was not written: {err}"),
     }
@@ -1307,16 +1374,22 @@ pub fn run_with(socket: &Path, limits: Limits) -> std::io::Result<()> {
     // Everyone has gone. When the last said it was done, the unsaved edits
     // went with it (all but those still waiting to be asked back); one that
     // went without a word leaves them named, for the next open to offer.
+    // A document that never got a file has nothing to come back to once
+    // its last client let its edits go, so its log goes too; after a crash
+    // it stays, for the next daemon on the socket to write on.
     let homed = lock(&OPLOG_PATH).is_some();
+    let state = lock(&hub.state);
     if homed {
-        let state = lock(&hub.state);
         let unsaved = if state.last_left_cleanly {
             state.recoverable.iter().map(|logged| logged.id).collect()
         } else {
             state.unsaved()
         };
         mark_unsaved(&unsaved, home_document().as_deref());
+    } else if state.last_left_cleanly {
+        remove_unhomed_log();
     }
+    drop(state);
     let _ = std::fs::remove_file(&note);
     let _ = std::fs::remove_file(socket);
     tracing::info!("last client disconnected; printcad-serverd exiting");

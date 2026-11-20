@@ -65,6 +65,13 @@ fn path_key(path: &std::path::Path) -> u64 {
     }
 }
 
+/// Where the daemon on `socket` keeps its ops until its document has a
+/// file: one log per socket, in the runtime folder. The whole path is the
+/// key, so equal socket names in different folders keep distinct logs.
+pub fn unhomed_oplog_for(socket: &std::path::Path) -> PathBuf {
+    runtime_dir().join(format!("unhomed-{:016x}.oplog.jsonl", path_key(socket)))
+}
+
 pub(crate) fn runtime_dir_for_logs() -> PathBuf {
     runtime_dir()
 }
