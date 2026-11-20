@@ -20,6 +20,7 @@ pub mod history;
 mod imported;
 pub mod inertia;
 pub mod jobs;
+mod mesh_entry;
 pub mod mesh_query;
 pub mod notes;
 pub mod op;

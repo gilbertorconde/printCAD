@@ -9,7 +9,7 @@ use tar::{Archive, Builder, Header};
 
 use super::{
     ArchiveProgress, BodyId, CONTAINER_FORMAT, Compression, Document, DocumentError,
-    DocumentResult, FileStamp, MeshesApart, TriMesh, stamp,
+    DocumentResult, FileStamp, MeshesApart, stamp,
 };
 
 /// The archive entry holding a document's PNG preview.
@@ -330,7 +330,7 @@ impl Document {
             if let Some(path) = &geom.mesh_path
                 && let Some(bytes) = blobs_by_path.remove(path)
             {
-                match rmp_serde::from_slice::<TriMesh>(&bytes) {
+                match crate::mesh_entry::read(&bytes) {
                     Ok(mesh) => geom.mesh = std::sync::Arc::new(mesh),
                     Err(e) => tracing::warn!("a mesh in {path} did not read: {e}"),
                 }
@@ -510,7 +510,7 @@ impl Document {
             let Some(path) = geom.mesh_path.as_ref() else {
                 continue;
             };
-            let bytes = rmp_serde::to_vec(&*geom.mesh)
+            let bytes = crate::mesh_entry::write(&geom.mesh)
                 .map_err(|e| DocumentError::Compression(format!("a mesh did not pack: {e}")))?;
             let mut header = Header::new_gnu();
             header.set_path(path)?;
