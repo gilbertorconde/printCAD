@@ -1006,6 +1006,17 @@ fn round_curves(shape: &SelectionShape) -> bool {
     c + e >= 2 && shape.only(0, 0, c, e)
 }
 
+/// Whether the selection is round curves that all have one centre point
+/// already, which Coincident has nothing to add to.
+pub fn share_a_centre(sketch: &Sketch, shape: &SelectionShape) -> bool {
+    if !round_curves(shape) {
+        return false;
+    }
+    let centres: Option<HashSet<Uuid>> =
+        shape.all.iter().map(|id| centre_of(sketch, *id)).collect();
+    centres.is_some_and(|c| c.len() == 1)
+}
+
 /// The centre point of a circle, an arc or an ellipse.
 fn centre_of(sketch: &Sketch, curve: Uuid) -> Option<Uuid> {
     match sketch.get_geometry(curve)? {

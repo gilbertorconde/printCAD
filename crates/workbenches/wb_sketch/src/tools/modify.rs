@@ -262,11 +262,19 @@ fn curve_resized(sketch: &mut Sketch, curve: Uuid) {
     });
 }
 
-/// `second` is the rest of `first`, cut from it: held on the same line, as
-/// level or plumb as `first` is when it is. `joined` when they share an
-/// end (a split), else the second is held on the first's line by its start
-/// (the far part of a trimmed middle).
+/// `second` is the rest of `first`, cut from it, held on the same line.
+/// `joined` when they share an end (a split): held parallel, or level or
+/// plumb as `first` is when it is, the shared end doing the rest. Else
+/// (the far part of a trimmed middle) held collinear with `first`, which
+/// keeps it level or plumb with it too.
 fn continues(sketch: &mut Sketch, first: Uuid, second: Uuid, joined: bool) {
+    if !joined {
+        sketch.add_constraint(ConstraintKind::Collinear {
+            line1: first,
+            line2: second,
+        });
+        return;
+    }
     let axis: Vec<ConstraintKind> = sketch
         .constraints
         .iter()
@@ -289,13 +297,6 @@ fn continues(sketch: &mut Sketch, first: Uuid, second: Uuid, joined: bool) {
         for kind in axis {
             sketch.add_constraint(kind);
         }
-    }
-    if !joined && let Some(GeometryElement::Line(l)) = sketch.get_geometry(second) {
-        let start = l.start;
-        sketch.add_constraint(ConstraintKind::PointOnLine {
-            point: start,
-            line: first,
-        });
     }
 }
 
@@ -1849,6 +1850,180 @@ struct OffsetMade {
     pairs: Vec<[Uuid; 2]>,
 }
 
+/// Which side of a curve its copy goes, before `flip` turns it over.
+#[derive(Clone, Copy)]
+enum Side {
+    /// The side the click is on.
+    Toward(Vec2D),
+    /// Out of the closed curve (`true`) or into it.
+    Outward(bool),
+}
+
+/// One piece of the selection the offset copies on its own: a circle, a
+/// curve sampled into a spline, or a chain of lines and arcs end to end.
+enum OffsetGroup {
+    Circle(crate::sketch::Circle),
+    Sampled(GeometryElement),
+    Chain(Vec<GeometryElement>),
+}
+
+impl OffsetGroup {
+    fn elements(&self) -> Vec<GeometryElement> {
+        match self {
+            OffsetGroup::Circle(c) => vec![GeometryElement::Circle(c.clone())],
+            OffsetGroup::Sampled(g) => vec![g.clone()],
+            OffsetGroup::Chain(links) => links.clone(),
+        }
+    }
+
+    fn offset(
+        &self,
+        sketch: &mut Sketch,
+        side: Side,
+        distance: f64,
+        flip: bool,
+        round: bool,
+    ) -> Option<OffsetMade> {
+        match self {
+            OffsetGroup::Circle(c) => offset_circle(sketch, c, side, distance, flip),
+            OffsetGroup::Sampled(g) => offset_sampled(sketch, g.id(), side, distance, flip),
+            OffsetGroup::Chain(links) => offset_chain(sketch, links, side, distance, flip, round),
+        }
+    }
+
+    /// The outline it closes, in the order it runs, or `None` when it
+    /// does not close.
+    fn outline(&self, sketch: &Sketch) -> Option<Vec<DVec2>> {
+        let samples = |geom: &GeometryElement| {
+            crate::external_ref::element_samples(sketch, geom)
+                .map(|s| s.into_iter().map(Vec2D::to_glam).collect())
+        };
+        match self {
+            OffsetGroup::Circle(c) => samples(&GeometryElement::Circle(c.clone())),
+            OffsetGroup::Sampled(geom) => match geom {
+                GeometryElement::Ellipse(e) if e.arc.is_none() => samples(geom),
+                GeometryElement::BSpline(b) if b.periodic => samples(geom),
+                _ => None,
+            },
+            OffsetGroup::Chain(links) => {
+                let ends: Vec<(Uuid, (Uuid, Uuid))> = links
+                    .iter()
+                    .filter_map(|g| chain_ends(g).map(|e| (g.id(), e)))
+                    .collect();
+                match order_chain(&ends)? {
+                    (order, true) => chain_outline(sketch, links, &order),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+/// The points a chain passes through, in the order it runs: each link's
+/// entry, then an arc's points between its ends.
+fn chain_outline(
+    sketch: &Sketch,
+    curves: &[GeometryElement],
+    links: &[ChainLink],
+) -> Option<Vec<DVec2>> {
+    let mut points = Vec::new();
+    for link in links {
+        points.push(sketch.point_position(link.entry)?.to_glam());
+        let geom = curves.iter().find(|g| g.id() == link.id)?;
+        if let GeometryElement::Arc(arc) = geom {
+            let mut along: Vec<DVec2> = crate::external_ref::element_samples(sketch, geom)?
+                .into_iter()
+                .map(Vec2D::to_glam)
+                .collect();
+            if link.entry != arc.start {
+                along.reverse();
+            }
+            let inner = along.len().saturating_sub(1);
+            points.extend(along.into_iter().take(inner).skip(1));
+        }
+    }
+    Some(points)
+}
+
+/// Twice the area a closed outline encloses, positive when it runs
+/// counter-clockwise.
+fn signed_area(outline: &[DVec2]) -> f64 {
+    let n = outline.len();
+    (0..n)
+        .map(|i| outline[i].perp_dot(outline[(i + 1) % n]))
+        .sum()
+}
+
+/// Whether `p` lies inside a closed outline (even-odd crossings).
+fn inside(outline: &[DVec2], p: DVec2) -> bool {
+    let n = outline.len();
+    let mut within = false;
+    for i in 0..n {
+        let (a, b) = (outline[i], outline[(i + 1) % n]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            within = !within;
+        }
+    }
+    within
+}
+
+/// Whether the left of a closed outline, as it runs, is out of it when
+/// `outward`, or into it when not.
+fn left_is(outline: &[DVec2], outward: bool) -> bool {
+    (signed_area(outline) < 0.0) == outward
+}
+
+/// The selection split into what is copied on its own: each circle and
+/// sampled curve, and each run of lines and arcs sharing ends.
+fn offset_groups(curves: &[GeometryElement]) -> Vec<OffsetGroup> {
+    let mut groups = Vec::new();
+    let mut chained: Vec<&GeometryElement> = Vec::new();
+    for g in curves {
+        match g {
+            GeometryElement::Circle(c) => groups.push(OffsetGroup::Circle(c.clone())),
+            GeometryElement::Line(_) | GeometryElement::Arc(_) => chained.push(g),
+            other => groups.push(OffsetGroup::Sampled(other.clone())),
+        }
+    }
+    let mut by_point: HashMap<Uuid, Vec<usize>> = HashMap::new();
+    for (i, g) in chained.iter().enumerate() {
+        if let Some((a, b)) = chain_ends(g) {
+            by_point.entry(a).or_default().push(i);
+            by_point.entry(b).or_default().push(i);
+        }
+    }
+    let mut seen = vec![false; chained.len()];
+    for first in 0..chained.len() {
+        if seen[first] {
+            continue;
+        }
+        seen[first] = true;
+        let mut chain = vec![first];
+        let mut next = 0;
+        while let Some(&i) = chain.get(next) {
+            next += 1;
+            let Some((a, b)) = chain_ends(chained[i]) else {
+                continue;
+            };
+            for &j in [a, b].iter().flat_map(|p| &by_point[p]) {
+                if !seen[j] {
+                    seen[j] = true;
+                    chain.push(j);
+                }
+            }
+        }
+        chain.sort_unstable();
+        groups.push(OffsetGroup::Chain(
+            chain.into_iter().map(|i| chained[i].clone()).collect(),
+        ));
+    }
+    groups
+}
+
+/// Copy each selected curve or chain `options.distance` off it. One goes
+/// to the side of the click; of several, the closed ones all grow or all
+/// shrink as the one nearest the click does, and one that does not close
+/// takes the click's side.
 pub(super) fn offset(
     sketch: &mut Sketch,
     cursor: Vec2D,
@@ -1879,35 +2054,56 @@ pub(super) fn offset(
     if curves.is_empty() {
         return ToolEffect::none();
     }
-    let sides: &[bool] = if options.both {
+    let groups = offset_groups(&curves);
+    let outlines: Vec<Option<Vec<DVec2>>> = groups.iter().map(|g| g.outline(sketch)).collect();
+    let nearest_closed = groups
+        .iter()
+        .zip(&outlines)
+        .filter_map(|(g, outline)| {
+            let near = g
+                .elements()
+                .iter()
+                .filter_map(|e| snap::distance_to_element(sketch, e, cursor))
+                .min_by(f64::total_cmp)?;
+            Some((near, outline.as_ref()?))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, outline)| outline);
+    let sides: Vec<Side> = outlines
+        .iter()
+        .map(|outline| match nearest_closed {
+            Some(nearest) if groups.len() > 1 && outline.is_some() => {
+                Side::Outward(!inside(nearest, cursor.to_glam()))
+            }
+            _ => Side::Toward(cursor),
+        })
+        .collect();
+    let flips: &[bool] = if options.both {
         &[false, true]
     } else {
         &[false]
     };
-    let mut made = Vec::new();
-    for &flip in sides {
-        let side = match curves.as_slice() {
-            [GeometryElement::Circle(circle)] => {
-                offset_circle(sketch, circle, cursor, distance, flip)
+    let mut made: Vec<OffsetMade> = Vec::new();
+    let mut left_out = 0;
+    for &flip in flips {
+        let mut pairs = Vec::new();
+        let mut any = false;
+        for (group, side) in groups.iter().zip(&sides) {
+            match group.offset(sketch, *side, distance, flip, options.round) {
+                Some(copied) => {
+                    any = true;
+                    pairs.extend(copied.pairs);
+                }
+                None => left_out += 1,
             }
-            [
-                one @ (GeometryElement::Ellipse(_)
-                | GeometryElement::BSpline(_)
-                | GeometryElement::Conic(_)),
-            ] => offset_sampled(sketch, one.id(), cursor, distance, flip),
-            _ if curves.iter().all(|g| chain_ends(g).is_some()) => {
-                offset_chain(sketch, &curves, cursor, distance, flip, options.round)
-            }
-            _ => None,
-        };
-        let Some(side) = side else {
-            continue;
-        };
-        made.push(side);
+        }
+        if any {
+            made.push(OffsetMade { pairs });
+        }
     }
     if made.is_empty() {
         return ToolEffect::log(
-            "Select one circle, ellipse, spline or conic, or a chain of lines and arcs",
+            "Select circles, ellipses, splines or conics, or chains of lines and arcs",
         );
     }
     if options.delete {
@@ -1922,20 +2118,28 @@ pub(super) fn offset(
         }
     }
     let count: usize = made.iter().map(|m| m.pairs.len().max(1)).sum();
-    ToolEffect::changed(format!("Offset {count} element(s) by {distance:.2}"))
+    let mut said = format!("Offset {count} element(s) by {distance:.2}");
+    if left_out > 0 {
+        said.push_str(&format!(
+            "; {left_out} left out (branching, or too small to shrink)"
+        ));
+    }
+    ToolEffect::changed(said)
 }
 
-/// A concentric copy of a circle, on the side of the click (the other with
-/// `flip`).
+/// A concentric copy of a circle on its `side` (the other with `flip`).
 fn offset_circle(
     sketch: &mut Sketch,
     circle: &crate::sketch::Circle,
-    cursor: Vec2D,
+    side: Side,
     distance: f64,
     flip: bool,
 ) -> Option<OffsetMade> {
     let c = sketch.point_position(circle.center)?;
-    let outside = ((cursor - c).to_glam().length() > circle.radius) != flip;
+    let outside = match side {
+        Side::Toward(cursor) => (cursor - c).to_glam().length() > circle.radius,
+        Side::Outward(out) => out,
+    } != flip;
     let new_r = if outside {
         circle.radius + distance
     } else {
@@ -1954,7 +2158,6 @@ fn offset_circle(
         pairs: vec![[circle.id, new_id]],
     })
 }
-
 /// How many points a sampled curve's copy passes through.
 const OFFSET_SAMPLES: usize = 32;
 
@@ -1963,7 +2166,7 @@ const OFFSET_SAMPLES: usize = 32;
 fn offset_sampled(
     sketch: &mut Sketch,
     id: Uuid,
-    cursor: Vec2D,
+    side: Side,
     distance: f64,
     flip: bool,
 ) -> Option<OffsetMade> {
@@ -1999,13 +2202,18 @@ fn offset_sampled(
         };
         v.normalize_or_zero()
     };
-    let p = cursor.to_glam();
-    let nearest = (0..n).min_by(|a, b| {
-        (samples[*a] - p)
-            .length()
-            .total_cmp(&(samples[*b] - p).length())
-    })?;
-    let left = (tangent(nearest).perp().dot(p - samples[nearest]) > 0.0) != flip;
+    let left = match side {
+        Side::Toward(cursor) => {
+            let p = cursor.to_glam();
+            let nearest = (0..n).min_by(|a, b| {
+                (samples[*a] - p)
+                    .length()
+                    .total_cmp(&(samples[*b] - p).length())
+            })?;
+            tangent(nearest).perp().dot(p - samples[nearest]) > 0.0
+        }
+        Side::Outward(out) => left_is(&samples, out),
+    } != flip;
     let d = if left { distance } else { -distance };
     // A whole step keeps the picks as even in the curve's parameter as the
     // samples are. A closed fit sets its points at even parameters, and
@@ -2057,31 +2265,22 @@ fn link_tangent(
     })
 }
 
-/// Copies of a chain of lines and arcs, joined where they meet.
-fn offset_chain(
-    sketch: &mut Sketch,
+/// Whether the click lies left of a chain as it runs, at the link
+/// nearest it.
+fn click_left_of(
+    sketch: &Sketch,
     curves: &[GeometryElement],
+    links: &[ChainLink],
     cursor: Vec2D,
-    distance: f64,
-    flip: bool,
-    round: bool,
-) -> Option<OffsetMade> {
-    let ends: Vec<(Uuid, (Uuid, Uuid))> = curves
-        .iter()
-        .filter_map(|g| chain_ends(g).map(|e| (g.id(), e)))
-        .collect();
-    let (links, closed) = order_chain(&ends)?;
+) -> Option<bool> {
     let elem_of = |id: Uuid| curves.iter().find(|g| g.id() == id).unwrap();
     let pos_of = |sketch: &Sketch, pid: Uuid| sketch.point_position(pid).map(|p| p.to_glam());
-
-    // Signed left-offset: positive when the click lies left of the chain
-    // direction at the nearest link.
     let near = links
         .iter()
         .filter_map(|l| snap::distance_to_element(sketch, elem_of(l.id), cursor).map(|d| (l, d)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(l, _)| l)?;
-    let left = match elem_of(near.id) {
+    Some(match elem_of(near.id) {
         GeometryElement::Line(_) => {
             let (a, b) = (pos_of(sketch, near.entry)?, pos_of(sketch, near.exit)?);
             (b - a).perp_dot(cursor.to_glam() - a) > 0.0
@@ -2097,6 +2296,29 @@ fn offset_chain(
             }
         }
         _ => return None,
+    })
+}
+
+/// Copies of a chain of lines and arcs, joined where they meet.
+fn offset_chain(
+    sketch: &mut Sketch,
+    curves: &[GeometryElement],
+    side: Side,
+    distance: f64,
+    flip: bool,
+    round: bool,
+) -> Option<OffsetMade> {
+    let ends: Vec<(Uuid, (Uuid, Uuid))> = curves
+        .iter()
+        .filter_map(|g| chain_ends(g).map(|e| (g.id(), e)))
+        .collect();
+    let (links, closed) = order_chain(&ends)?;
+    let elem_of = |id: Uuid| curves.iter().find(|g| g.id() == id).unwrap();
+    let pos_of = |sketch: &Sketch, pid: Uuid| sketch.point_position(pid).map(|p| p.to_glam());
+
+    let left = match side {
+        Side::Toward(cursor) => click_left_of(sketch, curves, &links, cursor)?,
+        Side::Outward(out) => left_is(&chain_outline(sketch, curves, &links)?, out),
     };
     let d_left = if left != flip { distance } else { -distance };
 

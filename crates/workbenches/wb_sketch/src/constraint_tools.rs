@@ -39,10 +39,13 @@ impl SketchWorkbench {
         // angle's corner are read from where each item stands.
         let items = self.tab.selected.in_order().to_vec();
         let own_ends = constrain::joins_own_ends(&feature.sketch, &shape.points_picked());
+        let one_centre = constrain::share_a_centre(&feature.sketch, &shape);
         let done = resolved.is_some_and(|resolved| {
             self.constrain_items(ctx, feature, resolved, &items, Vec::new())
         });
-        if !done && which == "coincident" && own_ends {
+        if !done && which == "coincident" && one_centre {
+            ctx.log_warn("These curves already share a centre");
+        } else if !done && which == "coincident" && own_ends {
             ctx.log_warn(
                 "The two ends of one line or arc cannot meet: draw a circle for a closed round",
             );

@@ -265,7 +265,8 @@ the value of the one there, or make it driving, instead. **Block** fixes an elem
 
 **Coincident** (Shift+C) joins points; on a point and a curve it puts
 the point on the curve, and on two or more circles, arcs or ellipses it
-makes them concentric, each centre on the first one's.
+makes them concentric, each centre on the first one's. Curves that share
+a centre already are left as they are, and the tool says so.
 
 **Collinear** (Shift+J) puts two or more lines on one line: each after
 the first lands on the first one's line, wherever along it.
@@ -391,7 +392,7 @@ values always stay.
 | Extend | | Extends a curve's end to the next curve |
 | Split | | Splits a curve where you click |
 | Copy, Move, Rotate, Scale | | Copy, move, turn or size the selection from a base point or pivot |
-| Offset | | Copies a curve or chain at a distance |
+| Offset | | Copies each selected curve or chain at a distance |
 | Symmetry | | Mirrors the selection about a line, two points or a point |
 | Rectangular array | | Copies the selection into rows and columns |
 | Join curves | | Merges a chain of curves into one B-spline |
@@ -417,7 +418,8 @@ curve held on the spline, as long as the point lies on the spline's span.
 **Trim and Extend at the axes.** By default the sketch's axes do not cut.
 Press U while Trim or Extend is in hand, or tick **Cut at the axes (U)**
 in the Tool section, and the two axes cut as curves do; an end left on an
-axis is held on it.
+axis is held on it. Trimming the middle of a line leaves two pieces held
+collinear, so they stay on one line.
 
 **Patterns.** Move, Rotate and Scale take a number of copies. For Move and
 Rotate:
@@ -430,8 +432,11 @@ Rotate:
 - **Follow the original**: the copies stay the original's size, spaced by
   one pitch, as the original changes.
 
-Offset copies the selected curves to the side of its click. The copies
-wait in the Tool section, whose distance, Round, Both sides and other
+Offset copies the selected curves to the side of its click. Several
+curves or chains (circles, or an outline and the holes in it) are copied
+each on its own in one step: the closed ones all grow or all shrink as the
+one nearest the click does, and an open one goes to the click's side. The
+copies wait in the Tool section, whose distance, Round, Both sides and other
 switches change them in the view; as with a shape, only Cancel drops
 them, and OK and everything else copy at what the section shows, carried
 on to the tool. A frame round any

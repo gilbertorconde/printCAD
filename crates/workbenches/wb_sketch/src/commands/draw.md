@@ -186,6 +186,13 @@ turn, degrees counter-clockwise) and x and y (a shape's first point).
 It returns every element made, end points and centres included, and every
 constraint made with them.
 
+Offset copies every curve in `selection` `offset_distance` off it, each
+circle, ellipse, spline or conic on its own and each run of lines and arcs
+sharing ends as one chain. One goes to the side of its click. Of several,
+the closed ones all grow or all shrink as the one nearest the click does,
+and an open one takes the click's side; `offset_linked` holds every copy to
+its original by one dimension.
+
 See also: `sketch.polyline`, `sketch.rect`, `sketch.circle`
 
 ### A slot drawn by its centre line
@@ -210,6 +217,23 @@ local pad = pc.design.pad{sketch = s, length = 1}
 assert(#pc.doc.rebuild() == 0)
 local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - 2 * math.sqrt(3) * 5.5 ^ 2) < 1e-3, "11 across flats: " .. m.volume)
+```
+
+### Two holes grown together for clearance
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local a = pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 3}
+local b = pc.sketch.circle{sketch = s, x = 20, y = 0, radius = 2}
+pc.sketch.draw{sketch = s, tool = "offset", points = {{0, 5}}, selection = {a, b},
+  params = {offset_distance = 0.2, offset_linked = true}}
+local radii = {}
+for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+  if g.Circle then radii[#radii + 1] = g.Circle.radius end
+end
+table.sort(radii)
+assert(#radii == 4 and math.abs(radii[2] - 2.2) < 1e-9 and math.abs(radii[4] - 3.2) < 1e-9)
+assert(#pc.sketch.constraints{sketch = s} == 1, "one dimension holds both")
 ```
 
 ### A closed path padded
