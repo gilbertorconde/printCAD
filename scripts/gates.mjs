@@ -18,7 +18,7 @@ export function gateList({ all = false, testArgs } = {}) {
   const heavy = heavyPackages();
   return [
     ["format", "lint", "cargo", ["fmt", "--all", "--check"]],
-    ["tooling", "lint", "node", ["--test", "scripts/workspace.test.mjs"]],
+    ["tooling", "lint", "node", ["--test", "scripts/workspace.test.mjs", "scripts/vendor-icons.test.mjs"]],
     ["layers", "lint", "node", ["scripts/check-layers.mjs"]],
     ["workbench seam", "lint", "node", ["scripts/check-workbench-seam.mjs"]],
     ["solver dependencies", "lint", "node", ["scripts/check-solver-deps.mjs"]],

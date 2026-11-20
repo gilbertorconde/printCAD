@@ -1002,6 +1002,24 @@ mod tests {
     }
 
     #[test]
+    fn pinned_external_points_are_never_free() {
+        let mut sketch = Sketch::new("t");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let edge = add_line(&mut sketch, a, b);
+        sketch.external.insert(
+            edge,
+            crate::sketch::ExternalSource::of_reference(crate::sketch::ExternalReference::Datum {
+                datum: Uuid::from_u128(700),
+            }),
+        );
+        let c = add_point(&mut sketch, 10.0, 5.0);
+        add_line(&mut sketch, b, c);
+        let free = free_points(&sketch);
+        assert_eq!(free, [c].into(), "only the drawn end moves");
+    }
+
+    #[test]
     fn an_arc_length_sweeps_the_end_round() {
         let mut sketch = Sketch::new("t");
         let c = add_point(&mut sketch, 0.0, 0.0);

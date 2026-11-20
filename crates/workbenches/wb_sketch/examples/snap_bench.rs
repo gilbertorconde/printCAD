@@ -7,7 +7,10 @@
 //! Then, on the grid with a dimension on each cell's bottom side and
 //! circle, an edit (a segment drawn, the task panel drawn too) and a
 //! dimension's label dragged, with and without the panel; and an edit
-//! with dimensions on 25 cells only, which the diagnosis analyses.
+//! with dimensions on 25 cells only, which the diagnosis analyses; one
+//! with a line tangent to each circle, its end held on it, and one with
+//! each cell's bottom side fitted to measured points; and
+//! the points the grid leaves free selected.
 //!
 //! `cargo run --release -p wb_sketch --example snap_bench -- [cells] [queries] [only]`:
 //! a square grid of `cells` × `cells` cells (20 by default), each a closed
@@ -304,6 +307,53 @@ fn dimensioned(mut sketch: Sketch, cells: usize) -> Sketch {
     sketch
 }
 
+/// A line touching each cell's circle at its top, its end held on the
+/// circle and tangent to it.
+fn tangent_lines(mut sketch: Sketch) -> Sketch {
+    let circles: Vec<(uuid::Uuid, Vec2D, f64)> = (sketch.geometry.iter())
+        .filter_map(|g| match g {
+            GeometryElement::Circle(c) => Some((c.id, sketch.point_position(c.center)?, c.radius)),
+            _ => None,
+        })
+        .collect();
+    for (circle, centre, r) in circles {
+        let p = point(&mut sketch, centre.x, centre.y + r);
+        let q = point(&mut sketch, centre.x + 1.5, centre.y + r);
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(p, q)));
+        sketch.add_constraint(ConstraintKind::PointOnCircle { point: p, circle });
+        sketch.add_constraint(ConstraintKind::Tangent {
+            line_or_circle1: line,
+            item2: circle,
+        });
+    }
+    sketch
+}
+
+/// Each cell's bottom side fitted to measured points along it, as a
+/// scan's slice leaves them.
+fn fitted(mut sketch: Sketch) -> Sketch {
+    let lines: Vec<(uuid::Uuid, Vec2D, Vec2D)> = (sketch.geometry.iter())
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => Some((
+                l.id,
+                sketch.point_position(l.start)?,
+                sketch.point_position(l.end)?,
+            )),
+            _ => None,
+        })
+        .step_by(4)
+        .collect();
+    for (element, a, b) in lines {
+        let points = [0.25, 0.5, 0.75]
+            .map(|t| [a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t + 0.01])
+            .to_vec();
+        sketch
+            .soft
+            .push(wb_sketch::sketch::SoftData { element, points });
+    }
+    sketch
+}
+
 /// A segment drawn per click with the line tool, each one an edit
 /// stored, solved and shown, the task panel drawn too.
 fn edit(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
@@ -361,6 +411,21 @@ fn label_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], panel:
         k += 1;
     });
     s.button(false, moves[0], tool);
+}
+
+/// The points the dimensioned grid leaves free selected, as the Select
+/// degrees of freedom action does.
+fn select_free(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
+    if !wanted(label) {
+        return;
+    }
+    let mut s = Session::new(sketch, span, false);
+    measure(label, queries, |_| {
+        s.send(
+            Some(WorkbenchInputEvent::ToolActivated),
+            "sketch.select_dof",
+        );
+    });
 }
 
 fn main() {
@@ -457,6 +522,19 @@ fn main() {
     // Few enough dimensions for the diagnosis to look for redundancy.
     let few = dimensioned(sketch.clone(), 25);
     edit("edit, 50 dimensions", &few, span, edits);
+    edit(
+        "edit, tangent lines",
+        &tangent_lines(marked.clone()),
+        span,
+        edits,
+    );
+    edit("edit, fitted sides", &fitted(marked.clone()), span, edits);
+    select_free(
+        "select free points",
+        &marked,
+        span,
+        &queries[..queries.len().min(4)],
+    );
     label_drag("label drag", &marked, span, &queries, false);
     label_drag("label drag, panel drawn", &marked, span, &queries, true);
 }

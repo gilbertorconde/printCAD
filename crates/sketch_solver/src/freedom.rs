@@ -1,7 +1,7 @@
 //! Rank and degrees of freedom, including otherwise uncompiled conic shapes.
 
 use crate::compile::compile_system;
-use crate::problem::{ConicKind, Geometry, Problem};
+use crate::problem::{ConicKind, Geometry, InternalRole, ItemReference, Problem, Relation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -55,7 +55,9 @@ pub fn estimate(problem: &Problem) -> Freedom {
 /// ellipse's or conic's shape) are, every curve without such variables
 /// counted in. Reference geometry and pinned external geometry are always
 /// locked. A curve is held where it is when it is in `curves` and every
-/// point it is drawn through is in `points`.
+/// point it is drawn through is in `points`. An ellipse's focus placed
+/// from its curve after the solve is locked when the curve and its centre
+/// are.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Locked {
     pub points: crate::problem::IdSet<crate::problem::PointReference>,
@@ -76,7 +78,7 @@ pub fn locked(problem: &Problem) -> Locked {
     }
     let mut out = Locked::default();
     for (&point, &k) in &sys.point_vars {
-        if var_locked[k] && var_locked[k + 1] {
+        if var_locked[k] && var_locked[k + 1] && !sys.derived_foci.contains(&point) {
             out.points.insert(point);
         }
     }
@@ -99,6 +101,31 @@ pub fn locked(problem: &Problem) -> Locked {
         let held = own.unwrap_or_else(|| problem.external.contains(&g.id()));
         if held {
             out.curves.insert(curve);
+        }
+    }
+    // A focus left out of the solve is placed from its ellipse after it:
+    // it moves exactly when the ellipse's centre or shape does.
+    for c in &problem.constraints {
+        let Relation::InternalAlignment {
+            element: ItemReference::Point(focus),
+            curve,
+            role: InternalRole::Focus1 | InternalRole::Focus2,
+        } = c.kind
+        else {
+            continue;
+        };
+        if !sys.derived_foci.contains(&focus) {
+            continue;
+        }
+        let Some(Geometry::Ellipse(e)) = problem.get_geometry(curve) else {
+            continue;
+        };
+        let centre = sys
+            .point_vars
+            .get(&e.center)
+            .is_none_or(|&k| var_locked[k] && var_locked[k + 1]);
+        if centre && out.curves.contains(&curve) {
+            out.points.insert(focus);
         }
     }
     out
