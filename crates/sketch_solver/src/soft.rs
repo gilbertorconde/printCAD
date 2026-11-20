@@ -16,7 +16,7 @@ use crate::problem::{
     Constraint, ConstraintId, CurveReference, Geometry, Point, PointId, PointReference, Problem,
     Relation, Vector,
 };
-use crate::solve::{Iteration, SolveOutcome, eval_residuals, iterate};
+use crate::solve::{Iteration, SolveOutcome, eval_residuals, iterate_in};
 use crate::sparse::{Block, Blocks, Matrix};
 use crate::trace::EquationSource;
 
@@ -58,10 +58,13 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
     let sys = crate::compile::compile(&augmented)?;
     let (hard, fit) = split(&sys, &ids);
     let settings = problem.settings;
+    // The constraints' blocks, shared by every solve of them below: only
+    // their values change from one to the next.
+    let hard_blocks = Blocks::of(&hard);
     let mut x = if hard.specs.is_empty() {
         sys.vars.clone()
     } else {
-        let first = iterate(&hard, settings);
+        let first = iterate_in(&hard, Some(&hard_blocks), settings);
         if !matches!(first.outcome, SolveOutcome::Converged { .. }) {
             let rms = rms(&fit, &first.values);
             return Ok(SoftAnswer {
@@ -84,6 +87,8 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
     // multipliers. A variable in no block takes no step.
     let blocks = Blocks::of(&sys);
     let rows = Rows::of(&sys, &ids);
+    let mut again = hard.clone();
+    again.settings = settings;
     for _ in 0..STEPS {
         if fit.residual_len == 0 || n == 0 {
             break;
@@ -125,9 +130,8 @@ pub fn solve_soft(problem: &Problem, soft: &[SoftPoint]) -> Result<SoftAnswer, I
                 trial[j] += step[column];
             }
             if !hard.specs.is_empty() {
-                let mut again = hard.clone_with(trial);
-                again.settings = settings;
-                let back = iterate(&again, settings);
+                again.vars = trial;
+                let back = iterate_in(&again, Some(&hard_blocks), settings);
                 if !matches!(
                     back.outcome,
                     SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve
@@ -359,6 +363,7 @@ fn rms(fit: &System, x: &[f64]) -> f64 {
 mod tests {
     use super::*;
     use crate::problem::{CurveId, Length, Line};
+    use crate::solve::iterate;
 
     fn point(id: u128, x: f64, y: f64) -> Geometry {
         Geometry::Point(Point {

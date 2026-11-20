@@ -48,6 +48,12 @@ pub struct Iteration {
 /// on another branch of the equations, the sketch's mirror image, while a
 /// path of near steps stays on the branch the drawing is on.
 pub fn iterate(sys: &System, settings: Settings) -> Iteration {
+    iterate_in(sys, None, settings)
+}
+
+/// [`iterate`], given `sys`'s [`Blocks`] where the caller keeps them: they
+/// depend only on its equations and free variables, never on its values.
+pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settings) -> Iteration {
     let tolerance = if settings.tolerance > 0.0 {
         settings.tolerance
     } else {
@@ -63,9 +69,16 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
         };
     }
 
-    let blocks = Blocks::of(sys);
+    let owned;
+    let blocks = match blocks {
+        Some(blocks) => blocks,
+        None => {
+            owned = Blocks::of(sys);
+            &owned
+        }
+    };
     let start = part_coincident_ends(sys);
-    let direct = descend(sys, &blocks, start.clone(), settings, tolerance, None);
+    let direct = descend(sys, blocks, start.clone(), settings, tolerance, None);
     if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
@@ -74,7 +87,7 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
     if steps <= 1 {
         return direct;
     }
-    let mut followed = follow(sys, &blocks, start, settings, tolerance, steps);
+    let mut followed = follow(sys, blocks, start, settings, tolerance, steps);
     if !matches!(followed.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
