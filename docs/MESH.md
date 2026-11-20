@@ -83,9 +83,16 @@ as creases.
 surface stays as it is; with **Smooth the surface** on, the points move
 toward a smooth surface, sharp edges and open rims kept.
 
-The geometry kernel cannot remesh or subdivide yet. Either step is added
-and kept, its row says why it does not build, and the scan shows the
-mesh before it until the kernel can.
+**Repair self-intersections** makes a closed mesh that crosses itself
+whole: shells exported overlapping, or a fold an edit left, are merged
+into one surface and what lay inside them goes, as a union of the mesh
+with itself. A slicer prints such a mesh wrongly, twice over where the
+shells overlap or not at all. An open mesh is refused: fill its holes
+first.
+
+The geometry kernel cannot remesh, subdivide or repair crossings yet.
+Each step is added and kept, its row says why it does not build, and
+the scan shows the mesh before it until the kernel can.
 
 **Boolean with solids** subtracts, adds or intersects a bounded solid:
 a solid body, placed where it sits against the scan, or an Inspection
@@ -135,6 +142,17 @@ percentile, and the legend gives the largest and the RMS movement. Surface an ed
 a bridge) is grey, and the legend gives its share. A cut moves nothing and adds its cap. Use it to see
 that an edit touched only what it meant to.
 `pc.mesh.deviation{scan = s}` answers the same numbers.
+
+## Self-intersections
+
+**Self-intersections** (in the Inspect group) finds where the selected
+mesh crosses itself: the pairs of triangles that meet away from the
+corners they share. Their corners are coloured over a grey mesh, and the
+log and the legend give the number of pairs and of triangles; a mesh
+that crosses nowhere says so. Click it again to hide the map.
+`pc.mesh.intersections{scan = s}` answers `pairs` and the `triangles` by
+number. The geometry kernel cannot search yet, so for now the tool says
+so in the log and turns itself off, and the command fails.
 
 ## Trim to scan
 

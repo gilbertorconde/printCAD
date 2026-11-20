@@ -47,6 +47,12 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("build_mesh_chain".into()))
     }
 
+    /// Every pair of `mesh`'s triangles that meet anywhere but at the
+    /// corners they share, by triangle number, lower first.
+    fn self_intersections(&self, _mesh: &TriMesh) -> KernelResult<Vec<[u32; 2]>> {
+        Err(KernelError::Unsupported("self_intersections".into()))
+    }
+
     /// The mesh as a file of `format` (`stl`, `3mf`, `ply` or `obj`),
     /// its triangles as they are, in millimetres.
     fn write_mesh(&self, _mesh: &TriMesh, _format: &str) -> KernelResult<Vec<u8>> {

@@ -86,11 +86,19 @@ reported, not hidden.
     assert(r.report.Reduce.within_share >= 0.999)
 ```
 
-## mesh.remesh, mesh.subdivide
+## mesh.remesh, mesh.subdivide, mesh.repair_intersections
 
 The geometry kernel cannot make these yet: the step is added and kept, its
 row says why it does not build, and the mesh before it is shown until the
 kernel can.
+
+## mesh.repair_intersections
+
+Makes a closed mesh that crosses itself whole: overlapping shells merge into
+one and the surface inside them goes, as a union of the mesh with itself.
+An open mesh is refused.
+
+See also: mesh.intersections
 
 ## mesh.remesh
 

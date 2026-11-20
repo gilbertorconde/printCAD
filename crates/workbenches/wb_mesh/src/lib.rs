@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 mod commands;
+mod crossings;
 mod pieces;
 mod solids;
 mod steps;
@@ -35,6 +36,7 @@ const FLIP: &str = "mesh.flip";
 const CUT: &str = "mesh.cut";
 const INSPECT: &str = "mesh.inspect";
 const SPLIT: &str = "mesh.split";
+const CROSSINGS: &str = "mesh.intersections";
 const DEVIATION: &str = "mesh.deviation";
 
 /// One step of a mesh body's history.
@@ -103,6 +105,13 @@ struct Tab {
     /// Each edited body's deviation from its start, by what it was
     /// measured from.
     deviations: core_document::jobs::Keyed<BodyId, Arc<[f32]>>,
+    /// Where the selected body's mesh crosses itself is shown.
+    crossings: bool,
+    /// Each body's crossing pairs of triangles, by the mesh they were
+    /// found on.
+    crossing_pairs: core_document::jobs::Keyed<BodyId, Arc<[[u32; 2]]>>,
+    /// The body and mesh whose crossings were last reported.
+    crossings_said: Option<(BodyId, u64)>,
     task: Option<task::Task>,
 }
 
@@ -394,10 +403,10 @@ impl core_document::Workbench for MeshWorkbench {
     fn configure(&self, context: &mut WorkbenchContext) {
         commands::register(context);
         let category = |id: &str| match id {
-            "mesh.fill" | "mesh.smooth" => "repair",
+            "mesh.fill" | "mesh.smooth" | "mesh.repair_intersections" => "repair",
             "mesh.offset" | "mesh.reduce" | "mesh.remesh" | "mesh.subdivide" | "mesh.boolean"
             | "mesh.thicken" => "shape",
-            DEVIATION => core_document::INSPECT_CATEGORY,
+            DEVIATION | CROSSINGS => core_document::INSPECT_CATEGORY,
             _ => "clean",
         };
         for (id, label, icon) in [
@@ -409,8 +418,10 @@ impl core_document::Workbench for MeshWorkbench {
         ]
         .into_iter()
         .chain(steps::TOOLS)
-        .chain([(DEVIATION, "Deviation of the edit", "measure")])
-        {
+        .chain([
+            (DEVIATION, "Deviation of the edit", "measure"),
+            (CROSSINGS, "Self-intersections", "warning"),
+        ]) {
             context.register_tool(
                 ToolDescriptor::new_action(id, label, Some(category(id))).icon(icon),
             );
@@ -531,6 +542,7 @@ impl core_document::Workbench for MeshWorkbench {
             ISLANDS | FLIP | CUT | SPLIT => mesh && self.tab.task.is_none(),
             id if steps::is_tool(id) => mesh && self.tab.task.is_none(),
             DEVIATION => true,
+            CROSSINGS => mesh,
             _ => false,
         }
     }
@@ -570,16 +582,20 @@ impl core_document::Workbench for MeshWorkbench {
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
-        tool_id == DEVIATION && self.tab.deviation
+        (tool_id == DEVIATION && self.tab.deviation) || (tool_id == CROSSINGS && self.tab.crossings)
     }
 
     fn busy(&self) -> bool {
-        self.tab.deviations.busy()
+        self.tab.deviations.busy() || self.tab.crossing_pairs.busy()
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.report_crossings(ctx);
     }
 
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
         core_document::ViewportOutput {
-            scalar_maps: self.scalar_maps(ctx),
+            scalar_maps: [self.scalar_maps(ctx), self.crossing_maps(ctx)].concat(),
             ..Default::default()
         }
     }
@@ -595,6 +611,11 @@ impl core_document::Workbench for MeshWorkbench {
         }
         if let (WorkbenchInputEvent::ToolActivated, Some(DEVIATION)) = (event, active_tool) {
             self.tab.deviation = !self.tab.deviation;
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(CROSSINGS)) = (event, active_tool) {
+            self.tab.crossings = !self.tab.crossings;
+            self.tab.crossings_said = None;
             return InputResult::consumed();
         }
         if let (WorkbenchInputEvent::ToolActivated, Some(SPLIT)) = (event, active_tool) {
@@ -1036,6 +1057,134 @@ mod tests {
         }
     }
 
+    /// A mesh body named Scan holding `mesh`, as an import makes one.
+    fn mesh_body(doc: &mut Document, mesh: TriMesh) -> BodyId {
+        let body = doc.create_body(Some("Scan".into()));
+        let asset = doc.add_asset(core_document::AssetReference::new(
+            "assets/scan.stl",
+            core_document::AssetType::Stl,
+            json!({}),
+        ));
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: Arc::new(mesh),
+                mesh_path: None,
+                source_asset: Some(asset),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        body
+    }
+
+    /// A kernel that finds these pairs of triangles crossing in any mesh,
+    /// or with none refuses to look.
+    struct Crossing(Option<&'static [[u32; 2]]>);
+
+    impl kernel_api::KernelQueries for Crossing {
+        fn self_intersections(&self, _mesh: &TriMesh) -> kernel_api::KernelResult<Vec<[u32; 2]>> {
+            self.0
+                .map(<[_]>::to_vec)
+                .ok_or_else(|| kernel_api::KernelError::Unsupported("not yet".into()))
+        }
+
+        fn project_edge(
+            &self,
+            _brep: &[u8],
+            _near: [f64; 3],
+            _plane: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("project_edge".into()))
+        }
+    }
+
+    static FINDS: Crossing = Crossing(Some(&[[0, 13], [1, 13]]));
+    static REFUSES: Crossing = Crossing(None);
+
+    /// The crossing map of the selected body, once its search is done.
+    fn crossing_map(
+        wb: &MeshWorkbench,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<core_document::ScalarMap> {
+        for _ in 0..2000 {
+            let map = wb
+                .viewport(ctx)
+                .scalar_maps
+                .into_iter()
+                .find(|m| m.legend.title == "Self-intersections");
+            let failed = ctx.selected_body_id.map(BodyId).is_some_and(|b| {
+                crossings::key(ctx.document, b)
+                    .is_some_and(|k| wb.tab.crossing_pairs.failure(b, k).is_some())
+            });
+            if map.is_some() || failed {
+                return map;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the search never ended");
+    }
+
+    /// The kernel's crossing pairs come back from the command by count and
+    /// triangle, and the map colours their corners alone; a kernel that
+    /// cannot look turns the map off and the command fails.
+    #[test]
+    fn crossings_are_counted_and_their_corners_shown() {
+        let mut both = cube([0.; 3], [10.; 3]);
+        let other = cube([5.; 3], [15.; 3]);
+        both.indices.extend(
+            other
+                .indices
+                .iter()
+                .map(|i| i + both.positions.len() as u32),
+        );
+        both.positions.extend(other.positions);
+        let mut doc = Document::new("crossing");
+        let body = mesh_body(&mut doc, both.clone());
+        for (kernel, finds) in [(&FINDS, true), (&REFUSES, false)] {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
+            ctx.selected_body_id = Some(body.0);
+            ctx.kernel = Some(kernel);
+            let mut wb = MeshWorkbench::default();
+            let answer = wb.run_command(CROSSINGS, &CommandArgs::new(), &mut ctx);
+            assert_eq!(answer.is_ok(), finds, "{answer:?}");
+            if finds {
+                assert_eq!(
+                    answer.unwrap(),
+                    json!({"pairs": 2, "triangles": [0, 1, 13]})
+                );
+            }
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some(CROSSINGS),
+                &mut ctx,
+            );
+            assert!(wb.tool_toggled(CROSSINGS));
+            let map = crossing_map(&wb, &ctx);
+            wb.on_frame(0.0, &mut ctx);
+            assert_eq!(wb.tool_toggled(CROSSINGS), finds, "a refusal turns it off");
+            let Some(map) = map else {
+                assert!(!finds, "no map from a kernel that finds");
+                continue;
+            };
+            let corners: std::collections::BTreeSet<u32> = [0usize, 1, 13]
+                .iter()
+                .flat_map(|t| both.indices[t * 3..t * 3 + 3].to_vec())
+                .collect();
+            for (v, value) in map.values.iter().enumerate() {
+                assert_eq!(
+                    value.is_finite(),
+                    corners.contains(&(v as u32)),
+                    "vertex {v}"
+                );
+            }
+        }
+    }
+
     /// Two cubes in one mesh body split into two mesh bodies holding a
     /// cube each, named after it, placed and drawn as it was and shown
     /// in its place; a peer applying the ops sees the same, a save keeps
@@ -1053,25 +1202,7 @@ mod tests {
         both.positions.extend(small.positions);
         assert!((inspect(&both)["volume"].as_f64().unwrap() - 1125.0).abs() < 1e-6);
         let mut doc = Document::new("split");
-        let body = doc.create_body(Some("Scan".into()));
-        let asset = doc.add_asset(core_document::AssetReference::new(
-            "assets/scan.stl",
-            core_document::AssetType::Stl,
-            json!({}),
-        ));
-        doc.set_imported_geometry(
-            body,
-            core_document::ImportedGeometry {
-                mesh: Arc::new(both),
-                mesh_path: None,
-                source_asset: Some(asset),
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        let body = mesh_body(&mut doc, both);
         let placement = core_document::BodyPlacement {
             translation: [1.0, 2.0, 3.0],
             ..Default::default()

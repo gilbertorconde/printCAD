@@ -3,13 +3,18 @@
 use super::*;
 use kernel_api::MeshFairing;
 
-pub(super) const TOOLS: [(&str, &str, &str); 8] = [
+pub(super) const TOOLS: [(&str, &str, &str); 9] = [
     ("mesh.fill", "Fill holes", "triangle"),
     ("mesh.smooth", "Smooth", "workbench-mesh"),
     ("mesh.offset", "Offset", "workbench-mesh"),
     ("mesh.reduce", "Reduce", "triangle"),
     ("mesh.remesh", "Remesh", "grid"),
     ("mesh.subdivide", "Subdivide", "triangle"),
+    (
+        "mesh.repair_intersections",
+        "Repair self-intersections",
+        "check-geometry",
+    ),
     ("mesh.boolean", "Boolean with solids", "boolean"),
     ("mesh.thicken", "Shell / hollow", "thickness"),
 ];
@@ -128,6 +133,7 @@ pub(super) fn make(
                 smooth: a.opt_bool("smooth")?.unwrap_or(false),
             }
         }
+        "mesh.repair_intersections" => MeshOp::RepairIntersections,
         "mesh.reduce" => {
             let limit = positive("triangle_limit", 50_000.0)?;
             if limit.fract() != 0.0 || limit > u32::MAX as f64 {
@@ -297,6 +303,15 @@ fn register_steps(
                 "Move the points toward a smooth surface; false keeps the surface",
             )
             .returns("{feature, name}"),
+        commands::made,
+    );
+    commands::on_scan(
+        t,
+        scan(CommandSpec::new(
+            "mesh.repair_intersections",
+            "Repair self-intersections",
+        ))
+        .returns("{feature, name}"),
         commands::made,
     );
     t.add_on_by_id(

@@ -90,6 +90,10 @@ pub enum MeshOp {
         #[serde(default)]
         smooth: bool,
     },
+    /// A closed mesh that crosses itself made whole: overlapping shells
+    /// merged and the surface inside them dropped, as a union of the mesh
+    /// with itself.
+    RepairIntersections,
     /// Cut by the plane through `origin` square to `normal`, the side
     /// `normal` points to kept when `keep_above`; with `close`, every loop
     /// of the cut capped flat, gaps in its rim up to `bridge` closed.

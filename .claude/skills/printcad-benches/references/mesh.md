@@ -14,9 +14,13 @@
   measures the mesh now to its start, a triangle whose middle lies off the
   start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
-  `mesh.offset`, `mesh.reduce`, `mesh.remesh`, `mesh.subdivide` (both
-  refused by the adapter until the kernel has them), `mesh.boolean`,
-  `mesh.thicken`,
+  `mesh.offset`, `mesh.reduce`, `mesh.remesh`, `mesh.subdivide`,
+  `mesh.repair_intersections` (these three refused by the adapter until
+  the kernel has them), `mesh.boolean`, `mesh.thicken`,
+  `mesh.intersections` (`crossings.rs`: `KernelQueries::self_intersections`
+  on the drawn mesh, also a toggle drawing the selected body's crossing
+  triangles as a `scalar_maps` map, found on a thread; `on_frame` logs
+  the count or the refusal once and a refusal turns the toggle off),
   `mesh.inspect`, `mesh.result` and `mesh.set`. `pieces.rs`: Split into
   bodies (`mesh.split`): the drawn mesh's pieces (corners at one point
   joined, as `inspect` counts them), each a new mesh body through

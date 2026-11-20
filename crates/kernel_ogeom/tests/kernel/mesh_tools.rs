@@ -1,5 +1,6 @@
-//! Mesh history steps that make a mesh finer or more even, read through
-//! the history a mesh body builds.
+//! Mesh history steps that make a mesh finer or more even or mend where
+//! it crosses itself, read through the history a mesh body builds, and
+//! the search for where it crosses.
 
 use kernel_api::{KernelQueries, MeshChainAnswer, MeshOp, TriMesh};
 use kernel_ogeom::QUERIES;
@@ -105,4 +106,45 @@ fn a_cube_subdivides_flat_into_sixteen_times_the_triangles() {
     assert_eq!(answer.steps[0].faces, 12 * 16);
     assert_eq!(edges(&answer.mesh).1, 0, "closed");
     assert!((volume(&answer.mesh) - 1000.0).abs() < 1e-6);
+}
+
+/// Two 10 mm cubes in one mesh: the second moved 5 mm along every axis
+/// into the first, or standing apart.
+fn two_cubes(apart: bool) -> TriMesh {
+    let at = if apart { 20.0 } else { 5.0 };
+    let mut both = cube([0.0; 3], [10.0; 3]);
+    let other = cube([at; 3], [at + 10.0; 3]);
+    let base = both.positions.len() as u32;
+    both.indices.extend(other.indices.iter().map(|i| i + base));
+    both.positions.extend(other.positions);
+    both
+}
+
+/// The overlapping cubes cross each other, never themselves; cubes apart
+/// cross nothing.
+#[test]
+#[ignore = "kernel: no query for the triangles where a mesh crosses itself (ogeom-rs#1187)"]
+fn overlapping_cubes_cross_and_cubes_apart_do_not() {
+    let pairs = QUERIES.self_intersections(&two_cubes(false)).unwrap();
+    assert!(!pairs.is_empty());
+    for [a, b] in pairs {
+        assert!(a < 12 && b >= 12, "{a} and {b} are of one cube");
+    }
+    assert!(
+        QUERIES
+            .self_intersections(&two_cubes(true))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// The overlapping cubes repaired are one closed solid of their union's
+/// volume that crosses nothing.
+#[test]
+#[ignore = "kernel: no repair of a mesh that crosses itself (ogeom-rs#1187)"]
+fn overlapping_cubes_repair_into_their_union() {
+    let answer = built(&two_cubes(false), MeshOp::RepairIntersections);
+    assert_eq!(edges(&answer.mesh).1, 0, "closed");
+    assert!((volume(&answer.mesh) - (2000.0 - 125.0)).abs() < 1e-6);
+    assert!(QUERIES.self_intersections(&answer.mesh).unwrap().is_empty());
 }

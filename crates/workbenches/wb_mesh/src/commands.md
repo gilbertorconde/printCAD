@@ -52,6 +52,16 @@ hidden. One undo takes it all back. A mesh of one piece is refused.
     assert(math.abs(math.min(a, b) - 250) < 1 and math.abs(math.max(a, b) - 1000) < 1)
 ```
 
+## mesh.intersections
+
+Of the mesh the scan draws now: every pair of its triangles that meet away
+from the corners they share, counted as `pairs`, and the triangles in them
+by number. The tool shows them on the selected scan, their corners coloured
+over grey. The geometry kernel cannot search yet: the command fails, saying
+so, until it can.
+
+See also: mesh.repair_intersections
+
 ## mesh.deviation
 
 Each point of the mesh the scan draws now is measured to its mesh as imported:

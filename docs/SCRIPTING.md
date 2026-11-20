@@ -9490,6 +9490,18 @@ Notes:
 - The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
 - Splits every triangle into four, levels times, so the count grows fourfold each level. Without smooth the surface stays exactly as it is; with smooth the points move toward a smooth surface, sharp edges and open rims kept.
 
+`pc.mesh.repair_intersections`: Repair self-intersections.
+
+- `scan` (id, optional): The mesh body; the selected one
+- Returns {feature, name}
+
+Notes:
+
+- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
+- Makes a closed mesh that crosses itself whole: overlapping shells merge into one and the surface inside them goes, as a union of the mesh with itself. An open mesh is refused.
+
+See also `pc.mesh.intersections`.
+
 `pc.mesh.result`: Step results.
 
 - `feature` (id): The mesh step
@@ -9623,6 +9635,17 @@ local a = pc.mesh.inspect{scan = split.bodies[1]}.volume
 local b = pc.mesh.inspect{scan = split.bodies[2]}.volume
 assert(math.abs(math.min(a, b) - 250) < 1 and math.abs(math.max(a, b) - 1000) < 1)
 ```
+
+`pc.mesh.intersections`: Find self-intersections.
+
+- `scan` (id, optional): The mesh body; the selected one
+- Returns {pairs, triangles}
+
+Notes:
+
+- Of the mesh the scan draws now: every pair of its triangles that meet away from the corners they share, counted as `pairs`, and the triangles in them by number. The tool shows them on the selected scan, their corners coloured over grey. The geometry kernel cannot search yet: the command fails, saying so, until it can.
+
+See also `pc.mesh.repair_intersections`.
 
 `pc.mesh.deviation`: Edit deviation.
 
