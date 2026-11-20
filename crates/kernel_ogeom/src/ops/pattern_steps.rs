@@ -78,6 +78,12 @@ pub fn transforms(
         let own = match step {
             PatternStep::Transforms(list) => list.clone(),
             PatternStep::Path(layout) => along(model, solid, layout)?,
+            PatternStep::Fill(layout) => {
+                if steps.len() > 1 {
+                    return Err("a fill pattern stands alone, no step of another".into());
+                }
+                super::fill::transforms(model, solid, layout)?
+            }
         };
         let mut next = Vec::with_capacity(occurrences.len() * (own.len() + 1));
         for base in &occurrences {

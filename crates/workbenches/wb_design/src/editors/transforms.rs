@@ -187,6 +187,37 @@ pub(super) fn transform_editor(
             );
             changed |= skipped_editor(f, skipped);
         }
+        DesignFeature::FillPattern {
+            originals,
+            region,
+            lattice,
+            spacing,
+            row_spacing,
+            angle_deg,
+            margin,
+            clip,
+            refine: _,
+            boolean_tolerance: _,
+            skipped,
+        } => {
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
+            changed |= patterns::fill_editor(
+                f,
+                ctx,
+                fx,
+                (body, feature_id),
+                region,
+                patterns::FillFields {
+                    lattice,
+                    spacing,
+                    row_spacing,
+                    angle_deg,
+                    margin,
+                    clip,
+                },
+            );
+            changed |= skipped_editor(f, skipped);
+        }
         DesignFeature::MultiTransform {
             originals,
             steps,

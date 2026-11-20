@@ -87,6 +87,11 @@ macro_rules! fuse_settings {
                 boolean_tolerance: $tolerance,
                 ..
             }
+            | DesignFeature::FillPattern {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
             | DesignFeature::MultiTransform {
                 refine: $refine,
                 boolean_tolerance: $tolerance,
@@ -1153,6 +1158,59 @@ impl Default for PathSpacing {
             align: false,
         }
     }
+}
+
+/// What a fill pattern covers, in its body's own frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Walk)]
+pub enum FillArea {
+    /// The area a sketch's curves close, or the regions of it named; its
+    /// lattice runs along the sketch's x axis.
+    Sketch {
+        sketch: FeatureId,
+        #[serde(default)]
+        #[walk(setting)]
+        regions: Vec<String>,
+    },
+    /// A flat face of the solid, found again where the pattern stands:
+    /// the area its outer edge closes. Its lattice runs along the body's
+    /// x axis laid on the face (its y axis on a face square to x).
+    Face(FacePick),
+}
+
+impl FillArea {
+    pub fn label(&self) -> &'static str {
+        match self {
+            FillArea::Sketch { .. } => "Sketch",
+            FillArea::Face(_) => "Picked face",
+        }
+    }
+}
+
+/// How a fill pattern's places repeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Describe)]
+pub enum FillKind {
+    /// Rows of places, `spacing` apart along a row and `row_spacing` from
+    /// row to row.
+    #[default]
+    Grid,
+    /// Each place `spacing` from its six neighbours, every other row moved
+    /// half a spacing along.
+    Honeycomb,
+}
+
+impl FillKind {
+    pub const ALL: [FillKind; 2] = [FillKind::Grid, FillKind::Honeycomb];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            FillKind::Grid => "Grid",
+            FillKind::Honeycomb => "Honeycomb",
+        }
+    }
+}
+
+fn default_fill_rows() -> f32 {
+    10.0
 }
 
 /// A hexagonal pocket for a captive nut, at one end of a hole: sized
@@ -2762,6 +2820,51 @@ pub enum DesignFeature {
         #[walk(setting)]
         skipped: Vec<u32>,
     },
+    /// Copies over a flat region, a sketch's area or a face of the solid,
+    /// at the places of a grid or a honeycomb through where the original
+    /// stands.
+    FillPattern {
+        originals: Vec<FeatureId>,
+        region: FillArea,
+        #[serde(default)]
+        #[walk(setting)]
+        lattice: FillKind,
+        /// A grid's spacing along its rows, a honeycomb's from each place
+        /// to its neighbours, mm.
+        #[walk(length("spacing", "Spacing"))]
+        spacing: f32,
+        /// A grid's spacing from row to row, mm.
+        #[serde(default = "default_fill_rows")]
+        #[walk(length("row_spacing", "Row spacing"))]
+        row_spacing: f32,
+        /// The lattice turned about the region's normal, degrees.
+        #[serde(default)]
+        #[walk(angle("angle", "Angle"))]
+        angle_deg: f32,
+        /// How far every copy keeps inside the region's edge, mm.
+        #[serde(default)]
+        #[walk(length("margin", "Margin"))]
+        margin: f32,
+        /// Copies the edge passes through are trimmed to the region
+        /// rather than left out.
+        #[serde(default)]
+        #[walk(setting)]
+        clip: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        #[walk(setting)]
+        refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
+        boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn, row by row.
+        #[serde(default)]
+        #[walk(setting)]
+        skipped: Vec<u32>,
+    },
     MultiTransform {
         originals: Vec<FeatureId>,
         #[walk(steps("step", "Step"))]
@@ -2931,6 +3034,7 @@ impl DesignFeature {
             | DesignFeature::CircularPattern { originals, .. }
             | DesignFeature::PointPattern { originals, .. }
             | DesignFeature::PathPattern { originals, .. }
+            | DesignFeature::FillPattern { originals, .. }
             | DesignFeature::MultiTransform { originals, .. } => Some(originals),
             _ => None,
         }
@@ -2945,6 +3049,7 @@ impl DesignFeature {
             | DesignFeature::CircularPattern { skipped, .. }
             | DesignFeature::PointPattern { skipped, .. }
             | DesignFeature::PathPattern { skipped, .. }
+            | DesignFeature::FillPattern { skipped, .. }
             | DesignFeature::MultiTransform { skipped, .. } => Some(skipped),
             _ => None,
         }
@@ -2960,6 +3065,7 @@ impl DesignFeature {
             | DesignFeature::CircularPattern { skipped, .. }
             | DesignFeature::PointPattern { skipped, .. }
             | DesignFeature::PathPattern { skipped, .. }
+            | DesignFeature::FillPattern { skipped, .. }
             | DesignFeature::MultiTransform { skipped, .. } => skipped,
             _ => return false,
         };
@@ -3029,6 +3135,7 @@ impl DesignFeature {
             DesignFeature::CircularPattern { .. } => "Circular Pattern",
             DesignFeature::PointPattern { .. } => "Point Pattern",
             DesignFeature::PathPattern { .. } => "Path Pattern",
+            DesignFeature::FillPattern { .. } => "Fill Pattern",
             DesignFeature::MultiTransform { .. } => "Multi Transform",
             DesignFeature::BodyBoolean { .. } => "Boolean",
             DesignFeature::Borrow { .. } => "Borrowed geometry",
@@ -3104,6 +3211,7 @@ impl DesignFeature {
             DesignFeature::CircularPattern { .. } => "circular-pattern",
             DesignFeature::PointPattern { .. } => "point-pattern",
             DesignFeature::PathPattern { .. } => "path-pattern",
+            DesignFeature::FillPattern { .. } => "fill-pattern",
             DesignFeature::MultiTransform { .. } => "multi-transform",
             DesignFeature::BodyBoolean { .. } => "boolean",
             DesignFeature::Borrow { .. } => "clone-geometry",
@@ -3286,7 +3394,11 @@ impl DesignFeature {
             DesignFeature::Project { faces, .. } | DesignFeature::Text { faces, .. } => {
                 faces.iter().collect()
             }
-            DesignFeature::Thread { face, .. } => vec![face],
+            DesignFeature::Thread { face, .. }
+            | DesignFeature::FillPattern {
+                region: FillArea::Face(face),
+                ..
+            } => vec![face],
             other => other.start_face().into_iter().collect(),
         }
     }
@@ -3340,7 +3452,11 @@ impl DesignFeature {
                 extras.start_face.as_mut().into_iter().collect()
             }
             DesignFeature::Hole { start, .. } => start.face.as_mut().into_iter().collect(),
-            DesignFeature::Thread { face, .. } => vec![face],
+            DesignFeature::Thread { face, .. }
+            | DesignFeature::FillPattern {
+                region: FillArea::Face(face),
+                ..
+            } => vec![face],
             _ => Vec::new(),
         }
     }
@@ -3382,11 +3498,32 @@ impl DesignFeature {
                 | DesignFeature::CircularPattern { .. }
                 | DesignFeature::PointPattern { .. }
                 | DesignFeature::PathPattern { .. }
+                | DesignFeature::FillPattern { .. }
                 | DesignFeature::MultiTransform { .. }
                 | DesignFeature::BodyBoolean { .. }
                 | DesignFeature::Split { .. }
                 | DesignFeature::Piece { .. }
         )
+    }
+
+    /// The numbers the feature holds that change nothing as it stands,
+    /// which its parameters leave out: a honeycomb's row spacing, the
+    /// pitch and depth of a thread cut to a standard size, the diameter of
+    /// a hole sized from its thread.
+    pub fn idle_numbers(&self) -> &'static [&'static str] {
+        match self {
+            DesignFeature::FillPattern {
+                lattice: FillKind::Honeycomb,
+                ..
+            } => &["row_spacing"],
+            DesignFeature::Thread {
+                thread: Some(_), ..
+            } => &["pitch", "depth"],
+            DesignFeature::Hole {
+                thread: Some(_), ..
+            } => &["diameter"],
+            _ => &[],
+        }
     }
 
     /// The split this feature is a piece of, when it is one.

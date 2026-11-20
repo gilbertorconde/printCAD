@@ -4351,7 +4351,7 @@ assert(cut > ring * 0.3 and cut < ring * 0.7, cut)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- Its sketch is an open line or chain of lines and arcs, `thickness` thick (2 mm), the thickness on both sides of the sketch plane, or `side = "Front"` (the side the normal points to) or `"Back"`. The line's ends run on along its end tangents until they meet the solid, and the web fills between the line and the solid on every side where the solid closes it in. With `along_normal = true` the line, thickened in its plane, runs along the plane's normal instead, either way, until it meets the solid. A rib that meets nothing, or a sketch that closes, fails on the feature.
+- Its sketch is an open line or chain of lines and arcs, `thickness` thick (2 mm), the thickness on both sides of the sketch plane, or `side = "Front"` (the side the normal points to) or `"Back"`. The line's ends run on along its end tangents until they meet the solid, and the web fills between the line and the solid on every side where the solid closes it in; past walls shorter than the line, it ends square where the solid ends along it. With `along_normal = true` the line, thickened in its plane, runs along the plane's normal instead, either way, until it meets the solid. A rib that meets nothing, or a sketch that closes, fails on the feature.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.pad`, `pc.sketch.line`.
 
@@ -5016,6 +5016,46 @@ table.sort(ys)
 assert(#ys == 5 and math.abs(ys[5] - 30) < 1e-6, #ys)
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (6400 - 5 * math.pi * 4) * 4) < 1e-3, volume)
+```
+
+`pc.design.fill_pattern`: Repeat the last feature over a sketch's area or a flat face in a grid or honeycomb.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket, a thread's round face, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true; the agents' `describe` and the console's `help("design.fill_pattern")` list every one, with its kind, default and forms
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing; one whose every copy does builds with a `warning` saying so.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
+- `sketch` gives the region, the area its curves close (`region = {Sketch = {sketch = id, regions = {...}}}` takes regions of it by name); `face_point` with `face_normal`, or `region = {Face = {point = {x, y, z}, normal = {x, y, z}}}`, a flat face of the solid, the area its outer edge closes, found where the pattern stands.
+- `lattice = "Grid"` (the default) places copies `spacing` mm apart along a row and `row_spacing` mm from row to row; `"Honeycomb"` places each `spacing` from its six neighbours, every other row moved half a spacing along. The lattice runs along the sketch's x axis (on a face, the body's x laid on it) turned by `angle_deg`, and passes through where the original stands, which holds one of its places. A copy is made where all of it lies inside the region at least `margin` mm from its edge; `clip = true` also makes those the edge passes through, trimmed to the region less the margin. Occurrences count the original first, then the copies row by row, as `skipped` names them.
+- The copies are the original's tool, built once and moved, cut or fused in one boolean. More than 2000 copies are refused.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.point_pattern`.
+
+Example: A plate vented with a honeycomb of holes.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local plate = pc.design.pad{sketch = s, length = 4}
+local body = pc.doc.feature{id = plate}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 1.5}
+local hole = pc.design.pocket{sketch = at, through_all = true}
+-- The plate's outline is the region; each hole's rim stays 1 mm inside.
+pc.design.fill_pattern{sketch = s, originals = {hole}, lattice = "Honeycomb",
+  spacing = 8, margin = 1}
+assert(#pc.doc.rebuild() == 0, "the fill builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1200 - 18 * math.pi * 2.25) * 4) < 1e-3, volume)
 ```
 
 `pc.design.scaled`: Scale the last feature.

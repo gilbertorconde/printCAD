@@ -106,6 +106,7 @@ const LOCAL = new Set([
   "circular-pattern",
   "point-pattern",
   "path-pattern",
+  "fill-pattern",
   "offset-solid",
   "separate-pieces",
   "section-sketch",

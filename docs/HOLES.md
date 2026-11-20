@@ -65,8 +65,8 @@ drill the tap size, print, and tap the hole afterwards.
 A mirror or pattern of the hole, or of the whole body, threads each
 copy it makes the same way, cut to the same hand across a mirror, and
 counts it in the parts list and the export. A copy that lands off the
-material is not threaded. A path pattern's copies are not threaded yet,
-since only the built solid says where they fall.
+material is not threaded. A path pattern's and a fill pattern's copies are
+not threaded yet, since only the built solid says where they fall.
 
 ## Depth and bottom
 

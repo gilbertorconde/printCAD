@@ -501,8 +501,12 @@ closes it in, **Thickness** thick: on **Both sides** of the sketch plane,
 or all of it on **One side** or the **Other side**. **Along the normal**
 instead thickens the line in its plane and runs it along the plane's
 normal until it meets the solid: a web drawn on a plane above a floor
-stands down onto it, and one drawn between two plates reaches both. A
-line that meets no solid, or a sketch that closes, fails on the feature.
+stands down onto it, and one drawn between two plates reaches both.
+Across the plane, a line drawn above walls shorter than it runs on over
+their tops: the web then fills down between them and onto their tops,
+ending square where the solid ends along the line, flush with the walls'
+outer faces. A line that meets no solid, or a sketch that closes, fails
+on the feature.
 A rib is copied by Mirrored and the patterns like any other feature.
 
 **Scale body** scales the whole solid about a point: by one **Factor**,
@@ -575,7 +579,19 @@ place, turned as the path turns with Turn with the path. An edge is found
 again on the solid as it stands where the pattern does in the history, so
 the copies follow the edge when the features before it change. **Multi
 transform** chains steps of every kind, a path among them, each applied to
-every occurrence before it. With a mirror's or pattern's task open, a dot
+every occurrence before it. **Fill pattern** covers a region with copies
+in a **Grid** (a spacing along the rows and one between them) or a
+**Honeycomb** (each copy one spacing from its six neighbours): for vents and
+lightening holes. The region is a sketch's area (its regions chosen as a
+pad's are) or a flat face of the solid picked in the view, its outer edge
+bounding it. The lattice passes through the original and runs along the
+sketch's x axis (the body's X laid on a face), turned by **Angle**; the
+arrows on the original drag the spacings. A copy is made where all of it
+lies inside, at least **Margin** from the edge, and with **Trim at the
+edge** the copies the edge passes through are made too, trimmed to the
+region. The copies are the original's tool built once and moved, put in by
+one boolean, so a few hundred holes build in a second or two; more than
+2000 are refused, with the spacing to widen. With a mirror's or pattern's task open, a dot
 stands at each occurrence, the original among them; click one to leave
 it out or bring it back. A skipped one draws crossed out, and the panel's
 **Skipped** row lists them, each with a button bringing it back and

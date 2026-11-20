@@ -1303,6 +1303,66 @@ pub enum PatternStep {
     Transforms(Vec<[[f64; 4]; 4]>),
     /// Copies along a path.
     Path(PathLayout),
+    /// Copies over a flat region in a grid or a honeycomb. It stands
+    /// alone: a fill is no step of a multi-transform.
+    Fill(FillLayout),
+}
+
+/// The most copies one [`FillLayout`] makes.
+pub const MAX_FILL_COPIES: usize = 2000;
+
+/// The area a [`FillLayout`] covers, in the chain's frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum FillRegion {
+    /// The area a sketch's closed wires close on their plane, less the
+    /// holes in it. Its lattice runs along the plane's x axis.
+    Profile(Profile),
+    /// The flat face of the solid, where the step stands, that the probe
+    /// finds: the area its outer edge closes. Its lattice runs along the
+    /// chain's x axis laid on the face (its y axis where x stands square
+    /// to the face).
+    Face(FaceProbe),
+}
+
+/// How a fill's places repeat.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum FillLattice {
+    /// Rows: places `x` apart along the lattice's direction, rows `y`
+    /// apart across it.
+    Grid { x: f64, y: f64 },
+    /// Each place `pitch` from its six neighbours: rows `pitch × √3 / 2`
+    /// apart, every other row moved half a pitch along.
+    Honeycomb { pitch: f64 },
+}
+
+/// Copies at the places of a flat lattice over a region. The lattice
+/// passes through where the original stands, so the original holds one
+/// place and each copy is the original moved, within the region's
+/// plane, to another. Occurrences count the original first, then the
+/// copies row by row across the lattice, each row along it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FillLayout {
+    pub region: FillRegion,
+    pub lattice: FillLattice,
+    /// The lattice turned about the region's normal from its direction,
+    /// degrees.
+    #[serde(default)]
+    pub angle_deg: f64,
+    /// How far every copy keeps inside the region's edge, mm.
+    #[serde(default)]
+    pub margin: f64,
+    /// Copies the edge (less the margin) passes through are trimmed to
+    /// the region rather than left out.
+    #[serde(default)]
+    pub clip: bool,
+    /// Where the original stands, in the chain's frame.
+    pub anchor: [f64; 3],
+    /// Points round the original's outline, in the chain's frame: a copy
+    /// lies whole inside the region where all of them, moved with it, do
+    /// and the region's edge crosses none of the outline. Empty, a copy
+    /// is its anchor alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outline: Vec<[f64; 3]>,
 }
 
 /// The path a [`PathLayout`] runs along, in the chain's frame.

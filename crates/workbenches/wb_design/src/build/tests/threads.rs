@@ -138,3 +138,37 @@ fn a_cosmetic_thread_cuts_nothing_and_a_taper_one_is_refused() {
     assert_eq!(err.feature, Some(id));
     assert!(err.message.contains("taper"), "{}", err.message);
 }
+
+/// A thread cut to a standard size takes its pitch and depth from it, and
+/// a hole sized from its thread its diameter: the parameter list leaves
+/// those out, and gives them back with no standard.
+#[test]
+fn numbers_a_standard_size_sets_are_not_listed() {
+    let listed = |feature: &DesignFeature| -> Vec<String> {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let id = add(&mut doc, body, feature.clone(), "F");
+        crate::params::feature_parameters(doc.get_feature_meta(id).unwrap())
+            .into_iter()
+            .filter_map(|p| p.name)
+            .collect()
+    };
+    let m6 = ThreadSpec::new(ThreadStandard::IsoMetricCoarse, "M6");
+    let standard = listed(&thread_on(10.0, Some(m6.clone())));
+    assert!(
+        !standard.iter().any(|n| n == "pitch" || n == "depth"),
+        "{standard:?}"
+    );
+    assert!(standard.iter().any(|n| n == "length"), "{standard:?}");
+    let own = listed(&thread_on(10.0, None));
+    assert!(own.iter().any(|n| n == "pitch") && own.iter().any(|n| n == "depth"));
+    let sketch = FeatureId(uuid::Uuid::new_v4());
+    let sized = listed(&hole(sketch, |h| *h.thread = Some(m6)));
+    assert!(!sized.iter().any(|n| n == "diameter"), "{sized:?}");
+    assert!(sized.iter().any(|n| n == "depth"), "{sized:?}");
+    assert!(
+        listed(&hole(sketch, |_| {}))
+            .iter()
+            .any(|n| n == "diameter")
+    );
+}

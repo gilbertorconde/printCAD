@@ -11,6 +11,11 @@ use super::common::{chain, is_sound, primitive_feature, try_chain, volume, xy_pl
 /// A U channel on the XY plane: a floor 20 × 20 × 2 and two walls 2
 /// thick, 20 tall, at either end of X.
 fn channel() -> Vec<SolidOp> {
+    channel_of(20.0)
+}
+
+/// [`channel`] with walls `wall` tall.
+fn channel_of(wall: f64) -> Vec<SolidOp> {
     let slab = |x: f64, y: f64, z: f64, (l, w, h): (f64, f64, f64)| SolidOp::Primitive {
         kind: PrimitiveKind::Box {
             length: l,
@@ -27,8 +32,8 @@ fn channel() -> Vec<SolidOp> {
     if let SolidOp::Primitive { op, .. } = &mut ops[0] {
         *op = BooleanOp::NewSolid;
     }
-    ops.push(slab(0.0, 0.0, 0.0, (2.0, 20.0, 20.0)));
-    ops.push(slab(18.0, 0.0, 0.0, (2.0, 20.0, 20.0)));
+    ops.push(slab(0.0, 0.0, 0.0, (2.0, 20.0, wall)));
+    ops.push(slab(18.0, 0.0, 0.0, (2.0, 20.0, wall)));
     ops
 }
 
@@ -84,6 +89,40 @@ fn a_rib_across_its_plane_fills_between_its_line_and_the_solid() {
             CHANNEL + web
         );
     }
+}
+
+/// A line 12 mm up across a channel whose walls stand 8 tall: its ends
+/// run on over the walls, and the web fills down to the floor between
+/// them and onto their tops, cut off square where the walls end along the
+/// line rather than leaking round them.
+#[test]
+fn a_rib_over_short_walls_stops_where_they_end() {
+    let thickness = 2.0;
+    let mut ops = channel_of(8.0);
+    ops.push(rib(
+        across(),
+        vec![ProfileSegment::Line {
+            start: [6.0, 12.0],
+            end: [14.0, 12.0],
+        }],
+        RibForm {
+            thickness,
+            side: RibSide::Both,
+            along_normal: false,
+        },
+    ));
+    let built = chain(&ops);
+    assert!(is_sound(&built.brep_blob), "a closed solid");
+    let channel = 20.0 * 20.0 * 2.0 + 2.0 * 2.0 * 20.0 * 6.0;
+    // Between the walls from the floor up to the line, and over each
+    // wall's top up to it.
+    let web = (16.0 * 10.0 + 2.0 * 2.0 * 4.0) * thickness;
+    let got = volume(&built.brep_blob);
+    assert!(
+        (got - (channel + web)).abs() < 1e-3,
+        "{got}, want {}",
+        channel + web
+    );
 }
 
 /// A line on a plane above the floor, along the normal: the strip it

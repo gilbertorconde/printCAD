@@ -503,3 +503,101 @@ fn pattern_referencing_later_feature_fails() {
     let err = body_build_ops(&doc, body).unwrap_err();
     assert!(err.message.contains("original"), "{}", err.message);
 }
+/// A fill pattern over a sketch goes to the chain as one fill step: the
+/// sketch's area, its lattice as set, where the hole it repeats stands and
+/// the counterbore's circle round it; a honeycomb lists no row spacing,
+/// and a fill with nothing to repeat is refused.
+#[test]
+fn a_fill_pattern_goes_to_the_chain_as_its_region_lattice_and_outline() {
+    use crate::feature::{FillArea, FillKind, HoleCut};
+    let (mut doc, body, sketch_id) = doc_with_body_sketch();
+    add(&mut doc, body, pad(sketch_id, 5.0), "Pad");
+    let at = points_sketch(&mut doc, body, &[(2.0, 2.0)]);
+    let hole_id = add(
+        &mut doc,
+        body,
+        hole(at, |h| {
+            *h.diameter = 2.0;
+            *h.cut = HoleCut::Counterbore {
+                diameter: 3.0,
+                depth: 1.0,
+            };
+        }),
+        "Hole",
+    );
+    let fill = |originals: Vec<FeatureId>, lattice| DesignFeature::FillPattern {
+        originals,
+        region: FillArea::Sketch {
+            sketch: sketch_id,
+            regions: Vec::new(),
+        },
+        lattice,
+        spacing: 4.0,
+        row_spacing: 6.0,
+        angle_deg: 30.0,
+        margin: 0.5,
+        clip: true,
+        refine: false,
+        boolean_tolerance: None,
+        skipped: vec![2],
+    };
+    let id = add(
+        &mut doc,
+        body,
+        fill(vec![hole_id], FillKind::Honeycomb),
+        "Fill",
+    );
+    let plan = body_build_ops(&doc, body).unwrap();
+    let Some(SolidOp::Pattern {
+        steps,
+        originals,
+        skipped,
+    }) = plan.ops.last()
+    else {
+        panic!("expected a pattern op, got {:?}", plan.ops.last());
+    };
+    assert_eq!(skipped, &vec![2]);
+    assert!(originals.iter().all(|&op| plan.op_features[op] == hole_id));
+    let [kernel_api::PatternStep::Fill(layout)] = steps.as_slice() else {
+        panic!("one fill step, not {steps:?}");
+    };
+    let kernel_api::FillRegion::Profile(region) = &layout.region else {
+        panic!("a sketch's area goes as its profile");
+    };
+    assert_eq!(region.wires[0].segments.len(), 4, "the rectangle's sides");
+    assert_eq!(
+        layout.lattice,
+        kernel_api::FillLattice::Honeycomb { pitch: 4.0 }
+    );
+    assert_eq!(
+        (layout.angle_deg, layout.margin, layout.clip),
+        (30.0, 0.5, true)
+    );
+    assert_eq!(layout.anchor, [2.0, 2.0, 0.0], "where the hole stands");
+    assert!(!layout.outline.is_empty());
+    for p in &layout.outline {
+        let r = (p[0] - 2.0).hypot(p[1] - 2.0);
+        assert!((r - 1.5).abs() < 1e-6, "the counterbore's rim, not {r}");
+    }
+    // A grid's rows have a spacing of their own; a honeycomb's follow its
+    // spacing.
+    let listed = |doc: &Document| -> Vec<String> {
+        crate::params::feature_parameters(doc.get_feature_meta(id).unwrap())
+            .into_iter()
+            .filter_map(|p| p.name)
+            .collect()
+    };
+    assert!(!listed(&doc).contains(&"row_spacing".to_string()));
+    doc.update_feature_data(id, fill(vec![hole_id], FillKind::Grid).to_json())
+        .unwrap();
+    assert!(listed(&doc).contains(&"row_spacing".to_string()));
+    let (_, along, across) =
+        crate::build::fill_frame(&doc, &fill(vec![hole_id], FillKind::Grid)).unwrap();
+    let (sin, cos) = 30f64.to_radians().sin_cos();
+    assert!((along[0] - cos).abs() < 1e-9 && (along[1] - sin).abs() < 1e-9);
+    assert!((across[0] + sin).abs() < 1e-9 && (across[1] - cos).abs() < 1e-9);
+    doc.update_feature_data(id, fill(Vec::new(), FillKind::Grid).to_json())
+        .unwrap();
+    let error = body_build_ops(&doc, body).unwrap_err();
+    assert!(error.message.contains("at least one"), "{}", error.message);
+}

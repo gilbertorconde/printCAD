@@ -13,6 +13,7 @@ mod design_stack;
 mod dxf_import;
 mod export;
 mod extrude;
+mod fill_pattern;
 mod fillet_corpus;
 mod generated_profiles;
 mod imported_base;

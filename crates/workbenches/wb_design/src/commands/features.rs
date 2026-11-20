@@ -98,6 +98,10 @@ pub(super) const FEATURES: &[(&str, &str)] = &[
         "design.path_pattern",
         "Repeat the last feature along a sketch's curves or an edge",
     ),
+    (
+        "design.fill_pattern",
+        "Repeat the last feature over a sketch's area or a flat face in a grid or honeycomb",
+    ),
     ("design.scaled", "Scale the last feature"),
     ("design.boolean", "Combine with another body"),
 ];

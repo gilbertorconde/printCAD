@@ -240,6 +240,37 @@ fn op_keys(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<u64> {
         .collect()
 }
 
+/// The fill a pattern's steps make, when they make one.
+fn fills(steps: &[kernel_api::PatternStep]) -> Option<&kernel_api::FillLayout> {
+    steps.iter().find_map(|step| match step {
+        kernel_api::PatternStep::Fill(layout) => Some(layout),
+        _ => None,
+    })
+}
+
+/// The tool each of `originals` (chain indices) built, to copy.
+fn pattern_tools(
+    tools: &[Option<ToolSnapshot>],
+    originals: &[usize],
+) -> Result<Vec<pattern::ToolInstance>, String> {
+    originals
+        .iter()
+        .map(|&orig| {
+            tools
+                .get(orig)
+                .and_then(|t| t.as_ref())
+                .map(|t| pattern::ToolInstance {
+                    tool: match &t.solid {
+                        Some(solid) => pattern::PatternTool::Solid(solid.clone()),
+                        None => pattern::PatternTool::Op(Box::new(t.op.clone())),
+                    },
+                    subtractive: t.subtractive,
+                })
+                .ok_or_else(|| "pattern references an op with no reusable tool solid".to_string())
+        })
+        .collect()
+}
+
 /// Per op, whether a later [`SolidOp::TransformCopies`], or a
 /// [`SolidOp::Pattern`] leaving its original out, names it among its
 /// originals: its tool is built for the copies but leaves the solid as it
@@ -643,6 +674,8 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         // here, and it builds as the transforms they make.
         let resolved;
         let solid_op = match solid_op {
+            // A fill builds its copies itself, its tools built once.
+            SolidOp::Pattern { steps, .. } if fills(steps).is_some() => solid_op,
             SolidOp::Pattern {
                 steps,
                 originals,
@@ -1107,6 +1140,38 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 )
                 .map_err(&err)?
             }
+            SolidOp::Pattern {
+                steps,
+                originals,
+                skipped,
+            } => {
+                let layout = fills(steps).ok_or_else(|| err("a pattern left unresolved".into()))?;
+                let solid = base.ok_or_else(|| err("a fill needs an existing solid".into()))?;
+                if originals.is_empty() {
+                    return Err(err(
+                        "a fill pattern repeats features: give it at least one original".into(),
+                    ));
+                }
+                let instances = pattern_tools(&tools, originals).map_err(&err)?;
+                ops::fill::apply(
+                    &mut model,
+                    solid,
+                    &instances,
+                    layout,
+                    skipped,
+                    |tool, cuts| {
+                        keep(
+                            tool,
+                            if cuts {
+                                BooleanOp::Cut
+                            } else {
+                                BooleanOp::Fuse
+                            },
+                        )
+                    },
+                )
+                .map_err(&err)?
+            }
             SolidOp::TransformCopies {
                 transforms,
                 originals,
@@ -1129,25 +1194,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                         subtractive: false,
                     }]
                 } else {
-                    originals
-                        .iter()
-                        .map(|&orig| {
-                            tools
-                                .get(orig)
-                                .and_then(|t| t.as_ref())
-                                .map(|t| pattern::ToolInstance {
-                                    tool: match &t.solid {
-                                        Some(solid) => pattern::PatternTool::Solid(solid.clone()),
-                                        None => pattern::PatternTool::Op(Box::new(t.op.clone())),
-                                    },
-                                    subtractive: t.subtractive,
-                                })
-                                .ok_or_else(|| {
-                                    err("pattern references an op with no reusable tool solid"
-                                        .into())
-                                })
-                        })
-                        .collect::<Result<_, _>>()?
+                    pattern_tools(&tools, originals).map_err(&err)?
                 };
                 pattern::apply(&mut model, solid, &instances, transforms).map_err(&err)?
             }
@@ -1178,7 +1225,6 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 made.shape
             }
             SolidOp::WithTolerance { .. } => unreachable!("read out of its wrapper above"),
-            SolidOp::Pattern { .. } => unreachable!("resolved into its transforms above"),
         };
 
         warnings.extend(

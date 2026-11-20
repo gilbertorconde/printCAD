@@ -270,6 +270,15 @@ impl DesignWorkbench {
         register(
             context,
             action(
+                "design.fill_pattern",
+                "Fill pattern",
+                "fill-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.multi_transform",
                 "Multi-transform",
                 "multi-transform",
@@ -471,6 +480,7 @@ impl DesignWorkbench {
             | "design.circular_pattern"
             | "design.point_pattern"
             | "design.path_pattern"
+            | "design.fill_pattern"
             | "design.multi_transform"
             | "design.boolean"
             | "design.centre_line" => has_solid,

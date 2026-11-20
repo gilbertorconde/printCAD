@@ -1,7 +1,7 @@
 //! Pattern transforms: the occurrences of linear, circular, point, polar
 //! and path patterns, and the matrices they are made of.
 
-use super::{dot3, edge_probe_of, load_sketch, mirror_plane};
+use super::{dot3, edge_probe_of, face_probe, load_sketch, mirror_plane, sketch_profile};
 use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature};
 use kernel_api::{BooleanOp, SolidOp};
 use wb_sketch::SketchFeature;
@@ -438,6 +438,9 @@ pub(crate) fn occurrence_steps(
                 document, path, layout,
             )?)]);
         }
+        DesignFeature::FillPattern { .. } => {
+            return Ok(vec![PatternStep::Fill(fill_layout(document, feature)?)]);
+        }
         DesignFeature::MultiTransform { steps, .. } => {
             if steps.is_empty() {
                 return Err("a multi-transform needs at least one step".into());
@@ -515,6 +518,230 @@ fn path_layout(
         reversed: layout.reversed,
         align: layout.align,
     })
+}
+
+/// What the kernel fills for fill pattern `feature`: its region and
+/// lattice, where its originals stand together and the outline they
+/// make, in the body's own frame.
+pub(crate) fn fill_layout(
+    document: &Document,
+    feature: &DesignFeature,
+) -> Result<kernel_api::FillLayout, String> {
+    use crate::feature::{FillArea, FillKind};
+    let DesignFeature::FillPattern {
+        originals,
+        region,
+        lattice,
+        spacing,
+        row_spacing,
+        angle_deg,
+        margin,
+        clip,
+        ..
+    } = feature
+    else {
+        return Err("not a fill pattern".into());
+    };
+    if originals.is_empty() {
+        return Err("a fill pattern repeats features: pick at least one to fill with".into());
+    }
+    let region = match region {
+        FillArea::Sketch { sketch, regions } => kernel_api::FillRegion::Profile(
+            sketch_profile(document, *sketch, regions)
+                .map_err(|e| format!("the fill's region sketch: {e}"))?,
+        ),
+        FillArea::Face(face) => kernel_api::FillRegion::Face(face_probe(face)),
+    };
+    let anchor = crate::instances::anchor_of(document, originals).ok_or(
+        "the fill cannot tell where its original stands: fill with a hole, a pocket, a pad \
+         or a primitive",
+    )?;
+    let outline = originals
+        .iter()
+        .flat_map(|id| outline_of(document, *id))
+        .collect();
+    Ok(kernel_api::FillLayout {
+        region,
+        lattice: match lattice {
+            FillKind::Grid => kernel_api::FillLattice::Grid {
+                x: f64::from(*spacing),
+                y: f64::from(*row_spacing),
+            },
+            FillKind::Honeycomb => kernel_api::FillLattice::Honeycomb {
+                pitch: f64::from(*spacing),
+            },
+        },
+        angle_deg: f64::from(*angle_deg),
+        margin: f64::from(*margin),
+        clip: *clip,
+        anchor,
+        outline,
+    })
+}
+
+/// Where fill pattern `feature`'s lattice stands, in its body's frame:
+/// the place its originals stand, the way along its rows and the way
+/// across them, each in the region's plane, turned by its angle.
+pub(crate) fn fill_frame(
+    document: &Document,
+    feature: &DesignFeature,
+) -> Option<([f64; 3], [f64; 3], [f64; 3])> {
+    use crate::feature::FillArea;
+    let DesignFeature::FillPattern {
+        originals,
+        region,
+        angle_deg,
+        ..
+    } = feature
+    else {
+        return None;
+    };
+    let (u, normal) = match region {
+        FillArea::Sketch { sketch, .. } => {
+            let plane = profile::plane_of(&load_sketch(document, *sketch).ok()?.plane);
+            (normalize(plane.x_axis).ok()?, normalize(plane.normal).ok()?)
+        }
+        FillArea::Face(face) => {
+            let normal = normalize(face.normal.map(f64::from)).ok()?;
+            let lay = |axis: [f64; 3]| {
+                let along = dot3(axis, normal);
+                normalize(std::array::from_fn(|k| axis[k] - normal[k] * along)).ok()
+            };
+            let u = lay([1.0, 0.0, 0.0])
+                .filter(|_| normal[0].abs() < 0.999)
+                .or_else(|| lay([0.0, 1.0, 0.0]))?;
+            (u, normal)
+        }
+    };
+    let v = super::cross3(normal, u);
+    let (sin, cos) = f64::from(*angle_deg).to_radians().sin_cos();
+    let along = std::array::from_fn(|k| u[k] * cos + v[k] * sin);
+    let across = std::array::from_fn(|k| v[k] * cos - u[k] * sin);
+    let anchor = crate::instances::anchor_of(document, originals)?;
+    Some((anchor, along, across))
+}
+
+/// How many points stand round a circle of an outline.
+const OUTLINE_ROUND: usize = 24;
+
+/// Points round what feature `id` adds or cuts, in its body's frame: a
+/// hole's widest circle at each of its centres, a sketch's curves, a
+/// primitive's corners or rims. None for a feature with no outline to
+/// read, which the fill takes as the point it stands at.
+fn outline_of(document: &Document, id: FeatureId) -> Vec<[f64; 3]> {
+    let Some(feature) = document.feature_as::<DesignFeature>(id) else {
+        return Vec::new();
+    };
+    let round = |centre: [f64; 3], x: [f64; 3], y: [f64; 3], radius: f64| {
+        (0..OUTLINE_ROUND).map(move |k| {
+            let (sin, cos) = (std::f64::consts::TAU * k as f64 / OUTLINE_ROUND as f64).sin_cos();
+            std::array::from_fn(|i| centre[i] + radius * (cos * x[i] + sin * y[i]))
+        })
+    };
+    match &feature {
+        DesignFeature::Hole { sketch, cut, .. } => {
+            let Ok(sketch) = load_sketch(document, *sketch) else {
+                return Vec::new();
+            };
+            let Ok((plane, _)) = super::hole_plane(document, &feature, &sketch) else {
+                return Vec::new();
+            };
+            let widest = match cut {
+                crate::feature::HoleCut::Counterbore { diameter, .. }
+                | crate::feature::HoleCut::Countersink { diameter, .. }
+                | crate::feature::HoleCut::Spotface { diameter, .. }
+                | crate::feature::HoleCut::Counterdrill { diameter, .. } => *diameter,
+                _ => 0.0,
+            };
+            let radius = f64::from(super::hole_diameter(&feature).max(widest)) * 0.5;
+            super::hole_centers(&sketch.sketch)
+                .into_iter()
+                .flat_map(|[u, v]| {
+                    let centre = std::array::from_fn(|i| {
+                        plane.origin[i] + plane.x_axis[i] * u + plane.y_axis[i] * v
+                    });
+                    round(centre, plane.x_axis, plane.y_axis, radius)
+                })
+                .collect()
+        }
+        DesignFeature::Primitive {
+            kind,
+            placement,
+            attached,
+            ..
+        } => {
+            let placement = attached.as_ref().map_or(*placement, |a| a.placement());
+            primitive_outline(kind, &placement)
+        }
+        other => match other.sketch() {
+            Some(sketch) => load_sketch(document, sketch)
+                .map(|s| {
+                    wb_sketch::render::sketch_polylines(&s.sketch, &s.plane)
+                        .into_iter()
+                        .flatten()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            None => Vec::new(),
+        },
+    }
+}
+
+/// Points round a primitive where `placement` puts it: a box's corners,
+/// the rims of a round one at its base and top.
+fn primitive_outline(
+    kind: &kernel_api::PrimitiveKind,
+    placement: &kernel_api::Placement,
+) -> Vec<[f64; 3]> {
+    use kernel_api::PrimitiveKind as P;
+    let z = normalize(placement.z_axis).unwrap_or([0.0, 0.0, 1.0]);
+    let x = {
+        let along = dot3(placement.x_axis, z);
+        normalize(std::array::from_fn(|i| placement.x_axis[i] - z[i] * along))
+            .unwrap_or([1.0, 0.0, 0.0])
+    };
+    let y = super::cross3(z, x);
+    let at = |u: f64, v: f64, w: f64| -> [f64; 3] {
+        std::array::from_fn(|i| placement.origin[i] + x[i] * u + y[i] * v + z[i] * w)
+    };
+    let rims = |radius: f64, height: f64| {
+        (0..OUTLINE_ROUND)
+            .flat_map(|k| {
+                let (sin, cos) =
+                    (std::f64::consts::TAU * k as f64 / OUTLINE_ROUND as f64).sin_cos();
+                [
+                    at(radius * cos, radius * sin, 0.0),
+                    at(radius * cos, radius * sin, height),
+                ]
+            })
+            .collect::<Vec<_>>()
+    };
+    match *kind {
+        P::Box {
+            length,
+            width,
+            height,
+        } => [0.0, length]
+            .iter()
+            .flat_map(|&u| [0.0, width].map(|v| (u, v)))
+            .flat_map(|(u, v)| [at(u, v, 0.0), at(u, v, height)])
+            .collect(),
+        P::Cylinder { radius, height, .. } => rims(radius, height),
+        P::Tube { outer, height, .. } => rims(outer, height),
+        P::Cone {
+            radius1,
+            radius2,
+            height,
+            ..
+        } => rims(radius1.max(radius2), height),
+        P::Prism {
+            circumradius,
+            height,
+            ..
+        } => rims(circumradius, height),
+        P::Sphere { radius, .. } => rims(radius, 0.0),
+        _ => Vec::new(),
+    }
 }
 
 /// `point` moved by `transform`.
@@ -644,6 +871,9 @@ pub(super) fn plan_pattern(
             originals, skipped, ..
         }
         | DesignFeature::PathPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::FillPattern {
             originals, skipped, ..
         }
         | DesignFeature::MultiTransform {

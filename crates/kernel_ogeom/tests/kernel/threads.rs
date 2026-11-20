@@ -346,3 +346,59 @@ fn a_thread_feature_cuts_its_size_or_is_called_out() {
         "at the end it was picked nearer, into the shaft: {callout:?}"
     );
 }
+/// A cosmetic thread repeated with its shaft by a pattern is called out
+/// on each copy, as a cosmetic hole's copies are; a copy the pattern
+/// skips is not.
+#[test]
+fn a_patterned_cosmetic_thread_is_called_out_on_every_copy() {
+    use super::common::{Features, registry, settle_as_host};
+    use core_document::Document;
+    let (r, h) = (3.0, 4.0);
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Bolts".into()));
+    let shaft = doc.add_in(
+        body,
+        "Shaft",
+        primitive_feature(
+            PrimitiveKind::Cylinder {
+                radius: r,
+                height: h,
+                angle_deg: 360.0,
+            },
+            [0.0; 3],
+        ),
+    );
+    let thread = doc.add_in(body, "Thread", thread_feature(r as f32, "M6", true));
+    let pattern = |skipped: Vec<u32>| wb_design::DesignFeature::LinearPattern {
+        originals: vec![shaft, thread],
+        axis: wb_design::PatternAxis::X,
+        length: 20.0,
+        occurrences: 3,
+        spacing_mode: false,
+        reversed: false,
+        refine: false,
+        boolean_tolerance: None,
+        spacings: Vec::new(),
+        skipped,
+    };
+    let copies = doc.add_in(body, "Pattern", pattern(Vec::new()));
+    settle_as_host(&registry, &mut doc);
+    let mut mouths: Vec<f64> = doc
+        .cosmetic_threads()
+        .iter()
+        .map(|c| {
+            assert_eq!(c.designation, "M6");
+            assert!((c.radius - r).abs() < 1e-3, "{}", c.radius);
+            c.mouth[0]
+        })
+        .collect();
+    mouths.sort_by(f64::total_cmp);
+    assert_eq!(mouths.len(), 3, "{mouths:?}");
+    assert!((mouths[1] - 10.0).abs() < 1e-3 && (mouths[2] - 20.0).abs() < 1e-3);
+
+    doc.set_feature(copies, pattern(vec![2]));
+    doc.mark_feature_dirty(copies);
+    settle_as_host(&registry, &mut doc);
+    assert_eq!(doc.cosmetic_threads().len(), 2, "the skipped copy has none");
+}

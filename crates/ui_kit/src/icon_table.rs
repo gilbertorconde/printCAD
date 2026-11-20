@@ -271,6 +271,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("eye", include_str!("../icons/eye.svg")),
     ("eye-off", include_str!("../icons/eye-off.svg")),
     ("file-document", include_str!("../icons/file-document.svg")),
+    ("fill-pattern", include_str!("../icons/fill-pattern.svg")),
     ("fillet", include_str!("../icons/fillet.svg")),
     ("fit-all", include_str!("../icons/fit-all.svg")),
     ("fit-scan", include_str!("../icons/fit-scan.svg")),
