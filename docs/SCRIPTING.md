@@ -9541,6 +9541,43 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(r.report.Reduce.within_share >= 0.999)
 ```
 
+`pc.mesh.remesh`: Remesh evenly.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `edge_length` (number, optional): Edge length aimed for, mm; the mean edge length
+- `keep_edges` (boolean, optional): Keep sharp edges as creases; true
+- `edge_angle` (number, optional): Turn beyond which an edge is a crease, degrees; 30
+- Returns {feature, name}
+
+Notes:
+
+- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
+- Evens the triangles out to edges near edge_length, the points kept on the surface. With keep_edges, edges turning more than edge_angle stay as creases.
+
+`pc.mesh.subdivide`: Subdivide triangles.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `levels` (number, optional): Times each triangle is split into four, 1 to 4; 1
+- `smooth` (boolean, optional): Move the points toward a smooth surface; false keeps the surface
+- Returns {feature, name}
+
+Notes:
+
+- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
+- Splits every triangle into four, levels times, so the count grows fourfold each level. Without smooth the surface stays exactly as it is; with smooth the points move toward a smooth surface, sharp edges and open rims kept.
+
+`pc.mesh.repair_intersections`: Repair self-intersections.
+
+- `scan` (id, optional): The mesh body; the selected one
+- Returns {feature, name}
+
+Notes:
+
+- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
+- Makes a closed mesh that crosses itself whole: overlapping shells merge into one and the surface inside them goes, as a union of the mesh with itself. An open mesh is refused.
+
+See also `pc.mesh.intersections`.
+
 `pc.mesh.result`: Step results.
 
 - `feature` (id): The mesh step
@@ -9644,6 +9681,47 @@ Notes:
 Notes:
 
 - The plane is xy, xz or yz, or any plane given by its `normal`. It passes through `origin`, or else through the point nearest the mesh's middle that lies `at` mm along the normal from the body's origin (for xy, the height z = `at`), or through the middle itself. Above is the side the normal points to.
+
+`pc.mesh.split`: Split into bodies.
+
+- `scan` (id, optional): The mesh body; the selected one
+- Returns {bodies}
+
+Notes:
+
+- Splits the mesh the scan draws now, its history applied, into one new mesh body per piece: triangles joined where they share a corner, as mesh.inspect counts pieces. The bodies are named after the scan and numbered from 1, take its placement, look and material, and stand where it stood; the scan is hidden. One undo takes it all back. A mesh of one piece is refused.
+
+Example: Split two parts scanned together.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.sketch.rect{sketch = s, x = 20, y = 0, width = 5, height = 5}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = pc.file.temp_path{name = "parts.stl"}
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+assert(pc.mesh.inspect{scan = scan}.pieces == 2)
+local split = pc.mesh.split{scan = scan}
+assert(#split.bodies == 2)
+local a = pc.mesh.inspect{scan = split.bodies[1]}.volume
+local b = pc.mesh.inspect{scan = split.bodies[2]}.volume
+assert(math.abs(math.min(a, b) - 250) < 1 and math.abs(math.max(a, b) - 1000) < 1)
+```
+
+`pc.mesh.intersections`: Find self-intersections.
+
+- `scan` (id, optional): The mesh body; the selected one
+- Returns {pairs, triangles}
+
+Notes:
+
+- Of the mesh the scan draws now: every pair of its triangles that meet away from the corners they share, counted as `pairs`, and the triangles in them by number. The tool shows them on the selected scan, their corners coloured over grey. The geometry kernel cannot search yet: the command fails, saying so, until it can.
+
+See also `pc.mesh.repair_intersections`.
 
 `pc.mesh.deviation`: Edit deviation.
 

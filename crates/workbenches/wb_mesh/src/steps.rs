@@ -3,14 +3,30 @@
 use super::*;
 use kernel_api::MeshFairing;
 
-pub(super) const TOOLS: [(&str, &str, &str); 6] = [
+pub(super) const TOOLS: [(&str, &str, &str); 9] = [
     ("mesh.fill", "Fill holes", "triangle"),
     ("mesh.smooth", "Smooth", "workbench-mesh"),
     ("mesh.offset", "Offset", "workbench-mesh"),
     ("mesh.reduce", "Reduce", "triangle"),
+    ("mesh.remesh", "Remesh", "grid"),
+    ("mesh.subdivide", "Subdivide", "triangle"),
+    (
+        "mesh.repair_intersections",
+        "Repair self-intersections",
+        "check-geometry",
+    ),
     ("mesh.boolean", "Boolean with solids", "boolean"),
     ("mesh.thicken", "Shell / hollow", "thickness"),
 ];
+
+/// Whether `id` is one of `TOOLS`.
+pub(super) fn is_tool(id: &str) -> bool {
+    TOOLS.iter().any(|(tool, _, _)| *tool == id)
+}
+
+/// The most times a subdivision splits each triangle: four levels make
+/// 256 of one.
+pub(super) const MAX_LEVELS: f64 = 4.0;
 
 /// Each undirected geometric edge counts once, including split corners.
 fn mean_edge(mesh: &TriMesh) -> f64 {
@@ -96,6 +112,28 @@ pub(super) fn make(
             region: region(a, ctx, body, true)?,
             distance: a.opt_number("distance")?.unwrap_or(0.1),
         },
+        "mesh.remesh" => MeshOp::Remesh {
+            edge_length: positive("edge_length", mean_edge(mesh))?,
+            keep_edges_deg: if a.opt_bool("keep_edges")?.unwrap_or(true) {
+                Some(a.opt_number("edge_angle")?.unwrap_or(30.0))
+            } else {
+                None
+            },
+        },
+        "mesh.subdivide" => {
+            let levels = a.opt_number("levels")?.unwrap_or(1.0);
+            if levels.fract() != 0.0 || !(1.0..=MAX_LEVELS).contains(&levels) {
+                return Err(CommandError::bad(
+                    "levels",
+                    format!("is a whole number from 1 to {MAX_LEVELS}"),
+                ));
+            }
+            MeshOp::Subdivide {
+                levels: levels as u32,
+                smooth: a.opt_bool("smooth")?.unwrap_or(false),
+            }
+        }
+        "mesh.repair_intersections" => MeshOp::RepairIntersections,
         "mesh.reduce" => {
             let limit = positive("triangle_limit", 50_000.0)?;
             if limit.fract() != 0.0 || limit > u32::MAX as f64 {
@@ -228,6 +266,52 @@ fn register_steps(
                 "Maximum triangles; 50000",
             )
             .returns("{feature, name}"),
+        commands::made,
+    );
+    commands::on_scan(
+        t,
+        scan(CommandSpec::new("mesh.remesh", "Remesh evenly"))
+            .optional(
+                "edge_length",
+                ParamKind::Number,
+                "Edge length aimed for, mm; the mean edge length",
+            )
+            .optional(
+                "keep_edges",
+                ParamKind::Bool,
+                "Keep sharp edges as creases; true",
+            )
+            .optional(
+                "edge_angle",
+                ParamKind::Number,
+                "Turn beyond which an edge is a crease, degrees; 30",
+            )
+            .returns("{feature, name}"),
+        commands::made,
+    );
+    commands::on_scan(
+        t,
+        scan(CommandSpec::new("mesh.subdivide", "Subdivide triangles"))
+            .optional(
+                "levels",
+                ParamKind::Number,
+                "Times each triangle is split into four, 1 to 4; 1",
+            )
+            .optional(
+                "smooth",
+                ParamKind::Bool,
+                "Move the points toward a smooth surface; false keeps the surface",
+            )
+            .returns("{feature, name}"),
+        commands::made,
+    );
+    commands::on_scan(
+        t,
+        scan(CommandSpec::new(
+            "mesh.repair_intersections",
+            "Repair self-intersections",
+        ))
+        .returns("{feature, name}"),
         commands::made,
     );
     t.add_on_by_id(

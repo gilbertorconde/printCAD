@@ -50,6 +50,7 @@ impl Document {
             },
             Op::CreateBody { id, .. } => Op::RemoveBody { id: *id },
             Op::CreateLinkedCopy { id, .. } => Op::RemoveBody { id: *id },
+            Op::CreateMeshBody { id, .. } => Op::RemoveBody { id: *id },
             Op::CreateLinkedBody { id, .. } => Op::RemoveBody { id: *id },
             Op::SetBodyLink { id, .. } => Op::SetBodyLink {
                 id: *id,
@@ -385,6 +386,32 @@ impl Document {
                     ..Body::new(*id, name.clone(), *created_at)
                 });
                 self.refresh_copy(*id);
+            }
+            Op::CreateMeshBody {
+                id,
+                name,
+                created_at,
+                asset,
+                mesh,
+            } => {
+                self.assets.insert(asset.id, asset.clone());
+                self.bodies.push(Body::new(*id, name.clone(), *created_at));
+                match rmp_serde::from_slice::<TriMesh>(mesh.as_slice()) {
+                    Ok(mesh) => self.set_imported_geometry(
+                        *id,
+                        ImportedGeometry {
+                            bounds_mm: mesh.bounds(),
+                            mesh: std::sync::Arc::new(mesh),
+                            mesh_path: None,
+                            source_asset: Some(asset.id),
+                            revision: 0,
+                            brep_blob_path: None,
+                            face_colors_path: None,
+                            health: None,
+                        },
+                    ),
+                    Err(e) => tracing::warn!("the mesh of body {name} did not read: {e}"),
+                }
             }
             Op::CreateLinkedBody {
                 id,

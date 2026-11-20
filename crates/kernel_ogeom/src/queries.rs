@@ -80,6 +80,12 @@ impl KernelQueries for OgeomQueries {
         crate::mesh_edit::build(start, ops)
     }
 
+    fn self_intersections(&self, _mesh: &TriMesh) -> KernelResult<Vec<[u32; 2]>> {
+        Err(kernel_api::KernelError::Unsupported(
+            "the kernel cannot find where a mesh crosses itself yet".into(),
+        ))
+    }
+
     fn write_mesh(&self, mesh: &TriMesh, format: &str) -> KernelResult<Vec<u8>> {
         crate::mesh_solids::write(mesh, format).map_err(other)
     }

@@ -309,6 +309,15 @@ fn step(
             }
             .into()
         }
+        MeshOp::Remesh { .. } => {
+            return Err("the kernel cannot remesh a mesh to an edge length yet".into());
+        }
+        MeshOp::Subdivide { .. } => {
+            return Err("the kernel cannot subdivide a mesh yet".into());
+        }
+        MeshOp::RepairIntersections => {
+            return Err("the kernel cannot resolve where a mesh crosses itself yet".into());
+        }
         MeshOp::Cut {
             origin,
             normal,

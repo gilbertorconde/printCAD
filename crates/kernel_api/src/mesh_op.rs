@@ -74,6 +74,26 @@ pub enum MeshOp {
         tolerance: f64,
         triangle_limit: usize,
     },
+    /// Remeshed to even triangles whose edges are near `edge_length`, the
+    /// points kept on the surface; edges turning more than
+    /// `keep_edges_deg` stay as creases.
+    Remesh {
+        edge_length: f64,
+        #[serde(default)]
+        keep_edges_deg: Option<f64>,
+    },
+    /// Each triangle split into four, `levels` times: the surface as it
+    /// is, or with `smooth` its points moved toward a smooth surface,
+    /// sharp edges and open rims kept.
+    Subdivide {
+        levels: u32,
+        #[serde(default)]
+        smooth: bool,
+    },
+    /// A closed mesh that crosses itself made whole: overlapping shells
+    /// merged and the surface inside them dropped, as a union of the mesh
+    /// with itself.
+    RepairIntersections,
     /// Cut by the plane through `origin` square to `normal`, the side
     /// `normal` points to kept when `keep_above`; with `close`, every loop
     /// of the cut capped flat, gaps in its rim up to `bridge` closed.

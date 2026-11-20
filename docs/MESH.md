@@ -72,6 +72,28 @@ RMS. The triangle limit takes priority: the task explicitly reports
 when reaching it exceeds tolerance, or when a safe reduction cannot
 reach the limit.
 
+**Remesh** evens the triangles out: a scan's slivers beside dense
+patches become triangles with edges near **Edge length** (the mean edge
+length to start with), the points kept on the surface. **Keep sharp
+edges** (on, at 30°) keeps the edges that turn more than **Edge angle**
+as creases.
+
+**Subdivide** splits every triangle into four, **Levels** times (1 to
+4), for a finer mesh to smooth, offset or press a texture into. The
+surface stays as it is; with **Smooth the surface** on, the points move
+toward a smooth surface, sharp edges and open rims kept.
+
+**Repair self-intersections** makes a closed mesh that crosses itself
+whole: shells exported overlapping, or a fold an edit left, are merged
+into one surface and what lay inside them goes, as a union of the mesh
+with itself. A slicer prints such a mesh wrongly, twice over where the
+shells overlap or not at all. An open mesh is refused: fill its holes
+first.
+
+The geometry kernel cannot remesh, subdivide or repair crossings yet.
+Each step is added and kept, its row says why it does not build, and
+the scan shows the mesh before it until the kernel can.
+
 **Boolean with solids** subtracts, adds or intersects a bounded solid:
 a solid body, placed where it sits against the scan, or an Inspection
 element selected before the tool (a fitted cylinder, cone or sphere, over
@@ -98,6 +120,20 @@ A step that cannot run (a delete with nothing in its region, a filter
 that would remove every piece) shows its error on its row. The scan keeps
 the mesh from before it.
 
+## Split into bodies
+
+**Split into bodies** turns a mesh body made of several loose pieces
+(parts scanned together, a plate of prints) into one mesh body per piece.
+A piece is the triangles joined where they share a corner, as
+`pc.mesh.inspect` counts its pieces. It splits the mesh as the body draws
+it now, its steps applied. Each new body is named after the one split and
+numbered ("Scan 1", "Scan 2", ...), stands where it stood and takes its
+placement, look, material and scan setting; the body split is hidden,
+its history kept. A new body's mesh is its own, so its history starts
+there. It is one step of undo: undoing it gives back the one body. A mesh
+of one piece has nothing to split and is refused.
+`pc.mesh.split{scan = s}` answers the new bodies.
+
 ## Deviation of the edit
 
 **Deviation of the edit** colours the scan by how far its edits moved its
@@ -106,6 +142,17 @@ percentile, and the legend gives the largest and the RMS movement. Surface an ed
 a bridge) is grey, and the legend gives its share. A cut moves nothing and adds its cap. Use it to see
 that an edit touched only what it meant to.
 `pc.mesh.deviation{scan = s}` answers the same numbers.
+
+## Self-intersections
+
+**Self-intersections** (in the Inspect group) finds where the selected
+mesh crosses itself: the pairs of triangles that meet away from the
+corners they share. Their corners are coloured over a grey mesh, and the
+log and the legend give the number of pairs and of triangles; a mesh
+that crosses nowhere says so. Click it again to hide the map.
+`pc.mesh.intersections{scan = s}` answers `pairs` and the `triangles` by
+number. The geometry kernel cannot search yet, so for now the tool says
+so in the log and turns itself off, and the command fails.
 
 ## Trim to scan
 

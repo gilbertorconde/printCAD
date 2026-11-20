@@ -18,6 +18,10 @@ fn shape_asset(name: &str, role: &str, body: BodyId) -> AssetReference {
     )
 }
 
+/// The metadata key naming the body a mesh asset was made for, which
+/// goes with that body.
+pub(crate) const MESH_OF: &str = "mesh_of";
+
 impl Document {
     /// Keep the body's solid as it stands (from an import, a mesh
     /// conversion or a repair) as the base its feature history starts
@@ -51,6 +55,29 @@ impl Document {
             self.record_and_apply(op::DocumentOp::SetMeshStart { id: body, on });
         }
         possible
+    }
+
+    /// A new mesh body named `name` holding `mesh`, in its own frame, as
+    /// a mesh body read from a file holds its triangles; undoable, unlike
+    /// an import. `None` when the mesh has no triangles or does not pack.
+    pub fn create_mesh_body(&mut self, name: String, mesh: &TriMesh) -> Option<BodyId> {
+        if mesh.indices.is_empty() {
+            return None;
+        }
+        let packed = rmp_serde::to_vec(mesh).ok()?;
+        let id = BodyId::new();
+        self.record_and_apply(op::DocumentOp::CreateMeshBody {
+            id,
+            asset: AssetReference::new(
+                format!("assets/{}.stl", Uuid::new_v4()),
+                AssetType::Stl,
+                serde_json::json!({ "source_path": format!("{name}.stl"), MESH_OF: id.0 }),
+            ),
+            name,
+            created_at: epoch_ms_now(),
+            mesh: op::BlobPayload::new(packed),
+        });
+        Some(id)
     }
 
     /// The bounded solid a feature offers a mesh boolean, in the

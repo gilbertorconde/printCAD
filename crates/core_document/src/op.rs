@@ -114,6 +114,17 @@ pub enum DocumentOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mirror: Option<crate::MirrorPlane>,
     },
+    /// A mesh body holding a mesh the document made itself (a piece split
+    /// off another mesh body): `mesh` a `TriMesh` packed as a `.prtcad`
+    /// mesh entry is, in the body's own frame, read under `asset`, which
+    /// carries no bytes.
+    CreateMeshBody {
+        id: BodyId,
+        name: String,
+        created_at: i64,
+        asset: AssetReference,
+        mesh: BlobPayload,
+    },
     /// A part linked from another printCAD file.
     CreateLinkedBody {
         id: BodyId,

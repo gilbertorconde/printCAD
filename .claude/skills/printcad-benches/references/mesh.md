@@ -14,8 +14,20 @@
   measures the mesh now to its start, a triangle whose middle lies off the
   start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
-  `mesh.offset`, `mesh.reduce`, `mesh.boolean`, `mesh.thicken`,
-  `mesh.inspect`, `mesh.result` and `mesh.set`. `solids.rs`: Boolean
+  `mesh.offset`, `mesh.reduce`, `mesh.remesh`, `mesh.subdivide`,
+  `mesh.repair_intersections` (these three refused by the adapter until
+  the kernel has them), `mesh.boolean`, `mesh.thicken`,
+  `mesh.intersections` (`crossings.rs`: `KernelQueries::self_intersections`
+  on the drawn mesh, also a toggle drawing the selected body's crossing
+  triangles as a `scalar_maps` map, found on a thread; `on_frame` logs
+  the count or the refusal once and a refusal turns the toggle off),
+  `mesh.inspect`, `mesh.result` and `mesh.set`. `pieces.rs`: Split into
+  bodies (`mesh.split`): the drawn mesh's pieces (corners at one point
+  joined, as `inspect` counts them), each a new mesh body through
+  `Document::create_mesh_body` (op `CreateMeshBody`, the mesh packed in
+  the op and its asset carrying no bytes, undone by `RemoveBody`, which
+  takes the asset made for the body with it), the source's placement and
+  look copied and the source hidden. `solids.rs`: Boolean
   (`MeshOp::Boolean`, its operand a `kernel_api::MeshOperand` snapshot
   taken when the step is made: a body's solid as native text with its
   placement, or the bounded solid a feature's owner offers through

@@ -115,6 +115,18 @@ fn clean_up(t: &mut CommandTable<MeshWorkbench>) {
     );
     on_scan(
         t,
+        scan(CommandSpec::new(SPLIT, "Split into bodies")).returns("{bodies}"),
+        split,
+    );
+    on_scan(
+        t,
+        scan(CommandSpec::new(CROSSINGS, "Find self-intersections"))
+            .returns("{pairs, triangles}")
+            .read_only(),
+        intersections,
+    );
+    on_scan(
+        t,
         scan(CommandSpec::new(DEVIATION, "Edit deviation"))
             .returns("{max, rms, p99, added}")
             .read_only(),
@@ -189,6 +201,34 @@ fn cut(
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let op = solids::cut(a, &now)?;
     add_step(ctx, body, "Cut", op)
+}
+
+fn split(
+    _: &str,
+    _a: &Args,
+    ctx: &mut WorkbenchRuntimeContext,
+    body: BodyId,
+    _start: &TriMesh,
+) -> CommandResult {
+    Ok(pieces::answer(&pieces::split(ctx, body)?))
+}
+
+fn intersections(
+    _: &str,
+    _a: &Args,
+    ctx: &mut WorkbenchRuntimeContext,
+    body: BodyId,
+    _start: &TriMesh,
+) -> CommandResult {
+    let (drawn, _) = ctx
+        .document
+        .local_geometry(body)
+        .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to search with"))?;
+    let pairs = crossings::find(kernel, &drawn).map_err(CommandError::failed)?;
+    Ok(crossings::reading(&pairs))
 }
 
 fn deviation_of_edit(

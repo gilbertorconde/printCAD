@@ -261,6 +261,34 @@ impl MeshWorkbench {
                     },
                 ),
             ]),
+            MeshOp::Remesh {
+                edge_length,
+                keep_edges_deg,
+            } => {
+                out.extend([
+                    mm("/op/Remesh/edge_length", "Edge length", *edge_length),
+                    check("edges", "Keep sharp edges", keep_edges_deg.is_some()),
+                ]);
+                if let Some(angle) = keep_edges_deg {
+                    out.push(number(
+                        "/op/Remesh/keep_edges_deg",
+                        "Edge angle",
+                        *angle,
+                        Dim::Angle,
+                        Some(0.0),
+                    ));
+                }
+            }
+            MeshOp::Subdivide { levels, smooth } => out.extend([
+                number(
+                    "/op/Subdivide/levels",
+                    "Levels",
+                    f64::from(*levels),
+                    Dim::Number,
+                    Some(1.0),
+                ),
+                check("smooth", "Smooth the surface", *smooth),
+            ]),
             MeshOp::Reduce {
                 tolerance,
                 triangle_limit,
@@ -381,6 +409,8 @@ impl MeshWorkbench {
                 };
                 *slot = if id.ends_with("triangle_limit") {
                     json!(value.max(1.0).round() as u64)
+                } else if id.ends_with("levels") {
+                    json!(value.clamp(1.0, steps::MAX_LEVELS).round() as u32)
                 } else {
                     json!(value)
                 };
@@ -453,9 +483,15 @@ impl MeshWorkbench {
                     _ => return,
                 }
             }
-            PanelEvent::Toggle { id, on } if id == "edges" => {
-                if let MeshOp::Smooth { keep_edges_deg, .. } = &mut f.op {
+            PanelEvent::Toggle { id, on } if id == "edges" => match &mut f.op {
+                MeshOp::Smooth { keep_edges_deg, .. } | MeshOp::Remesh { keep_edges_deg, .. } => {
                     *keep_edges_deg = on.then_some(30.0);
+                }
+                _ => return,
+            },
+            PanelEvent::Toggle { id, on } if id == "smooth" => {
+                if let MeshOp::Subdivide { smooth, .. } = &mut f.op {
+                    *smooth = *on;
                 }
             }
             PanelEvent::Toggle { id, on } if id == "close" => {

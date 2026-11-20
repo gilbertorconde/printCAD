@@ -86,6 +86,31 @@ reported, not hidden.
     assert(r.report.Reduce.within_share >= 0.999)
 ```
 
+## mesh.remesh, mesh.subdivide, mesh.repair_intersections
+
+The geometry kernel cannot make these yet: the step is added and kept, its
+row says why it does not build, and the mesh before it is shown until the
+kernel can.
+
+## mesh.repair_intersections
+
+Makes a closed mesh that crosses itself whole: overlapping shells merge into
+one and the surface inside them goes, as a union of the mesh with itself.
+An open mesh is refused.
+
+See also: mesh.intersections
+
+## mesh.remesh
+
+Evens the triangles out to edges near edge_length, the points kept on the
+surface. With keep_edges, edges turning more than edge_angle stay as creases.
+
+## mesh.subdivide
+
+Splits every triangle into four, levels times, so the count grows fourfold
+each level. Without smooth the surface stays exactly as it is; with smooth
+the points move toward a smooth surface, sharp edges and open rims kept.
+
 ## mesh.result
 
 Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999,
