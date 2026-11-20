@@ -106,8 +106,24 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   (`<log>.blobs`, imports' bytes by hash) keeps what a kept generation
   names: `prune_blobs` runs when such a mark drops generations, on a
   rebase and when the log is homed. The unhomed log
-  (`unhomed_oplog_for(socket)`) goes when its last client leaves with
-  `Leave`; after a crash it stays for the next daemon on the socket. A client with more than
+  (`unhomed_oplog_for(socket)`, with a `<log>.socket` note naming an
+  untitled socket) goes when its last client leaves with
+  `Leave`; after a crash it stays for the next daemon on the socket. An
+  untitled tab's first save moves it to its file's daemon without a
+  `Leave` (`DocumentSession::move_to_server`, `Connection::untitled_log`)
+  and sends `AdoptLog { socket }` before each `SaveDocument` until one
+  completes; the file's daemon waits (bounded) for the untitled daemon to
+  exit, then carries its log into the document's ahead of the save's mark
+  (`set_oplog_home(document, earlier)`, `carry_log`). A tab closed with
+  the save never written drops it (`discard_untitled_log`). After a crash
+  `untitled_logs` lists the untitled logs no daemon serves that hold edits
+  and do not begin with a `rebased` line (what a `Rebase` writes in an
+  unhomed log: its edits apply to a recovered copy, not an empty
+  document); `RestoreLog { socket }` on a new untitled tab's daemon
+  carries the log into its own and orders its batches like
+  `RestoreUnsaved`. The app's recovery list (`app/recovery.rs`,
+  `Source::UntitledLog`) pairs such a log with its tab's autosave copy
+  (`socket_path_for_untitled_of(pid, tab)`) and offers only the log. A client with more than
   `--queue-limit` (default 4096) unwritten
   messages is disconnected; an open's file and tail never count. An
   `AddFeature` or `SetFeatureBody` whose `seq` another feature holds takes

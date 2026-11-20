@@ -69,6 +69,8 @@ impl DocumentServer for DirectFiles {
             | ClientMessage::Presence(_)
             | ClientMessage::RestoreUnsaved
             | ClientMessage::DiscardUnsaved
+            | ClientMessage::AdoptLog { .. }
+            | ClientMessage::RestoreLog { .. }
             | ClientMessage::Leave => {}
             ClientMessage::Ops { ops, .. } => {
                 self.ops_dropped += ops.len() as u64;

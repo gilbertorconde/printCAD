@@ -224,7 +224,10 @@ document, saved or letting its edits go, the unsaved edits are gone with
 them, and the next server starts from the file. An imported file's bytes
 are kept once, beside the log, for as long as a part of the log still
 names them. A document that never had a file keeps its log in the runtime
-folder until its last copy closes it or saves it under a name.
+folder until its last copy closes it or saves it under a name. Its first
+save goes to the server of its new file, which takes that log into the
+document's log ahead of the save's mark, so the document's log begins with
+its first edit and counts those edits saved.
 
 When the application crashed, or its server stopped without warning,
 the unsaved edits stay in the log. The start page lists such documents
@@ -232,6 +235,17 @@ under Recover unsaved work, and opening one shows a card offering the
 edits back: Restore sends them through the server to every copy, after
 what the file holds; Discard lets them go. Saving the document without
 restoring them lets them go too.
+
+A document that never had a file leaves its log in the runtime folder
+when the application crashes, and the start page offers it under Recover
+unsaved work as well. Recover opens a new untitled tab whose server takes
+the log up and sends its edits to the tab as it sends any edit; Discard
+removes it. The log holds every edit the server received, the tab's
+autosave copy only those up to the last autosave, so where both are left
+only the log is offered and the copy goes with it. A log that begins at a
+recovered copy put in the tab cannot bring the session back by itself and
+is not offered; its copy is. The runtime folder is emptied when the system
+restarts, so after a restart the autosave copy is what comes back.
 
 A copy that stops taking the server's messages is disconnected once
 thousands are waiting for it.
