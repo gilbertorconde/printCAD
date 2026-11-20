@@ -12,6 +12,7 @@ and macOS. It is written in Rust.
 | Workbenches | `wb_sketch`, `wb_design`, `wb_surface`, `wb_assembly` | Tools and features, behind the `Workbench` trait |
 | Workbench packages | `wb_wasm`, `bench_api` | Workbenches built for WebAssembly, run sandboxed, and what they exchange with the app |
 | Workbench registry | `workbenches`, `bench_fixtures` | Registers the built-in workbenches and installed packages, builds the calibration coupon; ready-made scenes for the bench hooks and tests |
+| Sketch model | `sketch_model` | The sketch as data the sketcher, Design, Surface and import share: geometry, constraints and solving, profiles and regions, text, generated profiles |
 | Sketch solver | `sketch_solver` | The 2D constraint solver: a numerical problem in, a solution out, no sketch or document |
 | Scripting | `scripting` | The Lua engine scripts and the console run in |
 | AI agents | `agents` | Agent Client Protocol client and MCP server core |

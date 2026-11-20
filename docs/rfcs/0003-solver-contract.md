@@ -105,7 +105,7 @@ conversion. An exhaustive match enforces all 42 relation mappings. Inactive and
 reference dimensions are filtered here; unresolved stored references retain
 the application's zero-row compatibility through trusted `compile_system`.
 
-`wb_sketch::solver_report::compilation_reports` inspects every stored relation:
+`sketch_model::solver::report::compilation_reports` inspects every stored relation:
 inactive/reference/compiled/no-equations disposition, typed equation indices,
 strict semantic input errors, and omitted pair indices for partial Offset
 relations. Valid zero-row relations and malformed saved relations are observable
@@ -147,7 +147,7 @@ degree, knots and rational/periodic evaluation contracts.
 
 ## Captured corpus and checks
 
-`wb_sketch/src/solver/migration.rs` builds 24 deterministic input scenes;
+`sketch_model/src/solver/migration.rs` builds 24 deterministic input scenes;
 `migration.json` stores the complete inputs and application answers.
 It records ordinary/held/freedom compilation, held-attempt outcome,
 final outcome, iterations when available, stored geometry and constraint
@@ -167,11 +167,11 @@ fallback. Capture once before changing the solver and review the diff;
 do not recapture to make a changed solver pass.
 
 ```sh
-PRINTCAD_CAPTURE_SOLVER_CORPUS=1 cargo test -p wb_sketch --release \
-  --no-default-features --locked --lib \
+PRINTCAD_CAPTURE_SOLVER_CORPUS=1 cargo test -p sketch_model --release \
+  --locked --lib \
   solver::migration::captured_application_corpus -- --exact
-cargo test -p wb_sketch --release --no-default-features --locked --lib solver::
-cargo test -p wb_sketch --release --no-default-features --locked --lib \
+cargo test -p sketch_model --release --locked --lib solver::
+cargo test -p sketch_model --release --locked --lib \
   solver::migration::measure_migration_baseline -- --ignored --exact --nocapture
 ```
 
