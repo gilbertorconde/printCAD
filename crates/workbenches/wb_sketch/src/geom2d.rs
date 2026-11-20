@@ -5,7 +5,6 @@ use glam::DVec2;
 
 use crate::curves::END_SLACK;
 use crate::sketch::{GeometryElement, Sketch, Vec2D};
-use crate::snap::arc_angles;
 
 /// Below this the two directions/points are treated as coincident.
 const EPS: f64 = 1e-6;
@@ -290,6 +289,18 @@ pub(crate) fn raw_hits(a: &Prim, b: &Prim) -> Vec<DVec2> {
             Prim::Arc { c: c2, r: r2, .. } | Prim::Circle { c: c2, r: r2 },
         ) => circle_circle(*c1, *r1, *c2, *r2),
     }
+}
+
+/// CCW start angle and sweep (0..TAU) for an arc from `start_vec` to
+/// `end_vec` (both relative to the center).
+pub fn arc_angles(start_vec: DVec2, end_vec: DVec2) -> (f64, f64) {
+    let start_angle = start_vec.y.atan2(start_vec.x);
+    let end_angle = end_vec.y.atan2(end_vec.x);
+    let mut sweep = end_angle - start_angle;
+    while sweep <= 0.0 {
+        sweep += std::f64::consts::TAU;
+    }
+    (start_angle, sweep)
 }
 
 #[cfg(test)]

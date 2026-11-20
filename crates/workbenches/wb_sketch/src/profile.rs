@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use kernel_api::{ProfilePlane, ProfileSegment, ProfileWire};
 use uuid::Uuid;
 
+use crate::geom2d::arc_angles;
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
-use crate::snap::arc_angles;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProfileError {

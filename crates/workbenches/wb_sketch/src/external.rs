@@ -9,7 +9,6 @@
 //! has changed: in place where the shapes are the same kinds, keeping the
 //! constraints that refer to them, and afresh where they are not.
 
-use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 
 use core_document::{BodyId, FeatureId, InputResult, WorkbenchRuntimeContext};
@@ -20,7 +19,7 @@ use crate::boundary::widen3;
 use crate::external_follow::{external_stamp, lost_external_elements, project_source};
 use crate::sketch::{
     Arc, BSpline, Circle, Conic, ConicKind, Ellipse, ExternalSource, GeometryElement, Line, Point,
-    Sketch, Vec2D,
+    Sketch, Vec2D, external_groups,
 };
 use crate::{SketchWorkbench, commands, sketch};
 
@@ -325,41 +324,6 @@ fn update(sketch: &mut Sketch, group: &[Uuid], projected: &ProjectedEdge) -> boo
         _ => return false,
     }
     true
-}
-
-/// The external elements grouped by the edge they came from, each group
-/// in the order its elements were made.
-pub fn groups(sketch: &Sketch) -> Vec<(ExternalSource, Vec<Uuid>)> {
-    let key = |s: &ExternalSource| {
-        let mut k = s.body.as_u128().to_le_bytes().to_vec();
-        for c in s.point.iter().chain(&s.direction) {
-            k.extend(c.to_bits().to_le_bytes());
-        }
-        k.push(u8::from(s.section));
-        k.push(u8::from(s.defining));
-        match s.reference {
-            Some(crate::sketch::ExternalReference::SketchElement { sketch, element }) => {
-                k.extend(sketch.as_u128().to_le_bytes());
-                k.extend(element.as_u128().to_le_bytes());
-            }
-            Some(crate::sketch::ExternalReference::Datum { datum }) => {
-                k.extend(datum.as_u128().to_le_bytes());
-            }
-            None => {}
-        }
-        k
-    };
-    let mut by_source: BTreeMap<Vec<u8>, (ExternalSource, Vec<Uuid>)> = BTreeMap::new();
-    for element in &sketch.geometry {
-        if let Some(source) = sketch.external.get(&element.id()) {
-            by_source
-                .entry(key(source))
-                .or_insert_with(|| (*source, Vec::new()))
-                .1
-                .push(element.id());
-        }
-    }
-    by_source.into_values().collect()
 }
 
 /// Move one source's elements to `projected` where they are the same kinds
@@ -697,7 +661,7 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return;
         };
-        let groups = groups(&feature.sketch);
+        let groups = external_groups(&feature.sketch);
         if groups.is_empty() {
             return;
         }
@@ -758,7 +722,7 @@ mod tests {
             end: [10.0, y],
         };
         add(&mut sketch, &edge(0.0), source());
-        let (_, group) = groups(&sketch).remove(0);
+        let (_, group) = external_groups(&sketch).remove(0);
         assert!(already_holds(&sketch, &group, &[edge(0.0)]));
         assert!(!already_holds(&sketch, &group, &[edge(1.0)]));
         let circle = ProjectedEdge::Circle {
@@ -800,7 +764,7 @@ mod tests {
             .expect("the spline goes across as a NURBS segment");
         assert_eq!(nurbs, (2, vec![1.0, 0.5, 1.0]));
 
-        let group = groups(&sketch)[0].1.clone();
+        let group = external_groups(&sketch)[0].1.clone();
         assert!(update(&mut sketch, &group, &spline(1.0)), "in place");
         let GeometryElement::BSpline(b) = sketch.get_geometry(group[0]).unwrap() else {
             panic!("still a spline");
@@ -855,7 +819,7 @@ mod tests {
             },
             source(),
         );
-        let (src, group) = groups(&sketch).remove(0);
+        let (src, group) = external_groups(&sketch).remove(0);
         let line_id = group[0];
         refresh_group(
             &mut sketch,
@@ -883,9 +847,9 @@ mod tests {
             }],
         );
         assert!(sketch.get_geometry(line_id).is_none());
-        assert_eq!(groups(&sketch).len(), 1);
+        assert_eq!(external_groups(&sketch).len(), 1);
         assert!(matches!(
-            sketch.get_geometry(groups(&sketch)[0].1[0]),
+            sketch.get_geometry(external_groups(&sketch)[0].1[0]),
             Some(GeometryElement::Circle(_))
         ));
     }
@@ -925,7 +889,7 @@ mod tests {
                 ..face
             },
         );
-        let all = groups(&sketch);
+        let all = external_groups(&sketch);
         assert_eq!(all.len(), 2);
         let (src, group) = all.into_iter().find(|(s, _)| s.section).unwrap();
         assert_eq!(group.len(), 2);
@@ -958,7 +922,7 @@ mod tests {
             }],
         );
         assert!(group.iter().all(|id| sketch.get_geometry(*id).is_none()));
-        let (_, now) = groups(&sketch)
+        let (_, now) = external_groups(&sketch)
             .into_iter()
             .find(|(s, _)| s.section)
             .unwrap();
@@ -1002,7 +966,7 @@ mod tests {
         for (edge, kind, start) in cases {
             let mut sketch = Sketch::new("t");
             assert_eq!(add(&mut sketch, &edge(0.0), source()), 1);
-            let (_, group) = groups(&sketch).remove(0);
+            let (_, group) = external_groups(&sketch).remove(0);
             let Some(GeometryElement::Conic(conic)) = sketch.get_geometry(group[0]).cloned() else {
                 panic!("{:?}", sketch.get_geometry(group[0]));
             };
@@ -1025,7 +989,7 @@ mod tests {
         // A parabola's arc is not a hyperbola's, so it is made again.
         let mut sketch = Sketch::new("t");
         add(&mut sketch, &parabola(0.0), source());
-        let (_, group) = groups(&sketch).remove(0);
+        let (_, group) = external_groups(&sketch).remove(0);
         assert!(!refresh_in_place(&mut sketch, &group, &[hyperbola(0.0)]));
     }
 }

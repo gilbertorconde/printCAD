@@ -1445,7 +1445,7 @@ pub fn add_on_path(
                 sketch
                     .get_geometry(*id)
                     .and_then(|g| {
-                        crate::snap::distance_to_element(sketch, g, Vec2D::from_glam(spot))
+                        crate::shape::distance_to_element(sketch, g, Vec2D::from_glam(spot))
                     })
                     .unwrap_or(f64::MAX)
             };

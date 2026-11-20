@@ -3,10 +3,10 @@
 //! carries the shape along. The holds say nothing twice.
 
 use super::Harness;
+use wb_sketch::shape::distance_to_element;
 use wb_sketch::sketch::{
     Conic, ConicKind, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
 };
-use wb_sketch::snap::distance_to_element;
 
 /// Each tool's clicks on a sketch holding a level line along y = 10, an
 /// upright one along x = 20 and a point at (0, -6); the clicks on them

@@ -1112,7 +1112,7 @@ fn line_under_cursor(sketch: &Sketch, cursor: Vec2D, tol: f64) -> Option<(Vec2D,
         .iter()
         .filter_map(|g| match g {
             GeometryElement::Line(l) => {
-                let d = snap::distance_to_element(sketch, g, cursor)?;
+                let d = crate::shape::distance_to_element(sketch, g, cursor)?;
                 (d <= tol).then(|| {
                     (
                         sketch.point_position(l.start),

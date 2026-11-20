@@ -2211,6 +2211,42 @@ impl ConstraintKind {
     }
 }
 
+/// The external elements grouped by the edge they came from, each group
+/// in the order its elements were made.
+pub fn external_groups(sketch: &Sketch) -> Vec<(ExternalSource, Vec<Uuid>)> {
+    let key = |s: &ExternalSource| {
+        let mut k = s.body.as_u128().to_le_bytes().to_vec();
+        for c in s.point.iter().chain(&s.direction) {
+            k.extend(c.to_bits().to_le_bytes());
+        }
+        k.push(u8::from(s.section));
+        k.push(u8::from(s.defining));
+        match s.reference {
+            Some(ExternalReference::SketchElement { sketch, element }) => {
+                k.extend(sketch.as_u128().to_le_bytes());
+                k.extend(element.as_u128().to_le_bytes());
+            }
+            Some(ExternalReference::Datum { datum }) => {
+                k.extend(datum.as_u128().to_le_bytes());
+            }
+            None => {}
+        }
+        k
+    };
+    let mut by_source: std::collections::BTreeMap<Vec<u8>, (ExternalSource, Vec<Uuid>)> =
+        std::collections::BTreeMap::new();
+    for element in &sketch.geometry {
+        if let Some(source) = sketch.external.get(&element.id()) {
+            by_source
+                .entry(key(source))
+                .or_insert_with(|| (*source, Vec::new()))
+                .1
+                .push(element.id());
+        }
+    }
+    by_source.into_values().collect()
+}
+
 #[cfg(test)]
 mod construction_tests {
     use super::*;

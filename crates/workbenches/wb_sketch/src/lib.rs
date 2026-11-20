@@ -32,7 +32,7 @@ pub(crate) use external_follow::{project_source, with_edge_names};
 mod feature;
 mod frame_memo;
 pub mod generator;
-mod geom2d;
+pub mod geom2d;
 mod glyphs;
 mod images;
 mod input;
@@ -60,6 +60,7 @@ mod scan;
 mod selection;
 #[cfg(feature = "egui")]
 mod settings;
+pub mod shape;
 pub mod sketch;
 pub mod snap;
 mod solver;
@@ -1605,7 +1606,7 @@ impl Workbench for SketchWorkbench {
             return false;
         };
         let built = document.projected_references(node.id);
-        let groups: Vec<_> = external::groups(&feature.sketch)
+        let groups: Vec<_> = crate::sketch::external_groups(&feature.sketch)
             .into_iter()
             .filter(|(source, _)| source.reference.is_none())
             .filter_map(|(source, group)| {

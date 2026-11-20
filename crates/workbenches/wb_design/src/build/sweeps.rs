@@ -506,7 +506,7 @@ fn spine_segment(
                 wb_sketch::sketch::Vec2D::new(start[0] - center[0], start[1] - center[1]);
             let end_vec = wb_sketch::sketch::Vec2D::new(end[0] - center[0], end[1] - center[1]);
             let (start_angle, sweep) =
-                wb_sketch::snap::arc_angles(start_vec.to_glam(), end_vec.to_glam());
+                wb_sketch::geom2d::arc_angles(start_vec.to_glam(), end_vec.to_glam());
             let mid_angle = start_angle + sweep * 0.5;
             let radius = ((start[0] - center[0]).powi(2) + (start[1] - center[1]).powi(2)).sqrt();
             let mid = [

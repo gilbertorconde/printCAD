@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use crate::appearance::Appearance;
 use crate::geom2d;
+use crate::geom2d::arc_angles;
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
-use crate::snap::{SnapTarget, arc_angles};
+use crate::snap::SnapTarget;
 use crate::tools::{
     self, Similarity, ToolParams, ToolState, arc_slot_shape, polygon_corners, slot_corners,
 };

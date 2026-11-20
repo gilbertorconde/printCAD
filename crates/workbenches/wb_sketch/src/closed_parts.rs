@@ -11,9 +11,9 @@ use kernel_api::ProfileWire;
 
 use crate::SketchFeature;
 use crate::boundary::{self, narrow3};
+use crate::profile;
 use crate::regions::Region;
 use crate::sketch::{GeometryElement, Vec2D};
-use crate::{profile, snap};
 
 /// How strongly a region a plain profile leaves out (a hole, a region
 /// between crossing curves) is shaded, as a share of the regions it takes.
@@ -103,7 +103,12 @@ impl Kept {
             .geometry
             .iter()
             .filter(|g| !matches!(g, GeometryElement::Point(_)) && !sketch.is_construction(g.id()))
-            .filter_map(|g| Some((g.id(), snap::distance_within(sketch, g, pos, reach)?)))
+            .filter_map(|g| {
+                Some((
+                    g.id(),
+                    crate::shape::distance_within(sketch, g, pos, reach)?,
+                ))
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         let part = match curve {
             Some((curve, _)) => FeaturePart::Edge(curve.to_string()),

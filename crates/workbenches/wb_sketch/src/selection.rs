@@ -5,8 +5,8 @@
 use std::collections::HashSet;
 use std::ops::Deref;
 
+use crate::profile;
 use crate::sketch::{GeometryElement, Sketch, Vec2D};
-use crate::{profile, snap};
 use uuid::Uuid;
 
 /// Reads as the set it holds; changes go through its own methods so the
@@ -155,7 +155,7 @@ pub(super) fn element_touches(
         }),
         GeometryElement::Arc(a) => match (at(a.center), at(a.start), at(a.end)) {
             (Some(c), Some(s), Some(e)) => {
-                let (from, sweep) = snap::arc_angles((s - c).to_glam(), (e - c).to_glam());
+                let (from, sweep) = crate::geom2d::arc_angles((s - c).to_glam(), (e - c).to_glam());
                 around(c, (s - c).to_glam().length(), from, sweep, 48)
             }
             _ => Vec::new(),
@@ -225,7 +225,7 @@ pub(super) fn element_fully_inside(
             };
             let sv = (s - c).to_glam();
             let radius = sv.length();
-            let (start_angle, sweep) = snap::arc_angles(sv, (e - c).to_glam());
+            let (start_angle, sweep) = crate::geom2d::arc_angles(sv, (e - c).to_glam());
             let mid_angle = start_angle + sweep * 0.5;
             let mid = Vec2D::new(
                 c.x + radius * mid_angle.cos(),

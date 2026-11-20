@@ -172,7 +172,7 @@ fn bring_in(
 ) -> Result<(Uuid, Option<Projected>), String> {
     let source = crate::with_edge_names(ctx.document, pick.source);
     let curves = crate::project_source(ctx, plane, &source)?;
-    let held = crate::external::groups(sketch)
+    let held = crate::sketch::external_groups(sketch)
         .into_iter()
         .map(|(_, group)| group)
         .find(|group| crate::external::already_holds(sketch, group, &curves));

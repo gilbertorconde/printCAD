@@ -197,7 +197,7 @@ pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
             let center = sketch.point_position(a.center)?.to_glam();
             let start = sketch.point_position(a.start)?.to_glam();
             let end = sketch.point_position(a.end)?.to_glam();
-            let (_, sweep) = crate::snap::arc_angles(start - center, end - center);
+            let (_, sweep) = crate::geom2d::arc_angles(start - center, end - center);
             (a.radius > tolerance
                 && (start - end).length() <= tolerance
                 && sweep > std::f64::consts::PI)

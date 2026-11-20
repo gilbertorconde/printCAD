@@ -653,7 +653,7 @@ fn another_sketch_and_a_datum_come_in_as_external_geometry_that_follows_them() {
     let second_id = feature_id(&second);
     let mut feature = SketchFeature::from_json(doc.get_feature_data(second_id).unwrap()).unwrap();
     let placed = crate::placed_plane(&feature.plane, &crate::sketch_placement(&doc, second_id));
-    for (source, group) in crate::external::groups(&feature.sketch) {
+    for (source, group) in crate::sketch::external_groups(&feature.sketch) {
         let projected =
             crate::external_ref::project(&doc, &placed, source.reference.unwrap()).unwrap();
         crate::external::refresh_group(&mut feature.sketch, source, &group, &projected);

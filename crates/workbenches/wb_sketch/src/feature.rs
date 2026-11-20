@@ -331,7 +331,7 @@ impl SketchFeature {
     }
 
     pub fn own_projections(&self, body: core_document::BodyId) -> Vec<kernel_api::ProjectionProbe> {
-        crate::external::groups(&self.sketch)
+        crate::sketch::external_groups(&self.sketch)
             .into_iter()
             .filter(|(source, _)| source.reference.is_none() && source.body == body.0)
             .map(|(source, _)| projection_probe(&self.plane, &source))
