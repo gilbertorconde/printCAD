@@ -9,7 +9,8 @@
 //! dimension's label dragged, with and without the panel; and an edit
 //! with dimensions on 25 cells only, which the diagnosis analyses; one
 //! with a line tangent to each circle, its end held on it, and one with
-//! each cell's bottom side fitted to measured points; and
+//! each cell's bottom side fitted to measured points; a point of the
+//! plain grid dragged, a solve and a store per frame; and
 //! the points the grid leaves free selected, then the pointer moved
 //! about with them selected and the panel drawn.
 //!
@@ -414,6 +415,35 @@ fn label_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], panel:
     s.button(false, moves[0], tool);
 }
 
+/// The end of the middle cell's arc dragged about with the select tool,
+/// a pointer move per frame, each one solved and stored as one gesture.
+/// The grid has no dimensions here: their labels cover every point at
+/// this zoom, and a press on a label drags the label.
+fn point_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
+    if !wanted(label) {
+        return;
+    }
+    let mut s = Session::new(sketch, span, false);
+    let tool = "sketch.select";
+    s.send(Some(WorkbenchInputEvent::ToolActivated), tool);
+    let mid = ((span / CELL) as usize / 2) as f64 * CELL;
+    let grab = s.px(Vec2D::new(mid + 5.5, mid + 7.0));
+    s.move_to(grab, tool);
+    s.button(true, grab, tool);
+    let moves: Vec<_> = (0..queries.len())
+        .map(|k| {
+            let t = k as f32 * 0.37;
+            (grab.0 + 20.0 * t.sin() + 20.0, grab.1 + 20.0 * t.cos())
+        })
+        .collect();
+    let mut k = 0;
+    measure(label, queries, |_| {
+        s.move_to(moves[k % moves.len()], tool);
+        k += 1;
+    });
+    s.button(false, moves[0], tool);
+}
+
 /// The points the dimensioned grid leaves free selected, as the Select
 /// degrees of freedom action does.
 fn select_free(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
@@ -551,6 +581,7 @@ fn main() {
         edits,
     );
     edit("edit, fitted sides", &fitted(marked.clone()), span, edits);
+    point_drag("point drag", &sketch, span, edits);
     select_free(
         "select free points",
         &marked,
