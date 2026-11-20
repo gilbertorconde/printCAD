@@ -1037,6 +1037,11 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     alice.save(&home.document());
 
     let mut stalled = local_ipc::Stream::connect(home.socket()).expect("connect");
+    // Set before the daemon shuts this socket: some platforms refuse a
+    // timeout on a socket already shut down.
+    stalled
+        .set_read_timeout(Some(PATIENCE))
+        .expect("read timeout");
     doc_server::framing::write_frame(
         &mut stalled,
         &ClientMessage::Hello {
@@ -1057,9 +1062,6 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     let last = alice.settle();
 
     // What was written before the disconnect, then the end of the stream.
-    stalled
-        .set_read_timeout(Some(PATIENCE))
-        .expect("read timeout");
     let mut relayed = 0;
     loop {
         match doc_server::framing::read_frame::<_, ServerMessage>(&mut stalled) {
