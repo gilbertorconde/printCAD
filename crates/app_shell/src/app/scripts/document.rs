@@ -499,6 +499,13 @@ pub(crate) fn document_command(
             let name = a.string("name")?.to_string();
             let item = tree_item(document, a.id("id")?)?;
             user_note_guard(document, item, &a, "reword")?;
+            let item = match item {
+                TreeItemId::ImportedObject(id) => document
+                    .body_of_imported_object(id)
+                    .map(TreeItemId::Body)
+                    .unwrap_or(item),
+                _ => item,
+            };
             match item {
                 TreeItemId::Body(body) => document.rename_body(body, name),
                 TreeItemId::Feature(feature) => document

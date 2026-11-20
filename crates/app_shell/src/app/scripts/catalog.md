@@ -190,6 +190,10 @@ empty name leaves the name as it was.
 
 A variable set is a feature: this renames it too.
 
+A body has one name: the tree, the parts list and the print layout show it.
+An imported row that stands for a body (a part from the file, or an instance
+of one) renames that body; the file's own name stays on the row's details line.
+
 See also: `var.rename`
 
 ### A formula follows a renamed pad

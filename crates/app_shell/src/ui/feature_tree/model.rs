@@ -938,7 +938,8 @@ pub(super) fn build_imported_node(
         merged.imported_object_id = Some(imported.id);
         merged.visible = imported.visible && target.visible;
         let instance_name = imported.name.trim();
-        if !instance_name.is_empty() && instance_name != "Instance" {
+        let named = !instance_name.is_empty() && instance_name != "Instance";
+        if named {
             merged.label = imported.name.clone();
         }
         merged.detail = Some(format!(
@@ -946,6 +947,23 @@ pub(super) fn build_imported_node(
             kind_word(target.kind),
             target.name
         ));
+        // A row standing for a body is named as the body is: the name a
+        // rename changes and the parts list and print layout show. The
+        // file's own name stays on the details line.
+        if let Some(body) = document
+            .body_of_imported_object(imported.id)
+            .and_then(|b| document.body(b))
+        {
+            if named && body.name != imported.name {
+                merged.detail = Some(format!(
+                    "Instance {} of {} {}",
+                    imported.name,
+                    kind_word(target.kind),
+                    target.name
+                ));
+            }
+            merged.label = body.name.clone();
+        }
         return Some(merged);
     }
 
@@ -960,15 +978,20 @@ pub(super) fn build_imported_node(
     {
         children.extend(history);
     }
-    let label = if imported.name.is_empty() {
-        "Imported".to_string()
-    } else {
-        imported.name.clone()
+    let body = imported.body_id.and_then(|b| document.body(b));
+    let label = match body {
+        Some(body) => body.name.clone(),
+        None if imported.name.is_empty() => "Imported".to_string(),
+        None => imported.name.clone(),
     };
     let detail = match imported.kind {
         kernel_api::ImportedNodeKind::Assembly => "Assembly".to_string(),
-        kernel_api::ImportedNodeKind::Part if imported.body_id.is_some() => {
-            "Part, linked to a body".to_string()
+        kernel_api::ImportedNodeKind::Part if body.is_some() => {
+            if imported.name.is_empty() || imported.name == label {
+                "Part, linked to a body".to_string()
+            } else {
+                format!("Part {} in the file, linked to a body", imported.name)
+            }
         }
         kernel_api::ImportedNodeKind::Part => "Part".to_string(),
         kernel_api::ImportedNodeKind::Instance => "Instance".to_string(),

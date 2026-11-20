@@ -435,6 +435,7 @@ Notes:
 
 - Every formula that reads a renamed feature is rewritten to the new name. Two features may share a name while no formula reads it; a name a variable set has, or one a formula reads, is refused, since formulas find objects by name. An empty name leaves the name as it was.
 - A variable set is a feature: this renames it too.
+- A body has one name: the tree, the parts list and the print layout show it. An imported row that stands for a body (a part from the file, or an instance of one) renames that body; the file's own name stays on the row's details line.
 
 See also `pc.var.rename`.
 
