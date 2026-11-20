@@ -9465,6 +9465,31 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(r.report.Reduce.within_share >= 0.999)
 ```
 
+`pc.mesh.remesh`: Remesh evenly.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `edge_length` (number, optional): Edge length aimed for, mm; the mean edge length
+- `keep_edges` (boolean, optional): Keep sharp edges as creases; true
+- `edge_angle` (number, optional): Turn beyond which an edge is a crease, degrees; 30
+- Returns {feature, name}
+
+Notes:
+
+- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
+- Evens the triangles out to edges near edge_length, the points kept on the surface. With keep_edges, edges turning more than edge_angle stay as creases.
+
+`pc.mesh.subdivide`: Subdivide triangles.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `levels` (number, optional): Times each triangle is split into four, 1 to 4; 1
+- `smooth` (boolean, optional): Move the points toward a smooth surface; false keeps the surface
+- Returns {feature, name}
+
+Notes:
+
+- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
+- Splits every triangle into four, levels times, so the count grows fourfold each level. Without smooth the surface stays exactly as it is; with smooth the points move toward a smooth surface, sharp edges and open rims kept.
+
 `pc.mesh.result`: Step results.
 
 - `feature` (id): The mesh step

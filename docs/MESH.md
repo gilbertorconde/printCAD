@@ -72,6 +72,21 @@ RMS. The triangle limit takes priority: the task explicitly reports
 when reaching it exceeds tolerance, or when a safe reduction cannot
 reach the limit.
 
+**Remesh** evens the triangles out: a scan's slivers beside dense
+patches become triangles with edges near **Edge length** (the mean edge
+length to start with), the points kept on the surface. **Keep sharp
+edges** (on, at 30°) keeps the edges that turn more than **Edge angle**
+as creases.
+
+**Subdivide** splits every triangle into four, **Levels** times (1 to
+4), for a finer mesh to smooth, offset or press a texture into. The
+surface stays as it is; with **Smooth the surface** on, the points move
+toward a smooth surface, sharp edges and open rims kept.
+
+The geometry kernel cannot remesh or subdivide yet. Either step is added
+and kept, its row says why it does not build, and the scan shows the
+mesh before it until the kernel can.
+
 **Boolean with solids** subtracts, adds or intersects a bounded solid:
 a solid body, placed where it sits against the scan, or an Inspection
 element selected before the tool (a fitted cylinder, cone or sphere, over

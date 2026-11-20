@@ -309,6 +309,12 @@ fn step(
             }
             .into()
         }
+        MeshOp::Remesh { .. } => {
+            return Err("the kernel cannot remesh a mesh to an edge length yet".into());
+        }
+        MeshOp::Subdivide { .. } => {
+            return Err("the kernel cannot subdivide a mesh yet".into());
+        }
         MeshOp::Cut {
             origin,
             normal,

@@ -20,6 +20,7 @@ mod kernel_fillet_closed_edges;
 mod kernel_orientation;
 mod kernel_scaled_revolution;
 mod mesh_import;
+mod mesh_tools;
 mod naming;
 mod old_documents;
 mod path_frames;

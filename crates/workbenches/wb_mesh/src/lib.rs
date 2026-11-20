@@ -395,7 +395,8 @@ impl core_document::Workbench for MeshWorkbench {
         commands::register(context);
         let category = |id: &str| match id {
             "mesh.fill" | "mesh.smooth" => "repair",
-            "mesh.offset" | "mesh.reduce" | "mesh.boolean" | "mesh.thicken" => "shape",
+            "mesh.offset" | "mesh.reduce" | "mesh.remesh" | "mesh.subdivide" | "mesh.boolean"
+            | "mesh.thicken" => "shape",
             DEVIATION => core_document::INSPECT_CATEGORY,
             _ => "clean",
         };
@@ -472,6 +473,12 @@ impl core_document::Workbench for MeshWorkbench {
                 Dim::LENGTH,
                 "/op/Reduce/tolerance",
             )],
+            Ok(MeshOp::Remesh { .. }) => vec![Parameter::new(
+                "edge_length",
+                "Edge length",
+                Dim::LENGTH,
+                "/op/Remesh/edge_length",
+            )],
             _ => Vec::new(),
         }
     }
@@ -521,8 +528,8 @@ impl core_document::Workbench for MeshWorkbench {
                     .current_marking()
                     .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
             }
-            ISLANDS | FLIP | CUT | SPLIT | "mesh.fill" | "mesh.smooth" | "mesh.offset"
-            | "mesh.reduce" | "mesh.boolean" | "mesh.thicken" => mesh && self.tab.task.is_none(),
+            ISLANDS | FLIP | CUT | SPLIT => mesh && self.tab.task.is_none(),
+            id if steps::is_tool(id) => mesh && self.tab.task.is_none(),
             DEVIATION => true,
             _ => false,
         }
@@ -594,13 +601,8 @@ impl core_document::Workbench for MeshWorkbench {
             self.split_selected(ctx);
             return InputResult::consumed();
         }
-        if let (
-            WorkbenchInputEvent::ToolActivated,
-            Some(
-                tool @ (ISLANDS | DELETE | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset"
-                | "mesh.reduce" | "mesh.boolean" | "mesh.thicken"),
-            ),
-        ) = (event, active_tool)
+        if let (WorkbenchInputEvent::ToolActivated, Some(tool)) = (event, active_tool)
+            && (matches!(tool, ISLANDS | DELETE | FLIP | CUT) || steps::is_tool(tool))
         {
             if self.tab.task.is_some() {
                 return InputResult::consumed();
@@ -800,6 +802,8 @@ mod tests {
             ("mesh.smooth", "/op/Smooth/move_at_most", 0.02),
             ("mesh.offset", "/op/Offset/distance", -0.1),
             ("mesh.reduce", "/op/Reduce/triangle_limit", 100.0),
+            ("mesh.remesh", "/op/Remesh/edge_length", 0.5),
+            ("mesh.subdivide", "/op/Subdivide/levels", 2.0),
             ("mesh.thicken", "/op/Shell/thickness", 0.5),
         ] {
             let mut doc = Document::new("mesh task");
