@@ -555,8 +555,9 @@ to the new one as `ctx.attach_request`.
 
 `crates/app_shell/src/app/seam_lint.rs` fails if a workbench crate, id or
 feature type appears in the application, and CI checks the same. The
-application builds scenes from workbench features only through
-`bench_fixtures` (`crates/workbenches/fixtures`).
+application builds parts from workbench features only through the
+facade (`crates/workbenches`, the calibration coupon) and, for its bench
+hooks, `bench_fixtures` (`crates/workbenches/fixtures`).
 
 ## Adding to printCAD: the files each addition touches
 

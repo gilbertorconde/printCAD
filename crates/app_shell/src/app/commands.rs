@@ -1180,9 +1180,9 @@ impl PrintCadApp {
         self.session.return_workbench = None;
         self.session.view.before_edit = None;
         if kind == StartKind::Coupon {
-            match bench_fixtures::coupon(
+            match workbenches::coupon(
                 &mut self.session.document,
-                &bench_fixtures::CouponSizes::default(),
+                &workbenches::CouponSizes::default(),
             ) {
                 Ok(c) => {
                     self.session.active_body_id = Some(c.body);
