@@ -558,11 +558,6 @@ fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<U
         }
     }
 }
-/// The points the constraints leave free to move: each is nudged in turn
-/// and the sketch re-solved; a point the solver leaves where it was
-/// nudged has a degree of freedom in that direction. A sketch nothing
-/// pins down reports every point free, which is what its three rigid
-/// degrees of freedom mean.
 /// The elements nothing left free can move: a point fixed in both
 /// coordinates, a curve whose points are all fixed and whose own size
 /// (a radius, an ellipse's shape) is too. Worked out on the sketch as it
@@ -635,10 +630,34 @@ pub(crate) fn locked_elements(
     locked
 }
 
+/// The points the constraints leave free to move: each is nudged in turn
+/// and the sketch re-solved; a point the solver leaves where it was
+/// nudged has a degree of freedom in that direction. A sketch nothing
+/// pins down reports every point free, which is what its three rigid
+/// degrees of freedom mean.
+///
+/// A point no equation reads, both its coordinates the solve's to move,
+/// is one the solve leaves wherever it is put: it is free without being
+/// nudged.
 pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
     const NUDGE: f64 = 0.25;
     let mut base = sketch.clone();
     solve(&mut base);
+    let sys = build_system(&base);
+    let mut unread = vec![false; sys.vars.len()];
+    for &j in &sys.free {
+        unread[j] = true;
+    }
+    let mut reads = Vec::new();
+    for spec in &sys.specs {
+        spec.reads(&mut reads);
+    }
+    for j in reads {
+        unread[j] = false;
+    }
+    let unread = |id: Uuid| {
+        (sys.point_vars.get(&adapter::point(id))).is_some_and(|&k| unread[k] && unread[k + 1])
+    };
     let points: Vec<(Uuid, Vec2D)> = base
         .geometry
         .iter()
@@ -649,6 +668,10 @@ pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
         .collect();
     let mut free = std::collections::HashSet::new();
     for (id, at) in points {
+        if unread(id) {
+            free.insert(id);
+            continue;
+        }
         for nudge in [Vec2D::new(NUDGE, 0.0), Vec2D::new(0.0, NUDGE)] {
             let mut probe = base.clone();
             for g in &mut probe.geometry {

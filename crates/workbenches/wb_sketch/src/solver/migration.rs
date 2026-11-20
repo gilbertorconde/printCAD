@@ -935,6 +935,56 @@ fn captured_application_corpus() {
     equivalent(&expected, &actual, "corpus");
 }
 
+/// The free points found by nudging every point, the unread ones too.
+fn free_points_by_nudging(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
+    const NUDGE: f64 = 0.25;
+    let mut base = sketch.clone();
+    solve(&mut base);
+    let mut free = std::collections::HashSet::new();
+    for g in &base.geometry {
+        let GeometryElement::Point(p) = g else {
+            continue;
+        };
+        for nudge in [Vec2D::new(NUDGE, 0.0), Vec2D::new(0.0, NUDGE)] {
+            let mut probe = base.clone();
+            if let Some(GeometryElement::Point(q)) = probe.get_geometry_mut(p.id) {
+                q.position = Vec2D::new(p.position.x + nudge.x, p.position.y + nudge.y);
+            }
+            solve(&mut probe);
+            let after = probe.point_position(p.id).unwrap();
+            if (after.to_glam() - p.position.to_glam()).length() > NUDGE * 0.5 {
+                free.insert(p.id);
+                break;
+            }
+        }
+    }
+    free
+}
+
+/// Taking the points no equation reads for free without nudging them
+/// finds what nudging every point finds, across the corpus and with a
+/// loose point and a lone line added to each sketch.
+#[test]
+fn unread_points_are_free_as_nudging_finds() {
+    let mut unread = 0;
+    for (mut sketch, _) in cases() {
+        assert_eq!(
+            free_points(&sketch),
+            free_points_by_nudging(&sketch),
+            "{}",
+            sketch.name
+        );
+        let loose = point(&mut sketch, 31.0, 17.0);
+        let a = point(&mut sketch, -12.0, 3.0);
+        let b = point(&mut sketch, -9.0, 7.0);
+        line(&mut sketch, a, b);
+        let free = free_points(&sketch);
+        assert_eq!(free, free_points_by_nudging(&sketch), "{}", sketch.name);
+        unread += usize::from([loose, a, b].iter().all(|p| free.contains(p)));
+    }
+    assert_eq!(unread, cases().len());
+}
+
 #[test]
 fn corpus_checks_geometric_meaning_and_held_fallback() {
     for (mut sketch, held) in cases() {
