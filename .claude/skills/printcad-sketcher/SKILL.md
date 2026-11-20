@@ -121,10 +121,11 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   `model_picks.rs`, taking sketch clicks and the host's edge picks as
   operands, projecting the edges as guides, reusing what the sketch
   holds, and recording `sketch.external` then `sketch.constrain`),
-  `panel.rs` (the task panel, declared as blocks, `task_widgets`, drawn
+  `panel/` (the task panel, declared as blocks, `task_widgets`, drawn
   by `bench_panel` and answered in `task_event` through the
   sketcher's commands; `PanelState` keeps what each row and button stood
-  for; a generated sketch's panel is `generator/panel.rs`, declared the
+  for; `sections.rs`, `lists.rs`, `text.rs` and `builders.rs` declare it,
+  `events.rs` reads it back; a generated sketch's panel is `generator/panel.rs`, declared the
   same way), `dimension_task.rs` (a dimension's value, formula or new
   variable in a floating card by its label, `dimension_card`: opened by
   a new dimension, which waits in the card with the calls that make it
