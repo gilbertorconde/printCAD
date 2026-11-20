@@ -717,6 +717,9 @@ assert!(h.undo().is_some());
 
 The Peg example's tests in `crates/workbenches/wb_wasm/tests/packages.rs`
 use it.
+A harness keeps compiled components for the test run; to keep them
+between runs too, name a folder of the build's, as those tests do:
+`wb_wasm::set_compiled_cache(Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-packages"))`.
 
 ## Limits
 
