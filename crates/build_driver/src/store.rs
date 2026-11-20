@@ -1,0 +1,203 @@
+//! What a build leaves in the document. All of it is derived, per-replica
+//! state: none of these record an op.
+
+use core_document::{
+    BodyId, BuildError, BuildPlan, Document, DocumentService, FeatureId, ImportedGeometry,
+    PlanProbe, PlanProjection, RebuildJob,
+};
+use kernel_api::SolidBuildResult;
+
+use crate::BuildFailure;
+
+/// A body's job, started: what is left to build.
+#[derive(Debug)]
+pub struct Begun {
+    pub body: BodyId,
+    pub next: Next,
+    /// The feature the plan could not plan, recorded on it.
+    pub refused: Option<BuildError>,
+}
+
+/// What a started job asks of the kernel.
+#[derive(Debug)]
+pub enum Next {
+    /// The plan's ops, never empty.
+    Build(BuildPlan),
+    /// The history builds nothing: the body's built geometry is dropped.
+    Emptied,
+    /// Nothing could be planned; the body keeps what it shows.
+    Unplanned,
+}
+
+/// Start `job`: the body's errors and warnings are cleared, a feature the
+/// plan could not plan carries the error and each feature after it a word
+/// that it was not built, and a history that builds nothing drops the
+/// geometry features made (an imported solid outlives it).
+pub fn begin(document: &mut Document, job: RebuildJob) -> Begun {
+    let body = job.body;
+    document.clear_body_feature_errors(body);
+    let (next, refused) = match job.plan {
+        Ok(mut plan) => {
+            let refused = plan.failed.take();
+            if let Some(error) = &refused {
+                refuse(document, error, &std::mem::take(&mut plan.unbuilt));
+            }
+            if plan.ops.is_empty() {
+                if !document.body_solid_is_imported(body) {
+                    document.remove_imported_geometry(body);
+                }
+                (Next::Emptied, refused)
+            } else {
+                (Next::Build(plan), refused)
+            }
+        }
+        Err(error) => {
+            refuse(document, &error, &[]);
+            (Next::Unplanned, Some(error))
+        }
+    };
+    Begun {
+        body,
+        next,
+        refused,
+    }
+}
+
+fn refuse(document: &mut Document, error: &BuildError, unbuilt: &[FeatureId]) {
+    if let Some(feature) = error.feature {
+        document.set_feature_error(feature, Some(error.message.clone()));
+        mark_unbuilt(document, feature, unbuilt.iter().copied());
+    }
+}
+
+/// Keep what a build of `op_features` found besides its solid: the ops'
+/// warnings, a previewed fillet's size limit, the probes' answers and the
+/// projections.
+pub fn store_answers(
+    document: &mut Document,
+    op_features: &[FeatureId],
+    probes: &[PlanProbe],
+    projections: &[PlanProjection],
+    result: &SolidBuildResult,
+) {
+    document.store_build_warnings(op_features, probes, projections, result);
+    document.store_size_limit(op_features, result);
+    document.store_probe_answers(probes, &result.probes);
+    document.store_projections(projections, &result.projections);
+}
+
+/// Put a body's built solid in the document: its shape and the mesh drawn
+/// from it. The solid is derived from the history, so landing it is not an
+/// edit: a document opened and built again stays unedited.
+pub fn store_solid(document: &mut Document, body: BodyId, result: SolidBuildResult) {
+    let edited = document.metadata().dirty();
+    let bounds_mm = result.bounds_mm;
+    document.set_imported_brep_data(body, result.brep_blob, Vec::new());
+    document.set_imported_geometry(
+        body,
+        ImportedGeometry {
+            mesh: std::sync::Arc::new(result.mesh),
+            source_asset: None,
+            revision: 0,
+            bounds_mm,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+    if !edited {
+        document.mark_clean();
+    }
+}
+
+/// Pin a build's failure on its feature, with the edges a fillet or
+/// chamfer refused, and on each feature after it a word that it was not
+/// built.
+pub fn record_failure(document: &mut Document, failure: &BuildFailure) {
+    if let Some(feature) = failure.feature {
+        document.set_feature_failure(feature, failure.error.clone(), failure.edges.clone());
+        mark_unbuilt(document, feature, failure.unbuilt.iter().copied());
+    }
+}
+
+/// The body's first feature failed: nothing of its history builds, and a
+/// shape left from before would be stale. An imported solid stays.
+pub fn clear_unbuilt(document: &mut Document, body: BodyId) {
+    if !document.body_solid_is_imported(body) {
+        document.remove_imported_geometry(body);
+    }
+}
+
+/// Mark the features left out of a build because `failed`, before them,
+/// fails.
+fn mark_unbuilt(
+    document: &mut Document,
+    failed: FeatureId,
+    unbuilt: impl IntoIterator<Item = FeatureId>,
+) {
+    let name = document
+        .get_feature_meta(failed)
+        .map(|n| n.name.clone())
+        .unwrap_or_default();
+    for feature in unbuilt {
+        if feature != failed {
+            document.set_feature_error(
+                feature,
+                Some(format!("not built: `{name}` before it fails")),
+            );
+        }
+    }
+}
+
+/// Where a shape read from a file went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Landed {
+    /// The body's base or its shape.
+    Shape,
+    /// The body's stand-in, shown while its history does not build.
+    StandIn,
+    /// Nothing: a stand-in no longer due.
+    Dropped,
+}
+
+/// Put a shape read from the file `asset` on `body`: as its stand-in while
+/// that is due, else as its base, which its features then build on, or as
+/// its shape when it has no history.
+pub fn land_shape(
+    document: &mut Document,
+    registry: &DocumentService,
+    body: BodyId,
+    asset: uuid::Uuid,
+    read: kernel_api::MeshSolidResult,
+) -> Landed {
+    let geometry = ImportedGeometry {
+        bounds_mm: read.bounds_mm.or_else(|| read.mesh.bounds()),
+        mesh: std::sync::Arc::new(read.mesh),
+        source_asset: Some(asset),
+        revision: 0,
+        brep_blob_path: None,
+        mesh_path: None,
+        face_colors_path: None,
+        health: Some(read.health),
+    };
+    if document.is_stand_in(body, asset) {
+        // A build that succeeded, or a tip moved, while it was read leaves
+        // nothing to stand in for.
+        if document.stand_in_due(body) != Some(asset) {
+            return Landed::Dropped;
+        }
+        document.set_imported_geometry(body, geometry);
+        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+        return Landed::StandIn;
+    }
+    if document.has_base_solid(body) {
+        document.set_base_solid(body, geometry, read.brep_blob, read.face_colors);
+        // Its features build again on the new base.
+        registry.invalidate_body(document, body);
+    } else {
+        document.set_imported_geometry(body, geometry);
+        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+    }
+    Landed::Shape
+}
