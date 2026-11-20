@@ -12,7 +12,6 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::PrintCadApp;
 use crate::contract;
-use crate::log_panel as app_log;
 
 /// Frames after geometry arrives at which the bench click hook requests its
 /// pick (the camera has settled by then), clicks, activates the bench tool

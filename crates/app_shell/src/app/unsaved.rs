@@ -15,7 +15,6 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::PrintCadApp;
 use crate::app::doc_io::FileDialogKind;
-use crate::log_panel as app_log;
 
 /// What the user chose about unsaved edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,7 +330,7 @@ impl PrintCadApp {
         let Some(path) = self.session_at(index).and_then(|s| s.file.path.clone()) else {
             return;
         };
-        if !crate::platform::exists(&path) {
+        if !app_platform::exists(&path) {
             app_log::error(format!(
                 "`{}` is gone: nothing to revert to",
                 path.display()

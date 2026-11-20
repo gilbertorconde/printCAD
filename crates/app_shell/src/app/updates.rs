@@ -4,7 +4,6 @@
 
 use crate::PrintCadApp;
 use crate::app::packages::PackageNews;
-use crate::log_panel as app_log;
 
 /// Where the app's releases are published.
 pub(crate) const REPOSITORY: &str = "gilbertorconde/printCAD";

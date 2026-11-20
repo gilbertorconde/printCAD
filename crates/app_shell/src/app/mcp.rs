@@ -471,7 +471,7 @@ impl PrintCadApp {
                 self.agents.mcp = Some(server);
             }
             Err(err) => {
-                crate::app_log::warn(format!("Agents cannot reach the document: {err}"));
+                app_log::warn(format!("Agents cannot reach the document: {err}"));
             }
         }
     }
@@ -525,7 +525,7 @@ impl PrintCadApp {
                 .map_or_else(ToolAnswer::error, ToolAnswer::text),
             "log" => {
                 let lines = args.get("lines").and_then(Value::as_u64).unwrap_or(50) as usize;
-                let entries = crate::log_panel::entries();
+                let entries = app_log::entries();
                 let from = entries.len().saturating_sub(lines);
                 ToolAnswer::text(
                     entries[from..]

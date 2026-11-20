@@ -206,7 +206,7 @@ impl UiLayer {
             MenuLocal::Console(text) => self.console.insert(&text),
             MenuLocal::Task(open) => {
                 if self.bench_task_open {
-                    crate::log_panel::warn("Finish the task that is open first");
+                    app_log::warn("Finish the task that is open first");
                     return;
                 }
                 self.open_task(document, open, self.active_tab);

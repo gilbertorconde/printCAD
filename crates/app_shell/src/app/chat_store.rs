@@ -203,7 +203,7 @@ fn chats_in(store: &Path, file: &Path) -> Vec<SavedChat> {
     match load(store) {
         Ok(all) => all.documents.get(&key(file)).cloned().unwrap_or_default(),
         Err(err) => {
-            crate::log_panel::warn(format!("The document's chats are not restored: {err}"));
+            app_log::warn(format!("The document's chats are not restored: {err}"));
             Vec::new()
         }
     }
@@ -213,7 +213,7 @@ pub(crate) fn history_in(store: &Path) -> Vec<ClosedChat> {
     let all = match load(store) {
         Ok(all) => all,
         Err(err) => {
-            crate::log_panel::warn(format!("The past chats are not listed: {err}"));
+            app_log::warn(format!("The past chats are not listed: {err}"));
             return Vec::new();
         }
     };
@@ -238,7 +238,7 @@ fn change(store: &Path, edit: impl FnOnce(&mut Store) -> bool) {
     let mut all = match load(store) {
         Ok(all) => all,
         Err(err) => {
-            crate::log_panel::warn(format!("The document's chats are not kept: {err}"));
+            app_log::warn(format!("The document's chats are not kept: {err}"));
             return;
         }
     };
@@ -246,7 +246,7 @@ fn change(store: &Path, edit: impl FnOnce(&mut Store) -> bool) {
         return;
     }
     if let Err(err) = settings::json_file::keep(store, &all.to_json()) {
-        crate::log_panel::warn(format!("Could not keep the document's chats: {err}"));
+        app_log::warn(format!("Could not keep the document's chats: {err}"));
     }
 }
 

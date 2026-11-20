@@ -1,0 +1,16 @@
+[package]
+name = "app_platform"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Work beside the window and the user's files: named threads, atomic writes, private folders, termination signals."
+
+[dependencies]
+local_ipc = { path = "../local_ipc" }
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# SIGTERM and SIGINT turned into a quit; ending a file chooser process left
+# open at exit.
+libc = "0.2"

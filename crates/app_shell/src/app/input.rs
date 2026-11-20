@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 use crate::PrintCadApp;
 use crate::camera::CameraPointerResult;
-use crate::log_panel as app_log;
 
 pub(crate) use super::face_pick::*;
 

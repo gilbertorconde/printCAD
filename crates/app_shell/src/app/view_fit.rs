@@ -6,7 +6,6 @@ use core_document::Document;
 use glam::Vec3;
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
 use crate::orientation_cube::CameraSnapView;
 
 /// The box `(min, max)` of every body the view draws, in world space:

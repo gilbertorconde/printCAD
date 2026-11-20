@@ -144,11 +144,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app_log"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "app_platform"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "local_ipc",
+ "uuid",
+]
+
+[[package]]
 name = "app_shell"
 version = "0.18.0"
 dependencies = [
  "agents",
  "anyhow",
+ "app_log",
+ "app_platform",
  "arboard",
  "axes",
  "base64 0.23.1",
@@ -164,7 +182,6 @@ dependencies = [
  "gif",
  "glam 0.33.7",
  "kernel_ogeom",
- "libc",
  "local_ipc",
  "notify-rust",
  "png",

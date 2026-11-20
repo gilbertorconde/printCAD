@@ -3,7 +3,6 @@
 //! a body asks the kernel for, and small edits of the tab's tools.
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
 
 /// Work a body asks the kernel for, each a history barrier.
 pub(super) enum ShapeWork {

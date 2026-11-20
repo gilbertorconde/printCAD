@@ -19,7 +19,6 @@ use crate::PrintCadApp;
 use crate::app::session_state::ViewState;
 use crate::camera::KeptView;
 use crate::contract::PanelLayout;
-use crate::log_panel as app_log;
 
 /// How many documents' views are kept: the latest looked at.
 pub(crate) const VIEWS_KEPT: usize = 50;

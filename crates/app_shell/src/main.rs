@@ -9,9 +9,7 @@ mod contract;
 mod headless;
 mod kernel_worker;
 mod keymap;
-mod log_panel;
 mod orientation_cube;
-mod platform;
 #[cfg(all(feature = "profile", target_os = "linux"))]
 mod profile;
 mod script_library;
@@ -22,7 +20,6 @@ mod ui;
 use anyhow::{Context, Result};
 use core_document::{Document, DocumentService, WorkbenchId};
 use kernel_worker::KernelWorker;
-use log_panel as app_log;
 use render_wgpu::RenderBackend;
 use render_wgpu::{FrameSubmission, RenderSettings, Renderer};
 use settings::{SettingsStore, UserSettings};
@@ -129,7 +126,7 @@ fn main() -> Result<()> {
     match headless::parse(&words) {
         Ok(Some(invocation)) => {
             let finished = headless::run(&invocation, registry);
-            crate::platform::remove_scratch_folder();
+            app_platform::remove_scratch_folder();
             let finished = finished?;
             #[cfg(all(feature = "profile", target_os = "linux"))]
             profile::finish();
@@ -183,7 +180,7 @@ fn main() -> Result<()> {
     // A desktop logout or Ctrl+C in a terminal quits the way the window's
     // close does, though with no one to answer a question.
     let proxy = std::sync::Mutex::new(event_loop.create_proxy());
-    if let Err(err) = platform::on_termination(move || {
+    if let Err(err) = app_platform::on_termination(move || {
         if let Ok(proxy) = proxy.lock() {
             let _ = proxy.send_event(AppEvent::Terminate);
         }
@@ -196,7 +193,7 @@ fn main() -> Result<()> {
     // The dialog's thread ends with the process; a chooser it started as
     // a process of its own would not.
     if app.files.dialog_rx.is_some() {
-        platform::end_file_choosers();
+        app_platform::end_file_choosers();
     }
     #[cfg(all(feature = "profile", target_os = "linux"))]
     profile::finish();

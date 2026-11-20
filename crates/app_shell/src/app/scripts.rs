@@ -228,7 +228,7 @@ impl PrintCadApp {
                 if (given || a.has("on"))
                     && let Err(err) = self.settings_store.save(&self.user_settings)
                 {
-                    crate::log_panel::warn(format!("Failed to save settings: {err}"));
+                    app_log::warn(format!("Failed to save settings: {err}"));
                 }
                 Ok(answer)
             }
@@ -361,7 +361,7 @@ impl PrintCadApp {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        let read = crate::platform::read(path).and_then(|bytes| {
+        let read = app_platform::read(path).and_then(|bytes| {
             String::from_utf8(bytes)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
         });
@@ -548,10 +548,10 @@ impl PrintCadApp {
                         console::push(LineKind::Error, error.clone());
                         if from_file {
                             self.scripting.console_attention = true;
-                            crate::app_log::warn(format!("Script {label} stopped: {error}"));
+                            app_log::warn(format!("Script {label} stopped: {error}"));
                         }
                     }
-                    None if from_file => crate::app_log::info(format!("Ran {label}")),
+                    None if from_file => app_log::info(format!("Ran {label}")),
                     None => {}
                 }
                 self.redraw_needed = true;
@@ -703,15 +703,15 @@ impl PrintCadApp {
     pub(crate) fn toggle_recording(&mut self) {
         let Some(recorder) = self.scripting.recording.take() else {
             self.scripting.recording = Some(scripting::Recorder::default());
-            crate::app_log::info("Recording: what you do now is written as a script when you stop");
+            app_log::info("Recording: what you do now is written as a script when you stop");
             return;
         };
         if recorder.is_empty() {
-            crate::app_log::info("Recording stopped; nothing was recorded");
+            app_log::info("Recording stopped; nothing was recorded");
             return;
         }
         let Some(dir) = settings::scripts_dir() else {
-            crate::app_log::warn("The system names no configuration folder for scripts");
+            app_log::warn("The system names no configuration folder for scripts");
             return;
         };
         let path = crate::script_library::fresh_name(&dir, "recording");
@@ -727,10 +727,10 @@ impl PrintCadApp {
                     LineKind::Printed,
                     format!("Recording saved as {}", path.display()),
                 );
-                crate::app_log::info(format!("Recording saved as {}", path.display()));
+                app_log::info(format!("Recording saved as {}", path.display()));
             }
             Err(err) => {
-                crate::app_log::error(format!("Could not write {}: {err}", path.display()));
+                app_log::error(format!("Could not write {}: {err}", path.display()));
             }
         }
     }
@@ -745,7 +745,7 @@ impl PrintCadApp {
     /// editor.
     pub(crate) fn new_script(&mut self, runs: Option<Vec<String>>) {
         let Some(dir) = settings::scripts_dir() else {
-            crate::app_log::warn("The system names no configuration folder for scripts");
+            app_log::warn("The system names no configuration folder for scripts");
             return;
         };
         let path = crate::script_library::fresh_path(&dir);
@@ -756,11 +756,11 @@ impl PrintCadApp {
         let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, text));
         match written {
             Ok(()) => {
-                crate::app_log::info(format!("New script {}", path.display()));
+                app_log::info(format!("New script {}", path.display()));
                 self.scripting.library_changed();
                 self.edit_script(Some(path));
             }
-            Err(err) => crate::app_log::error(format!("Could not write {}: {err}", path.display())),
+            Err(err) => app_log::error(format!("Could not write {}: {err}", path.display())),
         }
     }
 
@@ -774,14 +774,14 @@ impl PrintCadApp {
                     return;
                 };
                 if let Err(err) = std::fs::create_dir_all(&dir) {
-                    crate::app_log::error(format!("Could not make {}: {err}", dir.display()));
+                    app_log::error(format!("Could not make {}: {err}", dir.display()));
                     return;
                 }
                 dir
             }
         };
         if let Err(err) = local_ipc::open_with_system(&target) {
-            crate::app_log::error(format!("Could not open {}: {err}", target.display()));
+            app_log::error(format!("Could not open {}: {err}", target.display()));
         }
     }
 
@@ -1404,7 +1404,7 @@ mod tests {
                 .flat_map(|h| h.join().unwrap())
                 .collect()
         });
-        crate::platform::remove_temp_folder();
+        app_platform::remove_temp_folder();
         failed.sort();
         assert!(
             failed.is_empty(),

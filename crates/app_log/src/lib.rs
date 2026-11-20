@@ -1,3 +1,6 @@
+//! The application log: the lines the log panel lists and the view
+//! flashes (warnings, errors, good news), each also sent to `tracing`.
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fmt,

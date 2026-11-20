@@ -9,7 +9,6 @@ use core_document::FeatureId;
 use kernel_api::TessellationSettings;
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
 
 impl PrintCadApp {
     pub(crate) fn drive_part_recompute(&mut self) {
@@ -544,7 +543,7 @@ impl PrintCadApp {
                 .file_name()
                 .map(|n| n.to_owned())
                 .unwrap_or_else(|| format!("{asset}.step").into());
-            let path = match crate::platform::scratch_file(&name.to_string_lossy(), &bytes) {
+            let path = match app_platform::scratch_file(&name.to_string_lossy(), &bytes) {
                 Ok(path) => path,
                 Err(e) => {
                     self.session.jobs.shapes_failed.insert(body.0, asset);

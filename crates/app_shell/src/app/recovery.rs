@@ -94,7 +94,7 @@ pub(crate) fn keep(
         pid: std::process::id(),
         saved_ms: now_ms(),
     };
-    crate::platform::write(&note_of(&copy), &serde_json::to_vec_pretty(&note)?)
+    app_platform::write(&note_of(&copy), &serde_json::to_vec_pretty(&note)?)
 }
 
 /// Take tab `tab`'s copy away: it was saved, closed, or the app quits.
@@ -104,8 +104,8 @@ pub(crate) fn forget(tab: Uuid) {
 
 /// Take a copy and its note away.
 pub(crate) fn remove(copy: &Path) {
-    crate::platform::remove(copy);
-    crate::platform::remove(&note_of(copy));
+    app_platform::remove(copy);
+    app_platform::remove(&note_of(copy));
 }
 
 /// Whether process `pid` still runs, as far as the system says.
@@ -180,12 +180,11 @@ fn with_logs(
 }
 
 fn left_behind_in(dir: &Path) -> Vec<Recoverable> {
-    let mut found: Vec<Recoverable> = crate::platform::list(dir)
+    let mut found: Vec<Recoverable> = app_platform::list(dir)
         .into_iter()
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
         .filter_map(|note_path| {
-            let note: Note =
-                serde_json::from_slice(&crate::platform::read(&note_path).ok()?).ok()?;
+            let note: Note = serde_json::from_slice(&app_platform::read(&note_path).ok()?).ok()?;
             let copy = note_path.with_extension("prtcad");
             let untitled = note
                 .file
@@ -193,7 +192,7 @@ fn left_behind_in(dir: &Path) -> Vec<Recoverable> {
                 .then(|| copy.file_stem()?.to_str()?.parse::<Uuid>().ok())
                 .flatten()
                 .map(|tab| doc_server::socket_path_for_untitled_of(note.pid, tab));
-            (crate::platform::exists(&copy) && !running(note.pid)).then_some(Recoverable {
+            (app_platform::exists(&copy) && !running(note.pid)).then_some(Recoverable {
                 copy,
                 name: note.name,
                 file: note.file,

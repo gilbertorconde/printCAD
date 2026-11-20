@@ -42,7 +42,7 @@ impl ConsoleState {
         let history = match history_file.as_ref().map(std::fs::read_to_string) {
             Some(Ok(text)) => parse_history(&text),
             Some(Err(err)) if err.kind() != std::io::ErrorKind::NotFound => {
-                crate::log_panel::warn(format!("Console history is not restored or saved: {err}"));
+                app_log::warn(format!("Console history is not restored or saved: {err}"));
                 history_file = None;
                 Vec::new()
             }
@@ -107,7 +107,7 @@ impl ConsoleState {
                 && let Err(err) =
                     local_ipc::write_atomically(path, write_history(&self.history).as_bytes())
             {
-                crate::log_panel::warn(format!("Could not keep console history: {err}"));
+                app_log::warn(format!("Could not keep console history: {err}"));
             }
         }
         Some(text)

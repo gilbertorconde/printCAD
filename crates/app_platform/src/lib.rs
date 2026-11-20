@@ -4,25 +4,25 @@
 use std::path::{Path, PathBuf};
 
 /// Work started beside the window, which an exit can wait for.
-pub(crate) struct Job {
+pub struct Job {
     handle: std::thread::JoinHandle<()>,
 }
 
 impl Job {
     /// Whether the work is done.
-    pub(crate) fn is_finished(&self) -> bool {
+    pub fn is_finished(&self) -> bool {
         self.handle.is_finished()
     }
 
     /// Wait for the work to end.
-    pub(crate) fn join(self) {
+    pub fn join(self) {
         let _ = self.handle.join();
     }
 }
 
 /// Run `work` on a thread named `name`; its answer goes where the caller
 /// arranged (a channel read on a later frame).
-pub(crate) fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> std::io::Result<Job> {
+pub fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> std::io::Result<Job> {
     std::thread::Builder::new()
         .name(name.to_string())
         .spawn(work)
@@ -33,7 +33,7 @@ pub(crate) fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> std::io
 /// `Some(Err)` when it ended without one, `None` while it is still at
 /// work or nothing is asked. Both answers clear `slot`, so a worker that
 /// died leaves nothing waiting to keep frames coming.
-pub(crate) fn take_answer<T>(
+pub fn take_answer<T>(
     slot: &mut Option<std::sync::mpsc::Receiver<T>>,
 ) -> Option<Result<T, std::sync::mpsc::RecvError>> {
     use std::sync::mpsc::{RecvError, TryRecvError};
@@ -47,36 +47,36 @@ pub(crate) fn take_answer<T>(
 }
 
 /// The bytes of the file at `path`.
-pub(crate) fn read(path: &Path) -> std::io::Result<Vec<u8>> {
+pub fn read(path: &Path) -> std::io::Result<Vec<u8>> {
     std::fs::read(path)
 }
 
 /// Write `bytes` as the file at `path`: into a file beside it, moved over
 /// it once whole, so a failed or cut-off write leaves the file as it was.
-pub(crate) fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     local_ipc::write_atomically(path, bytes)
 }
 
 /// Take the file at `path` away; one that is not there is no error.
-pub(crate) fn remove(path: &Path) {
+pub fn remove(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
 /// The files directly in folder `dir`.
-pub(crate) fn list(dir: &Path) -> Vec<PathBuf> {
+pub fn list(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)
         .map(|entries| entries.flatten().map(|e| e.path()).collect())
         .unwrap_or_default()
 }
 
 /// Whether there is a file at `path`.
-pub(crate) fn exists(path: &Path) -> bool {
+pub fn exists(path: &Path) -> bool {
     path.is_file()
 }
 
 /// Whether the file at `path` cannot be written in place: marked read-only,
 /// or closed to this user for writing. A file that is not there is not.
-pub(crate) fn read_only(path: &Path) -> bool {
+pub fn read_only(path: &Path) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
     };
@@ -105,7 +105,7 @@ pub(crate) fn read_only(path: &Path) -> bool {
 /// system's own handling back as it runs, so a second signal ends the
 /// process. Nothing on systems without these signals.
 #[cfg(unix)]
-pub(crate) fn on_termination(asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
+pub fn on_termination(asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
     use std::io::Read;
     use std::os::fd::FromRawFd;
     use std::sync::atomic::Ordering;
@@ -142,7 +142,7 @@ pub(crate) fn on_termination(asked: impl Fn() + Send + 'static) -> std::io::Resu
 }
 
 #[cfg(not(unix))]
-pub(crate) fn on_termination(_asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
+pub fn on_termination(_asked: impl Fn() + Send + 'static) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -166,7 +166,7 @@ extern "C" fn termination_handler(_signal: libc::c_int) {
 /// portal is missing, and that process outlives the app unless ended; a
 /// portal's chooser closes once its caller goes. The macOS and Windows
 /// choosers are part of the app's process and end with it.
-pub(crate) fn end_file_choosers() {
+pub fn end_file_choosers() {
     #[cfg(target_os = "linux")]
     end_children_named("zenity");
 }
@@ -215,7 +215,7 @@ fn children_named(name: &str) -> Vec<u32> {
 
 /// Where this run's private folders go: the user's own runtime folder,
 /// else the temporary folder.
-pub(crate) fn private_base() -> PathBuf {
+pub fn private_base() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|dir| dir.is_absolute() && dir.is_dir())
@@ -224,7 +224,7 @@ pub(crate) fn private_base() -> PathBuf {
 
 /// A folder in `base` for this run's `what` files, made now under a name
 /// no other run or user takes, and open to this user alone.
-pub(crate) fn make_private_folder(base: &Path, what: &str) -> std::io::Result<PathBuf> {
+pub fn make_private_folder(base: &Path, what: &str) -> std::io::Result<PathBuf> {
     loop {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let folder = base.join(format!(
@@ -252,7 +252,7 @@ pub(crate) fn make_private_folder(base: &Path, what: &str) -> std::io::Result<Pa
 /// (no dot when `ext` is empty), each made only where nothing is, so two
 /// files of one name never share a path and nothing put there beforehand
 /// is written through.
-pub(crate) fn reserve_file(folder: &Path, stem: &str, ext: &str) -> std::io::Result<PathBuf> {
+pub fn reserve_file(folder: &Path, stem: &str, ext: &str) -> std::io::Result<PathBuf> {
     let mut n = 1;
     loop {
         let stem = match n {
@@ -281,7 +281,7 @@ static SCRATCH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 /// Write `bytes` as a new file named after `name` in this run's private
 /// scratch folder, for the kernel to read by path. The folder is made on
 /// first use, and again should it go.
-pub(crate) fn scratch_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+pub fn scratch_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
     scratch_file_in(&SCRATCH, &private_base(), "scratch", name, bytes)
 }
 
@@ -290,7 +290,7 @@ static TEMP: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 /// A new file named after `name` holding `bytes`, in this run's private
 /// folder for scripts' own files (`file.temp_path`), made on first use.
-pub(crate) fn temp_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+pub fn temp_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
     scratch_file_in(&TEMP, &private_base(), "temp", name, bytes)
 }
 
@@ -298,13 +298,13 @@ pub(crate) fn temp_file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
 /// with whatever is left in them, on the way out: the scratch files are
 /// the kernel's copies, read by then or no longer wanted, and a script's
 /// files last for the run.
-pub(crate) fn remove_scratch_folder() {
+pub fn remove_scratch_folder() {
     remove_kept_folder(&SCRATCH);
     remove_temp_folder();
 }
 
 /// Remove this run's folder for scripts' files, made again on next use.
-pub(crate) fn remove_temp_folder() {
+pub fn remove_temp_folder() {
     remove_kept_folder(&TEMP);
 }
 

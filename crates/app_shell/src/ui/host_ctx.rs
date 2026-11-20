@@ -5,7 +5,6 @@
 use core_document::{Document, FeatureId, WorkbenchRuntimeContext};
 
 use crate::contract::HostCtxParams;
-use crate::log_panel;
 
 /// A context for a panel hook.
 pub fn panel_ctx<'a>(
@@ -41,9 +40,9 @@ pub fn panel_ctx<'a>(
 pub fn flush_ctx_logs(ctx: &mut WorkbenchRuntimeContext) {
     for entry in ctx.drain_logs() {
         match entry.level {
-            core_document::LogLevel::Info => log_panel::info(entry.message),
-            core_document::LogLevel::Warn => log_panel::warn(entry.message),
-            core_document::LogLevel::Error => log_panel::error(entry.message),
+            core_document::LogLevel::Info => app_log::info(entry.message),
+            core_document::LogLevel::Warn => app_log::warn(entry.message),
+            core_document::LogLevel::Error => app_log::error(entry.message),
         }
     }
 }

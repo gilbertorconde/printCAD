@@ -81,7 +81,7 @@ impl Pressing {
                             match HeightMap::from_image(bytes, PICTURE_PX) {
                                 Ok(map) => Some(Arc::new(map)),
                                 Err(err) => {
-                                    crate::log_panel::warn(format!(
+                                    app_log::warn(format!(
                                         "A texture's picture does not read, so it presses \
                                          nothing: {err}"
                                     ));
@@ -229,11 +229,11 @@ impl crate::PrintCadApp {
             };
             let (tx, rx) = std::sync::mpsc::channel();
             pressed.making.insert(key, Some(rx));
-            let spawned = crate::platform::spawn("printcad-texture", move || {
+            let spawned = app_platform::spawn("printcad-texture", move || {
                 let _ = tx.send(Arc::new(pressing.apply(&local, Detail::PREVIEW)));
             });
             if let Err(err) = spawned {
-                crate::log_panel::warn(format!("The texture preview could not start: {err}"));
+                app_log::warn(format!("The texture preview could not start: {err}"));
                 self.session.drawn.texture_meshes.making.remove(&key);
             }
         }
@@ -268,12 +268,12 @@ impl PressedMeshes {
     /// so it neither keeps frames coming nor starts again.
     fn take_in(&mut self) {
         for (key, answer) in &mut self.making {
-            match crate::platform::take_answer(answer) {
+            match app_platform::take_answer(answer) {
                 Some(Ok(mesh)) => {
                     self.made.insert(*key, mesh);
                 }
                 Some(Err(_)) => {
-                    crate::log_panel::warn("A texture preview stopped without a mesh.");
+                    app_log::warn("A texture preview stopped without a mesh.");
                     self.failed.insert(*key);
                 }
                 None => {}

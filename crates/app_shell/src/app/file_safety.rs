@@ -12,7 +12,6 @@ use uuid::Uuid;
 
 use crate::PrintCadApp;
 use crate::app::unsaved::Then;
-use crate::log_panel as app_log;
 
 /// The version this build is, as saves are stamped with it.
 const RUNNING: &str = env!("CARGO_PKG_VERSION");
@@ -147,7 +146,7 @@ impl PrintCadApp {
     /// Learn what wrote the file just opened into the active tab and
     /// whether it can be written, and say what the user should know.
     pub(crate) fn note_opened_file(&mut self, path: &Path) {
-        let read_only = crate::platform::read_only(path);
+        let read_only = app_platform::read_only(path);
         let safety = FileSafety::of_opened(path, &self.session.document, read_only);
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
@@ -182,7 +181,7 @@ impl PrintCadApp {
                 .file
                 .path
                 .as_deref()
-                .is_some_and(crate::platform::read_only)
+                .is_some_and(app_platform::read_only)
     }
 
     /// Save to `path`, picked by Save or Save As: over the tab's own file

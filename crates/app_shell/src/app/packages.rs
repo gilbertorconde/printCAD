@@ -13,7 +13,6 @@ use workbenches::{Capabilities, Package, PackageState, PackageStatus};
 
 use crate::PrintCadApp;
 use crate::contract::ActiveWorkbench;
-use crate::log_panel as app_log;
 
 /// A package whose files are in place, and its workbench made ready to
 /// register: `None` when the user turned the package off.
@@ -241,7 +240,7 @@ impl PrintCadApp {
     pub(crate) fn package_thread(&mut self, work: impl FnOnce() -> PackageNews + Send + 'static) {
         let tx = self.packages.work.tx.clone();
         self.packages.work.pending += 1;
-        let started = crate::platform::spawn("printcad-packages", move || {
+        let started = app_platform::spawn("printcad-packages", move || {
             let _ = tx.send(work());
         });
         if let Err(e) = started {

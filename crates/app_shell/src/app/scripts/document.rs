@@ -197,7 +197,7 @@ pub(crate) fn document_command(
         "file.temp_path" => {
             let name = a.opt_string("name")?.unwrap_or("file");
             let text = a.opt_string("text")?.unwrap_or_default();
-            let path = crate::platform::temp_file(name, text.as_bytes())
+            let path = app_platform::temp_file(name, text.as_bytes())
                 .map_err(|e| CommandError::failed(format!("could not make the file: {e}")))?;
             Ok(json!(path.display().to_string()))
         }
@@ -486,7 +486,7 @@ pub(crate) fn document_command(
         "doc.replace_shape" => {
             let body = a.body(document, "body")?;
             let path = a.string("path")?;
-            let bytes = crate::platform::read(std::path::Path::new(path))
+            let bytes = app_platform::read(std::path::Path::new(path))
                 .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
             if !document.replace_body_shape(body, path, bytes) {
                 return Err(CommandError::bad(

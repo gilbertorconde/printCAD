@@ -17,7 +17,6 @@ use glam::Vec2;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::PrintCadApp;
-use crate::app_log;
 
 /// How long a right press stays still before the menu opens.
 pub(crate) const HOLD: Duration = Duration::from_millis(300);

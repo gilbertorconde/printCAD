@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 
 use crate::app::view_fit::{aabb_fit_center_radius, document_imported_aabb};
 use crate::contract::TreeItemId;
-use crate::log_panel as app_log;
 use crate::{Document, PrintCadApp};
 
 /// Derive a user-facing document name from a file name by stripping the
@@ -685,7 +684,7 @@ impl PrintCadApp {
     }
 
     pub(crate) fn save_document_at(&mut self, path: &Path) -> Result<()> {
-        if crate::platform::read_only(path) {
+        if app_platform::read_only(path) {
             return Err(anyhow::anyhow!(
                 "{} is read-only: save the document under another name",
                 path.display()
@@ -721,7 +720,7 @@ impl PrintCadApp {
             Some(ext) if ext == "json" => {
                 let bytes = serde_json::to_vec_pretty(&self.session.document)
                     .with_context(|| "Failed to serialize document")?;
-                crate::platform::write(path, &bytes)
+                app_platform::write(path, &bytes)
                     .with_context(|| format!("Failed to write document file {}", path.display()))?;
             }
             _ => {
@@ -928,7 +927,7 @@ impl PrintCadApp {
     /// packing one does, so it does not belong on the UI thread either.
     fn start_document_parse(&mut self, token: u64, path: PathBuf, bytes: Vec<u8>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = crate::platform::spawn("printcad-document-open", move || {
+        let spawned = app_platform::spawn("printcad-document-open", move || {
             let parsed = Self::parse_document_bytes(&path, bytes);
             let _ = tx.send(OpenJob {
                 token,
@@ -1006,7 +1005,7 @@ impl PrintCadApp {
         let worker_progress = Arc::clone(&progress);
         let (tx, rx) = std::sync::mpsc::channel();
 
-        let spawned = crate::platform::spawn("printcad-document-save", move || {
+        let spawned = app_platform::spawn("printcad-document-save", move || {
             document.set_thumbnail(doc_render::thumbnail::render(&preview, forward, up));
             let packed = document.save_to_bytes_watched(compression, &move |done, total| {
                 worker_progress.set(done, total);
@@ -1177,7 +1176,7 @@ impl PrintCadApp {
         for (tab, seq, mut document, file) in wanted {
             self.autosave.saved.insert(tab, seq);
             let name = document.name().to_string();
-            let spawned = crate::platform::spawn("printcad-autosave", move || {
+            let spawned = app_platform::spawn("printcad-autosave", move || {
                 let kept = document
                     .save_to_bytes(core_document::Compression::Zstd)
                     .map_err(|e| e.to_string())
@@ -1221,7 +1220,7 @@ impl PrintCadApp {
             }
             crate::app::recovery::Source::Copy { .. } => {}
         }
-        let document = crate::platform::read(&copy)
+        let document = app_platform::read(&copy)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| Self::parse_document_bytes(&copy, bytes));
         let document = match document {
@@ -1346,7 +1345,7 @@ impl PrintCadApp {
     /// A name picked for a close, quit or Save all that waits on the save
     /// gives back what goes on once it is written.
     pub(crate) fn poll_file_dialog(&mut self) -> Option<(uuid::Uuid, crate::app::unsaved::Then)> {
-        let result = match crate::platform::take_answer(&mut self.files.dialog_rx) {
+        let result = match app_platform::take_answer(&mut self.files.dialog_rx) {
             Some(Ok(result)) => result,
             Some(Err(_)) => {
                 app_log::error("The file dialog closed without an answer: nothing done");
@@ -1409,7 +1408,7 @@ impl PrintCadApp {
             FileDialogKind::Attach(chat) => self.attach_files(&chat, result.paths),
             FileDialogKind::SaveFile(file) => {
                 if let Some(path) = path {
-                    match crate::platform::write(&path, &file.contents) {
+                    match app_platform::write(&path, &file.contents) {
                         Ok(()) => app_log::info(format!("Saved {}", path.display())),
                         Err(err) => {
                             app_log::error(format!("Could not save {}: {err}", path.display()))
@@ -1654,7 +1653,7 @@ fn write_into(folder: &std::path::Path, files: &[(String, Vec<u8>)]) {
             continue;
         }
         let path = folder.join(name);
-        match crate::platform::write(&path, contents) {
+        match app_platform::write(&path, contents) {
             Ok(()) => app_log::info(format!("Saved {}", path.display())),
             Err(err) => app_log::error(format!("Could not save {}: {err}", path.display())),
         }

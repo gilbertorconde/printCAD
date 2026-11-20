@@ -824,7 +824,7 @@ impl PrintCadApp {
     /// Add a picture of the scene as the user sees it.
     pub(crate) fn attach_view(&mut self, id: &str) {
         let Some(png) = self.view_png(1280, 960) else {
-            crate::app_log::warn("Nothing is visible to attach a picture of");
+            app_log::warn("Nothing is visible to attach a picture of");
             return;
         };
         self.attach_picture(id, "view", png);
@@ -843,9 +843,7 @@ impl PrintCadApp {
         };
         match png {
             Ok(png) => self.attach_picture(id, "pasted", png),
-            Err(err) => {
-                crate::app_log::warn(format!("Could not read the clipboard's picture: {err}"))
-            }
+            Err(err) => app_log::warn(format!("Could not read the clipboard's picture: {err}")),
         }
     }
 
@@ -993,7 +991,7 @@ impl PrintCadApp {
         {
             config.choices.insert(option, value);
             if let Err(err) = self.settings_store.save(&self.user_settings) {
-                crate::app_log::warn(format!("Could not save the agent's choice: {err}"));
+                app_log::warn(format!("Could not save the agent's choice: {err}"));
             }
         }
     }

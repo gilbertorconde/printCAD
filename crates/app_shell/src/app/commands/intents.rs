@@ -7,7 +7,6 @@ use winit::event_loop::ActiveEventLoop;
 use super::FrameIntents;
 use crate::PrintCadApp;
 use crate::contract::{Screen, TreeItemId};
-use crate::log_panel as app_log;
 use crate::orientation_cube::CubeDrag;
 
 /// A STEP import confirmed this frame: the file and the detail asked for.
@@ -347,7 +346,7 @@ impl PrintCadApp {
             self.start_new_document(kind);
         }
         if let Some(path) = intents.open_recent.take() {
-            if crate::platform::exists(&path) {
+            if app_platform::exists(&path) {
                 self.open_document_at(path);
             } else {
                 app_log::error(format!("`{}` is gone; removed from recent", path.display()));

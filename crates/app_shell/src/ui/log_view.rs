@@ -5,13 +5,11 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::small_secondary_button;
 use ui_kit::{mono, sans, sans_semibold};
 
-use crate::log_panel;
-
 pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
     if !show {
         return;
     }
-    let entries = log_panel::entries();
+    let entries = app_log::entries();
     if entries.is_empty() {
         return;
     }
@@ -34,7 +32,7 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
                 );
                 ui.add_space(SPACE_2);
                 if small_secondary_button(ui, "Clear").clicked() {
-                    log_panel::clear();
+                    app_log::clear();
                 }
             });
             ui.add_space(SPACE_1);
@@ -52,10 +50,10 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
                             secs % 60
                         );
                         let (label, color) = match entry.level {
-                            log_panel::LogLevel::Info => ("INFO", INFO),
-                            log_panel::LogLevel::Success => ("OK", SUCCESS),
-                            log_panel::LogLevel::Warn => ("WARN", WARNING),
-                            log_panel::LogLevel::Error => ("ERROR", DANGER),
+                            app_log::LogLevel::Info => ("INFO", INFO),
+                            app_log::LogLevel::Success => ("OK", SUCCESS),
+                            app_log::LogLevel::Warn => ("WARN", WARNING),
+                            app_log::LogLevel::Error => ("ERROR", DANGER),
                         };
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = SPACE_2;

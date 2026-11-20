@@ -228,7 +228,7 @@ pub(crate) struct FileWork {
     /// has been sent.
     pub slicer_folder: Option<PathBuf>,
     /// Animations being drawn and written on threads of their own.
-    pub animations: Vec<crate::platform::Job>,
+    pub animations: Vec<app_platform::Job>,
 }
 
 impl FileWork {
@@ -421,7 +421,7 @@ pub(crate) struct Autosave {
     /// Each tab's document as last autosaved, by its mutation seq.
     pub saved: HashMap<Uuid, u64>,
     /// Autosave writes on their threads, joined before an exit.
-    pub jobs: Vec<crate::platform::Job>,
+    pub jobs: Vec<app_platform::Job>,
     /// Copies a crash left, offered back on the start page.
     pub recoverable: Vec<crate::app::recovery::Recoverable>,
 }

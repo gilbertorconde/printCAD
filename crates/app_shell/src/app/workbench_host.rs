@@ -12,7 +12,6 @@ use uuid::Uuid;
 use crate::PrintCadApp;
 use crate::app::doc_io::{FileDialogKind, FileToSave};
 use crate::contract::TreeItemId;
-use crate::log_panel as app_log;
 
 /// Snapshot of host state a hook's context is built from. Constructed via
 /// [`PrintCadApp::interaction_ctx_params`] / [`PrintCadApp::overlay_ctx_params`]

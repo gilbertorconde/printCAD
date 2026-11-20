@@ -9,7 +9,6 @@
 use core_document::TaskOutcome;
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
 
 impl PrintCadApp {
     /// Whether a task that holds its edits as one step is open, or due to

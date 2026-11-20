@@ -13,7 +13,6 @@ use uuid::Uuid;
 use crate::PrintCadApp;
 use crate::app::input::PickedFace;
 use crate::contract::PickFilter;
-use crate::log_panel as app_log;
 
 /// Dash pattern of a crossing box, in pixels.
 const CROSSING_DASH: (f32, f32) = (6.0, 4.0);

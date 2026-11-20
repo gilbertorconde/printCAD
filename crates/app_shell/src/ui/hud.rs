@@ -515,11 +515,11 @@ pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let recent: Vec<crate::log_panel::LogEntry> = crate::log_panel::entries()
+    let recent: Vec<app_log::LogEntry> = app_log::entries()
         .into_iter()
         .rev()
         .filter(|e| {
-            !matches!(e.level, crate::log_panel::LogLevel::Info)
+            !matches!(e.level, app_log::LogLevel::Info)
                 && now.saturating_sub(e.timestamp_secs) < SHOW_FOR_SECS
         })
         .take(3)
@@ -538,8 +538,8 @@ pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
             ui.spacing_mut().item_spacing.y = SPACE_1;
             for entry in recent {
                 let (color, icon) = match entry.level {
-                    crate::log_panel::LogLevel::Success => (SUCCESS, "check"),
-                    crate::log_panel::LogLevel::Warn => (WARNING, "warning"),
+                    app_log::LogLevel::Success => (SUCCESS, "check"),
+                    app_log::LogLevel::Warn => (WARNING, "warning"),
                     _ => (DANGER, "error"),
                 };
                 Card::floating()
@@ -615,7 +615,7 @@ mod toast_tests {
 
     #[test]
     fn good_news_draws_as_a_card_over_the_view() {
-        crate::log_panel::success("A package is ready");
+        app_log::success("A package is ready");
         let ctx = Context::default();
         ui_kit::theme::apply_theme(&ctx);
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));

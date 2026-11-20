@@ -12,7 +12,6 @@ use core_document::{BodyId, BodyPlacement};
 use glam::Vec3;
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
 use doc_render::thumbnail::Shape;
 
 /// Frame size, in pixels.
@@ -162,8 +161,8 @@ pub(crate) fn save_dialog(videos: bool) -> (String, String, Vec<&'static str>) {
 pub(crate) fn write_in_background(
     animation: Animation,
     path: PathBuf,
-) -> Option<crate::platform::Job> {
-    let spawned = crate::platform::spawn("printcad-animation", move || {
+) -> Option<app_platform::Job> {
+    let spawned = app_platform::spawn("printcad-animation", move || {
         match write(&animation, &path) {
             Ok(written) => app_log::info(format!(
                 "Saved a {}-frame animation to {}",
@@ -183,7 +182,7 @@ pub(crate) fn write_in_background(
 fn write(animation: &Animation, path: &std::path::Path) -> Result<PathBuf, String> {
     let (kind, path) = Kind::of(path);
     let save = |target: &std::path::Path, bytes: Vec<u8>| {
-        crate::platform::write(target, &bytes)
+        app_platform::write(target, &bytes)
             .map_err(|err| format!("could not save {}: {err}", target.display()))
     };
     match kind {

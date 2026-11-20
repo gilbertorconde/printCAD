@@ -928,7 +928,7 @@ fn serve_request(
                     Ok(model) => {
                         let kernel_ms = k0.elapsed();
                         let r0 = Instant::now();
-                        match crate::platform::read(&path) {
+                        match app_platform::read(&path) {
                             Ok(raw_bytes) => {
                                 let read_ms = r0.elapsed();
                                 let worker_total = started.elapsed();

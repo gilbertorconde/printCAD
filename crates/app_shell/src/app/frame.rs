@@ -18,7 +18,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
 use super::scene_guides::{self, GuideView};
 use crate::contract;
-use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, OrientationCubeInput};
 use crate::{Document, PrintCadApp};
 

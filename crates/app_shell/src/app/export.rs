@@ -14,7 +14,6 @@ use kernel_ogeom::export::{
 };
 
 use crate::PrintCadApp;
-use crate::app_log;
 
 /// The export dialog's options.
 #[derive(Debug, Clone)]
@@ -298,7 +297,7 @@ fn write_files(
                 export_with_annotations(&borrowed, &notes, &semantic, draft.format, &draft.detail)
                     .map_err(|e| e.to_string())
                     .and_then(|exported| {
-                        crate::platform::write(&path, &exported.bytes)
+                        app_platform::write(&path, &exported.bytes)
                             .map(|()| exported)
                             .map_err(|e| format!("could not write the file: {e}"))
                     });
@@ -492,19 +491,18 @@ impl PrintCadApp {
         }
         let folder = match self.files.slicer_folder.clone().filter(|f| f.is_dir()) {
             Some(folder) => folder,
-            None => match crate::platform::make_private_folder(
-                &crate::platform::private_base(),
-                "slicer",
-            ) {
-                Ok(folder) => {
-                    self.files.slicer_folder = Some(folder.clone());
-                    folder
+            None => {
+                match app_platform::make_private_folder(&app_platform::private_base(), "slicer") {
+                    Ok(folder) => {
+                        self.files.slicer_folder = Some(folder.clone());
+                        folder
+                    }
+                    Err(err) => {
+                        app_log::error(format!("Could not make a folder for the slicer: {err}"));
+                        return;
+                    }
                 }
-                Err(err) => {
-                    app_log::error(format!("Could not make a folder for the slicer: {err}"));
-                    return;
-                }
-            },
+            }
         };
         let stem = self
             .session
@@ -514,7 +512,7 @@ impl PrintCadApp {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| file_stem_of(self.session.document.name()));
-        let path = match crate::platform::reserve_file(&folder, &stem, draft.format.extension()) {
+        let path = match app_platform::reserve_file(&folder, &stem, draft.format.extension()) {
             Ok(path) => path,
             Err(err) => {
                 app_log::error(format!(
@@ -627,13 +625,13 @@ impl PrintCadApp {
                 "Compensating round faces: holes {holes:+.3} mm, bosses {bosses:+.3} mm in radius"
             ));
         }
-        let started = crate::platform::spawn("printcad-export", move || {
+        let started = app_platform::spawn("printcad-export", move || {
             let files = write_files(&bodies, &semantic, files, &draft, (scale, rounds));
             let _ = tx.send(ExportOutcome { files, open_with });
         });
         if let Err(err) = started {
             self.files.export_rx = None;
-            crate::app_log::error(format!("Could not start the export: {err}"));
+            app_log::error(format!("Could not start the export: {err}"));
         }
     }
 
@@ -665,7 +663,7 @@ impl PrintCadApp {
     /// stops keeping frames coming once its thread ends.
     pub(crate) fn poll_export(&mut self) {
         self.files.animations.retain(|job| !job.is_finished());
-        match crate::platform::take_answer(&mut self.files.export_rx) {
+        match app_platform::take_answer(&mut self.files.export_rx) {
             Some(Ok(outcome)) => report_export(outcome, true),
             Some(Err(_)) => app_log::error(EXPORT_STOPPED),
             None => {}
@@ -698,7 +696,7 @@ impl PrintCadApp {
     /// slicer may still be reading a file in it. One left for a slicer
     /// stays for the system to clear with the runtime or temporary folder.
     pub(crate) fn remove_private_folders(&mut self) {
-        crate::platform::remove_scratch_folder();
+        app_platform::remove_scratch_folder();
         let Some(folder) = self.files.slicer_folder.take() else {
             return;
         };

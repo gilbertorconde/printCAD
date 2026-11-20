@@ -296,9 +296,7 @@ impl PrintCadApp {
                         eye,
                     ),
                     _ => {
-                        crate::app_log::info(
-                            "The clipping plane takes a flat face or a datum plane",
-                        );
+                        app_log::info("The clipping plane takes a flat face or a datum plane");
                         return true;
                     }
                 };
@@ -323,7 +321,7 @@ impl PrintCadApp {
                             self.session.view.section_pick = None;
                         }
                         None => {
-                            crate::app_log::info(
+                            app_log::info(
                                 "Those three points stand in a line: pick the third again",
                             );
                             points.pop();

@@ -13,7 +13,6 @@ use arms::ShapeWork;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::doc_io::FileDialogKind;
-use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 use crate::PrintCadApp;
@@ -138,7 +137,7 @@ impl PrintCadApp {
             if self.scripting.recording.is_some()
                 && matches!(command, UiCommand::Undo | UiCommand::Redo)
             {
-                crate::app_log::warn(
+                app_log::warn(
                     "Undo and Redo are not in the recording: what they took back stays in it",
                 );
             }
@@ -932,7 +931,7 @@ impl PrintCadApp {
         index: usize,
         path: &std::path::Path,
     ) {
-        let bytes = match crate::platform::read(path) {
+        let bytes = match app_platform::read(path) {
             Ok(bytes) => bytes,
             Err(err) => {
                 app_log::error(format!("Could not read {}: {err}", path.display()));
@@ -1317,7 +1316,7 @@ impl PrintCadApp {
                 if let Err(why) =
                     doc.set_feature_formula(feature, parameter.key.clone(), Some(text))
                 {
-                    crate::log_panel::warn(why.to_string());
+                    app_log::warn(why.to_string());
                 }
             }
             FormulaEdit::Value(v) => {
@@ -1325,7 +1324,7 @@ impl PrintCadApp {
                     .registry
                     .set_parameter_value(doc, feature, parameter, v)
                 {
-                    crate::log_panel::warn(why);
+                    app_log::warn(why);
                 }
             }
         }
@@ -1361,7 +1360,7 @@ impl PrintCadApp {
                 self.session.journal.label_next("New variable set");
                 self.close_gesture();
             }
-            Err(why) => crate::log_panel::warn(why),
+            Err(why) => app_log::warn(why),
         }
     }
 
@@ -1371,7 +1370,7 @@ impl PrintCadApp {
                 self.session.journal.label_next(label);
                 self.close_gesture();
             }
-            Err(why) => crate::log_panel::warn(why),
+            Err(why) => app_log::warn(why),
         }
     }
 }
@@ -1389,7 +1388,7 @@ impl PrintCadApp {
                         self.close_gesture();
                         self.apply_tree_selection(crate::contract::TreeItemId::Feature(id));
                     }
-                    Err(why) => crate::log_panel::warn(why),
+                    Err(why) => app_log::warn(why),
                 }
                 return;
             }
