@@ -18,8 +18,14 @@ struct TestHome {
 
 impl TestHome {
     fn new(tag: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("printcad_daemon_{tag}_{}", std::process::id()));
+        // macOS keeps a socket's whole path under about 104 bytes and its
+        // temp folder is deep, so the tests' sockets sit under /tmp there.
+        let base = if cfg!(target_os = "macos") {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let dir = base.join(format!("printcad_daemon_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("test dir");
         Self { dir }
