@@ -7,6 +7,7 @@ mod block_kernel;
 mod interaction;
 mod operations;
 mod precision;
+mod stored_json;
 
 use core_document::KeyCode;
 use glam::{Mat4, Vec3};

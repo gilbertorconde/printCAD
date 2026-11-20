@@ -1203,4 +1203,64 @@ mod tests {
         assert_ne!(shown.plane, written.plane, "the body moved");
         same(&shown, &afresh(&doc));
     }
+
+    /// A write is made over the data written before it once nothing else
+    /// holds that, and stores what writing it afresh stores; data an undo
+    /// step holds is never written over, and the undo puts it back whole.
+    #[test]
+    fn a_write_over_earlier_data_leaves_what_others_hold_alone() {
+        use core_document::history::OpJournal;
+        let mut doc = Document::new("t");
+        let id = doc
+            .add_feature(
+                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
+                "s".into(),
+            )
+            .unwrap();
+        let mut wb = SketchWorkbench::default();
+        let write = |doc: &mut Document, wb: &mut SketchWorkbench, x: f64| {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(id);
+            wb.on_frame(0.016, &mut ctx);
+            let mut feature = wb.get_active_sketch(&ctx).unwrap();
+            let point = Point::new(Vec2D::new(x, 3.0));
+            feature.sketch.add_geometry(GeometryElement::Point(point));
+            assert!(wb.store_sketch(&mut ctx, feature));
+            let stored = doc.get_feature_meta(id).unwrap().data.clone();
+            let written = wb.tab.written.borrow().as_ref().unwrap().feature.to_json();
+            assert_eq!(stored.to_string(), written.to_string());
+            stored
+        };
+        // Where the sketch's id is kept: a write over earlier data keeps
+        // the text standing there, a fresh write makes its own.
+        let node = |data: &serde_json::Value| data["sketch"]["id"].as_str().unwrap().as_ptr();
+        let spare = |wb: &SketchWorkbench| wb.tab.spare.borrow().as_deref().map(node);
+
+        write(&mut doc, &mut wb, 1.0);
+        write(&mut doc, &mut wb, 2.0);
+        let free = spare(&wb).expect("the first write is spare");
+        let third = write(&mut doc, &mut wb, 3.0);
+        assert_eq!(node(&third), free, "written over the spare");
+
+        // Each write an undo step of its own: from the second, the data
+        // written before is held by one, and every undo puts it back as
+        // written.
+        let mut history = OpJournal::new(100);
+        history.note(&mut doc);
+        let mut texts = vec![doc.get_feature_meta(id).unwrap().data.to_string()];
+        texts.push(write(&mut doc, &mut wb, 4.0).to_string());
+        history.note(&mut doc);
+        for x in [5.0, 6.0, 7.0] {
+            let held = spare(&wb);
+            let stored = write(&mut doc, &mut wb, x);
+            assert_ne!(Some(node(&stored)), held, "a held spare is left alone");
+            history.note(&mut doc);
+            texts.push(stored.to_string());
+        }
+        for text in texts.iter().rev().skip(1) {
+            history.undo(&mut doc).unwrap();
+            assert_eq!(&doc.get_feature_meta(id).unwrap().data.to_string(), text);
+        }
+    }
 }
