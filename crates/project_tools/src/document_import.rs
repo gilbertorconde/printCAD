@@ -9,7 +9,9 @@ use crate::error::{ErrorCategory, Failure, ImportError};
 use crate::numeric::{design_length, frame, sketch_plane};
 use crate::report::{Finding, note};
 use crate::sketch_import::{ImportedSketch, import_sketch};
-use core_document::{BodyId, BodyPlacement, Document, FeatureId, ImportedGeometry};
+use core_document::{
+    BodyId, BodyPlacement, Document, DocumentService, FeatureId, ImportedGeometry,
+};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use project_archive::archive::FcstdError;
@@ -212,68 +214,29 @@ pub fn import_document(
             }
         }
     }
-    // Then the bodies built from features, each once what it takes from
-    // other bodies is built.
-    let mut pending: Vec<&ConvertedBody> = project
+    // Then the bodies built from features, built as the app builds them,
+    // each once what it takes from other bodies is built.
+    let features: Vec<&ConvertedBody> = project
         .bodies
         .iter()
         .filter(|b| b.kind == BodyKind::Features && !b.features.is_empty())
         .collect();
-    while !pending.is_empty() {
-        let ready = pending
-            .iter()
-            .position(|b| {
-                taken_from(&project.document, b.body)
-                    .iter()
-                    .all(|source| !pending.iter().any(|p| p.body == *source))
-            })
-            .unwrap_or(0);
-        let converted = pending.remove(ready);
+    let built = build_driver::build_all(
+        &mut project.document,
+        &builder(),
+        &mut kernel,
+        &detail,
+        &mut (),
+    );
+    for converted in features {
         let body = converted.body;
-        let document = &project.document;
-        let named = |feature: Option<FeatureId>| {
-            feature
-                .and_then(|f| document.get_feature_meta(f))
-                .map_or(String::new(), |n| format!(" {}", n.name))
-        };
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let plan = wb_design::body_build_ops(document, body).map_err(|e| {
-                let at = named(e.feature);
-                Failure::new(ErrorCategory::Rebuild, format!("planning{at}: {e}"))
-            })?;
-            kernel
-                .execute_solid_chain(kernel_ogeom::ChainRequest::new(&plan.ops, &detail))
-                .map_err(|e| {
-                    let at = named(plan.op_features.get(e.op_index).copied());
-                    Failure::new(ErrorCategory::Rebuild, format!("kernel{at}: {e}"))
-                })
-        }));
-        let failure = match result {
-            Ok(Ok(built)) => {
-                store(
-                    &mut project.document,
-                    body,
-                    (
-                        ImportedGeometry {
-                            mesh: Arc::new(built.mesh),
-                            mesh_path: None,
-                            source_asset: None,
-                            revision: 0,
-                            bounds_mm: built.bounds_mm,
-                            brep_blob_path: None,
-                            face_colors_path: None,
-                            health: None,
-                        },
-                        built.brep_blob,
-                    ),
-                );
-                continue;
-            }
-            Ok(Err(reason)) => reason,
-            Err(panic) => Failure::new(
-                ErrorCategory::Rebuild,
-                format!("kernel panic: {}", panic_message(&panic)),
-            ),
+        let Some(failure) = built
+            .bodies
+            .iter()
+            .find(|b| b.body == body)
+            .and_then(|b| build_failure(&project.document, b))
+        else {
+            continue;
         };
         // What the file saved stands in for a history that does not build.
         let stand_in = project.document.body(body).and_then(|b| b.stand_in);
@@ -291,21 +254,45 @@ pub fn import_document(
     Ok(project)
 }
 
-/// The bodies `body`'s features take solids from: a clone's source and
-/// the tools of its booleans.
-fn taken_from(document: &Document, body: BodyId) -> Vec<BodyId> {
-    wb_design::design_features_of_body(document, body)
-        .into_iter()
-        .flat_map(|(_, feature)| match feature {
-            DesignFeature::Clone { source } => vec![source],
-            DesignFeature::BodyBoolean {
-                tool_body,
-                more_tools,
-                ..
-            } => std::iter::once(tool_body).chain(more_tools).collect(),
-            _ => Vec::new(),
-        })
-        .collect()
+/// The benches a converted project's features belong to, which plan its
+/// builds as the app's do.
+fn builder() -> DocumentService {
+    let mut registry = DocumentService::default();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
+    for bench in [
+        Box::new(wb_sketch::SketchWorkbench::default()) as Box<dyn core_document::Workbench>,
+        Box::new(wb_design::DesignWorkbench::default()),
+    ] {
+        registry
+            .register_workbench(bench)
+            .expect("the sketch and design benches register once each");
+    }
+    registry
+}
+
+/// Why `body`'s build failed, when it did: where its plan stopped, else
+/// where the kernel did.
+fn build_failure(document: &Document, built: &build_driver::BodyBuild) -> Option<Failure> {
+    let named = |feature: Option<FeatureId>| {
+        feature
+            .and_then(|f| document.get_feature_meta(f))
+            .map_or(String::new(), |n| format!(" {}", n.name))
+    };
+    let reason = match (&built.refused, &built.kernel) {
+        (Some(error), _) => format!("planning{}: {error}", named(error.feature)),
+        (None, build_driver::KernelStep::Failed { failure, .. }) => format!(
+            "kernel{}: op {}: {}",
+            named(failure.feature),
+            failure.op_index,
+            failure.error
+        ),
+        (None, build_driver::KernelStep::Panicked(why)) => format!("kernel panic: {why}"),
+        (None, build_driver::KernelStep::Cancelled) => "kernel: cancelled".to_string(),
+        (None, build_driver::KernelStep::Built | build_driver::KernelStep::Nothing) => {
+            return None;
+        }
+    };
+    Some(Failure::new(ErrorCategory::Rebuild, reason))
 }
 
 /// The shape asset `asset` of `document` holds, read by the kernel.

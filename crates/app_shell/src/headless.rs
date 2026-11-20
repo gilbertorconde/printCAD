@@ -531,198 +531,51 @@ fn context(document: &mut Document) -> WorkbenchRuntimeContext<'_> {
     ctx
 }
 
+/// Reads a shape the document takes from a file as the kernel reads files:
+/// a copy of the asset under its own name, removed once read.
+struct ShapeFiles;
+
+impl build_driver::ShapeReader for ShapeFiles {
+    fn read(
+        &mut self,
+        kernel: &mut kernel_ogeom::OgeomKernel,
+        document: &Document,
+        asset: uuid::Uuid,
+        detail: &TessellationSettings,
+    ) -> Option<kernel_api::MeshSolidResult> {
+        let (reference, bytes) = document.asset_with_bytes(asset)?;
+        let name = Path::new(&reference.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let shape = crate::platform::scratch_file(&name, &bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|path| {
+                let shape = kernel.read_solid(&path, detail).map_err(|e| e.to_string());
+                let _ = std::fs::remove_file(path);
+                shape
+            });
+        shape
+            .inspect_err(|error| eprintln!("a shape could not be read from {name}: {error}"))
+            .ok()
+    }
+}
+
 impl Headless {
     /// Build every solid that changed, here and now, until nothing is left
     /// to build. The failures, as `{feature, name, error}`.
     fn rebuild(&mut self) -> Vec<Value> {
-        let mut kernel = kernel_ogeom::OgeomKernel::new();
-        // A plan that fails keeps its body's features clean, so the loop
-        // ends; the bound is a guard, not the expected way out.
-        let mut read = std::collections::HashSet::new();
-        for _ in 0..32 {
-            self.read_shapes(&mut read);
-            // What stands on a solid just built follows it before the next
-            // round is planned.
-            self.registry.evaluate(&mut self.document);
-            self.rebuild_meshes();
-            let jobs = self.registry.rebuild_jobs(&mut self.document);
-            if jobs.is_empty() {
-                break;
-            }
-            for job in jobs {
-                let body = job.body;
-                self.document.clear_body_feature_errors(body);
-                let mut plan = match job.plan {
-                    Ok(plan) => plan,
-                    Err(err) => {
-                        if let Some(feature) = err.feature {
-                            self.document
-                                .set_feature_error(feature, Some(err.message.clone()));
-                        }
-                        continue;
-                    }
-                };
-                if let Some(err) = plan.failed.take()
-                    && let Some(feature) = err.feature
-                {
-                    self.document.set_feature_error(feature, Some(err.message));
-                    let unbuilt = std::mem::take(&mut plan.unbuilt);
-                    crate::app::recompute::mark_unbuilt(&mut self.document, feature, unbuilt);
-                }
-                // A step that fails leaves the body the history before it.
-                loop {
-                    if plan.ops.is_empty() {
-                        if !self.document.body_solid_is_imported(body) {
-                            self.document.remove_imported_geometry(body);
-                        }
-                        break;
-                    }
-                    let asked: Vec<kernel_api::ChainProbe> =
-                        plan.probes.iter().map(|p| p.probe).collect();
-                    let tags: Vec<kernel_api::TopoName> = plan
-                        .op_features
-                        .iter()
-                        .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
-                        .collect();
-                    let projections: Vec<kernel_api::ChainProjection> =
-                        plan.projections.iter().map(|p| p.projection).collect();
-                    match kernel.execute_solid_chain(
-                        kernel_ogeom::ChainRequest::new(
-                            &plan.ops,
-                            &TessellationSettings::default(),
-                        )
-                        .tags(&tags)
-                        .probes(&asked)
-                        .projections(&projections),
-                    ) {
-                        Ok(result) => {
-                            self.document.store_build_warnings(
-                                &plan.op_features,
-                                &plan.probes,
-                                &plan.projections,
-                                &result,
-                            );
-                            self.document
-                                .store_probe_answers(&plan.probes, &result.probes);
-                            self.document
-                                .store_projections(&plan.projections, &result.projections);
-                            crate::app::recompute::store_built_solid(
-                                &mut self.document,
-                                body,
-                                result,
-                            );
-                            break;
-                        }
-                        Err(err) => {
-                            let Some(feature) = plan.op_features.get(err.op_index).copied() else {
-                                break;
-                            };
-                            self.document.set_feature_failure(
-                                feature,
-                                err.message.clone(),
-                                err.edges.clone(),
-                            );
-                            let prefix = plan.keep_before_failure(err.op_index).unwrap();
-                            crate::app::recompute::mark_unbuilt(
-                                &mut self.document,
-                                feature,
-                                prefix.unbuilt,
-                            );
-                        }
-                    }
-                }
-            }
+        let built = build_driver::build_all(
+            &mut self.document,
+            &self.registry,
+            &mut kernel_ogeom::OgeomKernel::new(),
+            &TessellationSettings::default(),
+            &mut ShapeFiles,
+        );
+        for note in &built.notes {
+            eprintln!("{note}");
         }
-        self.read_shapes(&mut read);
-        self.mirror_copies();
         crate::app::scripts::rebuild_failures(&self.document)
-    }
-
-    fn rebuild_meshes(&mut self) {
-        use kernel_api::KernelQueries;
-        let plans = self.registry.mesh_build_plans(&self.document);
-        for plan in plans {
-            if self.document.mesh_steps(&plan).is_some() {
-                continue;
-            }
-            let Some(start) = self.document.mesh_start(plan.body) else {
-                continue;
-            };
-            let answer = match plan.restored_start(&start.mesh) {
-                Some(answer) => Ok(answer),
-                None => kernel_ogeom::QUERIES
-                    .build_mesh_chain(&start.mesh, &plan.ops)
-                    .map_err(|e| e.to_string()),
-            };
-            plan.land(&mut self.document, answer);
-        }
-    }
-
-    /// Read every shape the document takes from a file and has not yet
-    /// (`Document::bodies_awaiting_shape`): shapes replaced or given from
-    /// a file, and the stand-ins of bodies that do not build. Each is read
-    /// once a rebuild.
-    fn read_shapes(
-        &mut self,
-        read: &mut std::collections::HashSet<(core_document::BodyId, uuid::Uuid)>,
-    ) {
-        let mut kernel = kernel_ogeom::OgeomKernel::new();
-        let detail = TessellationSettings::default();
-        for (body, asset) in self.document.bodies_awaiting_shape() {
-            if !read.insert((body, asset)) {
-                continue;
-            }
-            let Some((reference, bytes)) = self.document.asset_with_bytes(asset) else {
-                continue;
-            };
-            let name = Path::new(&reference.path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let shape = crate::platform::scratch_file(&name, &bytes)
-                .map_err(|e| e.to_string())
-                .and_then(|path| {
-                    let shape = kernel.read_solid(&path, &detail).map_err(|e| e.to_string());
-                    let _ = std::fs::remove_file(path);
-                    shape
-                });
-            match shape {
-                Ok(shape) => {
-                    crate::app::recompute::land_shape(
-                        &mut self.document,
-                        &self.registry,
-                        body,
-                        asset,
-                        shape,
-                    );
-                }
-                Err(error) => eprintln!("a shape could not be read from {name}: {error}"),
-            }
-        }
-    }
-
-    /// Give every mirrored copy without one its snapshot: its source's,
-    /// mirrored by the kernel.
-    fn mirror_copies(&mut self) {
-        use kernel_api::KernelQueries;
-        for (body, from, plane) in self.document.copies_awaiting_shape() {
-            match kernel_ogeom::QUERIES.mirror(
-                &from,
-                plane.point.map(f64::from),
-                plane.normal.map(f64::from),
-            ) {
-                Ok(blob) => {
-                    self.document.set_mirrored_shape(body, &from, blob);
-                }
-                Err(error) => {
-                    let name = self
-                        .document
-                        .body(body)
-                        .map_or("a mirrored copy", |b| b.name.as_str());
-                    eprintln!("`{name}` could not be mirrored: {error}");
-                }
-            }
-        }
     }
 
     /// Read `path` into the document as the app's import does: a file

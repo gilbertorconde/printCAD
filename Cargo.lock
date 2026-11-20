@@ -154,6 +154,7 @@ dependencies = [
  "base64 0.23.1",
  "bench_fixtures",
  "bench_panel",
+ "build_driver",
  "core_document",
  "doc_render",
  "doc_server",
@@ -3903,6 +3904,7 @@ dependencies = [
 name = "project_tools"
 version = "0.1.0"
 dependencies = [
+ "build_driver",
  "core_document",
  "glam 0.33.7",
  "kernel_ogeom",
@@ -3913,6 +3915,7 @@ dependencies = [
  "sketch_model",
  "uuid",
  "wb_design",
+ "wb_sketch",
  "zip",
 ]
 
