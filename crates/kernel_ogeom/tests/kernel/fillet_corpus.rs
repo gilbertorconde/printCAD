@@ -937,3 +937,75 @@ fn a_tangent_bosss_foot_rounds() {
     assert!(base - least < v && v < base + most, "volume {v}");
     assert!(is_sound(&built.brep_blob));
 }
+
+/// A stepped block: a plate 40 x 20 x 5 with a block 10 x 20 x 10 more on
+/// its far end, as one L-shaped extrusion, or as the plate with the block
+/// padded on.
+fn stepped(fused: bool) -> Vec<SolidOp> {
+    if fused {
+        return vec![
+            prism(
+                xy_plane(),
+                vec![rect_wire(0.0, 0.0, 40.0, 20.0)],
+                5.0,
+                BooleanOp::NewSolid,
+            ),
+            prism(
+                plane_at_z(5.0),
+                vec![rect_wire(30.0, 0.0, 40.0, 20.0)],
+                10.0,
+                BooleanOp::Fuse,
+            ),
+        ];
+    }
+    let xz = ProfilePlane {
+        origin: [0.0, 0.0, 0.0],
+        x_axis: [1.0, 0.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [0.0, -1.0, 0.0],
+    };
+    let l = poly(&[
+        [0.0, 0.0],
+        [40.0, 0.0],
+        [40.0, 15.0],
+        [30.0, 15.0],
+        [30.0, 5.0],
+        [0.0, 5.0],
+    ]);
+    vec![prism(xz, vec![l], 20.0, BooleanOp::NewSolid)]
+}
+
+/// Every edge of a stepped block chamfered: the inside chamfer along the
+/// step's foot runs into the outside chamfers at both ends, one sound solid.
+#[test]
+fn a_stepped_block_chamfers_on_every_edge() {
+    let mut chain = stepped(false);
+    chain.push(chamfer(1.0, EdgeSelection::All, false));
+    let built = try_chain(&chain).unwrap_or_else(|e| panic!("{}", e.message));
+    assert!(is_sound(&built.brep_blob));
+    let v = volume(&built.brep_blob);
+    // The block less the outside bevels' wedges (0.5 mm2 along 320 mm of
+    // convex edge) plus the inside bevel's along the step (20 mm), within
+    // what the corners where three bevels meet take or leave.
+    let plain = 6000.0 - 0.5 * 320.0 + 0.5 * 20.0;
+    assert!((v - plain).abs() < 10.0, "{v} against about {plain}");
+}
+
+/// The same part built as a plate with the block padded on chamfers to the
+/// same solid as the one-piece step.
+#[test]
+#[ignore = "kernel: concave chamfers between planes are refused (ogeom-rs#1161)"]
+fn a_padded_step_chamfers_as_the_one_piece_step_does() {
+    let at = |fused: bool| {
+        let mut chain = stepped(fused);
+        chain.push(chamfer(1.0, EdgeSelection::All, false));
+        let built = try_chain(&chain).unwrap_or_else(|e| panic!("{}", e.message));
+        assert!(is_sound(&built.brep_blob));
+        volume(&built.brep_blob)
+    };
+    let (padded, whole) = (at(true), at(false));
+    assert!(
+        (padded - whole).abs() < 1e-6 * whole,
+        "{padded} against {whole}"
+    );
+}
