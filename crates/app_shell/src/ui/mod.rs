@@ -52,7 +52,7 @@ use winit::{event::WindowEvent, window::Window};
 
 use crate::contract::*;
 use crate::keymap;
-use crate::orientation_cube::{self, OrientationCubeConfig};
+use orientation_cube::{self, OrientationCubeConfig};
 
 /// The panels whose size is dragged, by name, and whether each is sized
 /// along the window's width.

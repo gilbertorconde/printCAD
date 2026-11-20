@@ -8,9 +8,7 @@ mod camera;
 mod console;
 mod contract;
 mod headless;
-mod kernel_worker;
 mod keymap;
-mod orientation_cube;
 #[cfg(all(feature = "profile", target_os = "linux"))]
 mod profile;
 mod scans;

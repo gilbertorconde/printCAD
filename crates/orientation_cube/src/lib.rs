@@ -1,6 +1,6 @@
 //! Orientation cube widget for showing camera orientation in the 3D viewport.
 //!
-//! This module provides a visual indicator of the current camera orientation,
+//! This crate provides a visual indicator of the current camera orientation,
 //! rendered as a 3D cube with labeled faces (FRONT, REAR, LEFT, RIGHT, TOP, BOTTOM)
 //! and colored axis arrows (X=red, Y=green, Z=blue).
 //!
@@ -293,7 +293,7 @@ pub fn draw(
 
     egui::Area::new(egui::Id::new("orientation_cube"))
         .fixed_pos(pos)
-        .order(crate::ui::VIEW_LAYER)
+        .order(ui_kit::VIEW_LAYER)
         .show(ctx, |ui| {
             let (response, painter) = ui.allocate_painter(
                 egui::Vec2::new(total_width, total_height),
@@ -365,7 +365,7 @@ pub fn draw(
         );
         egui::Area::new(egui::Id::new("orientation_axes"))
             .fixed_pos(axis_pos)
-            .order(crate::ui::VIEW_LAYER)
+            .order(ui_kit::VIEW_LAYER)
             .show(ctx, |ui| {
                 let (response, painter) =
                     ui.allocate_painter(egui::Vec2::splat(axis_widget), Sense::hover());
@@ -435,7 +435,7 @@ fn draw_home_glyph(ui: &Ui, response: &Response, planar_only: bool) -> bool {
 }
 
 /// Whether `point` lies inside `polygon`, by the even-odd rule.
-pub(super) fn point_in_polygon(point: Pos2, polygon: &[Pos2]) -> bool {
+pub(crate) fn point_in_polygon(point: Pos2, polygon: &[Pos2]) -> bool {
     let corners: Vec<[f32; 2]> = polygon.iter().map(|p| [p.x, p.y]).collect();
     kernel_api::polygon::contains(&[&corners], [point.x, point.y])
 }

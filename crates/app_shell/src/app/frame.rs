@@ -18,8 +18,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
 use super::scene_guides::{self, GuideView};
 use crate::contract;
-use crate::orientation_cube::{CameraSnapView, OrientationCubeInput};
 use crate::{Document, PrintCadApp};
+use orientation_cube::{CameraSnapView, OrientationCubeInput};
 
 mod scene;
 

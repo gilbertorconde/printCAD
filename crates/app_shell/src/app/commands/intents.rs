@@ -7,7 +7,7 @@ use winit::event_loop::ActiveEventLoop;
 use super::FrameIntents;
 use crate::PrintCadApp;
 use crate::contract::{Screen, TreeItemId};
-use crate::orientation_cube::CubeDrag;
+use orientation_cube::CubeDrag;
 
 /// A STEP import confirmed this frame: the file and the detail asked for.
 type StepImport = (std::path::PathBuf, kernel_api::TessellationSettings);

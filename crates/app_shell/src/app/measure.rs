@@ -10,7 +10,7 @@ use core_document::{DatumFeature, DatumShape, EdgeCircle, Unit, format_area_mm2}
 use glam::Vec3;
 use kernel_api::{FaceSurface, TriMesh};
 
-use crate::kernel_worker::MeasuredPart;
+use kernel_worker::MeasuredPart;
 
 /// One thing the measure tool picked, in world space.
 #[derive(Debug, Clone, PartialEq)]
@@ -126,7 +126,7 @@ fn nearest_on_line(origin: Vec3, direction: Vec3, eye: Vec3, ray: Vec3) -> Vec3 
 pub(crate) struct MeasureGap {
     pub token: u64,
     pub first_placement: core_document::BodyPlacement,
-    pub found: Option<Result<crate::kernel_worker::LeastDistance, String>>,
+    pub found: Option<Result<kernel_worker::LeastDistance, String>>,
 }
 
 impl MeasureGap {

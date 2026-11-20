@@ -142,7 +142,7 @@ fn label_fonts() -> std::sync::Arc<fontdb::Database> {
         .clone()
 }
 
-pub(crate) fn rasterize_svg(svg: &str) -> Option<ColorImage> {
+pub fn rasterize_svg(svg: &str) -> Option<ColorImage> {
     let opt = Options {
         font_family: "IBM Plex Sans".into(),
         languages: vec!["en".into()],

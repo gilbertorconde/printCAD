@@ -319,7 +319,7 @@ fn interruption_and_planar_lock_release_held_snapshots() {
             0 => camera.forget_released([false; 3]),
             1 => camera.update_viewport((0, 0), (900, 700)),
             2 => camera.set_orbit_lock(true),
-            _ => camera.snap_to_view(crate::orientation_cube::CameraSnapView::Front, &settings),
+            _ => camera.snap_to_view(orientation_cube::CameraSnapView::Front, &settings),
         }
         assert!(camera.navigation_hold.is_none());
         let eye = camera.state.eye;
@@ -464,7 +464,7 @@ fn a_cube_drag_orbits_as_the_middle_button_does_and_respects_the_plane_lock() {
 
 #[test]
 fn fly_to_fit_turns_to_the_view_and_frames_the_sphere() {
-    use crate::orientation_cube::CameraSnapView;
+    use orientation_cube::CameraSnapView;
     let center = Vec3::new(40.0, -12.0, 7.0);
     let radius = 25.0;
     for projection in [ProjectionMode::Perspective, ProjectionMode::Orthographic] {

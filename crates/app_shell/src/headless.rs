@@ -1330,8 +1330,8 @@ endsolid t
     /// stops at a failing fillet and one built against another body.
     #[test]
     fn the_app_s_kernel_worker_builds_what_a_script_builds() {
-        use crate::kernel_worker::{KernelResponse, KernelWorker};
         use build_driver::{Next, clear_unbuilt, record_failure, store_answers, store_solid};
+        use kernel_worker::{KernelResponse, KernelWorker};
         let mut registry = registry();
         let made = r#"
             local s = pc.sketch.new{plane = "XY"}

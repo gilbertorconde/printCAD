@@ -185,15 +185,16 @@ dependencies = [
  "gif",
  "glam 0.33.7",
  "kernel_ogeom",
+ "kernel_worker",
  "local_ipc",
  "notify-rust",
+ "orientation_cube",
  "package_store",
  "png",
  "pprof",
  "printcad-bench-api",
  "printcad-kernel-api",
  "render_wgpu",
- "resvg",
  "rfd",
  "scripting",
  "serde",
@@ -206,7 +207,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "ui_kit",
- "usvg",
  "uuid",
  "viewport_camera",
  "winit",
@@ -2513,6 +2513,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernel_worker"
+version = "0.1.0"
+dependencies = [
+ "app_platform",
+ "build_driver",
+ "core_document",
+ "kernel_ogeom",
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3649,6 +3664,20 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "orientation_cube"
+version = "0.1.0"
+dependencies = [
+ "axes",
+ "egui",
+ "glam 0.33.7",
+ "printcad-kernel-api",
+ "resvg",
+ "tiny-skia 0.12.0",
+ "ui_kit",
+ "usvg",
 ]
 
 [[package]]

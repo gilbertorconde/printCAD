@@ -13,7 +13,7 @@ use arms::ShapeWork;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::doc_io::FileDialogKind;
-use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
+use orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 use crate::PrintCadApp;
 use crate::contract::{

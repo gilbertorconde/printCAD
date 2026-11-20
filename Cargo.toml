@@ -18,6 +18,8 @@ members = [
   "crates/doc_render",
   "crates/doc_export",
   "crates/build_driver",
+  "crates/kernel_worker",
+  "crates/orientation_cube",
   "crates/kernel_api",
   "crates/kernel_ogeom",
   "crates/project_tools",

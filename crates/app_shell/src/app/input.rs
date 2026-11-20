@@ -1004,7 +1004,7 @@ impl PrintCadApp {
         let relative = place_a.inverse().after(&place_b);
         let rows = relative.rows();
         self.kernel_worker
-            .request_min_distance(crate::kernel_worker::KernelRequest::MinDistance {
+            .request_min_distance(kernel_worker::KernelRequest::MinDistance {
                 body_id: a.0,
                 token,
                 first,

@@ -14,11 +14,7 @@ const MARGIN: f32 = 12.0;
 /// The tool card's close button, square.
 const CLOSE_PX: f32 = 18.0;
 
-/// The layer of what floats on the view (its toolbar, cards and cube):
-/// above the panels, below dialogs, menus and their pop-ups, which share
-/// egui's foreground layer, so a dialog is never drawn under the view's
-/// furniture whichever of them was last brought forward.
-pub(crate) const VIEW_LAYER: Order = Order::Middle;
+pub(crate) use ui_kit::VIEW_LAYER;
 
 fn corner(viewport: egui::Rect, id: &str, align: Align2, offset: Vec2) -> Area {
     let anchor = match align {

@@ -472,10 +472,7 @@ fn clipping_encloses_the_whole_scene_after_framing_one_part() {
             );
         }
         // Turn a little, as a drag would.
-        cam.snap_to_view(
-            crate::orientation_cube::CameraSnapView::FrontTopRight,
-            &settings,
-        );
+        cam.snap_to_view(orientation_cube::CameraSnapView::FrontTopRight, &settings);
         for _ in 0..(step % 5 + 1) {
             cam.update(0.05, &settings);
         }

@@ -11,7 +11,7 @@ const LAYERS = [
   ["app_log", "axes", "feature_walk", "image_edges", "local_ipc", "metrology", "printcad-kernel-api", "printcad-panel-api",
    "project_archive", "sketch_solver", "transform_gizmo", "ui_kit", "viewport_camera"],
   // Contracts and services over the foundations.
-  ["app_platform", "printcad-bench-api", "kernel_ogeom", "render_wgpu", "settings", "agents"],
+  ["app_platform", "orientation_cube", "printcad-bench-api", "kernel_ogeom", "render_wgpu", "settings", "agents"],
   // The document.
   ["core_document"],
   // What the benches share over the document: the declared panels drawn
@@ -28,7 +28,7 @@ const LAYERS = [
   // The bench facade.
   ["workbenches"],
   // What the application keeps beside its documents and window.
-  ["assistant", "doc_export", "file_session", "package_store"],
+  ["assistant", "doc_export", "file_session", "kernel_worker", "package_store"],
   // The application.
   ["app_shell"],
 ];

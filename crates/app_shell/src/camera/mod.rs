@@ -8,9 +8,9 @@
 
 pub(crate) mod section;
 
-use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Quat, Vec2, Vec3};
+use orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use settings::{CameraSettings, NavigationStyle, ProjectionMode, SixDofMotion, SixDofSettings};
 use tracing::{debug, trace};
 use viewport_camera::controller::GestureKind;

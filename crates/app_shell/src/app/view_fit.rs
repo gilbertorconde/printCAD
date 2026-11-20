@@ -6,7 +6,7 @@ use core_document::Document;
 use glam::Vec3;
 
 use crate::PrintCadApp;
-use crate::orientation_cube::CameraSnapView;
+use orientation_cube::CameraSnapView;
 
 /// The box `(min, max)` of every body the view draws, in world space:
 /// hidden bodies are left out. `None` when nothing is drawn.

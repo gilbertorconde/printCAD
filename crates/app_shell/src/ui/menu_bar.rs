@@ -10,7 +10,7 @@ use ui_kit::{mono, sans, sans_semibold};
 use workbenches::REGISTERED_WORKBENCHES;
 
 use super::{ActiveTool, ActiveWorkbench, FileCommand, Screen, UiCommand};
-use crate::orientation_cube::CameraSnapView;
+use orientation_cube::CameraSnapView;
 
 /// What the menu bar reads this frame.
 pub struct MenuBarInputs<'a> {

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::PrintCadApp;
 use crate::app::view_fit::aabb_fit_center_radius;
 use crate::contract::TreeItemId;
-use crate::kernel_worker::KernelResponse;
+use kernel_worker::KernelResponse;
 
 /// Map a STEP-declared length unit onto the document's display unit enum.
 fn length_unit_to_document_unit(unit: LengthUnit) -> Unit {

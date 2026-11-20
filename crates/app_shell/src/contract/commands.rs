@@ -8,7 +8,7 @@ use settings::ProjectionMode;
 
 use super::ActiveWorkbench;
 use super::{TreeFeatureCommand, TreeItemId};
-use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
+use orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 /// The Edit menu's clipboard entries; the active bench answers them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

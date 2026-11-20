@@ -7,7 +7,7 @@ use winit::window::Window;
 
 use super::*;
 use crate::contract::{MenuLocal, OpenTask, TreeItemId};
-use crate::orientation_cube::OrientationCubeResult;
+use orientation_cube::OrientationCubeResult;
 
 /// What the frame was given, and what it works out once before drawing.
 struct FrameIn<'a> {

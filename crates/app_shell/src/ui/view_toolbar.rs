@@ -19,7 +19,7 @@ use crate::camera::section::{
     SectionAim, SectionAxis, SectionPick, SectionPlane, SectionToggle, Wedge,
 };
 use crate::contract::{MeasureBar, PickFilter};
-use crate::orientation_cube::CameraSnapView;
+use orientation_cube::CameraSnapView;
 
 const BUTTON: f32 = 28.0;
 

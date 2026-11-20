@@ -8,7 +8,7 @@ use settings::UserSettings;
 use settings::recent::RecentEntry;
 
 use super::{ActiveTool, ActiveWorkbench, HostCtxParams, Screen, TreeItemId};
-use crate::orientation_cube::OrientationCubeInput;
+use orientation_cube::OrientationCubeInput;
 
 /// The body under the cursor and the point hit on it.
 #[derive(Debug, Clone, PartialEq)]

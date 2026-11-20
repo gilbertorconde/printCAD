@@ -25,6 +25,8 @@ assistant = { path = "../assistant" }
 base64.workspace = true
 core_document = { path = "../core_document" }
 build_driver = { path = "../build_driver" }
+kernel_worker = { path = "../kernel_worker" }
+orientation_cube = { path = "../orientation_cube" }
 bench_panel = { path = "../bench_panel" }
 doc_render = { path = "../doc_render" }
 doc_export = { path = "../doc_export" }
@@ -43,10 +45,6 @@ ui_kit = { path = "../ui_kit" }
 glam.workspace = true
 uuid.workspace = true
 axes = { path = "../axes" }
-# The proof's labels and the orientation cube's faces are text; the cube
-# falls back on system fonts.
-resvg = { workspace = true, features = ["text", "system-fonts", "memmap-fonts"] }
-usvg = { workspace = true, features = ["text", "system-fonts", "memmap-fonts"] }
 tiny-skia.workspace = true
 png = "0.18"
 flate2.workspace = true

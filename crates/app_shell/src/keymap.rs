@@ -14,7 +14,7 @@ use crate::contract::{
     EditCommand, FileCommand, MenuLocal, OpenTask, PropertyTab, SettingsEdit, TreeFeatureCommand,
     TreeItemId, UiCommand,
 };
-use crate::orientation_cube::CameraSnapView;
+use orientation_cube::CameraSnapView;
 
 /// An application command a key can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

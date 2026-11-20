@@ -290,8 +290,8 @@ impl PrintCadApp {
         // moving-camera case (the one the user feels).
         if hooks.orbit {
             self.session.view.camera.apply_rotate_delta(
-                &crate::orientation_cube::RotateDelta {
-                    axis: crate::orientation_cube::RotateAxis::ScreenY,
+                &orientation_cube::RotateDelta {
+                    axis: orientation_cube::RotateAxis::ScreenY,
                     degrees: 0.5,
                 },
                 &self.user_settings.camera,
@@ -717,7 +717,7 @@ impl PrintCadApp {
             let cy = fy * vp.3 as f32;
             match self.bench.click_frames {
                 1 => self.session.view.camera.snap_to_view(
-                    crate::orientation_cube::CameraSnapView::FrontTopRight,
+                    orientation_cube::CameraSnapView::FrontTopRight,
                     &self.user_settings.camera,
                 ),
                 BENCH_CLICK_PICK_FRAME..BENCH_CLICK_FRAME => {
