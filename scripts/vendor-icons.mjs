@@ -10,7 +10,7 @@
 //
 // Run: node scripts/vendor-icons.mjs [<source icon dir>]  (default ui-mockup/icons)
 
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -143,11 +143,6 @@ const LOCAL = new Set([
 const MOTION_DIR = "motion";
 const MOTION_PREFIX = "motion-";
 
-mkdirSync(dest, { recursive: true });
-for (const f of readdirSync(dest)) {
-  if (f.endsWith(".svg") && !LOCAL.has(f.slice(0, -4))) unlinkSync(join(dest, f));
-}
-
 function stripMetadata(svg) {
   return (
     svg
@@ -158,32 +153,38 @@ function stripMetadata(svg) {
   );
 }
 
-const names = [];
+// The whole source set is read before anything in the destination is
+// touched: a missing or empty source refuses, leaving the vendored copies
+// as they are.
+if (!existsSync(src) || !statSync(src).isDirectory()) {
+  console.error(`vendor-icons: source folder ${src} does not exist`);
+  process.exit(1);
+}
+const copies = new Map();
 for (const file of readdirSync(src).sort()) {
   if (!file.endsWith(".svg")) continue;
   const base = file.slice(0, -4);
   if (SKIP.has(base)) continue;
   const name = base.startsWith("file-") ? DOCUMENT_ICON : base;
-  if (name === DOCUMENT_ICON && names.includes(DOCUMENT_ICON)) {
+  if (name === DOCUMENT_ICON && copies.has(DOCUMENT_ICON)) {
     console.error(`vendor-icons: more than one file-* icon in the source set`);
     process.exit(1);
   }
-  let svg = stripMetadata(readFileSync(join(src, file), "utf8"));
-  svg = svg.replace(/currentColor/g, "#FFFFFF");
-  writeFileSync(join(dest, `${name}.svg`), svg);
-  names.push(name);
+  const svg = stripMetadata(readFileSync(join(src, file), "utf8"));
+  copies.set(name, svg.replace(/currentColor/g, "#FFFFFF"));
 }
-
+if (copies.size === 0) {
+  console.error(`vendor-icons: no SVG icons in ${src}`);
+  process.exit(1);
+}
 const motionSrc = join(src, MOTION_DIR);
 if (existsSync(motionSrc)) {
   for (const file of readdirSync(motionSrc).sort()) {
     if (!file.endsWith(".svg")) continue;
-    const name = MOTION_PREFIX + file.slice(0, -4);
-    writeFileSync(
-      join(dest, `${name}.svg`),
+    copies.set(
+      MOTION_PREFIX + file.slice(0, -4),
       stripMetadata(readFileSync(join(motionSrc, file), "utf8")),
     );
-    names.push(name);
   }
 }
 for (const local of LOCAL) {
@@ -191,8 +192,18 @@ for (const local of LOCAL) {
     console.error(`vendor-icons: missing local icon ${local}.svg`);
     process.exit(1);
   }
-  names.push(local);
 }
+
+mkdirSync(dest, { recursive: true });
+for (const f of readdirSync(dest)) {
+  if (f.endsWith(".svg") && !LOCAL.has(f.slice(0, -4))) unlinkSync(join(dest, f));
+}
+const names = [];
+for (const [name, svg] of copies) {
+  writeFileSync(join(dest, `${name}.svg`), svg);
+  names.push(name);
+}
+names.push(...LOCAL);
 names.sort();
 
 const rows = names.map((n) => `    ("${n}", include_str!("../icons/${n}.svg")),`).join("\n");
