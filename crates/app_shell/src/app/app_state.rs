@@ -214,9 +214,9 @@ pub(crate) struct FileWork {
     /// Pending file dialog result from its background thread.
     pub dialog_rx: Option<std::sync::mpsc::Receiver<crate::app::doc_io::FileDialogResult>>,
     /// An export being written on its own thread.
-    pub export_rx: Option<std::sync::mpsc::Receiver<crate::app::export::ExportOutcome>>,
+    pub export_rx: Option<std::sync::mpsc::Receiver<doc_export::ExportOutcome>>,
     /// The export options last confirmed, which the dialog opens on.
-    pub last_export: crate::app::export::ExportDraft,
+    pub last_export: doc_export::ExportDraft,
     /// Recently opened documents and the last dialog directory.
     pub recent: settings::recent::RecentStore,
     /// The files of the tabs closed, the latest last: what Reopen closed

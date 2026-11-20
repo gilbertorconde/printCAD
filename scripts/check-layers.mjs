@@ -28,7 +28,7 @@ const LAYERS = [
   // The bench facade.
   ["workbenches"],
   // What the application keeps beside its documents and window.
-  ["assistant", "file_session", "package_store"],
+  ["assistant", "doc_export", "file_session", "package_store"],
   // The application.
   ["app_shell"],
 ];

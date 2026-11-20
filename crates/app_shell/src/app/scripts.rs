@@ -17,13 +17,13 @@ pub(crate) use catalog::{
 };
 use catalog::{all_commands, app_commands, key_commands};
 mod document;
+pub(crate) use doc_export::export_draft;
 #[cfg(test)]
 use document::faces_of;
 pub(crate) use document::{
-    body_list, delete_item, document_command, drop_place, export_args, export_draft,
-    features_in_order, kind_of, move_after, move_in_history, print_layout_command,
-    rebuild_failures, set_body_tip, set_item_visible, set_tip, suppress, suppress_all,
-    suppress_call, surface_json, tree_item, user_note_guard,
+    body_list, delete_item, document_command, drop_place, features_in_order, kind_of, move_after,
+    move_in_history, print_layout_command, rebuild_failures, set_body_tip, set_item_visible,
+    set_tip, suppress, suppress_all, suppress_call, surface_json, tree_item, user_note_guard,
 };
 mod recording;
 use recording::item_id;
@@ -339,7 +339,7 @@ impl PrintCadApp {
                     .as_ref()
                     .filter(|_| printing.apply_compensation);
                 let folder = draft.per_body.then(|| path.clone());
-                let files = crate::app::export::export_document(
+                let files = doc_export::export_document(
                     (&self.whole_solids(), &self.registry),
                     path,
                     &draft,
@@ -348,7 +348,7 @@ impl PrintCadApp {
                     compensation,
                 )
                 .map_err(CommandError::failed)?;
-                Ok(crate::app::export::export_answer(folder.as_deref(), &files))
+                Ok(doc_export::export_answer(folder.as_deref(), &files))
             }
             _ => Err(CommandError::failed("this command takes no file")),
         }

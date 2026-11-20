@@ -165,7 +165,7 @@ pub struct UiFrameInputs<'a> {
     /// How many buttons it has, so Preferences offers a row per button.
     pub nav_buttons: u32,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
-    pub export_pending: Option<&'a mut crate::app::export::ExportDraft>,
+    pub export_pending: Option<&'a mut doc_export::ExportDraft>,
     /// The scripts folder's scripts.
     pub scripts: &'a [crate::script_library::ScriptEntry],
     /// The workbench packages found when the app started, and since.

@@ -16,6 +16,7 @@ members = [
   "crates/panel_api",
   "crates/doc_server",
   "crates/doc_render",
+  "crates/doc_export",
   "crates/build_driver",
   "crates/kernel_api",
   "crates/kernel_ogeom",

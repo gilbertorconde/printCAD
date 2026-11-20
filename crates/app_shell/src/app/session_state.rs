@@ -154,7 +154,7 @@ pub(crate) struct FileState {
     /// The worker parsing an opened document, for the same reason.
     pub open_rx: Option<std::sync::mpsc::Receiver<OpenJob>>,
     /// The export dialog's draft, while it is open.
-    pub export_pending: Option<crate::app::export::ExportDraft>,
+    pub export_pending: Option<doc_export::ExportDraft>,
     /// The exporting walkthrough is waiting on a solid to open the export
     /// dialog over.
     pub export_when_ready: bool,
@@ -443,11 +443,11 @@ pub(crate) struct Drawn {
     /// The Print layout task is open: the scene shows the layout.
     /// Each textured body as drawn: its textures pressed into its own
     /// mesh, made on a thread of its own.
-    pub textured: std::collections::HashMap<core_document::BodyId, crate::app::textures::Preview>,
+    pub textured: std::collections::HashMap<core_document::BodyId, doc_export::textures::Preview>,
     /// The pressed meshes those previews share, made and being made.
-    pub texture_meshes: crate::app::textures::PressedMeshes,
+    pub texture_meshes: doc_export::textures::PressedMeshes,
     /// Pictures textures use, read once each.
-    pub texture_pictures: crate::app::textures::Pictures,
+    pub texture_pictures: doc_export::textures::Pictures,
     /// Whether each shown note's point is hidden by its own body, kept
     /// with what it was worked out from.
     pub note_occlusions: crate::app::note_tool::Occlusions,

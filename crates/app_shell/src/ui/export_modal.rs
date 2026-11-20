@@ -12,7 +12,7 @@ use ui_kit::widgets::{
 use ui_kit::{sans, sans_semibold};
 
 use super::StepImportDialogAction as DialogAction;
-use crate::app::export::ExportDraft;
+use doc_export::ExportDraft;
 
 fn label(ui: &mut egui::Ui, text: &str) {
     ui.add_sized(

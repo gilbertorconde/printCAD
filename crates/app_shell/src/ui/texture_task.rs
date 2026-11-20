@@ -43,7 +43,7 @@ impl TextureTask {
     /// them instead.
     pub fn open(document: &Document, body: BodyId, face: Option<u32>) -> Self {
         let start = textures_of(document, body);
-        let inherited = match crate::app::textures::textures_of(document, body) {
+        let inherited = match doc_export::textures::textures_of(document, body) {
             Some((textures, _)) if start.is_empty() => textures.to_vec(),
             _ => Vec::new(),
         };

@@ -27,6 +27,7 @@ core_document = { path = "../core_document" }
 build_driver = { path = "../build_driver" }
 bench_panel = { path = "../bench_panel" }
 doc_render = { path = "../doc_render" }
+doc_export = { path = "../doc_export" }
 bench_api.workspace = true
 render_wgpu = { path = "../render_wgpu" }
 tracing.workspace = true

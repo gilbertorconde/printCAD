@@ -175,6 +175,7 @@ dependencies = [
  "bench_panel",
  "build_driver",
  "core_document",
+ "doc_export",
  "doc_render",
  "doc_server",
  "egui",
@@ -1285,6 +1286,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "doc_export"
+version = "0.1.0"
+dependencies = [
+ "app_log",
+ "app_platform",
+ "core_document",
+ "doc_render",
+ "glam 0.33.7",
+ "kernel_ogeom",
+ "local_ipc",
+ "printcad-kernel-api",
+ "serde_json",
+ "settings",
+ "surface_texture",
+ "uuid",
 ]
 
 [[package]]

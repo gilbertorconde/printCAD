@@ -486,7 +486,7 @@ impl Headless {
                     use doc_render::print_layout::{LayoutSettings, lay_out, parts_to_print};
                     let parts = parts_to_print(&self.document, &self.registry);
                     let parts = match &bodies {
-                        Some(bodies) => crate::app::export::parts_of(parts, bodies),
+                        Some(bodies) => doc_export::parts_of(parts, bodies),
                         None => parts,
                     };
                     lay_out(
@@ -496,7 +496,7 @@ impl Headless {
                     )
                 });
                 let folder = draft.per_body.then(|| path.clone());
-                let files = crate::app::export::export_document(
+                let files = doc_export::export_document(
                     (&self.document, &self.registry),
                     path,
                     &draft,
@@ -505,7 +505,7 @@ impl Headless {
                     None,
                 )
                 .map_err(CommandError::failed)?;
-                Ok(crate::app::export::export_answer(folder.as_deref(), &files))
+                Ok(doc_export::export_answer(folder.as_deref(), &files))
             }
             _ => {
                 let (bench, _) = self
@@ -1299,11 +1299,11 @@ endsolid t
             pc.config.activate{name = "Small"}
         "#;
         // The NURBS kind of STEP, which the file's extension cannot say.
-        let draft = crate::app::export::ExportDraft {
+        let draft = doc_export::ExportDraft {
             format: kernel_ogeom::export::ExportFormat::StepNurbs,
             ..Default::default()
         };
-        let export = crate::app::export::every_configuration_script(
+        let export = doc_export::every_configuration_script(
             &dir.join("part").display().to_string(),
             &draft,
             None,
