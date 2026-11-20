@@ -1,7 +1,7 @@
 //! Host command specifications and file/key command contracts.
 
 use crate::PrintCadApp;
-use crate::ui::keymap;
+use crate::keymap;
 use core_document::{Args, CommandError, CommandProse, CommandSpec, ParamKind};
 use std::sync::OnceLock;
 

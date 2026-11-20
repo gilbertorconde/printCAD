@@ -6,25 +6,9 @@
 use egui::Ui;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{Tab, TabReorder, tab_plus};
-use uuid::Uuid;
 
 use super::UiCommand;
-
-/// One tab as the host describes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TabInfo {
-    pub tab: Uuid,
-    pub name: String,
-    pub dirty: bool,
-    pub active: bool,
-    /// Nothing has happened in the tab: it shows the start page and New
-    /// or Open take it over instead of opening another.
-    pub blank: bool,
-    /// Its file cannot be written in place: a lock before its name.
-    pub read_only: bool,
-    /// It was opened from or saved to a file, which Revert reads again.
-    pub has_file: bool,
-}
+use crate::contract::TabInfo;
 
 const TAB_MIN: f32 = 96.0;
 const TAB_MAX: f32 = 220.0;

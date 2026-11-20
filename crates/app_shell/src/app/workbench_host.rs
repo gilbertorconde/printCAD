@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::PrintCadApp;
 use crate::app::doc_io::{FileDialogKind, FileToSave};
+use crate::contract::TreeItemId;
 use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
 
 /// Snapshot of host state a hook's context is built from. Constructed via
 /// [`PrintCadApp::interaction_ctx_params`] / [`PrintCadApp::overlay_ctx_params`]
@@ -293,7 +293,7 @@ impl PrintCadApp {
         self.apply_hook_outcome(outcome, HookSite::Interaction);
         match result {
             Ok(answer) => {
-                self.session.screen = crate::ui::Screen::Workspace;
+                self.session.screen = crate::contract::Screen::Workspace;
                 if let Some(id) = answer.as_str().and_then(|s| Uuid::parse_str(s).ok())
                     && self
                         .session
@@ -363,7 +363,7 @@ impl PrintCadApp {
             HostRequest::OpenMenu { bench, tag, items } => {
                 if let Some(at) = self.pointer_in_points() {
                     self.session.viewport_menu = None;
-                    self.session.bench_menu = Some(crate::ui::BenchMenu {
+                    self.session.bench_menu = Some(crate::contract::BenchMenu {
                         bench,
                         tag,
                         items,

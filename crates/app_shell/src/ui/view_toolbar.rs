@@ -18,6 +18,7 @@ use crate::camera::FOV_RANGE_DEG;
 use crate::camera::section::{
     SectionAim, SectionAxis, SectionPick, SectionPlane, SectionToggle, Wedge,
 };
+use crate::contract::{MeasureBar, PickFilter};
 use crate::orientation_cube::CameraSnapView;
 
 const BUTTON: f32 = 28.0;
@@ -143,47 +144,6 @@ fn toggled(
     }
 }
 
-/// What a click in the view picks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PickFilter {
-    /// An edge near the cursor, else the face under it; a double click
-    /// the whole body.
-    #[default]
-    Any,
-    Faces,
-    Edges,
-    /// A click takes the whole body.
-    Bodies,
-}
-
-impl PickFilter {
-    pub const ALL: [PickFilter; 4] = [
-        PickFilter::Any,
-        PickFilter::Faces,
-        PickFilter::Edges,
-        PickFilter::Bodies,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            PickFilter::Any => "Faces and edges",
-            PickFilter::Faces => "Faces only",
-            PickFilter::Edges => "Edges only",
-            PickFilter::Bodies => "Whole bodies",
-        }
-    }
-
-    /// Whether an edge near the cursor hovers and picks.
-    pub fn edges(self) -> bool {
-        matches!(self, PickFilter::Any | PickFilter::Edges)
-    }
-
-    /// Whether the face under the cursor hovers and picks.
-    pub fn faces(self) -> bool {
-        matches!(self, PickFilter::Any | PickFilter::Faces)
-    }
-}
-
 /// The view state the toolbar shows.
 pub struct ViewToolbarState {
     pub pick_filter: PickFilter,
@@ -203,16 +163,6 @@ pub struct ViewToolbarState {
     pub print_bed: bool,
     /// Imported annotations are drawn over the scene.
     pub annotations: bool,
-}
-
-/// What the measure tool's pill shows.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeasureBar {
-    /// The unit chosen for the readout; `None` follows the document's.
-    pub unit: Option<core_document::Unit>,
-    pub document_unit: core_document::Unit,
-    /// How many picks the chain holds.
-    pub picks: usize,
 }
 
 /// Draws the pill and pushes the commands of any clicked button.

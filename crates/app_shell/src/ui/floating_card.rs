@@ -16,7 +16,8 @@ use egui::{Area, Context, Key, Pos2, Rect, Vec2};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, note_card, primary_button, secondary_button};
 
-use super::host_ctx::{HostCtxParams, PanelWriteback, flush_ctx_logs, panel_ctx};
+use super::host_ctx::{PanelWriteback, flush_ctx_logs, panel_ctx};
+use crate::contract::HostCtxParams;
 use crate::ui::ActiveWorkbench;
 
 /// How far the card keeps from the point it is beside, logical pixels.

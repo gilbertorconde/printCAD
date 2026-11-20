@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::app::doc_io::{OpenJob, SaveJob, SaveProgress};
 use crate::app::session::BodyPreview;
 use crate::camera::CameraController;
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 use crate::{DimensionCache, RemoteImportRoute};
 
 /// Where the tab looks from and how the view is laid out.
@@ -36,7 +36,7 @@ pub(crate) struct ViewState {
     /// leaves the view as the user puts it.
     pub fit_on_layout: bool,
     /// What a click in the view picks.
-    pub pick_filter: crate::ui::PickFilter,
+    pub pick_filter: crate::contract::PickFilter,
     /// Where the view stood when an edit session began, to go back to
     /// when it ends.
     pub before_edit: Option<crate::camera::KeptView>,
@@ -73,7 +73,7 @@ pub(crate) struct Hover {
     /// drew them with: which edges near the cursor are in view.
     pub pick_depths: Option<render_wgpu::DepthWindow>,
     /// The tree row under the pointer: what it stands for lights up.
-    pub tree: Option<crate::ui::TreeItemId>,
+    pub tree: Option<crate::contract::TreeItemId>,
 }
 
 /// What is picked in the view and the tree.
@@ -456,7 +456,7 @@ pub(crate) struct Drawn {
     pub dimension_cache: Vec<DimensionCache>,
     /// Each measured body's volume, area and centre, with the geometry
     /// revision it was measured at.
-    pub physical: std::collections::HashMap<Uuid, (u64, crate::ui::Physical)>,
+    pub physical: std::collections::HashMap<Uuid, (u64, crate::contract::Physical)>,
 }
 impl ViewState {
     /// The view from `camera`, with no clipping plane, split or grid.

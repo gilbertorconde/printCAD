@@ -7,7 +7,7 @@ use core_document::TaskOutcome;
 use settings::ProjectionMode;
 
 use super::ActiveWorkbench;
-use super::feature_tree::{TreeFeatureCommand, TreeItemId};
+use super::{TreeFeatureCommand, TreeItemId};
 use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 /// The Edit menu's clipboard entries; the active bench answers them.
@@ -187,7 +187,7 @@ pub enum UiCommand {
     /// The tree opens its way to this body and scrolls to it.
     RevealInTree(core_document::BodyId),
     /// What a click in the view picks from now on.
-    SetPickFilter(crate::ui::PickFilter),
+    SetPickFilter(crate::contract::PickFilter),
     /// Pick a picture for texture `index` of `body`'s pattern.
     PickTexturePicture {
         body: core_document::BodyId,

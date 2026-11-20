@@ -9,7 +9,6 @@ use ui_kit::widgets::{ToolButtonState, fitted_menu, mono_label, tool_button};
 use ui_kit::{mono, sans, sans_semibold};
 use workbenches::REGISTERED_WORKBENCHES;
 
-use super::toolbar::activate_tool;
 use super::{ActiveTool, ActiveWorkbench, FileCommand, Screen, UiCommand};
 use crate::orientation_cube::CameraSnapView;
 
@@ -720,7 +719,7 @@ pub fn draw_menu_bar(
                                         continue;
                                     }
                                     if r.clicked() {
-                                        activate_tool(active_tool, &tools, tool, &tool.id);
+                                        active_tool.activate(&tools, tool, &tool.id);
                                         ui.close();
                                     }
                                 }

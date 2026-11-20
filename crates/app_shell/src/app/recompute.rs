@@ -800,8 +800,8 @@ impl PrintCadApp {
     /// part linked to one.
     pub(crate) fn panel_body(&self) -> Option<core_document::BodyId> {
         match self.session.selection.tree? {
-            crate::ui::TreeItemId::Body(body) => Some(body),
-            crate::ui::TreeItemId::ImportedObject(id) => {
+            crate::contract::TreeItemId::Body(body) => Some(body),
+            crate::contract::TreeItemId::ImportedObject(id) => {
                 self.session.document.body_of_imported_object(id)
             }
             _ => None,
@@ -844,14 +844,14 @@ impl PrintCadApp {
         self.session
             .drawn
             .physical
-            .insert(body.0, (revision, crate::ui::Physical::Measuring));
+            .insert(body.0, (revision, crate::contract::Physical::Measuring));
         self.kernel_worker.request_measure(body.0, revision, blob);
     }
 
     /// The bodies the selection stands for: those picked whole or by a
     /// face in the view, else the tree's body, part or component.
     fn selection_bodies(&self) -> Vec<core_document::BodyId> {
-        use crate::ui::TreeItemId;
+        use crate::contract::TreeItemId;
         let document = &self.session.document;
         let mut bodies: Vec<core_document::BodyId> = self
             .session
@@ -881,8 +881,8 @@ impl PrintCadApp {
     /// when it has one, measured by the kernel worker once per revision
     /// of each body's geometry. `None` while nothing with a solid is
     /// selected.
-    pub(crate) fn selection_mass(&mut self) -> Option<crate::ui::SelectionMass> {
-        let mut mass = crate::ui::SelectionMass::default();
+    pub(crate) fn selection_mass(&mut self) -> Option<crate::contract::SelectionMass> {
+        let mut mass = crate::contract::SelectionMass::default();
         for body in self.selection_bodies() {
             let Some(revision) = self
                 .session
@@ -904,7 +904,7 @@ impl PrintCadApp {
             }
             match self.session.drawn.physical.get(&body.0) {
                 Some((measured, reading)) if *measured == revision => match reading {
-                    crate::ui::Physical::Ready(props) => {
+                    crate::contract::Physical::Ready(props) => {
                         if let Some(volume) = props.volume_mm3 {
                             let own = self
                                 .session
@@ -916,8 +916,8 @@ impl PrintCadApp {
                             mass.approximate |= props.approximate;
                         }
                     }
-                    crate::ui::Physical::Measuring => mass.measuring = true,
-                    crate::ui::Physical::Failed(_) => {}
+                    crate::contract::Physical::Measuring => mass.measuring = true,
+                    crate::contract::Physical::Failed(_) => {}
                 },
                 _ => {
                     self.measure_body(body, revision);
@@ -929,7 +929,7 @@ impl PrintCadApp {
     }
 
     /// The panel body's measure, when it is of the geometry on screen.
-    pub(crate) fn panel_physical(&self) -> Option<crate::ui::Physical> {
+    pub(crate) fn panel_physical(&self) -> Option<crate::contract::Physical> {
         let body = self.panel_body()?;
         let revision = self
             .session
@@ -944,7 +944,7 @@ impl PrintCadApp {
         // The kernel measures the body's own shape; the centre and the
         // inertia's axes are shown where the body sits.
         Some(match reading {
-            crate::ui::Physical::Ready(props) => {
+            crate::contract::Physical::Ready(props) => {
                 let mut props = **props;
                 let placement = self.session.document.body_placement(body);
                 let c = props.centre_mm.map(|v| v as f32);
@@ -952,7 +952,7 @@ impl PrintCadApp {
                 if let Some(inertia) = &mut props.inertia {
                     *inertia = core_document::inertia::turned(inertia, placement.quat().as_dquat());
                 }
-                crate::ui::Physical::Ready(Box::new(props))
+                crate::contract::Physical::Ready(Box::new(props))
             }
             other => other.clone(),
         })
@@ -963,8 +963,8 @@ impl PrintCadApp {
     /// line the view's pick stands for (a straight edge, a round edge's or
     /// face's axis), then the document's datum points and lines by name.
     /// Empty while the panel shows no measure.
-    pub(crate) fn inertia_references(&self) -> Vec<crate::ui::InertiaReference> {
-        use crate::ui::InertiaReference as R;
+    pub(crate) fn inertia_references(&self) -> Vec<crate::contract::InertiaReference> {
+        use crate::contract::InertiaReference as R;
         if self.panel_body().is_none() {
             return Vec::new();
         }
@@ -1026,7 +1026,7 @@ impl PrintCadApp {
     }
 }
 
-impl crate::ui::InertiaReference {
+impl crate::contract::InertiaReference {
     /// What a datum offers to take inertia about, in the world: a line
     /// its axis, a point or coordinate system its origin, a plane nothing.
     pub(crate) fn of_datum(datum: &core_document::PlacedDatum) -> Option<Self> {

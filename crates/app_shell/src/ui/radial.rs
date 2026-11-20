@@ -2,19 +2,10 @@
 //! what is let go on): the slices round the press, clockwise from the
 //! top, the one pointed at lit and named in the middle.
 
+use crate::contract::RadialView;
 use egui::{Align2, Pos2, Rect, Stroke, Vec2, pos2, vec2};
 use ui_kit::sans_medium;
 use ui_kit::tokens::*;
-
-/// The open menu, as the UI draws it.
-#[derive(Debug, Clone)]
-pub struct RadialView {
-    /// Its middle, in the view's physical pixels.
-    pub centre: [f32; 2],
-    /// Each slice's icon and name.
-    pub slices: Vec<(&'static str, String)>,
-    pub pointed: Option<usize>,
-}
 
 /// From the middle to the slices' icons, and their chips' radius, in
 /// points.

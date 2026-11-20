@@ -4,50 +4,8 @@
 
 use core_document::{Document, FeatureId, WorkbenchRuntimeContext};
 
+use crate::contract::HostCtxParams;
 use crate::log_panel;
-
-/// Camera and viewport facts the app hands the UI each frame.
-#[derive(Debug, Clone)]
-pub struct HostCtxParams {
-    pub camera_position: [f32; 3],
-    pub camera_target: [f32; 3],
-    /// `(x, y, width, height)` in physical pixels.
-    pub viewport: (u32, u32, u32, u32),
-    pub pixels_per_point: f32,
-    pub view_proj: Option<[[f32; 4]; 4]>,
-    pub selected_body_id: Option<uuid::Uuid>,
-    pub selected_face: Option<core_document::FaceRef>,
-    pub selected_faces: Vec<core_document::FaceRef>,
-    pub selected_edges: Vec<core_document::EdgeRef>,
-    pub selected_parts: Vec<core_document::FeaturePart>,
-    /// Every feature of the tree's selection when there are several, the
-    /// selected row first.
-    pub selected_features: Vec<FeatureId>,
-    /// The feature kinds benches declare bought.
-    pub bought_kinds: Vec<core_document::WorkbenchId>,
-    /// The tab's newest closed undo step.
-    pub undo_entry: Option<core_document::JournalEntryId>,
-}
-
-impl Default for HostCtxParams {
-    fn default() -> Self {
-        Self {
-            camera_position: [0.0, 0.0, 5.0],
-            camera_target: [0.0; 3],
-            viewport: (0, 0, 1, 1),
-            pixels_per_point: 1.0,
-            view_proj: None,
-            selected_body_id: None,
-            selected_face: None,
-            selected_faces: Vec::new(),
-            selected_edges: Vec::new(),
-            selected_parts: Vec::new(),
-            selected_features: Vec::new(),
-            bought_kinds: Vec::new(),
-            undo_entry: None,
-        }
-    }
-}
 
 /// A context for a panel hook.
 pub fn panel_ctx<'a>(

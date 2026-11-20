@@ -1,6 +1,7 @@
 //! The tree rows' menus: a feature's and a body's.
 
 use super::*;
+use crate::contract::{TreeFeatureCommand, TreeItemId};
 
 /// A feature row's menu: its own edits, its place in history, its body's
 /// look and placement, the clipboard, its formulas and the rest.
@@ -193,7 +194,7 @@ pub(super) fn attach_feature_menu(
             if menu_entry(ui, "Properties", options.key("edit.properties")).clicked() {
                 result.local = Some(super::super::MenuLocal::Properties(
                     node.id,
-                    super::super::property_panel::PropertyTab::Data,
+                    crate::contract::PropertyTab::Data,
                 ));
                 ui.close();
             }

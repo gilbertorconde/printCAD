@@ -5,8 +5,10 @@
 mod app;
 mod camera;
 mod console;
+mod contract;
 mod headless;
 mod kernel_worker;
+mod keymap;
 mod log_panel;
 mod orientation_cube;
 mod platform;
@@ -26,9 +28,10 @@ use render_wgpu::{FrameSubmission, RenderSettings, Renderer};
 use settings::{SettingsStore, UserSettings};
 use std::path::PathBuf;
 
+use contract::{ActiveWorkbench, Screen};
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use ui::{ActiveWorkbench, Screen, UiLayer};
+use ui::UiLayer;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,

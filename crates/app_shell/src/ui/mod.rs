@@ -1,12 +1,13 @@
+//! The window's UI, one module per region, drawn each frame from
+//! `crate::contract`'s inputs and answering with its commands.
+//! [`UiLayer`] is all the host sees of it.
+
 mod assistant;
 mod bench_ui;
 mod combo_view;
 mod command_palette;
-mod context_menu;
-mod variables_view;
-pub use context_menu::{BenchMenu, OtherPick, ViewportMenu};
-mod commands;
 mod console_view;
+mod context_menu;
 mod details_modal;
 mod export_modal;
 mod feature_tree;
@@ -14,9 +15,8 @@ mod floating_card;
 mod frame;
 mod host_ctx;
 mod hud;
+mod variables_view;
 pub(crate) use hud::VIEW_LAYER;
-mod inputs;
-pub(crate) mod keymap;
 mod legend;
 mod log_view;
 mod menu_bar;
@@ -25,69 +25,34 @@ mod note_card;
 mod overlays;
 mod preferences;
 mod property_panel;
-pub(crate) mod radial;
+mod radial;
 mod release_notes;
 mod save_over_modal;
 mod start_page;
-pub(crate) mod status_bar;
+mod status_bar;
 mod step_import_modal;
 mod tab_bar;
 mod task_panel;
-pub(crate) mod toolbar;
+mod toolbar;
 mod unsaved_modal;
-pub(crate) mod view_toolbar;
-pub(crate) mod widget_map;
-pub use view_toolbar::PickFilter;
+mod view_toolbar;
+mod widget_map;
 
 mod array_task;
 mod body_menu;
 mod host_tasks;
 mod task_blocks;
 mod texture_task;
-pub use body_menu::{MenuLocal, OpenTask};
-pub use commands::{
-    BodyEdit, ConfigEdit, EditCommand, FileCommand, PrintOn, SavedSectionAction, SettingsEdit,
-    StartKind, UiCommand,
-};
-pub use host_ctx::HostCtxParams;
-pub use inputs::{FileMarks, HoverCard, Physical, SelectionMass, UiFrameInputs};
-pub use property_panel::InertiaReference;
-pub use step_import_modal::StepImportDialogAction;
-pub use tab_bar::TabInfo;
+use step_import_modal::StepImportDialogAction;
 
 use core_document::WorkbenchId;
 use egui::Context;
 use egui_winit::{State, egui as egui_core};
-use render_wgpu::EguiSubmission;
 use winit::{event::WindowEvent, window::Window};
 
+use crate::contract::*;
+use crate::keymap;
 use crate::orientation_cube::{self, OrientationCubeConfig};
-
-/// Which top-level screen the window shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen {
-    /// The launch page: new-document cards, recent files.
-    Start,
-    /// The modelling workspace.
-    Workspace,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActiveWorkbench(pub WorkbenchId);
-
-/// The panels around the view as they were left: kept between runs.
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-pub struct PanelLayout {
-    /// Each resizable panel's size across the window, by the panel's name.
-    pub sizes: std::collections::BTreeMap<String, f32>,
-    pub console_open: bool,
-    pub assistant_open: bool,
-    /// The property panel's page.
-    pub property_page: property_panel::PropertyTab,
-    /// The tree's share of the left column.
-    pub tree_share: Option<f32>,
-}
 
 /// The panels whose size is dragged, by name, and whether each is sized
 /// along the window's width.
@@ -98,48 +63,6 @@ const RESIZABLE_PANELS: [(&str, bool); 5] = [
     ("console_panel", false),
     ("log_panel", false),
 ];
-
-#[derive(Debug, Clone, Default)]
-pub struct ActiveTool {
-    /// Set of active tool IDs. For Radio tools, only one per group is active.
-    /// For Check tools, multiple can be active. For Action tools, this is cleared after handling.
-    pub active_ids: std::collections::HashSet<String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ViewportRect {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// Per-frame data (submission, viewport, tool/workbench state) plus the
-/// list of actions the user triggered this frame.
-pub struct UiFrameOutput {
-    pub submission: EguiSubmission,
-    /// egui's own repaint request: `Duration::ZERO` for "next frame please"
-    /// (animations), a finite delay for timed repaints (caret blink), and
-    /// effectively-infinite when content is static.
-    pub repaint_delay: std::time::Duration,
-    pub viewport: ViewportRect,
-    /// The pane beside the viewport when the view is split.
-    pub side_viewport: Option<ViewportRect>,
-    pub active_tool: ActiveTool,
-    pub active_workbench: ActiveWorkbench,
-    pub commands: Vec<UiCommand>,
-    /// A workbench task is open in the right panel after this frame.
-    pub task_open: bool,
-    /// The bench's floating card on screen this frame: its id, and
-    /// whether its OK is held back.
-    pub card: Option<(String, bool)>,
-    /// The tree row under the pointer.
-    pub tree_hovered: Option<TreeItemId>,
-    /// The Print layout task is open after this frame.
-    pub print_layout_open: bool,
-    /// The marking tool in hand, while the Mark surface task is open.
-    pub mark_arm: Option<crate::app::marking::MarkArm>,
-}
 
 pub struct UiLayer {
     ctx: Context,
@@ -160,7 +83,7 @@ pub struct UiLayer {
     orientation_cube_config: OrientationCubeConfig,
     /// Substring filter over the model tree; UI-local.
     tree_filter: String,
-    property_tab: property_panel::PropertyTab,
+    property_tab: PropertyTab,
     rename_buffer: Option<(TreeItemId, String)>,
     /// What the Physical group takes the inertia about, by name; the
     /// centre of mass when unset or no longer offered.
@@ -276,7 +199,7 @@ impl UiLayer {
             }
             MenuLocal::Rename(item) => {
                 commands.push(UiCommand::SelectTreeItem(item));
-                self.property_tab = property_panel::PropertyTab::Data;
+                self.property_tab = PropertyTab::Data;
                 self.rename_buffer = None;
                 ctx.data_mut(|d| d.insert_temp(egui::Id::new(property_panel::FOCUS_LABEL), true));
             }
@@ -318,7 +241,7 @@ impl UiLayer {
             image_textures: std::collections::HashMap::new(),
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
-            property_tab: property_panel::PropertyTab::default(),
+            property_tab: PropertyTab::default(),
             rename_buffer: None,
             inertia_about: None,
             recent_search: String::new(),
@@ -591,8 +514,6 @@ fn apply_writeback(
         commands.push(UiCommand::Recorded(writeback.recorded.clone()));
     }
 }
-
-pub use feature_tree::{TreeFeatureCommand, TreeItemId};
 
 #[cfg(test)]
 mod working_cursor_tests {

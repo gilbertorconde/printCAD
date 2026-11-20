@@ -2,6 +2,7 @@
 //! imported parts, notes, arrays and components, with their problems marked.
 
 use super::*;
+use crate::contract::TreeItemId;
 
 impl DocumentTree {
     pub fn build(document: &Document, registry: &DocumentService) -> Self {

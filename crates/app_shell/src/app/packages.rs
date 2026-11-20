@@ -12,8 +12,8 @@ use settings::{PackageGrant, PackageSettings};
 use workbenches::{Capabilities, Package, PackageState, PackageStatus};
 
 use crate::PrintCadApp;
+use crate::contract::ActiveWorkbench;
 use crate::log_panel as app_log;
-use crate::ui::ActiveWorkbench;
 
 /// A package whose files are in place, and its workbench made ready to
 /// register: `None` when the user turned the package off.

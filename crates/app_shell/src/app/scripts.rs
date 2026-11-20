@@ -42,7 +42,7 @@ use winit::event_loop::ActiveEventLoop;
 use crate::PrintCadApp;
 use crate::app::workbench_host::HookSite;
 use crate::console::{self, LineKind};
-use crate::ui::keymap::{self, HostOutcome, HostState};
+use crate::keymap::{self, HostOutcome, HostState};
 
 impl PrintCadApp {
     /// Run command `id` for a script, its arguments checked against its
@@ -275,12 +275,7 @@ impl PrintCadApp {
                 }
                 let tools = self.registry.tools_for(&bench).unwrap_or_default().to_vec();
                 if let Some(tool) = tools.iter().find(|t| t.id == id) {
-                    crate::ui::toolbar::activate_tool(
-                        &mut self.session.active_tool,
-                        &tools,
-                        tool,
-                        id,
-                    );
+                    self.session.active_tool.activate(&tools, tool, id);
                 }
                 Ok(Value::Null)
             }
@@ -860,9 +855,9 @@ impl PrintCadApp {
             "doc.repair" | "doc.convert_to_solid" | "doc.refine" => {
                 let bodies = body_list(args.get("bodies"))?.unwrap_or_default();
                 let command = match id {
-                    "doc.repair" => crate::ui::UiCommand::RepairShapes(bodies),
-                    "doc.refine" => crate::ui::UiCommand::RefineShapes(bodies),
-                    _ => crate::ui::UiCommand::ConvertToSolid(bodies),
+                    "doc.repair" => crate::contract::UiCommand::RepairShapes(bodies),
+                    "doc.refine" => crate::contract::UiCommand::RefineShapes(bodies),
+                    _ => crate::contract::UiCommand::ConvertToSolid(bodies),
                 };
                 self.apply_ui_commands(vec![command], event_loop);
                 Ok(Value::Null)
@@ -1042,8 +1037,8 @@ fn return_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::TreeItemId;
     use crate::test_support::datum_points as points;
-    use crate::ui::TreeItemId;
     use core_document::{BodyId, FeatureId};
 
     /// One of the document's own commands, its arguments checked first.
@@ -1456,7 +1451,7 @@ mod tests {
 
     #[test]
     fn host_ui_edits_record_as_the_document_s_commands() {
-        use crate::ui::{TreeFeatureCommand, UiCommand};
+        use crate::contract::{TreeFeatureCommand, UiCommand};
         let body = BodyId(Uuid::new_v4());
         let feature = FeatureId(Uuid::new_v4());
         let rename = recorded_of(&UiCommand::RenameTreeItem {
@@ -1625,7 +1620,7 @@ mod tests {
         )
         .unwrap();
         assert!(doc.bodies()[0].face_colors.is_empty());
-        let face_down = crate::ui::BodyEdit::PrintOn(crate::ui::PrintOn::Face(1));
+        let face_down = crate::contract::BodyEdit::PrintOn(crate::contract::PrintOn::Face(1));
         let (call, args) = body_edit_call(body, &face_down);
         run(&mut doc, call, args).unwrap();
         let face = core_document::FaceKey { name: 12, index: 1 };
@@ -1649,9 +1644,9 @@ mod tests {
         );
         // What the menus record is a call a script can make.
         for edit in [
-            crate::ui::BodyEdit::Frozen(false),
-            crate::ui::BodyEdit::Selectable(true),
-            crate::ui::BodyEdit::Recompute,
+            crate::contract::BodyEdit::Frozen(false),
+            crate::contract::BodyEdit::Selectable(true),
+            crate::contract::BodyEdit::Recompute,
         ] {
             let (id, args) = body_edit_call(body, &edit);
             run(&mut doc, id, args).unwrap();

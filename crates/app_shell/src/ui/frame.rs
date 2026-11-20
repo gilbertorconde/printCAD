@@ -6,6 +6,7 @@ use settings::ProjectionMode;
 use winit::window::Window;
 
 use super::*;
+use crate::contract::{MenuLocal, OpenTask, TreeItemId};
 use crate::orientation_cube::OrientationCubeResult;
 
 /// What the frame was given, and what it works out once before drawing.
@@ -46,7 +47,15 @@ struct FrameOut {
 }
 
 impl UiLayer {
-    pub fn run(&mut self, window: &Window, mut inputs: UiFrameInputs<'_>) -> UiFrameOutput {
+    /// Draw one frame from `inputs`, then write the widget map
+    /// (`PRINTCAD_WIDGET_MAP`) when it changed.
+    pub fn run(&mut self, window: &Window, inputs: UiFrameInputs<'_>) -> UiFrameOutput {
+        let output = self.draw_ui(window, inputs);
+        super::widget_map::publish();
+        output
+    }
+
+    fn draw_ui(&mut self, window: &Window, mut inputs: UiFrameInputs<'_>) -> UiFrameOutput {
         let mut raw_input = self.state.take_egui_input(window);
         if let Some(steps) = self.bench_ui.as_mut() {
             steps.feed(&mut raw_input);
@@ -525,6 +534,9 @@ impl UiLayer {
     fn draw_status_and_console(&mut self, ui: &mut Ui, f: &mut FrameIn<'_>, out: &mut FrameOut) {
         let inputs = &f.inputs;
         let settings = inputs.settings;
+        let dimensions = inputs
+            .selection_bounds
+            .map(|bounds| status_bar::size_text(bounds, inputs.document.display_unit()));
         let status = status_bar::draw_status_bar(
             ui,
             &status_bar::StatusBarInputs {
@@ -546,7 +558,7 @@ impl UiLayer {
                 items: inputs.status_items.as_ref(),
                 preselect: inputs.hover_card.as_ref().map(|h| h.title.as_str()),
                 picks: inputs.picks.as_deref(),
-                dimensions: inputs.dimensions.as_deref(),
+                dimensions: dimensions.as_deref(),
                 quick_measure: &inputs.quick_measure,
                 script_running: inputs.script_running,
                 recording: inputs.recording,
@@ -1071,7 +1083,7 @@ impl UiLayer {
             if let Ok(tools) = inputs.registry.tools_for(&out.active_workbench.0)
                 && let Some(tool) = tools.iter().find(|t| t.id == id)
             {
-                toolbar::activate_tool(&mut out.active_tool, tools, tool, &id);
+                out.active_tool.activate(tools, tool, &id);
             }
         }
         let ctx = self.ctx.clone();
@@ -1167,7 +1179,7 @@ impl UiLayer {
             .unwrap_or(std::time::Duration::MAX);
 
         UiFrameOutput {
-            submission: EguiSubmission {
+            submission: render_wgpu::EguiSubmission {
                 pixels_per_point: full_output.pixels_per_point,
                 textures_delta: full_output.textures_delta,
                 primitives,

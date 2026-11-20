@@ -219,7 +219,7 @@ impl Selection {
         };
         let mut features = session.selection.features();
         if features.is_empty()
-            && let Some(crate::ui::TreeItemId::Feature(id)) = session.selection.tree
+            && let Some(crate::contract::TreeItemId::Feature(id)) = session.selection.tree
         {
             features.push(id);
         }

@@ -221,7 +221,7 @@ impl PrintCadApp {
                 eye,
             );
         }
-        let Some(crate::ui::TreeItemId::Feature(id)) = self.session.selection.tree else {
+        let Some(crate::contract::TreeItemId::Feature(id)) = self.session.selection.tree else {
             return None;
         };
         let (origin, normal) = self.datum_plane(id)?;
@@ -418,7 +418,7 @@ impl PrintCadApp {
         let toggle = match aim {
             "view" => SectionToggle::View,
             saved if saved.starts_with("saved:") => {
-                self.saved_section_action(crate::ui::SavedSectionAction::Show(
+                self.saved_section_action(crate::contract::SavedSectionAction::Show(
                     saved["saved:".len()..].to_string(),
                 ));
                 return;

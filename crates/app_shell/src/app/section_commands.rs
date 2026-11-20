@@ -237,8 +237,8 @@ impl PrintCadApp {
     /// The clip pill's Sections menu: saving is one undo step under the
     /// section's name; showing and dropping a name the document lacks do
     /// nothing.
-    pub(crate) fn saved_section_action(&mut self, action: crate::ui::SavedSectionAction) {
-        use crate::ui::SavedSectionAction as Action;
+    pub(crate) fn saved_section_action(&mut self, action: crate::contract::SavedSectionAction) {
+        use crate::contract::SavedSectionAction as Action;
         match action {
             Action::Save(name) => {
                 let Some(plane) = &self.session.view.section else {

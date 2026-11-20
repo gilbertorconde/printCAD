@@ -44,7 +44,7 @@ impl PrintCadApp {
         }
     }
 
-    pub(super) fn set_pick_filter(&mut self, filter: crate::ui::PickFilter) {
+    pub(super) fn set_pick_filter(&mut self, filter: crate::contract::PickFilter) {
         self.session.view.pick_filter = filter;
         self.session.hover.edge = None;
         app_log::info(format!("Picking: {}", filter.label()));

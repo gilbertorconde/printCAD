@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use core_document::{
     Body, BodyId, ComponentId, Document, DocumentService, FeatureId, FeatureInfo, FeatureNode,
-    MenuScope, NoteId, WorkbenchId,
+    MenuScope, WorkbenchId,
 };
 use egui::{Response, Ui, Vec2};
 use ui_kit::sans;
@@ -15,46 +15,9 @@ mod menus;
 mod model;
 pub use model::RailItem;
 
+use crate::contract::{TreeFeatureCommand, TreeItemId};
 use menus::*;
 pub(crate) use model::feature_info;
-
-/// Identifier for selectable items in the tree panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum TreeItemId {
-    DocumentRoot,
-    Body(BodyId),
-    Feature(FeatureId),
-    ImportedObject(Uuid),
-    Component(ComponentId),
-    /// The group of a body's notes.
-    Notes(BodyId),
-    Note(NoteId),
-    /// The group of an array's copies.
-    Array(core_document::ArrayId),
-}
-
-impl From<FeatureId> for TreeItemId {
-    fn from(value: FeatureId) -> Self {
-        TreeItemId::Feature(value)
-    }
-}
-
-/// Context-menu action on a feature row, applied by the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TreeFeatureCommand {
-    Suppress(bool),
-    SetVisible(bool),
-    MoveUp,
-    MoveDown,
-    SetTip,
-    ClearTip,
-    /// Dragged and dropped on `target`'s row: goes just before or after it
-    /// in the history.
-    MoveNextTo {
-        target: FeatureId,
-        before: bool,
-    },
-}
 
 /// A feature row being dragged.
 #[derive(Debug, Clone, Copy)]

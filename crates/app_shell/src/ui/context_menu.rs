@@ -14,34 +14,9 @@ use ui_kit::widgets::Card;
 
 use super::UiCommand;
 use super::keymap::Keymap;
+use crate::contract::{BenchMenu, ViewportMenu};
 
 const MENU_WIDTH: f32 = 150.0;
-
-/// A right click on a body, and where it landed, in points.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ViewportMenu {
-    pub body: core_document::BodyId,
-    pub at: [f32; 2],
-    /// The face it was opened on, when there was one: its index in the
-    /// body's mesh.
-    pub face: Option<u32>,
-    /// The point it was opened on, where the body sits in the document.
-    pub point: Option<[f32; 3]>,
-    /// The last tool started, by name, which the menu offers to repeat.
-    pub repeat: Option<String>,
-    /// Every face under the cursor, front to back, for Select other.
-    pub others: Vec<OtherPick>,
-}
-
-/// A menu a bench opened at the pointer: its entries, the tag its pick
-/// carries back, and where it stands, in points.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BenchMenu {
-    pub bench: core_document::WorkbenchId,
-    pub tag: String,
-    pub items: Vec<core_document::MenuItem>,
-    pub at: [f32; 2],
-}
 
 /// The bench's own menu: its entries, a ticked one lit, each pick sent
 /// to the bench that opened it with [`MenuScope::Popup`] and its tag.
@@ -96,15 +71,6 @@ pub fn draw_bench_menu(ctx: &Context, menu: &BenchMenu, commands: &mut Vec<UiCom
     if pressed_elsewhere {
         commands.push(UiCommand::CloseViewportMenu);
     }
-}
-
-/// A face under the cursor, which Select other offers: its body, the
-/// triangle the cursor's ray crossed on it, and how the menu names it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OtherPick {
-    pub body: core_document::BodyId,
-    pub triangle: u32,
-    pub label: String,
 }
 
 pub fn draw(

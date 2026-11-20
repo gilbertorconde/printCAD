@@ -11,7 +11,8 @@ use ui_kit::widgets::{Note, primary_button, secondary_button, status_pill};
 use ui_kit::{sans, sans_semibold};
 
 use super::ActiveWorkbench;
-use super::host_ctx::{HostCtxParams, PanelWriteback, flush_ctx_logs, panel_ctx};
+use super::host_ctx::{PanelWriteback, flush_ctx_logs, panel_ctx};
+use crate::contract::HostCtxParams;
 
 pub const TASK_PANEL_WIDTH: f32 = 300.0;
 

@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result};
 
 use crate::app::view_fit::{aabb_fit_center_radius, document_imported_aabb};
+use crate::contract::TreeItemId;
 use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
 use crate::{Document, PrintCadApp};
 
 /// Derive a user-facing document name from a file name by stripping the
@@ -211,7 +211,7 @@ impl PrintCadApp {
     /// happened in it, a new tab beside it otherwise.
     pub(crate) fn reset_to_new_document(&mut self) {
         self.ensure_fresh_tab();
-        self.session.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::contract::Screen::Workspace;
         app_log::info("New document");
     }
 
@@ -274,7 +274,7 @@ impl PrintCadApp {
 
         self.session.document.mark_clean();
         self.touch_recent(&path);
-        self.session.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::contract::Screen::Workspace;
         // Reframe on the imported meshes' bounds, as a STEP import does, so the
         // scene bounds and the automatic near/far planes agree with the view;
         // keeping the old eye and target would clip the model at the margins.
@@ -403,7 +403,7 @@ impl PrintCadApp {
             self.import_step_at(&path, self.imports.last_detail.clone());
         } else {
             // The import dialog is drawn on the workspace only.
-            self.session.screen = crate::ui::Screen::Workspace;
+            self.session.screen = crate::contract::Screen::Workspace;
             self.session.file.step_import_pending = Some((path, self.imports.last_detail.clone()));
         }
     }
@@ -525,7 +525,7 @@ impl PrintCadApp {
         // A file already open is that tab; otherwise it gets a blank one.
         if let Some(index) = self.tab_index_of_file(&path) {
             self.switch_tab(index);
-            self.session.screen = crate::ui::Screen::Workspace;
+            self.session.screen = crate::contract::Screen::Workspace;
             return;
         }
         self.ensure_fresh_tab();

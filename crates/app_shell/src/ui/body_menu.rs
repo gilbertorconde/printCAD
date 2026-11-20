@@ -5,50 +5,12 @@
 //! page, the console's input) comes back as a [`MenuLocal`] for the UI to
 //! act on.
 
-use core_document::{BodyId, Document, FeatureId, NoteId};
+use core_document::{BodyId, Document};
 use egui::Ui;
 
-use super::property_panel::PropertyTab;
 use super::{BodyEdit, PrintOn, TreeItemId, UiCommand};
-
-/// What a menu entry changes in the window rather than the document.
-#[derive(Debug, Clone, PartialEq)]
-pub enum MenuLocal {
-    /// Select the item and show this page of the property panel.
-    Properties(TreeItemId, PropertyTab),
-    /// Select the item and put its name up for editing.
-    Rename(TreeItemId),
-    /// Put this text in the script console's input.
-    Console(String),
-    /// Open one of the application's tasks in the right panel.
-    Task(OpenTask),
-}
-
-/// A task a menu opens in the right panel.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OpenTask {
-    Placement(BodyId),
-    /// The body's look, with the face the menu was opened on, if any.
-    Appearance(BodyId, Option<u32>),
-    /// A feature's place in its body's history.
-    History(FeatureId),
-    /// The patterns pressed into the body's faces, with the face the menu
-    /// was opened on, if any.
-    Texture(BodyId, Option<u32>),
-    /// Every part laid flat on the bed, for export or the slicer.
-    PrintLayout,
-    /// A new note on the body, at a point where it sits in the document
-    /// (the one the menu was opened on), or where the body offers one.
-    AddNote(BodyId, Option<[f32; 3]>),
-    /// A note's text and where its label stands.
-    EditNote(NoteId),
-    /// The array that owns or repeats the body, or a new one of it.
-    Array(BodyId),
-    /// The array that repeats the component, or a new one of it.
-    ComponentArray(core_document::ComponentId),
-    /// Marking a scan's surface by hand.
-    Mark(BodyId),
-}
+use crate::contract::PropertyTab;
+use crate::contract::{MenuLocal, OpenTask};
 
 /// A body as a script names it: its id, with its name beside.
 pub fn body_reference(name: &str, body: BodyId) -> String {

@@ -3,15 +3,16 @@
 //! where the category changes. The file and undo buttons and the tool
 //! search sit in the menu bar, the view's switches on the view's pill.
 
-use core_document::{DocumentService, ToolBehavior, ToolDescriptor, WorkbenchId};
+use core_document::{DocumentService, ToolDescriptor, WorkbenchId};
 use egui::{Popup, RichText, Vec2};
 use ui_kit::sans;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{TOOL_MENU_STRIP, ToolButtonState, tool_button, vseparator};
 use workbenches::REGISTERED_WORKBENCHES;
 
-use super::host_ctx::{HostCtxParams, panel_ctx};
+use super::host_ctx::panel_ctx;
 use super::{ActiveTool, ActiveWorkbench, SettingsEdit, UiCommand};
+use crate::contract::HostCtxParams;
 
 /// Everything the toolbar needs from the frame.
 pub struct ToolbarInputs<'a> {
@@ -70,47 +71,6 @@ fn remember_variant(ctx: &egui::Context, tool_id: &str, index: usize) {
     ctx.data_mut(|d| d.insert_persisted(egui::Id::new(("toolbar_variant", tool_id)), index));
 }
 
-/// Activate `id` following `tool`'s behavior: Actions fire once, Checks
-/// toggle, Radios clear their group first.
-pub fn activate_tool(
-    active_tool: &mut ActiveTool,
-    tools: &[ToolDescriptor],
-    tool: &ToolDescriptor,
-    id: &str,
-) {
-    let is_active = active_tool.active_ids.contains(id);
-    match tool.behavior {
-        ToolBehavior::Action => {
-            // Fire-and-forget: the host clears it after handling the input.
-            active_tool.active_ids.insert(id.to_owned());
-        }
-        ToolBehavior::Check => {
-            if is_active {
-                active_tool.active_ids.remove(id);
-            } else {
-                active_tool.active_ids.insert(id.to_owned());
-            }
-        }
-        ToolBehavior::Radio => {
-            if is_active {
-                active_tool.active_ids.remove(id);
-            } else {
-                match &tool.group {
-                    Some(group) => active_tool.active_ids.retain(|active_id| {
-                        tools
-                            .iter()
-                            .find(|t| t.id == core_document::base_tool_id(active_id))
-                            .map(|t| t.group.as_deref() != Some(group))
-                            .unwrap_or(true)
-                    }),
-                    None => active_tool.active_ids.clear(),
-                }
-                active_tool.active_ids.insert(id.to_owned());
-            }
-        }
-    }
-}
-
 fn tool_is_active(active_tool: &ActiveTool, tool_id: &str) -> bool {
     active_tool
         .active_ids
@@ -159,7 +119,7 @@ fn pick_variant(
 ) {
     remember_variant(ctx, &tool.id, index);
     if enabled {
-        activate_tool(active_tool, tools, tool, &activation_id(tool, Some(index)));
+        active_tool.activate(tools, tool, &activation_id(tool, Some(index)));
     }
 }
 
@@ -221,12 +181,7 @@ fn draw_tool(
     super::widget_map::note(ui.ctx(), || format!("button:{button_id}"), response.rect);
 
     if response.clicked() && enabled && planned.is_none() {
-        activate_tool(
-            active_tool,
-            tools,
-            tool,
-            &activation_id(tool, variant_index),
-        );
+        active_tool.activate(tools, tool, &activation_id(tool, variant_index));
     }
     if !menu {
         return response;
@@ -573,7 +528,7 @@ impl ToolPanels<'_> {
                         d.remove::<usize>(egui::Id::new(("toolbar_variant", &tool.id)))
                     });
                 }
-                activate_tool(self.active_tool, self.tools, tool, &id);
+                self.active_tool.activate(self.tools, tool, &id);
                 ui.close();
             }
             let hint = planned.map_or_else(

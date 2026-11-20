@@ -785,7 +785,7 @@ impl PrintCadApp {
             key,
         };
         let shortcut =
-            !crate::ui::keymap::types_number(chord) && gfx.ui_layer.is_shortcut(chord, &wb_id);
+            !crate::keymap::types_number(chord) && gfx.ui_layer.is_shortcut(chord, &wb_id);
         (mid_value || !shortcut).then_some(text)
     }
 
@@ -1066,7 +1066,7 @@ impl PrintCadApp {
         } else {
             Vec::new()
         };
-        self.session.viewport_menu = body.map(|body| crate::ui::ViewportMenu {
+        self.session.viewport_menu = body.map(|body| crate::contract::ViewportMenu {
             body: core_document::BodyId(body),
             at: [(vp.0 + cx) / scale, (vp.1 + cy) / scale],
             face,
@@ -1094,7 +1094,7 @@ impl PrintCadApp {
     /// Every face the cursor's ray crosses, front to back, over every
     /// visible body that takes picks, each face once: what Select other
     /// lists. A face the clipping plane hides is left out.
-    pub(crate) fn faces_under_cursor(&self) -> Vec<crate::ui::OtherPick> {
+    pub(crate) fn faces_under_cursor(&self) -> Vec<crate::contract::OtherPick> {
         let Some((origin, direction)) = self.cursor_ray() else {
             return Vec::new();
         };
@@ -1158,7 +1158,7 @@ impl PrintCadApp {
                     .imported_geometry(id)
                     .and_then(|g| g.mesh.face_surfaces.get(face as usize).copied())
                     .map_or("face", surface_word);
-                crate::ui::OtherPick {
+                crate::contract::OtherPick {
                     body: id,
                     triangle,
                     // How far behind the nearest face it lies tells alike
@@ -1248,7 +1248,7 @@ impl PrintCadApp {
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
         // against them on the CPU with a proper pixel tolerance.
         if let Some(feature_id) = self.feature_under_cursor() {
-            self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
+            self.apply_tree_selection(crate::contract::TreeItemId::Feature(feature_id));
             self.session.selection.last_face_hit = None;
             self.session.selection.face_highlight = None;
             app_log::info(format!("Selected feature {feature_id:?}"));
@@ -1339,14 +1339,14 @@ impl PrintCadApp {
         if let Some(hovered) = self.session.hover.body {
             // Picking only edges, a click on a body away from them takes
             // nothing.
-            if filter == crate::ui::PickFilter::Edges {
+            if filter == crate::contract::PickFilter::Edges {
                 return true;
             }
             // A feature's own geometry is occasionally GPU-picked too (e.g.
             // clicking exactly on a sketch line): same selection path.
             let feature_id = core_document::FeatureId(hovered);
             if self.session.document.get_feature_meta(feature_id).is_some() {
-                self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
+                self.apply_tree_selection(crate::contract::TreeItemId::Feature(feature_id));
                 self.session.selection.last_face_hit = None;
                 return true;
             }
@@ -1375,7 +1375,7 @@ impl PrintCadApp {
                 .is_mesh_body(core_document::BodyId(hovered))
                 && !already_whole;
 
-            let whole_only = filter == crate::ui::PickFilter::Bodies;
+            let whole_only = filter == crate::contract::PickFilter::Bodies;
             // A double click on a face of a body built from features opens
             // the feature that made it, as a double click on its row would.
             let maker = (is_double
@@ -1389,7 +1389,7 @@ impl PrintCadApp {
                     .face_maker(core_document::BodyId(hovered), face.name)
             });
             if let Some(feature) = maker {
-                self.apply_tree_activation(crate::ui::TreeItemId::Feature(feature));
+                self.apply_tree_activation(crate::contract::TreeItemId::Feature(feature));
                 app_log::info("Editing the feature that made the face");
             } else if is_double || whole_mesh || (whole_only && !already_whole) {
                 // The whole body the face belongs to: one part of an
@@ -1618,9 +1618,9 @@ impl PrintCadApp {
             None => parts.push(part),
         }
         if self.session.active_document_object != Some(feature)
-            || self.session.selection.tree != Some(crate::ui::TreeItemId::Feature(feature))
+            || self.session.selection.tree != Some(crate::contract::TreeItemId::Feature(feature))
         {
-            self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
+            self.apply_tree_selection(crate::contract::TreeItemId::Feature(feature));
         }
         self.session.selection.last_face_hit = None;
         self.session.selection.face_highlight = None;

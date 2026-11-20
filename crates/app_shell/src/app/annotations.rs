@@ -11,7 +11,7 @@ use glam::Vec3;
 
 use crate::PrintCadApp;
 use crate::app::frame::ViewportData;
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 
 /// How thick an annotation's lines draw, in pixels.
 const LINE_PX: f32 = 1.2;

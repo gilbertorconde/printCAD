@@ -15,9 +15,9 @@ use uuid::Uuid;
 
 use crate::PrintCadApp;
 use crate::app::view_fit::aabb_fit_center_radius;
+use crate::contract::TreeItemId;
 use crate::kernel_worker::KernelResponse;
 use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
 
 /// Map a STEP-declared length unit onto the document's display unit enum.
 fn length_unit_to_document_unit(unit: LengthUnit) -> Unit {
@@ -337,8 +337,8 @@ impl PrintCadApp {
                     result,
                 } => {
                     let reading = match result {
-                        Ok(props) => crate::ui::Physical::Ready(Box::new(props)),
-                        Err(error) => crate::ui::Physical::Failed(error),
+                        Ok(props) => crate::contract::Physical::Ready(Box::new(props)),
+                        Err(error) => crate::contract::Physical::Failed(error),
                     };
                     self.session
                         .drawn
@@ -558,7 +558,7 @@ impl PrintCadApp {
         }
 
         self.remember_recent_dir(path);
-        self.session.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::contract::Screen::Workspace;
         let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
         info!(
             path = %path.display(),

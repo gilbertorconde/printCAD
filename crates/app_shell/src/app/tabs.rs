@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::PrintCadApp;
 use crate::app::gesture::GestureEnd;
 use crate::app::session::{DocumentSession, TabSlot};
+use crate::contract::{Screen, TabInfo};
 use crate::log_panel as app_log;
-use crate::ui::{Screen, TabInfo};
 
 /// How many closed tabs Reopen closed tab remembers.
 const CLOSED_KEPT: usize = 20;

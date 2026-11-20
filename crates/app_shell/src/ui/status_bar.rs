@@ -11,18 +11,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{mono_label, vseparator};
 
 use super::overlays::rgb;
-
-/// The document server serving a tab, as the status bar shows it.
-#[derive(Debug, Clone, Default)]
-pub struct ServerBadge {
-    /// What the server calls itself, for the tooltip.
-    pub name: String,
-    /// The app reads and writes files itself, with no server process.
-    pub standalone: bool,
-    pub connected: bool,
-    /// Other clients editing the same document.
-    pub peers: u32,
-}
+use crate::contract::ServerBadge;
 
 /// Everything the status bar reads this frame.
 pub struct StatusBarInputs<'a> {

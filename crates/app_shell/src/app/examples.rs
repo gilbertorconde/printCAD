@@ -5,8 +5,8 @@
 use core_document::{Document, FeatureId};
 
 use crate::PrintCadApp;
+use crate::contract::TreeItemId;
 use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
 
 /// One of the examples the start page offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

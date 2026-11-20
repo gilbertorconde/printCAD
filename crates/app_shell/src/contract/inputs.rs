@@ -1,15 +1,13 @@
-//! Per-frame inputs handed from the app to [`super::UiLayer::run`].
+//! Per-frame inputs handed from the app to `UiLayer::run`.
 
 use std::path::PathBuf;
 
 use axes::AxisSystem;
 use settings::UserSettings;
 
-use super::feature_tree::TreeItemId;
-use super::host_ctx::HostCtxParams;
 use settings::recent::RecentEntry;
 
-use super::{ActiveTool, ActiveWorkbench, Screen};
+use super::{ActiveTool, ActiveWorkbench, HostCtxParams, Screen, TreeItemId};
 use crate::orientation_cube::OrientationCubeInput;
 
 /// The body under the cursor and the point hit on it.
@@ -83,8 +81,9 @@ pub struct UiFrameInputs<'a> {
     /// What is picked in the view when it is more than one thing ("3
     /// faces, 2 edges"), for the status bar.
     pub picks: Option<String>,
-    /// "w × h × d" of the selected body, already formatted.
-    pub dimensions: Option<String>,
+    /// The selected body's bounds where it sits (millimetres, document
+    /// axes), which the status bar gives as "w × h × d".
+    pub selection_bounds: Option<([f32; 3], [f32; 3])>,
     /// What the selection measures, a line each, while the status bar's
     /// quick measure is on.
     pub quick_measure: Vec<String>,
@@ -98,7 +97,7 @@ pub struct UiFrameInputs<'a> {
     pub panel_bounds_mm: Option<([f32; 3], [f32; 3])>,
     /// What the Physical group can take the inertia about, the centre of
     /// mass first.
-    pub inertia_references: Vec<super::property_panel::InertiaReference>,
+    pub inertia_references: Vec<super::InertiaReference>,
     /// The camera's field of view, in degrees, for the view toolbar.
     pub field_of_view_deg: f32,
     /// The projection the tab's view draws with.
@@ -108,7 +107,7 @@ pub struct UiFrameInputs<'a> {
     /// What the clipping plane waits for a pick in the view to aim it.
     pub section_prompt: Option<String>,
     /// What a click in the view picks.
-    pub pick_filter: super::view_toolbar::PickFilter,
+    pub pick_filter: super::PickFilter,
     pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
     /// Filled shapes the active bench draws beneath its lines.
@@ -132,15 +131,15 @@ pub struct UiFrameInputs<'a> {
     /// Bytes packed into the archive being saved, out of the whole.
     pub save_progress: Option<(u64, u64)>,
     /// The document server serving this session, and how it is doing.
-    pub server: super::status_bar::ServerBadge,
+    pub server: super::ServerBadge,
     /// The strip of open documents, in order.
     pub tabs: Vec<super::TabInfo>,
     /// The measure tool is armed.
     pub measuring: bool,
     /// The radial menu, while a held right press has it open.
-    pub radial: Option<super::radial::RadialView>,
+    pub radial: Option<super::RadialView>,
     /// The measure tool's own pill under the view toolbar, while it is armed.
-    pub measure_bar: Option<super::view_toolbar::MeasureBar>,
+    pub measure_bar: Option<super::MeasureBar>,
     /// The note tool is armed.
     pub note_tool: bool,
     /// The note card, while it is open.

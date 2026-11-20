@@ -11,8 +11,8 @@ use std::time::Instant;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::PrintCadApp;
+use crate::contract;
 use crate::log_panel as app_log;
-use crate::ui;
 
 /// Frames after geometry arrives at which the bench click hook requests its
 /// pick (the camera has settled by then), clicks, activates the bench tool
@@ -341,7 +341,7 @@ impl PrintCadApp {
                 self.bench_open_sketch();
             }
             // Without a hook, the command line's files or the last run's.
-            if crate::launch_screen() == crate::ui::Screen::Start {
+            if crate::launch_screen() == crate::contract::Screen::Start {
                 self.reopen_at_start();
             }
         }
@@ -370,8 +370,8 @@ impl PrintCadApp {
         {
             self.bench.select_fired = true;
             let row = match self.session.document.imported_object_for_body(body.0) {
-                Some(node) => crate::ui::TreeItemId::ImportedObject(node),
-                None => crate::ui::TreeItemId::Body(body.0),
+                Some(node) => crate::contract::TreeItemId::ImportedObject(node),
+                None => crate::contract::TreeItemId::Body(body.0),
             };
             self.apply_tree_selection(row);
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
@@ -392,7 +392,7 @@ impl PrintCadApp {
             && let Some(feature) = named_feature(&self.session.document, which)
         {
             self.bench.select_fired = true;
-            self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
+            self.apply_tree_selection(crate::contract::TreeItemId::Feature(feature));
             tracing::info!(target: "printcad.frame", "bench selected feature `{which}`");
         }
         // Dev/bench hook: `PRINTCAD_BENCH_ISOLATE=<name>` isolates the view
@@ -461,7 +461,7 @@ impl PrintCadApp {
                 .map(|(id, _)| *id);
             match found {
                 Some(id) => {
-                    self.apply_tree_activation(crate::ui::TreeItemId::Feature(id));
+                    self.apply_tree_activation(crate::contract::TreeItemId::Feature(id));
                     tracing::info!(target: "printcad.frame", "bench editing `{name}`");
                 }
                 None => tracing::warn!(target: "printcad.frame", "bench edit: no feature `{name}`"),
@@ -618,17 +618,17 @@ impl PrintCadApp {
                 .min_by_key(|(id, n)| (n.seq, **id))
                 .map(|(id, _)| *id);
             let open = match which.as_str() {
-                "placement" => Some(ui::OpenTask::Placement(body)),
-                "history" => first.map(ui::OpenTask::History),
-                "texture" => Some(ui::OpenTask::Texture(body, None)),
-                "print_layout" => Some(ui::OpenTask::PrintLayout),
-                "array" => Some(ui::OpenTask::Array(body)),
+                "placement" => Some(contract::OpenTask::Placement(body)),
+                "history" => first.map(contract::OpenTask::History),
+                "texture" => Some(contract::OpenTask::Texture(body, None)),
+                "print_layout" => Some(contract::OpenTask::PrintLayout),
+                "array" => Some(contract::OpenTask::Array(body)),
                 "note" => Some(match self.session.document.body_notes(body).first() {
-                    Some(note) => ui::OpenTask::EditNote(note.id),
-                    None => ui::OpenTask::AddNote(body, None),
+                    Some(note) => contract::OpenTask::EditNote(note.id),
+                    None => contract::OpenTask::AddNote(body, None),
                 }),
-                "mark" => Some(ui::OpenTask::Mark(body)),
-                _ => Some(ui::OpenTask::Appearance(body, None)),
+                "mark" => Some(contract::OpenTask::Mark(body)),
+                _ => Some(contract::OpenTask::Appearance(body, None)),
             };
             if let Some(open) = open {
                 gfx.ui_layer
@@ -650,7 +650,7 @@ impl PrintCadApp {
                 .collect();
             if !broken.is_empty() {
                 self.bench.repair_fired = true;
-                self.apply_ui_commands(vec![ui::UiCommand::RepairShapes(broken)], event_loop);
+                self.apply_ui_commands(vec![contract::UiCommand::RepairShapes(broken)], event_loop);
             }
         }
 
@@ -668,7 +668,10 @@ impl PrintCadApp {
                 .collect();
             if !meshes.is_empty() {
                 self.bench.convert_fired = true;
-                self.apply_ui_commands(vec![ui::UiCommand::ConvertToSolid(meshes)], event_loop);
+                self.apply_ui_commands(
+                    vec![contract::UiCommand::ConvertToSolid(meshes)],
+                    event_loop,
+                );
             }
         }
 
@@ -683,7 +686,10 @@ impl PrintCadApp {
                 .collect();
             if !faceted.is_empty() {
                 self.bench.refine_fired = true;
-                self.apply_ui_commands(vec![ui::UiCommand::RefineShapes(faceted)], event_loop);
+                self.apply_ui_commands(
+                    vec![contract::UiCommand::RefineShapes(faceted)],
+                    event_loop,
+                );
             }
         }
 
@@ -836,7 +842,7 @@ impl PrintCadApp {
             scene,
         ) {
             Ok(handles) => {
-                self.apply_tree_activation(crate::ui::TreeItemId::Feature(handles.feature));
+                self.apply_tree_activation(crate::contract::TreeItemId::Feature(handles.feature));
             }
             Err(err) => app_log::error(format!("bench scene: {err}")),
         }

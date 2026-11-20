@@ -8,14 +8,8 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{QtyField, check_row, mono_label};
 use uuid::Uuid;
 
-use super::feature_tree::{TreeFeatureCommand, TreeItemId};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum PropertyTab {
-    View,
-    #[default]
-    Data,
-}
+use crate::contract::{InertiaReference, PropertyTab};
+use crate::contract::{TreeFeatureCommand, TreeItemId};
 
 #[derive(Default)]
 pub struct PropertyPanelResult {
@@ -1057,31 +1051,6 @@ fn physical_group(
 
 /// The row naming what the inertia below it is about, drawn as a choice.
 const INERTIA_ABOUT: &str = "Inertia about";
-
-/// A point or a line the Physical group can take a body's inertia about,
-/// placed in the world.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InertiaReference {
-    CentreOfMass,
-    Point {
-        name: String,
-        at: [f64; 3],
-    },
-    Axis {
-        name: String,
-        point: [f64; 3],
-        direction: [f64; 3],
-    },
-}
-
-impl InertiaReference {
-    pub fn name(&self) -> &str {
-        match self {
-            InertiaReference::CentreOfMass => "Centre of mass",
-            InertiaReference::Point { name, .. } | InertiaReference::Axis { name, .. } => name,
-        }
-    }
-}
 
 /// What a moment in mm⁵ at unit density is multiplied by to read in
 /// `unit`, and the suffix it reads with: the mass's (g times the unit

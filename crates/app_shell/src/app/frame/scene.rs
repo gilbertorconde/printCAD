@@ -28,7 +28,7 @@ impl PrintCadApp {
                 // even on hairline geometry.
                 let is_active = self.session.active_document_object == Some(feature_id)
                     || self.session.selection.tree
-                        == Some(crate::ui::TreeItemId::Feature(feature_id));
+                        == Some(crate::contract::TreeItemId::Feature(feature_id));
                 // Parts of it picked on their own leave the rest plain.
                 let parts: &[core_document::FeaturePart] =
                     if self.session.active_document_object == Some(feature_id) {
@@ -43,7 +43,8 @@ impl PrintCadApp {
                     .as_ref()
                     .is_some_and(|(f, _)| *f == feature_id);
                 let is_hovered = (self.session.hover.feature == Some(feature_id) && !curve_lit)
-                    || self.session.hover.tree == Some(crate::ui::TreeItemId::Feature(feature_id));
+                    || self.session.hover.tree
+                        == Some(crate::contract::TreeItemId::Feature(feature_id));
                 let palette = core_document::SketchPalette::default();
                 let plain = match geometry.tint {
                     core_document::PassiveTint::Plain => palette.geometry,

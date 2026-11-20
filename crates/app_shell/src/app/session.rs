@@ -14,7 +14,7 @@ pub(crate) use crate::app::session_state::{
     Selection, ViewState,
 };
 use crate::camera::CameraController;
-use crate::ui::{ActiveTool, ActiveWorkbench, Screen, TreeItemId};
+use crate::contract::{ActiveTool, ActiveWorkbench, Screen, TreeItemId};
 
 /// How many steps a tab's undo history keeps, and a window-less run's.
 pub(crate) const JOURNAL_LIMIT: usize = 64;
@@ -51,10 +51,10 @@ pub(crate) struct DocumentSession {
     pub plane_session_open: bool,
     /// The context menu a right click on a body asked for, until it is
     /// used or dismissed.
-    pub viewport_menu: Option<crate::ui::ViewportMenu>,
+    pub viewport_menu: Option<crate::contract::ViewportMenu>,
     /// The menu a bench opened at the pointer, until it is used or
     /// dismissed.
-    pub bench_menu: Option<crate::ui::BenchMenu>,
+    pub bench_menu: Option<crate::contract::BenchMenu>,
     /// How many menus benches have opened: a right click that opened one
     /// opens no body menu as well.
     pub bench_menus_opened: u64,

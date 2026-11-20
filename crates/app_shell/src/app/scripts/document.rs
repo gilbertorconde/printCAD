@@ -1,6 +1,6 @@
 //! Document command handlers shared by desktop and headless execution.
 
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 use core_document::{Args, BodyId, CommandArgs, CommandError, CommandResult, FeatureId};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -76,8 +76,8 @@ fn slot_answer(
 fn inertia_reference(
     document: &core_document::Document,
     value: &Value,
-) -> Result<crate::ui::InertiaReference, CommandError> {
-    use crate::ui::InertiaReference as R;
+) -> Result<crate::contract::InertiaReference, CommandError> {
+    use crate::contract::InertiaReference as R;
     let bad = || {
         CommandError::bad(
             "about",
@@ -671,7 +671,7 @@ pub(crate) fn document_command(
                     document.body_placement(body).quat().as_dquat(),
                 );
                 let about = about.as_ref().map(|about| match about {
-                    crate::ui::InertiaReference::Axis {
+                    crate::contract::InertiaReference::Axis {
                         point, direction, ..
                     } => json!({
                         "point": point,
@@ -684,7 +684,7 @@ pub(crate) fn document_command(
                             *direction,
                         ),
                     }),
-                    crate::ui::InertiaReference::Point { at, .. } => {
+                    crate::contract::InertiaReference::Point { at, .. } => {
                         let tensor = core_document::inertia::about_point(
                             &turned.about_centre,
                             volume,
@@ -697,7 +697,7 @@ pub(crate) fn document_command(
                             "principal": principal(core_document::inertia::principal(&tensor)),
                         })
                     }
-                    crate::ui::InertiaReference::CentreOfMass => json!({
+                    crate::contract::InertiaReference::CentreOfMass => json!({
                         "point": centre_wide,
                         "tensor": turned.about_centre,
                         "principal": principal(turned.principal),

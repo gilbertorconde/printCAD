@@ -1,14 +1,17 @@
 //! UI edits expressed as recorded command calls.
 
 use super::document::suppress_call;
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 use core_document::{BodyId, CommandArgs};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 /// The command a body menu's edit runs, and its arguments.
-pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'static str, Value) {
-    use crate::ui::BodyEdit;
+pub(crate) fn body_edit_call(
+    body: BodyId,
+    edit: &crate::contract::BodyEdit,
+) -> (&'static str, Value) {
+    use crate::contract::BodyEdit;
     let id = body.0.to_string();
     match edit {
         BodyEdit::Frozen(frozen) => ("doc.set_body", json!({"body": id, "frozen": frozen})),
@@ -21,9 +24,9 @@ pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'sta
         BodyEdit::Recompute => ("doc.recompute", json!({"body": id})),
         BodyEdit::PrintOn(on) => {
             let on = match on {
-                crate::ui::PrintOn::Auto => json!("auto"),
-                crate::ui::PrintOn::AsModelled => json!("as_modelled"),
-                crate::ui::PrintOn::Face(face) => json!(face),
+                crate::contract::PrintOn::Auto => json!("auto"),
+                crate::contract::PrintOn::AsModelled => json!("as_modelled"),
+                crate::contract::PrintOn::Face(face) => json!(face),
             };
             ("doc.set_body", json!({"body": id, "print_on": on}))
         }
@@ -33,8 +36,8 @@ pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'sta
 /// What a host UI command does, as the command a recording says it with:
 /// renaming, showing or hiding and deleting tree rows. The benches record
 /// their own.
-pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_document::Recorded> {
-    use crate::ui::{TreeFeatureCommand, UiCommand};
+pub(crate) fn recorded_of(command: &crate::contract::UiCommand) -> Option<core_document::Recorded> {
+    use crate::contract::{TreeFeatureCommand, UiCommand};
     let call = |id: &str, args: Value| core_document::Recorded {
         id: id.to_string(),
         args: match args {
@@ -47,7 +50,7 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         UiCommand::SetDocumentAgentRules(rules) => {
             Some(call("doc.set_agent_rules", json!({"rules": rules})))
         }
-        UiCommand::Config(crate::ui::ConfigEdit::NewTable) => None,
+        UiCommand::Config(crate::contract::ConfigEdit::NewTable) => None,
         UiCommand::Config(edit) => {
             let (id, args) = edit.command();
             Some(call(id, args))

@@ -17,7 +17,7 @@ use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 use crate::PrintCadApp;
-use crate::ui::{
+use crate::contract::{
     ActiveWorkbench, FileCommand, StartKind, TreeFeatureCommand, TreeItemId, UiCommand,
 };
 
@@ -45,7 +45,7 @@ struct FrameIntents {
     toggle_grid: bool,
     toggle_origin_planes: bool,
     toggle_measure: bool,
-    edit: Vec<crate::ui::EditCommand>,
+    edit: Vec<crate::contract::EditCommand>,
     body_display: Vec<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
     set_visibility: Vec<(uuid::Uuid, bool)>,
     select_tree_item: Option<TreeItemId>,
@@ -497,7 +497,7 @@ impl PrintCadApp {
         if tool.planned.is_some() {
             return;
         }
-        crate::ui::toolbar::activate_tool(&mut self.session.active_tool, tools, tool, &id);
+        self.session.active_tool.activate(tools, tool, &id);
         self.redraw_needed = true;
     }
 
@@ -872,8 +872,8 @@ impl PrintCadApp {
 
     /// A change a body menu asked for, one undo step, run as the command
     /// a script would call.
-    fn apply_body_edit(&mut self, body: core_document::BodyId, edit: crate::ui::BodyEdit) {
-        use crate::ui::BodyEdit;
+    fn apply_body_edit(&mut self, body: core_document::BodyId, edit: crate::contract::BodyEdit) {
+        use crate::contract::BodyEdit;
         let (id, args) = crate::app::scripts::body_edit_call(body, &edit);
         let args = match args {
             serde_json::Value::Object(map) => map,
@@ -916,9 +916,9 @@ impl PrintCadApp {
                 app_log::info("Rebuilding the body");
                 return;
             }
-            BodyEdit::PrintOn(crate::ui::PrintOn::Face(_)) => "Print on this face",
-            BodyEdit::PrintOn(crate::ui::PrintOn::AsModelled) => "Print as modelled",
-            BodyEdit::PrintOn(crate::ui::PrintOn::Auto) => "Print on its best face",
+            BodyEdit::PrintOn(crate::contract::PrintOn::Face(_)) => "Print on this face",
+            BodyEdit::PrintOn(crate::contract::PrintOn::AsModelled) => "Print as modelled",
+            BodyEdit::PrintOn(crate::contract::PrintOn::Auto) => "Print on its best face",
         };
         self.session.journal.label_next(label);
         self.close_gesture();
@@ -1251,7 +1251,7 @@ impl PrintCadApp {
     /// of the tree's selection (every body of a component, the bodies of
     /// the features Ctrl-clicked beside it).
     fn bodies_to_isolate(&self) -> Vec<core_document::BodyId> {
-        use crate::ui::TreeItemId;
+        use crate::contract::TreeItemId;
         if self.session.selection.body.is_some() {
             let mut bodies: Vec<core_document::BodyId> = self
                 .session
@@ -1283,7 +1283,7 @@ impl PrintCadApp {
     /// The body Hide others keeps: the one selected in the view, else the
     /// body of the tree's selection.
     fn selected_body_for_isolate(&self) -> Option<core_document::BodyId> {
-        use crate::ui::TreeItemId;
+        use crate::contract::TreeItemId;
         if let Some(body) = self.session.selection.body {
             return Some(core_document::BodyId(body));
         }
@@ -1349,7 +1349,7 @@ impl PrintCadApp {
             .expect("a free name");
         match doc.add_variable_set(&name) {
             Ok(id) => {
-                self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                self.apply_tree_selection(crate::contract::TreeItemId::Feature(id));
                 self.record_calls(vec![core_document::Recorded {
                     id: "var.new".to_string(),
                     args: serde_json::json!({"name": name})
@@ -1378,8 +1378,8 @@ impl PrintCadApp {
 
 impl PrintCadApp {
     /// Apply an edit of the configurations table as one undo step.
-    fn apply_config_edit(&mut self, edit: crate::ui::ConfigEdit) {
-        use crate::ui::ConfigEdit;
+    fn apply_config_edit(&mut self, edit: crate::contract::ConfigEdit) {
+        use crate::contract::ConfigEdit;
         let doc = &mut self.session.document;
         let (done, label) = match &edit {
             ConfigEdit::NewTable => {
@@ -1387,7 +1387,7 @@ impl PrintCadApp {
                     Ok(id) => {
                         self.session.journal.label_next("New configurations table");
                         self.close_gesture();
-                        self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                        self.apply_tree_selection(crate::contract::TreeItemId::Feature(id));
                     }
                     Err(why) => crate::log_panel::warn(why),
                 }

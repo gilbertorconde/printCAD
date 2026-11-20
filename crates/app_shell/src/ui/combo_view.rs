@@ -8,9 +8,12 @@ use ui_kit::widgets::vseparator;
 use ui_kit::{sans, sans_medium};
 
 use super::ActiveWorkbench;
-use super::feature_tree::{self, TreeItemId};
-use super::host_ctx::{HostCtxParams, PanelWriteback, flush_ctx_logs, panel_ctx};
-use super::property_panel::{self, PropertyTab};
+use super::feature_tree;
+use super::host_ctx::{PanelWriteback, flush_ctx_logs, panel_ctx};
+use super::property_panel;
+use crate::contract::HostCtxParams;
+use crate::contract::PropertyTab;
+use crate::contract::TreeItemId;
 
 #[derive(Default)]
 pub struct ComboViewResult {
@@ -22,7 +25,10 @@ pub struct ComboViewResult {
     pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
     /// A body shown or hidden, from its tree row or the property panel.
     pub body_visibility_change: Option<(core_document::BodyId, bool)>,
-    pub tree_feature_command: Option<(core_document::FeatureId, feature_tree::TreeFeatureCommand)>,
+    pub tree_feature_command: Option<(
+        core_document::FeatureId,
+        crate::contract::TreeFeatureCommand,
+    )>,
     /// The property panel's Label row committed a new name.
     pub rename: Option<(TreeItemId, String)>,
     /// A row the user asked to delete.
@@ -77,7 +83,7 @@ pub struct ComboViewInputs<'a> {
     /// That body's bounds where it sits.
     pub bounds_mm: Option<([f32; 3], [f32; 3])>,
     /// What the inertia can be taken about, and the one chosen.
-    pub inertia_references: &'a [super::property_panel::InertiaReference],
+    pub inertia_references: &'a [crate::contract::InertiaReference],
     pub inertia_about: &'a mut Option<String>,
     /// The keys the tree's menus name.
     pub keymap: &'a super::keymap::Keymap,

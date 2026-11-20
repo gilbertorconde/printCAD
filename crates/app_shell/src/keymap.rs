@@ -10,8 +10,10 @@
 use core_document::{Chord, DocumentService, KeyCode, WorkbenchId};
 use settings::KeyboardSettings;
 
-use super::feature_tree::{TreeFeatureCommand, TreeItemId};
-use super::{EditCommand, FileCommand, SettingsEdit, UiCommand};
+use crate::contract::{
+    EditCommand, FileCommand, MenuLocal, OpenTask, PropertyTab, SettingsEdit, TreeFeatureCommand,
+    TreeItemId, UiCommand,
+};
 use crate::orientation_cube::CameraSnapView;
 
 /// An application command a key can run.
@@ -822,7 +824,7 @@ pub enum HostOutcome {
     ToggleConsole,
     ToggleAssistant,
     /// A change to the window only.
-    Local(super::MenuLocal),
+    Local(MenuLocal),
     Nothing,
 }
 
@@ -861,7 +863,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Export => C(UiCommand::File(FileCommand::Export)),
         SavePicture => C(UiCommand::File(FileCommand::SavePicture)),
         SendToSlicer => C(UiCommand::File(FileCommand::SendToSlicer)),
-        PrintLayout => HostOutcome::Local(super::MenuLocal::Task(super::OpenTask::PrintLayout)),
+        PrintLayout => HostOutcome::Local(MenuLocal::Task(OpenTask::PrintLayout)),
         Quit => C(UiCommand::Quit),
         NewTab => C(UiCommand::NewTab),
         ReopenTab => C(UiCommand::ReopenTab),
@@ -919,15 +921,12 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Repeat => C(UiCommand::RepeatLastTool),
         Rename => match state.tree_selection {
             Some(item) if item != TreeItemId::DocumentRoot => {
-                HostOutcome::Local(super::MenuLocal::Rename(item))
+                HostOutcome::Local(MenuLocal::Rename(item))
             }
             _ => HostOutcome::Nothing,
         },
         Properties => state.tree_selection.map_or(HostOutcome::Nothing, |item| {
-            HostOutcome::Local(super::MenuLocal::Properties(
-                item,
-                super::property_panel::PropertyTab::Data,
-            ))
+            HostOutcome::Local(MenuLocal::Properties(item, PropertyTab::Data))
         }),
         LogPanel => C(UiCommand::ToggleLogPanel),
         Delete => match state.tree_selection {
