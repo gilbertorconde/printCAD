@@ -32,7 +32,7 @@
   taken when the step is made: a body's solid as native text with its
   placement, or the bounded solid a feature's owner offers through
   `BenchFeatures::feature_solid`, kept per evaluation as
-  `Document::feature_solid`; an Inspection element's primitive over its
+  `Derived::feature_solid`; an Inspection element's primitive over its
   drawn extent) and Shell (`MeshOp::Shell`, hollow when closed, thickened
   when open); `mesh.trim_to_scan` cuts a solid body by the scan's break
   (`KernelQueries::trim_to_scan`, the kernel's `cut_by_mesh_region`) and
@@ -40,7 +40,7 @@
   a body built from features, which is hidden; `mesh.preview_cut` and
   `mesh.export` (`KernelQueries::write_mesh`) record nothing. Declared task controls edit each step live with OK/Cancel,
   listing triangle counts and the kernel's movement or verified reduction
-  measurements. `Document::store_mesh_build` keeps these derived reports
+  measurements. `DerivedMut::store_mesh_build` keeps these derived reports
   and source identities by the full plan; desktop and headless builds
   share it. A marking follows moved vertices through the source identities, a
   reduced vertex marked when every start vertex merged into it is

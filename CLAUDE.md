@@ -101,8 +101,8 @@ seven (empty where unused). A new method goes in the group it belongs
 to. Recompute loop: workbench edits
 document → features marked dirty via the dependency DAG →
 `drive_part_recompute` (each frame) asks every bench for its `rebuild_jobs`
-→ kernel worker thread → results land in the document's imported-geometry
-sidecar → rendered/picked like any body. Everything between the plan and
+→ kernel worker thread → results land in the document's derived build
+state (`doc.derived_mut()`) → rendered/picked like any body. Everything between the plan and
 the document is `build_driver`'s: starting a job (`begin`), the chain run
 and its fallback to the history before a failing feature
 (`build_until_failure`), and landing (`store_answers`, `store_solid`,
@@ -169,8 +169,15 @@ hacks, no silently degraded feature). Instead:
   state never does.** Mutators follow validate → resolve (ids, timestamps,
   seq) → build `DocumentOp` → `apply_op` → record; replay runs the same code
   live edits ran (`core_document/src/op.rs`, tests in `tests/document/op_replay.rs`).
-  Dirty flags, recompute errors and imported-geometry sidecars are per-replica
-  consequences, excluded from the replicated projection. The outbox is
+  Derived build state is one value behind its own handle
+  (`core_document/src/derived.rs`): bodies' meshes, snapshots and face
+  colours, feature errors and warnings, probe and projection answers,
+  size limits, mesh results, threads, feature solids. Read it through
+  `doc.derived()`, write it through `doc.derived_mut()` (a `DerivedMut`,
+  never an op; recording one while it is out panics in debug builds);
+  never add a build-result writer to `Document` itself. It and the dirty
+  flags are per-replica consequences, excluded from the replicated
+  projection (only the meshes are saved, under `imported_meshes`). The outbox is
   `#[serde(skip)]` and Clone-EMPTIES: snapshots carry state, never pending
   ops. Never add a `&mut` escape hatch to `Document`; capture is only total
   because none exists.
@@ -229,7 +236,7 @@ hacks, no silently degraded feature). Instead:
   never send `Rebase`, and never replace the document. Non-invertible ops
   (imports, asset adds) are barriers that clear history. Coalescing keeps
   the LAST op with the FIRST inverse. `Document::clone` still preserves the
-  `#[serde(skip)]` sidecars (save snapshots depend on it; `step_persistence.rs` tests
+  derived state and `#[serde(skip)]` sidecars (save snapshots depend on it; `step_persistence.rs` tests
   pin it). Solids stay derived: `after_history_jump` re-marks part features
   dirty.
 - Kernel shapes are plain `Send + Sync` data; tests run in parallel with no

@@ -154,7 +154,7 @@ point. From the sketch's own body it is the solid as it stands at the
 sketch's place in the history: Design's plan asks it
 (`BuildPlan::projections`, `kernel_api::ChainProjection`, answered by the
 chain beside its probes in `SolidBuildResult::projections`, kept by
-`Document::store_projections`), so what the sketch builds never moves it;
+`Derived::store_projections`), so what the sketch builds never moves it;
 another body's solid built from the sketch waits for the sketch to open. New projections take the
 Construction mode (a guide in it, counting out of it; the commands' `counts`
 flag, off unless given); projected ends at one spot join in the profile

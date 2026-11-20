@@ -18,8 +18,22 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   as `ShapeProbe`s, which Design's plan asks of the solid where the
   datum stands in the history (`BuildPlan::probes`, answered by
   `ChainRequest::probes`); the answers are derived state
-  (`Document::store_probe_answers`) that `datum::derive` folds into the
+  (`Derived::store_probe_answers`) that `datum::derive` folds into the
   datum's values, so it and what is built on it follow the solid);
+  `derived` (`Derived`, `DerivedMut`): the document's derived build
+  state as one field: bodies' meshes (placed and in their own frame),
+  shape snapshots and face colours, each feature's `BuildStatus` (error,
+  refused edges, warning, unchanged), probe and projection answers, size
+  limits, what features were built against, mesh build results, cosmetic
+  threads and feature solids. `doc.derived()` reads it; `doc.derived_mut()`
+  is the only way to write it (the build paths in `build_driver::store`,
+  imports, links, mirrored copies), records no op, and asserts in debug
+  builds that nothing records one while it is out. A probe or projection
+  answer that moves counts toward `mutation_seq` (Derived's own `moved`
+  count), so formulas are worked out again without marking an edit. It
+  is saved only as the bodies' meshes, under the JSON's `imported_meshes`
+  key (`derived::saved_meshes`), the replicated projection drops that key,
+  and a clone keeps all of it;
   `jobs`, the benches' work away from the window: `Keyed` (results by id
   and the key of their inputs, a newer key superseding a run still going,
   its late answer dropped: Mesh's and Design's deviation maps,

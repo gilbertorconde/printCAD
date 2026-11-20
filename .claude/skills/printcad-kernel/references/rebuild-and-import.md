@@ -13,7 +13,7 @@ over its faces (the renderer's `TranslucentFront` pass, back faces culled).
 A previewed fillet or chamfer also has the chain work out the largest size
 that builds (`ops::dressup::size_limit`, kept in the `ChainCache` by the
 history before it and `SolidOp::size_limit_key`), answered as
-`SolidBuildResult::size_limit` and kept by `Document::store_size_limit`;
+`SolidBuildResult::size_limit` and kept by `Derived::store_size_limit`;
 Design's `size_limit.rs` reads it while the key holds, and its handle
 (`Handle::stop`) and fields (`Quantity::drag_max`) stop a drag there.
 
@@ -24,7 +24,7 @@ withheld original never; `left_alone` matches every face to one of the
 input's by surface kind and box, a split piece inside its whole counting,
 and measures the volume only then). Such a feature builds, and its last op
 gets an `OpWarning` with `unchanged` set, its message the predicate ("removes
-nothing: it may point away from the material"). `Document::store_build_warnings`
+nothing: it may point away from the material"). `Derived::store_build_warnings`
 keeps it apart as `FeatureNode::unchanged`, and `DocumentService::feature_warning`
 puts the feature's kind before it ("this pocket removes nothing: ...") for
 the tree and the scripts' `warning`. The `ChainCache`'s saved states carry

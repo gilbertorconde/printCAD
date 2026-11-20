@@ -88,7 +88,7 @@
   taper (`thread_cut` in `wb_design/src/build/holes.rs`). A cosmetic thread
   (`cosmetic_thread`) draws a helix instead, and its designation reaches
   the host through `BenchOutput::cosmetic_threads` (`ThreadCallout`, kept by
-  `DocumentService::evaluate` as derived `Document::cosmetic_threads`),
+  `DocumentService::evaluate` as derived `Derived::cosmetic_threads`),
   which the parts list's Threads column, `app/annotations.rs`'s callouts
   and a STEP export's callouts (`export.rs::body_notes`) read. Drill points and
   counterdrill cones are kernel cone primitives cut at each centre.
