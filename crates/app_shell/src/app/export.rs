@@ -1554,6 +1554,19 @@ mod tests {
                 core_document::WorkbenchDescriptor::new("test.pmi", "PMI", "")
             }
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
+        }
+
+        impl core_document::BenchFeatures for Bench {}
+
+        impl core_document::BenchTools for Bench {}
+
+        impl core_document::BenchPanels for Bench {}
+
+        impl core_document::BenchBuild for Bench {}
+
+        impl core_document::BenchParameters for Bench {}
+
+        impl core_document::BenchOutput for Bench {
             fn semantic_pmi(
                 &self,
                 _: &core_document::Document,
@@ -1570,6 +1583,8 @@ mod tests {
                 }
             }
         }
+
+        impl core_document::BenchCommands for Bench {}
         let mut registry = core_document::DocumentService::default();
         registry.register_workbench(Box::new(Bench)).unwrap();
         let path = std::env::temp_dir().join(format!("export-pmi-{}.step", uuid::Uuid::new_v4()));
@@ -1636,6 +1651,19 @@ mod tests {
                 core_document::WorkbenchDescriptor::new("test.bought", "Bought", "")
             }
             fn configure(&self, _: &mut core_document::WorkbenchContext) {}
+        }
+
+        impl core_document::BenchFeatures for Bought {}
+
+        impl core_document::BenchTools for Bought {}
+
+        impl core_document::BenchPanels for Bought {}
+
+        impl core_document::BenchBuild for Bought {}
+
+        impl core_document::BenchParameters for Bought {}
+
+        impl core_document::BenchOutput for Bought {
             fn not_printed(
                 &self,
                 document: &core_document::Document,
@@ -1644,6 +1672,8 @@ mod tests {
                 document.bodies().iter().map(|b| b.id).collect()
             }
         }
+
+        impl core_document::BenchCommands for Bought {}
         let doc = textured_box(true);
         let body = doc.bodies()[0].id;
         let mut registry = core_document::DocumentService::default();

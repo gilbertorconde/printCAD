@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_support::imported;
 use core_document::testing::{call_checked, ctx};
-use core_document::{ComponentId, Document};
+use core_document::{BenchOutput, ComponentId, Document};
 
 /// Run a command as a script does: its arguments checked against its
 /// registered spec first.
@@ -328,7 +328,6 @@ fn perpendicular_faces_start_parallel_and_end_square() {
 /// bench leaves them out of what is printed, and the list says so.
 #[test]
 fn a_part_is_marked_bought_and_given_a_column() {
-    use core_document::Workbench;
     let mut doc = Document::new("t");
     let (a, b) = (doc.create_body(Some("Screw".into())), doc.create_body(None));
     doc.set_imported_brep_data(a, b"screw".to_vec(), Vec::new());

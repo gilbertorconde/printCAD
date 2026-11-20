@@ -65,9 +65,10 @@ use std::time::Instant;
 
 use boundary::{narrow, narrow3};
 use core_document::{
-    BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope, TaskInfo,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, MenuItem, MenuScope,
+    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
 use feature::SketchFeature;
@@ -1373,29 +1374,6 @@ impl SketchWorkbench {
 }
 
 impl Workbench for SketchWorkbench {
-    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
-        self.dimension_card(ctx)
-    }
-
-    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
-        self.dimension_event(ctx, event);
-    }
-
-    fn tool_history(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        reply: core_document::ToolHistoryReply,
-    ) {
-        match reply {
-            core_document::ToolHistoryReply::Closed(entry) => self.tab.chain_links.closed(entry),
-            core_document::ToolHistoryReply::Undone { .. } => {
-                if let Some(feature) = self.get_active_sketch(ctx) {
-                    self.follow_history(ctx, &feature.sketch);
-                }
-            }
-        }
-    }
-
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             crate::KIND,
@@ -1417,6 +1395,121 @@ impl Workbench for SketchWorkbench {
         .modal()
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        self.frame.clear();
+        Some(&mut self.tab)
+    }
+
+    fn configure(&self, context: &mut WorkbenchContext) {
+        self.register_tools(context);
+    }
+
+    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        ctx.log_info("Sketch workbench activated");
+    }
+
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        ctx.log_info("Sketch workbench deactivated");
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        // A shape is recorded once it is done: its tool back at rest, or
+        // another tool picked.
+        let shape_done = self.tab.draw_record.as_ref().is_some_and(|r| {
+            self.tab.tool_state.is_idle() || self.tab.last_tool.as_deref() != Some(r.tool.as_str())
+        });
+        if shape_done {
+            self.flush_draw_record(ctx);
+        }
+        // The picker opens as the bench does, not at the next input.
+        self.take_attach_request(ctx);
+        self.sync_active_sketch_from_ctx(ctx);
+        if self.tab.active_sketch_id.is_some()
+            && self.tab.external_refreshed != self.tab.active_sketch_id
+        {
+            self.tab.external_refreshed = self.tab.active_sketch_id;
+            self.refresh_external(ctx);
+        }
+        if self.tab.last_tool.as_deref() == Some("sketch.external") {
+            if self.tab.external_intersection {
+                self.take_intersection_picks(ctx);
+            } else {
+                self.take_external_picks(ctx);
+            }
+        }
+        if self.tab.active_sketch_id.is_none() {
+            self.tab.armed = None;
+        }
+        self.take_armed_picks(ctx);
+        self.drop_stale_wall_check(ctx);
+        if !chain::is_chain(&self.tab.tool_state) {
+            self.tab.chain_links.clear();
+        }
+        let seq = ctx.document.mutation_seq();
+        let from_outside = self
+            .tab
+            .own_seq
+            .swap(seq, std::sync::atomic::Ordering::Relaxed)
+            != seq;
+        self.tab.selection_shape = match self.frame_sketch(ctx) {
+            Some(feature) => {
+                // What was selected may be gone, by an edit here that took
+                // more with it (an element's constraints) or one from outside.
+                self.tab.selected.retain(|id| {
+                    feature.sketch.get_geometry(*id).is_some()
+                        || sketch::Reference::of(*id).is_some()
+                });
+                self.tab
+                    .selected_constraints
+                    .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
+                if from_outside {
+                    // A segment taken back puts the gesture before it.
+                    self.follow_chain(&feature.sketch);
+                    // The verdict is of a sketch that is not there any more.
+                    self.tab.last_solve = None;
+                    self.tab.last_diagnosis = None;
+                    // An undo may bring back geometry that meets its
+                    // constraints or geometry that waits for a solve.
+                    self.tab.unsolved_edits =
+                        !self.options.auto_update && !solver::holds(&feature.sketch);
+                }
+                self.tab.section_view = feature.shows_section(self.options.section_on_open);
+                let selected: Vec<Uuid> = self.tab.selected.iter().copied().collect();
+                self.tab.internal_target =
+                    !internal::curves_of(&feature.sketch, &selected).is_empty();
+                constrain::SelectionShape::picked_in(
+                    &feature.sketch,
+                    &self.tab.selected,
+                    self.tab.selected.in_order(),
+                )
+            }
+            None => constrain::SelectionShape::default(),
+        };
+        if self.tab.armable.0.as_ref() != Some(&self.tab.selection_shape) {
+            let armable = std::iter::once("dimension")
+                .chain(constrain::TOOLS.iter().copied())
+                .filter(|which| model_picks::completable(which, &self.tab.selection_shape))
+                .collect();
+            self.tab.armable = (Some(self.tab.selection_shape.clone()), armable);
+        }
+    }
+
+    fn shortcuts_changed(&mut self, keys: &HashMap<String, Vec<core_document::Chord>>) {
+        self.action_keys = keys
+            .iter()
+            .filter_map(|(id, chords)| Some((id.clone(), chords.first()?.to_string())))
+            .collect();
+    }
+
+    /// The edited sketch's reference pictures, laid on its plane under
+    /// its lines.
+    /// Edges are being found in a reference picture.
+    fn busy(&self) -> bool {
+        self.tab.picture_edges.running()
+    }
+}
+
+impl BenchFeatures for SketchWorkbench {
     fn feature_warning(
         &self,
         document: &core_document::Document,
@@ -1450,6 +1543,160 @@ impl Workbench for SketchWorkbench {
         }
     }
 
+    fn passive_geometry(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
+    ) -> Option<core_document::PassiveGeometry> {
+        // As its formulas leave it, solved.
+        let feature = document.read_feature::<SketchFeature>(id)?;
+        let revision = document.values_revision(id)?;
+        // Every region its curves close, shaded on its own.
+        let regions = if self.options.shade_regions {
+            self.tab.closed_parts.passive_regions(
+                id,
+                revision,
+                &feature,
+                REGION_LIFT_MM,
+                self.options.appearance.region_opacity,
+            )
+        } else {
+            Vec::new()
+        };
+        Some(core_document::PassiveGeometry {
+            mesh: render::sketch_to_lines(&feature.sketch, &feature.plane),
+            revision,
+            tint: core_document::PassiveTint::Plain,
+            regions,
+        })
+    }
+
+    fn pick_part(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
+        pick: &core_document::ViewportPick,
+        tolerance_px: f32,
+    ) -> Option<core_document::PartPick> {
+        let feature = document.read_feature::<SketchFeature>(id)?;
+        self.tab.closed_parts.pick(
+            id,
+            document.values_revision(id)?,
+            &feature,
+            pick,
+            tolerance_px,
+            self.options.shade_regions,
+        )
+    }
+
+    fn part_lines(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        part: &core_document::FeaturePart,
+    ) -> Option<kernel_api::TriMesh> {
+        let core_document::FeaturePart::Edge(curve) = part else {
+            return None;
+        };
+        let feature = document.feature_as::<SketchFeature>(id)?;
+        render::curve_lines(&feature.sketch, &feature.plane, curve.parse().ok()?)
+    }
+
+    /// Its chains of curves (construction left out, as a profile leaves
+    /// it) and its points that are no curve's end or centre.
+    fn feature_paths(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
+    ) -> Option<core_document::FeaturePaths> {
+        let feature = document.feature_as::<SketchFeature>(id)?;
+        let sketch = &feature.sketch;
+        let chains = profile::extract_chains(sketch).unwrap_or_default();
+        let held: HashSet<Uuid> = sketch
+            .geometry
+            .iter()
+            .flat_map(Sketch::curve_point_ids)
+            .collect();
+        let points: Vec<[f64; 2]> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) if !held.contains(&p.id) => {
+                    Some([p.position.x, p.position.y])
+                }
+                _ => None,
+            })
+            .collect();
+        if chains.is_empty() && points.is_empty() {
+            return None;
+        }
+        Some(core_document::FeaturePaths {
+            plane: profile::plane_of(&feature.plane),
+            chains,
+            points,
+        })
+    }
+
+    /// The distance in pixels from the cursor to the sketch's nearest
+    /// curve: the cursor unprojected onto the sketch plane, the distance
+    /// measured in sketch units, then scaled by the pixels one unit spans
+    /// at the sketch origin so the answer is zoom-independent.
+    fn pick_feature(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
+        pick: &core_document::ViewportPick,
+    ) -> Option<f32> {
+        let feature = document.feature_as::<SketchFeature>(id)?;
+        let (_, pos, px_per_unit) = closed_parts::cursor_in_sketch(&feature, pick)?;
+        snap::nearest_curve_distance(&feature.sketch, pos).map(|units| narrow(units) * px_per_unit)
+    }
+
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.tab.active_sketch_id
+    }
+
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        // What a click left waiting is written as it stands.
+        self.store_corner(ctx, false);
+        self.discard_corner();
+        self.flush_draw_record(ctx);
+        if self.tab.active_sketch_id.is_some() {
+            self.tab.active_sketch_id = None;
+            self.tab.session_start = None;
+            self.tab.sketch_picker = None;
+            self.clear_interaction_state();
+            // Deselect the feature: with it still active the next input
+            // event would immediately re-enter editing via
+            // `sync_active_sketch_from_ctx`.
+            ctx.active_document_object = None;
+            ctx.log_info("Exited sketch editing mode");
+        } else {
+            ctx.log_warn("Not in sketch editing mode");
+        }
+    }
+}
+
+impl BenchTools for SketchWorkbench {
+    fn tool_history(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        reply: core_document::ToolHistoryReply,
+    ) {
+        match reply {
+            core_document::ToolHistoryReply::Closed(entry) => self.tab.chain_links.closed(entry),
+            core_document::ToolHistoryReply::Undone { .. } => {
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    self.follow_history(ctx, &feature.sketch);
+                }
+            }
+        }
+    }
+
     fn locks_view_to_plane(&self) -> bool {
         true
     }
@@ -1467,6 +1714,141 @@ impl Workbench for SketchWorkbench {
         self.tab.active_sketch_id.is_some() && self.tab.dim_capture.takes_text()
     }
 
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer(ctx);
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        self.handle_input(event, active_tool, ctx)
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        if self.editing_generated(ctx) {
+            return tool_id == "sketch.finish";
+        }
+        let editing = self.tab.active_sketch_id.is_some();
+        if let Some(rest) = tool_id.strip_prefix("sketch.constrain.") {
+            let which = tool_variant(tool_id).unwrap_or(rest);
+            // A tool the selection does not fit yet arms, to take more picks.
+            let armable = self.tab.armable.1.contains(which);
+            if which == "dimension" {
+                return editing && (dimension_for(&self.tab.selection_shape).is_some() || armable);
+            }
+            return editing && (constrain::fits(which, &self.tab.selection_shape) || armable);
+        }
+        match tool_id {
+            "sketch.create" => ctx.selected_body_id.is_some() || ctx.active_object_plane.is_some(),
+            "sketch.edit" => {
+                !editing
+                    && ctx
+                        .active_document_object
+                        .is_some_and(|id| self.is_sketch_feature(ctx, id))
+            }
+            "sketch.attach" => editing && ctx.selected_face.is_some(),
+            "sketch.fit_scan" => editing && !self.scan_guides(ctx).is_empty(),
+            "sketch.design_values" => editing,
+            "sketch.fit_edge" => {
+                editing
+                    && self
+                        .frame_sketch(ctx)
+                        .is_some_and(|f| !f.sketch.images.is_empty())
+            }
+            "sketch.save_dxf" | "sketch.save_svg" | "sketch.save_csv" => editing,
+            "sketch.array" => editing && !self.tab.selected.is_empty(),
+            "sketch.bspline_convert" => {
+                editing
+                    && self.tab.selection_shape.all.len() > self.tab.selection_shape.points.len()
+            }
+            "sketch.bspline_degree_up" | "sketch.bspline_degree_down" => {
+                editing && !self.tab.selection_shape.others.is_empty()
+            }
+            "sketch.internal_geometry" => editing && self.tab.internal_target,
+            "sketch.remove_axis_alignment" => editing && !self.tab.selection_shape.lines.is_empty(),
+            "sketch.join" => {
+                editing
+                    && self.tab.selection_shape.all.len() - self.tab.selection_shape.points.len()
+                        >= 2
+            }
+            "sketch.toggle_driving" | "sketch.toggle_active" | "sketch.park_constraints" => {
+                editing && !self.tab.selected_constraints.is_empty()
+            }
+            "sketch.select_constraints" => editing && !self.tab.selected.is_empty(),
+            "sketch.select_elements" => editing && !self.tab.selected_constraints.is_empty(),
+            "sketch.select_conflicting" => {
+                editing
+                    && self
+                        .tab
+                        .last_diagnosis
+                        .as_ref()
+                        .is_some_and(|d| !d.conflicting.is_empty())
+            }
+            "sketch.select_redundant" => {
+                editing
+                    && self
+                        .tab
+                        .last_diagnosis
+                        .as_ref()
+                        .is_some_and(|d| !d.redundant.is_empty())
+            }
+            _ => editing,
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        match tool_id {
+            _ if self.armed_as(tool_id) => true,
+            "sketch.construction" => self.construction_mode(),
+            "sketch.snap" => !self.tab.snap_off,
+            "sketch.show_constraints" => self.options.constraints_hidden,
+            "sketch.grid" => self.options.grid_on,
+            "sketch.rendering_order" => self.options.construction_on_top,
+            "sketch.bspline_comb" => self.options.spline_comb,
+            "sketch.bspline_knots" => self.options.spline_knots,
+            "sketch.bspline_polygon" => self.options.spline_polygon,
+            "sketch.bspline_degree_label" => self.options.spline_degree,
+            "sketch.bspline_multiplicity" => self.options.spline_multiplicity,
+            "sketch.bspline_weights" => self.options.spline_weights,
+            "sketch.parked_layer" => self.tab.parked_layer,
+            "sketch.section_view" => self.tab.section_view,
+            "sketch.carbon_copy" | "sketch.merge" => {
+                self.tab.sketch_picker.as_ref().is_some_and(|p| {
+                    (p.mode == SketchPickerMode::Merge) == (tool_id == "sketch.merge")
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            overlays: self.screen_overlays(ctx, ctx.active_document_object),
+            images: self.screen_images(ctx, ctx.active_document_object),
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            hud: self.viewport_hud(ctx),
+            status: self.status_items(ctx),
+            clip_plane: self.clip_plane(ctx),
+            view_grid: self.view_grid(ctx),
+            ..Default::default()
+        }
+    }
+}
+
+impl BenchPanels for SketchWorkbench {
+    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+        self.dimension_card(ctx)
+    }
+
+    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
+        self.dimension_event(ctx, event);
+    }
+
     fn settings_json(&self) -> Option<serde_json::Value> {
         serde_json::to_value(self.options).ok()
     }
@@ -1475,11 +1857,6 @@ impl Workbench for SketchWorkbench {
         if let Ok(options) = serde_json::from_value(value.clone()) {
             self.options = options;
         }
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        self.frame.clear();
-        Some(&mut self.tab)
     }
 
     fn menu_items(&self, scope: &MenuScope, _document: &core_document::Document) -> Vec<MenuItem> {
@@ -1491,15 +1868,6 @@ impl Workbench for SketchWorkbench {
             ],
             _ => Vec::new(),
         }
-    }
-
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &core_document::CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> core_document::CommandResult {
-        commands::run_on(self, id, args, ctx)
     }
 
     /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
@@ -1530,10 +1898,40 @@ impl Workbench for SketchWorkbench {
         }
     }
 
-    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
-        params::parameters(node)
+    fn has_settings(&self) -> bool {
+        true
     }
 
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.tab.pending_creation.is_some() {
+            return Some(TaskInfo {
+                title: "New sketch".to_string(),
+                icon: "sketch-new",
+                confirmable: false,
+                stepwise: false,
+                ..Default::default()
+            });
+        }
+        let id = self.tab.active_sketch_id?;
+        let name = ctx.document.get_feature_meta(id)?.name.clone();
+        let feature = self.frame_displayed(ctx);
+        Some(TaskInfo {
+            title: name,
+            subtitle: feature
+                .as_ref()
+                .map(|f| crate::style::placement_label(f))
+                .unwrap_or_default(),
+            status: feature.map(|f| self.task_status(&f)),
+            icon: "sketch-edit",
+            // Cancel puts the sketch back as the session found it.
+            confirmable: true,
+            // Every line drawn or constraint added is a step of its own.
+            stepwise: true,
+        })
+    }
+}
+
+impl BenchBuild for SketchWorkbench {
     fn settle(&self, _node: &core_document::FeatureNode, values: &mut serde_json::Value) {
         params::settle(values);
     }
@@ -1688,407 +2086,24 @@ impl Workbench for SketchWorkbench {
         *values = feature.to_json();
         true
     }
+}
 
-    fn passive_geometry(
-        &self,
-        document: &core_document::Document,
-        id: FeatureId,
-        _node: &core_document::FeatureNode,
-    ) -> Option<core_document::PassiveGeometry> {
-        // As its formulas leave it, solved.
-        let feature = document.read_feature::<SketchFeature>(id)?;
-        let revision = document.values_revision(id)?;
-        // Every region its curves close, shaded on its own.
-        let regions = if self.options.shade_regions {
-            self.tab.closed_parts.passive_regions(
-                id,
-                revision,
-                &feature,
-                REGION_LIFT_MM,
-                self.options.appearance.region_opacity,
-            )
-        } else {
-            Vec::new()
-        };
-        Some(core_document::PassiveGeometry {
-            mesh: render::sketch_to_lines(&feature.sketch, &feature.plane),
-            revision,
-            tint: core_document::PassiveTint::Plain,
-            regions,
-        })
+impl BenchParameters for SketchWorkbench {
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        params::parameters(node)
     }
+}
 
-    fn pick_part(
-        &self,
-        document: &core_document::Document,
-        id: FeatureId,
-        _node: &core_document::FeatureNode,
-        pick: &core_document::ViewportPick,
-        tolerance_px: f32,
-    ) -> Option<core_document::PartPick> {
-        let feature = document.read_feature::<SketchFeature>(id)?;
-        self.tab.closed_parts.pick(
-            id,
-            document.values_revision(id)?,
-            &feature,
-            pick,
-            tolerance_px,
-            self.options.shade_regions,
-        )
-    }
+impl BenchOutput for SketchWorkbench {}
 
-    fn part_lines(
-        &self,
-        document: &core_document::Document,
-        id: FeatureId,
-        part: &core_document::FeaturePart,
-    ) -> Option<kernel_api::TriMesh> {
-        let core_document::FeaturePart::Edge(curve) = part else {
-            return None;
-        };
-        let feature = document.feature_as::<SketchFeature>(id)?;
-        render::curve_lines(&feature.sketch, &feature.plane, curve.parse().ok()?)
-    }
-
-    /// Its chains of curves (construction left out, as a profile leaves
-    /// it) and its points that are no curve's end or centre.
-    fn feature_paths(
-        &self,
-        document: &core_document::Document,
-        id: FeatureId,
-        _node: &core_document::FeatureNode,
-    ) -> Option<core_document::FeaturePaths> {
-        let feature = document.feature_as::<SketchFeature>(id)?;
-        let sketch = &feature.sketch;
-        let chains = profile::extract_chains(sketch).unwrap_or_default();
-        let held: HashSet<Uuid> = sketch
-            .geometry
-            .iter()
-            .flat_map(Sketch::curve_point_ids)
-            .collect();
-        let points: Vec<[f64; 2]> = sketch
-            .geometry
-            .iter()
-            .filter_map(|g| match g {
-                GeometryElement::Point(p) if !held.contains(&p.id) => {
-                    Some([p.position.x, p.position.y])
-                }
-                _ => None,
-            })
-            .collect();
-        if chains.is_empty() && points.is_empty() {
-            return None;
-        }
-        Some(core_document::FeaturePaths {
-            plane: profile::plane_of(&feature.plane),
-            chains,
-            points,
-        })
-    }
-
-    /// The distance in pixels from the cursor to the sketch's nearest
-    /// curve: the cursor unprojected onto the sketch plane, the distance
-    /// measured in sketch units, then scaled by the pixels one unit spans
-    /// at the sketch origin so the answer is zoom-independent.
-    fn pick_feature(
-        &self,
-        document: &core_document::Document,
-        id: FeatureId,
-        _node: &core_document::FeatureNode,
-        pick: &core_document::ViewportPick,
-    ) -> Option<f32> {
-        let feature = document.feature_as::<SketchFeature>(id)?;
-        let (_, pos, px_per_unit) = closed_parts::cursor_in_sketch(&feature, pick)?;
-        snap::nearest_curve_distance(&feature.sketch, pos).map(|units| narrow(units) * px_per_unit)
-    }
-
-    fn configure(&self, context: &mut WorkbenchContext) {
-        self.register_tools(context);
-    }
-
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Sketch workbench activated");
-    }
-
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Sketch workbench deactivated");
-    }
-
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.cancel_pointer(ctx);
-    }
-
-    fn on_input(
+impl BenchCommands for SketchWorkbench {
+    fn run_command(
         &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
+        id: &str,
+        args: &core_document::CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        self.handle_input(event, active_tool, ctx)
-    }
-
-    fn has_settings(&self) -> bool {
-        true
-    }
-
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        if self.tab.pending_creation.is_some() {
-            return Some(TaskInfo {
-                title: "New sketch".to_string(),
-                icon: "sketch-new",
-                confirmable: false,
-                stepwise: false,
-                ..Default::default()
-            });
-        }
-        let id = self.tab.active_sketch_id?;
-        let name = ctx.document.get_feature_meta(id)?.name.clone();
-        let feature = self.frame_displayed(ctx);
-        Some(TaskInfo {
-            title: name,
-            subtitle: feature
-                .as_ref()
-                .map(|f| crate::style::placement_label(f))
-                .unwrap_or_default(),
-            status: feature.map(|f| self.task_status(&f)),
-            icon: "sketch-edit",
-            // Cancel puts the sketch back as the session found it.
-            confirmable: true,
-            // Every line drawn or constraint added is a step of its own.
-            stepwise: true,
-        })
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        // A shape is recorded once it is done: its tool back at rest, or
-        // another tool picked.
-        let shape_done = self.tab.draw_record.as_ref().is_some_and(|r| {
-            self.tab.tool_state.is_idle() || self.tab.last_tool.as_deref() != Some(r.tool.as_str())
-        });
-        if shape_done {
-            self.flush_draw_record(ctx);
-        }
-        // The picker opens as the bench does, not at the next input.
-        self.take_attach_request(ctx);
-        self.sync_active_sketch_from_ctx(ctx);
-        if self.tab.active_sketch_id.is_some()
-            && self.tab.external_refreshed != self.tab.active_sketch_id
-        {
-            self.tab.external_refreshed = self.tab.active_sketch_id;
-            self.refresh_external(ctx);
-        }
-        if self.tab.last_tool.as_deref() == Some("sketch.external") {
-            if self.tab.external_intersection {
-                self.take_intersection_picks(ctx);
-            } else {
-                self.take_external_picks(ctx);
-            }
-        }
-        if self.tab.active_sketch_id.is_none() {
-            self.tab.armed = None;
-        }
-        self.take_armed_picks(ctx);
-        self.drop_stale_wall_check(ctx);
-        if !chain::is_chain(&self.tab.tool_state) {
-            self.tab.chain_links.clear();
-        }
-        let seq = ctx.document.mutation_seq();
-        let from_outside = self
-            .tab
-            .own_seq
-            .swap(seq, std::sync::atomic::Ordering::Relaxed)
-            != seq;
-        self.tab.selection_shape = match self.frame_sketch(ctx) {
-            Some(feature) => {
-                // What was selected may be gone, by an edit here that took
-                // more with it (an element's constraints) or one from outside.
-                self.tab.selected.retain(|id| {
-                    feature.sketch.get_geometry(*id).is_some()
-                        || sketch::Reference::of(*id).is_some()
-                });
-                self.tab
-                    .selected_constraints
-                    .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
-                if from_outside {
-                    // A segment taken back puts the gesture before it.
-                    self.follow_chain(&feature.sketch);
-                    // The verdict is of a sketch that is not there any more.
-                    self.tab.last_solve = None;
-                    self.tab.last_diagnosis = None;
-                    // An undo may bring back geometry that meets its
-                    // constraints or geometry that waits for a solve.
-                    self.tab.unsolved_edits =
-                        !self.options.auto_update && !solver::holds(&feature.sketch);
-                }
-                self.tab.section_view = feature.shows_section(self.options.section_on_open);
-                let selected: Vec<Uuid> = self.tab.selected.iter().copied().collect();
-                self.tab.internal_target =
-                    !internal::curves_of(&feature.sketch, &selected).is_empty();
-                constrain::SelectionShape::picked_in(
-                    &feature.sketch,
-                    &self.tab.selected,
-                    self.tab.selected.in_order(),
-                )
-            }
-            None => constrain::SelectionShape::default(),
-        };
-        if self.tab.armable.0.as_ref() != Some(&self.tab.selection_shape) {
-            let armable = std::iter::once("dimension")
-                .chain(constrain::TOOLS.iter().copied())
-                .filter(|which| model_picks::completable(which, &self.tab.selection_shape))
-                .collect();
-            self.tab.armable = (Some(self.tab.selection_shape.clone()), armable);
-        }
-    }
-
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        if self.editing_generated(ctx) {
-            return tool_id == "sketch.finish";
-        }
-        let editing = self.tab.active_sketch_id.is_some();
-        if let Some(rest) = tool_id.strip_prefix("sketch.constrain.") {
-            let which = tool_variant(tool_id).unwrap_or(rest);
-            // A tool the selection does not fit yet arms, to take more picks.
-            let armable = self.tab.armable.1.contains(which);
-            if which == "dimension" {
-                return editing && (dimension_for(&self.tab.selection_shape).is_some() || armable);
-            }
-            return editing && (constrain::fits(which, &self.tab.selection_shape) || armable);
-        }
-        match tool_id {
-            "sketch.create" => ctx.selected_body_id.is_some() || ctx.active_object_plane.is_some(),
-            "sketch.edit" => {
-                !editing
-                    && ctx
-                        .active_document_object
-                        .is_some_and(|id| self.is_sketch_feature(ctx, id))
-            }
-            "sketch.attach" => editing && ctx.selected_face.is_some(),
-            "sketch.fit_scan" => editing && !self.scan_guides(ctx).is_empty(),
-            "sketch.design_values" => editing,
-            "sketch.fit_edge" => {
-                editing
-                    && self
-                        .frame_sketch(ctx)
-                        .is_some_and(|f| !f.sketch.images.is_empty())
-            }
-            "sketch.save_dxf" | "sketch.save_svg" | "sketch.save_csv" => editing,
-            "sketch.array" => editing && !self.tab.selected.is_empty(),
-            "sketch.bspline_convert" => {
-                editing
-                    && self.tab.selection_shape.all.len() > self.tab.selection_shape.points.len()
-            }
-            "sketch.bspline_degree_up" | "sketch.bspline_degree_down" => {
-                editing && !self.tab.selection_shape.others.is_empty()
-            }
-            "sketch.internal_geometry" => editing && self.tab.internal_target,
-            "sketch.remove_axis_alignment" => editing && !self.tab.selection_shape.lines.is_empty(),
-            "sketch.join" => {
-                editing
-                    && self.tab.selection_shape.all.len() - self.tab.selection_shape.points.len()
-                        >= 2
-            }
-            "sketch.toggle_driving" | "sketch.toggle_active" | "sketch.park_constraints" => {
-                editing && !self.tab.selected_constraints.is_empty()
-            }
-            "sketch.select_constraints" => editing && !self.tab.selected.is_empty(),
-            "sketch.select_elements" => editing && !self.tab.selected_constraints.is_empty(),
-            "sketch.select_conflicting" => {
-                editing
-                    && self
-                        .tab
-                        .last_diagnosis
-                        .as_ref()
-                        .is_some_and(|d| !d.conflicting.is_empty())
-            }
-            "sketch.select_redundant" => {
-                editing
-                    && self
-                        .tab
-                        .last_diagnosis
-                        .as_ref()
-                        .is_some_and(|d| !d.redundant.is_empty())
-            }
-            _ => editing,
-        }
-    }
-
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        match tool_id {
-            _ if self.armed_as(tool_id) => true,
-            "sketch.construction" => self.construction_mode(),
-            "sketch.snap" => !self.tab.snap_off,
-            "sketch.show_constraints" => self.options.constraints_hidden,
-            "sketch.grid" => self.options.grid_on,
-            "sketch.rendering_order" => self.options.construction_on_top,
-            "sketch.bspline_comb" => self.options.spline_comb,
-            "sketch.bspline_knots" => self.options.spline_knots,
-            "sketch.bspline_polygon" => self.options.spline_polygon,
-            "sketch.bspline_degree_label" => self.options.spline_degree,
-            "sketch.bspline_multiplicity" => self.options.spline_multiplicity,
-            "sketch.bspline_weights" => self.options.spline_weights,
-            "sketch.parked_layer" => self.tab.parked_layer,
-            "sketch.section_view" => self.tab.section_view,
-            "sketch.carbon_copy" | "sketch.merge" => {
-                self.tab.sketch_picker.as_ref().is_some_and(|p| {
-                    (p.mode == SketchPickerMode::Merge) == (tool_id == "sketch.merge")
-                })
-            }
-            _ => false,
-        }
-    }
-
-    fn editing_feature(&self) -> Option<FeatureId> {
-        self.tab.active_sketch_id
-    }
-
-    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        // What a click left waiting is written as it stands.
-        self.store_corner(ctx, false);
-        self.discard_corner();
-        self.flush_draw_record(ctx);
-        if self.tab.active_sketch_id.is_some() {
-            self.tab.active_sketch_id = None;
-            self.tab.session_start = None;
-            self.tab.sketch_picker = None;
-            self.clear_interaction_state();
-            // Deselect the feature: with it still active the next input
-            // event would immediately re-enter editing via
-            // `sync_active_sketch_from_ctx`.
-            ctx.active_document_object = None;
-            ctx.log_info("Exited sketch editing mode");
-        } else {
-            ctx.log_warn("Not in sketch editing mode");
-        }
-    }
-
-    fn shortcuts_changed(&mut self, keys: &HashMap<String, Vec<core_document::Chord>>) {
-        self.action_keys = keys
-            .iter()
-            .filter_map(|(id, chords)| Some((id.clone(), chords.first()?.to_string())))
-            .collect();
-    }
-
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        core_document::ViewportOutput {
-            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
-            overlays: self.screen_overlays(ctx, ctx.active_document_object),
-            images: self.screen_images(ctx, ctx.active_document_object),
-            marks: self.screen_marks(ctx, ctx.active_document_object),
-            labels: self.screen_labels(ctx, ctx.active_document_object),
-            hud: self.viewport_hud(ctx),
-            status: self.status_items(ctx),
-            clip_plane: self.clip_plane(ctx),
-            view_grid: self.view_grid(ctx),
-            ..Default::default()
-        }
-    }
-
-    /// The edited sketch's reference pictures, laid on its plane under
-    /// its lines.
-    /// Edges are being found in a reference picture.
-    fn busy(&self) -> bool {
-        self.tab.picture_edges.running()
+    ) -> core_document::CommandResult {
+        commands::run_on(self, id, args, ctx)
     }
 }
 

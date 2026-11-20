@@ -14,7 +14,7 @@ contract: `CommandSpec` (id, typed `ParamSpec`s, `extra_args`), JSON
 `CommandArgs` in, `CommandResult` out, `spec.check` before every call. A
 bench registers commands in `configure` (ids unique across the registry)
 in the order the generated reference lists them and runs them in
-`Workbench::run_command` with the same context its tools get. Every
+`BenchCommands::run_command` with the same context its tools get. Every
 built-in bench keeps them in one `CommandTable<B>`
 (`core_document::command`: every spec beside the function that runs it,
 so an id is written once; registration order, `owns` and dispatch derive

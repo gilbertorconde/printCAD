@@ -107,7 +107,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   meshes once per revision and draws see-through behind the lines, lit
   in the hover or selection paint), loose ends ringed,
   a closed sketch's parts picked with no task open (`closed_parts.rs`:
-  `Workbench::pick_part` answers the curve within reach or the region
+  `BenchFeatures::pick_part` answers the curve within reach or the region
   under the cursor, `part_lines` a picked curve's lines; the host keeps
   them as `DocumentSession::selection.parts` beside the selected feature,
   a click taking a region alone and Ctrl adding regions or curves, a

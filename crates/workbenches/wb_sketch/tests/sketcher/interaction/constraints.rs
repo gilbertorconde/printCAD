@@ -3,7 +3,7 @@
 //! relation the sketch holds already is not added again.
 
 use super::Harness;
-use core_document::{KeyCode, Workbench};
+use core_document::{BenchCommands, KeyCode};
 use sketch_model::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 use uuid::Uuid;
 

@@ -596,7 +596,7 @@ pub fn sync_dependencies(ctx: &mut WorkbenchRuntimeContext, id: FeatureId, datum
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{Document, Workbench};
+    use core_document::{BenchCommands, Document};
     use kernel_api::{KernelQueries, KernelResult, ProbeAnswer, ProbedCircle, ShapeProbe};
 
     use crate::DesignWorkbench;

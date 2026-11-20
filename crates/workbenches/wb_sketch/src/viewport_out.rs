@@ -1004,6 +1004,7 @@ impl FrameOverlays {
 }
 #[cfg(test)]
 mod tests {
+    use core_document::BenchTools;
     use std::sync::Arc;
 
     use core_document::{Document, Workbench, WorkbenchInputEvent};

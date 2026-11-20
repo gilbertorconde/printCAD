@@ -2,7 +2,7 @@
 //! drawn and picked geometry, and the values they derive.
 
 use crate::{DesignFeature, DesignWorkbench, borrow, build, datum_refs, viewport_out::datum_mesh};
-use core_document::{Document, FeatureId, FeatureInfo, Workbench, WorkbenchFeature};
+use core_document::{BenchBuild, Document, FeatureId, FeatureInfo, WorkbenchFeature};
 
 impl DesignWorkbench {
     pub(crate) fn info_of(&self, node: &core_document::FeatureNode) -> FeatureInfo {

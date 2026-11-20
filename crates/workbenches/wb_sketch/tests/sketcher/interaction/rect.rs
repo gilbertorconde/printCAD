@@ -4,7 +4,7 @@
 
 use super::Harness;
 use crate::all_lines;
-use core_document::Workbench;
+use core_document::BenchPanels;
 use sketch_model::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 
 fn sketching() -> Harness {

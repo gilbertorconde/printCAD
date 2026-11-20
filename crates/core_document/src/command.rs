@@ -4,7 +4,7 @@
 //!
 //! A workbench registers the commands it answers with
 //! [`crate::WorkbenchContext::register_command`] and runs them in
-//! [`crate::Workbench::run_command`]; the application registers its own the
+//! [`crate::BenchCommands::run_command`]; the application registers its own the
 //! same way. Arguments and results are JSON values, so any caller that
 //! speaks JSON (a script, an agent) reaches every command the same way.
 //! A command changes the document through its ordinary mutators, so each

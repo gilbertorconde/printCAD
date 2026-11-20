@@ -31,8 +31,10 @@ and macOS. It is written in Rust.
 ## Key decisions
 
 - **The application knows no workbench by name.** Every workbench talks to
-  it through the `Workbench` trait. A test fails if a workbench name appears
-  in `app_shell`. See [Writing a workbench](WORKBENCH_GUIDE.md).
+  it through the `Workbench` trait, which holds a workbench's description
+  and lifecycle, and its supertraits, one per concern (features, tools and
+  input, panels, builds, parameters, output, commands). A test fails if a
+  workbench name appears in `app_shell`. See [Writing a workbench](WORKBENCH_GUIDE.md).
 - **Solids are derived.** A document stores features. The solid of a body is
   rebuilt from them by the kernel on a background thread.
 - **Every edit is an operation.** The document records one operation per

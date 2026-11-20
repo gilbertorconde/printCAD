@@ -1,6 +1,6 @@
 use super::*;
-use core_document::Workbench;
 use core_document::history::OpJournal;
+use core_document::{BenchTools, Workbench};
 use std::sync::Arc;
 
 /// A scan and a reference beside it, both with a triangle.

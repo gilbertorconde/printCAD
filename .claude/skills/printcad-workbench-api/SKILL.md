@@ -12,7 +12,26 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
 The `Workbench` trait is the only seam between the host and a bench; the
 host never names a bench: `scripts/check-workbench-seam.mjs` checks
 `crates/app_shell/src` and its manifest, discovering built-in bench crates
-and concrete workbench types from their source directories. `descriptor()` says
+and concrete workbench types from their source directories. The trait
+itself (`core_document/src/workbench.rs`) holds the descriptor and the
+lifecycle (`descriptor`, `configure`, `on_activate`/`on_deactivate`,
+`on_frame`, `on_background_frame`, `busy`, `files_opened`,
+`shortcuts_changed`, `tab_state`, `suspend_session`/`resume_session`);
+every other method is in one of its supertraits, a file each under
+`core_document/src/workbench/`, all defaulted: `BenchFeatures` (tree,
+picking, passive geometry, delete and the edit session), `BenchTools`
+(tool state, `on_input`, `cancel_pointer_gesture`, `viewport` and the
+view and key questions), `BenchPanels` (`task`, the floating card, menus,
+settings), `BenchBuild` (`rebuild_jobs`, invalidation, `mesh_plans`,
+`settle` and the derives), `BenchParameters` (parameters, drag range,
+`values_moved`, `property_hints`, references), `BenchOutput` (`report`,
+`semantic_pmi`, `cosmetic_threads`, `not_printed`, `print_parts`) and
+`BenchCommands` (`run_command`). Every bench, `WasmWorkbench` and each
+test double implements all seven, in that order after its `Workbench`
+block, an empty `impl` for a group it leaves alone; the host calls them
+through `dyn Workbench` (a `Box<dyn Workbench>` or a concrete type needs
+the group imported). A new method goes in the group of its concern.
+`descriptor()` says
 what a bench is: `icon`, the `feature_kinds` it claims (the
 `FeatureNode::workbench_id` values it presents, edits, renders, picks and
 deletes; Design claims `core.datum` too; a kind claimed twice fails

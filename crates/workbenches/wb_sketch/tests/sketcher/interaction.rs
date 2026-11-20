@@ -8,8 +8,9 @@ use crate::{
     line_of, number_text, spline_of, view_proj, view_proj_from,
 };
 use core_document::{
-    Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette,
-    ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchCommands, BenchFeatures, BenchPanels, BenchTools, Document, FeatureId, KeyCode, MarkKind,
+    MouseButton, ScreenSpaceMark, SketchPalette, ViewportPick, Workbench, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use sketch_model::SketchFeature;
 use sketch_model::sketch::{GeometryElement, Sketch};
@@ -4289,6 +4290,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
 /// from the toolbar the way a user makes them.
 mod curve_constraints {
     use super::*;
+    use core_document::{BenchParameters, BenchTools};
     use sketch_model::sketch::{ConstraintKind, X_AXIS_ID};
 
     /// Draw an arc about `(cx, cy)` from `radius` right of it, a quarter
@@ -5218,7 +5220,6 @@ fn task_panel_request(
 /// Escape while sketching stays the gesture's.
 #[test]
 fn the_header_cancel_ends_a_sketch_session_as_it_found_it() {
-    use core_document::Workbench;
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 7.0));
     h.key(KeyCode::Escape, None);

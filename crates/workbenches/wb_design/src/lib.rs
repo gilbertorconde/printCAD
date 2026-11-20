@@ -78,9 +78,10 @@ pub use references::retarget_feature_sketch;
 #[cfg(test)]
 use core_document::HostRequest;
 use core_document::{
-    BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope, TaskInfo,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
-    base_tool_id,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, Document, FeatureId, FeatureInfo, InputResult, MenuItem, MenuScope,
+    TaskInfo, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
+    WorkbenchRuntimeContext, base_tool_id,
 };
 use features::datum_icon;
 use making::{Given, ToolMade, take_base};
@@ -353,39 +354,38 @@ impl Workbench for DesignWorkbench {
         ])
     }
 
-    fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {
-        build::rebuild_jobs(document)
+    fn configure(&self, context: &mut WorkbenchContext) {
+        self.register_tools(context);
     }
 
-    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
-        build::invalidate_body(document, body);
+    fn busy(&self) -> bool {
+        self.tab.deviations.busy()
     }
 
-    fn invalidate_all(&self, document: &mut Document) {
-        build::mark_all_design_features_dirty(document);
+    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        ctx.log_info("Design workbench activated");
     }
 
+    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+        self.tab.centre = None;
+        self.tab.datums_drawn = None;
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.tab.datums_drawn = Self::target_body(ctx);
+        if self.tab.centre.is_some() {
+            self.take_centre_pick(ctx);
+        }
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchFeatures for DesignWorkbench {
     fn editing_feature(&self) -> Option<FeatureId> {
         self.task_feature()
-    }
-
-    fn references(
-        &self,
-        document: &Document,
-        id: FeatureId,
-        node: &core_document::FeatureNode,
-    ) -> Vec<core_document::FeatureReference> {
-        references::references(document, id, node)
-    }
-
-    fn set_reference(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        id: FeatureId,
-        key: &str,
-        to: core_document::ReferenceChoice,
-    ) -> Result<(), String> {
-        references::set_reference(ctx, id, key, to)
     }
 
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
@@ -416,17 +416,6 @@ impl Workbench for DesignWorkbench {
         node.read::<DesignFeature>()?.sketch()
     }
 
-    /// A hole with a cosmetic thread threads each of its bores; a mirror
-    /// or a pattern each copy of them it keeps.
-    fn cosmetic_threads(
-        &self,
-        document: &Document,
-        id: FeatureId,
-        node: &core_document::FeatureNode,
-    ) -> Vec<core_document::ThreadCallout> {
-        self.threads_of(document, id, node)
-    }
-
     /// A borrow draws what it lends where its body sits, in the palette's
     /// external colour: the sketch's curves, or the outlines of the faces
     /// and edges.
@@ -451,26 +440,21 @@ impl Workbench for DesignWorkbench {
         self.pick_of(document, id, node, pick)
     }
 
-    fn configure(&self, context: &mut WorkbenchContext) {
-        self.register_tools(context);
+    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+        self.let_go_of_handle();
+        self.tab.centre = None;
+        #[cfg(feature = "egui")]
+        {
+            self.tab.task = None;
+        }
     }
 
-    /// A feature row offers Duplicate, and a move into each other body
-    /// built here (not one read from a file); a sketch's row offers each
-    /// flat face its body borrows to map it onto.
-    fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
-        self.menu_entries(scope, document)
+    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
+        build::delete_feature(ctx.document, id)
     }
+}
 
-    fn on_command(
-        &mut self,
-        id: &str,
-        scope: &MenuScope,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> bool {
-        self.menu_command(id, scope, ctx)
-    }
-
+impl BenchTools for DesignWorkbench {
     fn tool_toggled(&self, tool_id: &str) -> bool {
         match base_tool_id(tool_id) {
             "design.scan_deviation" => self.tab.scan_deviation,
@@ -479,10 +463,6 @@ impl Workbench for DesignWorkbench {
             }
             _ => false,
         }
-    }
-
-    fn busy(&self) -> bool {
-        self.tab.deviations.busy()
     }
 
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
@@ -498,22 +478,6 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &core_document::CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> core_document::CommandResult {
-        if generators::is_command(id) {
-            return generators::command(id, args, ctx);
-        }
-        commands::run(self, id, args, ctx)
-    }
-
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Design workbench activated");
-    }
-
     fn on_input(
         &mut self,
         event: &WorkbenchInputEvent,
@@ -521,6 +485,44 @@ impl Workbench for DesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         self.take_input(event, active_tool, ctx)
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.put_back_handle(ctx);
+    }
+
+    /// While a view handle is held: what it sets, its steps and the key
+    /// for the fine ones.
+    /// Digits typed while a handle is held set its number.
+    fn takes_numeric_input(&self) -> bool {
+        self.tab.held.is_some() || self.tab.typed.is_some()
+    }
+
+    /// Once typing has begun, letters too: a formula.
+    fn takes_text_input(&self) -> bool {
+        self.tab.typed.is_some()
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        self.tool_enabled(tool_id, ctx)
+    }
+}
+
+impl BenchPanels for DesignWorkbench {
+    /// A feature row offers Duplicate, and a move into each other body
+    /// built here (not one read from a file); a sketch's row offers each
+    /// flat face its body borrows to map it onto.
+    fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
+        self.menu_entries(scope, document)
+    }
+
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        self.menu_command(id, scope, ctx)
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
@@ -544,53 +546,8 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.put_back_handle(ctx);
-    }
-
-    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
-        self.let_go_of_handle();
-        self.tab.centre = None;
-        #[cfg(feature = "egui")]
-        {
-            self.tab.task = None;
-        }
-    }
-
-    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
-        self.tab.centre = None;
-        self.tab.datums_drawn = None;
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        self.tab.datums_drawn = Self::target_body(ctx);
-        if self.tab.centre.is_some() {
-            self.take_centre_pick(ctx);
-        }
-    }
-
-    /// While a view handle is held: what it sets, its steps and the key
-    /// for the fine ones.
-    /// Digits typed while a handle is held set its number.
-    fn takes_numeric_input(&self) -> bool {
-        self.tab.held.is_some() || self.tab.typed.is_some()
-    }
-
-    /// Once typing has begun, letters too: a formula.
-    fn takes_text_input(&self) -> bool {
-        self.tab.typed.is_some()
-    }
-
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        self.tool_enabled(tool_id, ctx)
-    }
-
     fn has_settings(&self) -> bool {
         true
-    }
-
-    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
-        build::delete_feature(ctx.document, id)
     }
 
     fn settings_json(&self) -> Option<serde_json::Value> {
@@ -602,9 +559,64 @@ impl Workbench for DesignWorkbench {
             self.options = options;
         }
     }
+}
 
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
+impl BenchBuild for DesignWorkbench {
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {
+        build::rebuild_jobs(document)
+    }
+
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        build::invalidate_body(document, body);
+    }
+
+    fn invalidate_all(&self, document: &mut Document) {
+        build::mark_all_design_features_dirty(document);
+    }
+
+    /// A primitive attached by a mode, or a feature starting on a face,
+    /// takes what the last build found of what it stands on.
+    fn derive_on_solid(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        probed: &core_document::rebuild::ProbedReferences,
+    ) -> bool {
+        self.follow_solid(node, values, probed)
+    }
+
+    /// A datum made from a sketch's points or lines takes where they stand
+    /// now; so does a primitive attached by a mode, which follows the
+    /// datums it stands on too.
+    fn derive(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+        _document: &core_document::Document,
+    ) -> bool {
+        self.derive_values(node, values, values_of, _document)
+    }
+}
+
+impl BenchParameters for DesignWorkbench {
+    fn references(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Vec<core_document::FeatureReference> {
+        references::references(document, id, node)
+    }
+
+    fn set_reference(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        key: &str,
+        to: core_document::ReferenceChoice,
+    ) -> Result<(), String> {
+        references::set_reference(ctx, id, key, to)
     }
 
     /// A Text whose formulas changed, however they were set: its hidden
@@ -640,30 +652,6 @@ impl Workbench for DesignWorkbench {
         (None, most.map(f64::from))
     }
 
-    /// A primitive attached by a mode, or a feature starting on a face,
-    /// takes what the last build found of what it stands on.
-    fn derive_on_solid(
-        &self,
-        node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
-        probed: &core_document::rebuild::ProbedReferences,
-    ) -> bool {
-        self.follow_solid(node, values, probed)
-    }
-
-    /// A datum made from a sketch's points or lines takes where they stand
-    /// now; so does a primitive attached by a mode, which follows the
-    /// datums it stands on too.
-    fn derive(
-        &self,
-        node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
-        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
-        _document: &core_document::Document,
-    ) -> bool {
-        self.derive_values(node, values, values_of, _document)
-    }
-
     fn property_hints(&self) -> core_document::PropertyHints {
         core_document::PropertyHints {
             length_keys: vec![
@@ -694,6 +682,33 @@ impl Workbench for DesignWorkbench {
                 "tool_body",
             ],
         }
+    }
+}
+
+impl BenchOutput for DesignWorkbench {
+    /// A hole with a cosmetic thread threads each of its bores; a mirror
+    /// or a pattern each copy of them it keeps.
+    fn cosmetic_threads(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Vec<core_document::ThreadCallout> {
+        self.threads_of(document, id, node)
+    }
+}
+
+impl BenchCommands for DesignWorkbench {
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        if generators::is_command(id) {
+            return generators::command(id, args, ctx);
+        }
+        commands::run(self, id, args, ctx)
     }
 }
 

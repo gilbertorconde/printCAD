@@ -107,15 +107,16 @@ pub use threads::ThreadCallout;
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 pub use variables::{Numbering, VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
-    BenchReport, FeatureInfo, FeaturePart, FeaturePaths, FeatureReference, FeatureState,
-    FeatureStatus, FileImport, INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope,
-    OverlayMesh, PartPick, PassiveGeometry, PassiveRegion, PassiveTint, PrintPart, PropertyHints,
-    RADIAL_SLOTS, ReferenceChoice, ReportTable, ScalarMap, ScreenSpaceImage, ScreenSpaceLabel,
-    ScreenSpaceMark, ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, StatusTone, TabSlot,
-    TaskInfo, TaskOutcome, TaskRequest, TaskStatus, ToolBehavior, ToolDescriptor, ToolHint,
-    ToolVariant, ViewportHud, ViewportOutput, ViewportPick, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchId, base_tool_id, fresh_revision, mesh_revision, numbered_pins,
-    tool_variant,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchReport, BenchTools, FeatureInfo, FeaturePart, FeaturePaths, FeatureReference,
+    FeatureState, FeatureStatus, FileImport, INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem,
+    MenuScope, OverlayMesh, PartPick, PassiveGeometry, PassiveRegion, PassiveTint, PrintPart,
+    PropertyHints, RADIAL_SLOTS, ReferenceChoice, ReportTable, ScalarMap, ScreenSpaceImage,
+    ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems,
+    StatusTone, TabSlot, TaskInfo, TaskOutcome, TaskRequest, TaskStatus, ToolBehavior,
+    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportOutput, ViewportPick, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, fresh_revision,
+    mesh_revision, numbered_pins, tool_variant,
 };
 
 /// Result type for document operations.
@@ -309,7 +310,7 @@ pub struct Document {
     #[serde(skip)]
     threads_at: Option<u64>,
     /// The bounded solid each feature's owner offers
-    /// (`Workbench::feature_solid`), in the document's frame: derived at
+    /// (`BenchFeatures::feature_solid`), in the document's frame: derived at
     /// each evaluation, never an op.
     #[serde(skip)]
     feature_solids: HashMap<FeatureId, kernel_api::MeshOperand>,
@@ -855,7 +856,7 @@ impl Document {
     }
 
     /// Every cosmetic thread the features in the bodies' builds declare
-    /// (`Workbench::cosmetic_threads`), as last evaluated.
+    /// (`BenchOutput::cosmetic_threads`), as last evaluated.
     pub fn cosmetic_threads(&self) -> &[threads::ThreadCallout] {
         &self.threads
     }
@@ -896,7 +897,7 @@ impl Document {
 
     /// The features whose values formulas moved, or whose formulas were
     /// set or taken away, since this was last asked, for
-    /// `Workbench::values_moved`.
+    /// `BenchParameters::values_moved`.
     pub fn take_moved_values(&mut self) -> Vec<FeatureId> {
         std::mem::take(&mut self.evaluated.moved)
     }
@@ -957,7 +958,7 @@ impl Document {
     }
 
     /// Set the formula behind the feature's number `key` (its bench's key,
-    /// `Workbench::parameters`), or take it away so the number stands as
+    /// `BenchParameters::parameters`), or take it away so the number stands as
     /// it is: at the value the formula last gave it, when the formulas are
     /// worked out for the document as it stands.
     pub fn set_feature_formula(

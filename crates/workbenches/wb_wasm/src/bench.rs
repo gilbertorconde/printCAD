@@ -8,11 +8,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use bench_api::{Frame, Widget};
 use core_document::rebuild::{BuildError, BuildPlan, RebuildJob};
 use core_document::{
-    ActionDescriptor, BodyId, Chord, CommandArgs, CommandError, CommandResult, CommandSpec,
-    Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem, MenuScope,
-    OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay,
-    StatusItems, TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    ActionDescriptor, BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels,
+    BenchParameters, BenchTools, BodyId, Chord, CommandArgs, CommandError, CommandResult,
+    CommandSpec, Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MarkKind, MenuItem,
+    MenuScope, OverlayMesh, Parameter, PropertyHints, ScreenSpaceLabel, ScreenSpaceMark,
+    ScreenSpaceOverlay, StatusItems, TaskInfo, ToolBehavior, ToolDescriptor, ToolHint, ViewportHud,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::de::DeserializeOwned;
 
@@ -728,6 +729,105 @@ impl Workbench for WasmWorkbench {
         }
     }
 
+    fn busy(&self) -> bool {
+        let inner = self.inner();
+        inner.guest.jobs.running()
+            || inner.guest.jobs.has_finished(&inner.session)
+            || (inner.active && inner.frame.animating)
+    }
+
+    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        inner.active = true;
+        let input = bench_api::Input {
+            event: bench_api::Event::Activated,
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        self.deliver(&mut inner, ctx, input);
+    }
+
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        inner.active = false;
+        let input = bench_api::Input {
+            event: bench_api::Event::Deactivated,
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        self.deliver(&mut inner, ctx, input);
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        self.deliver_finished_jobs(&mut inner, ctx);
+    }
+
+    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        self.deliver_finished_jobs(&mut inner, ctx);
+    }
+
+    fn files_opened(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: &str,
+        files: Vec<(String, Vec<u8>)>,
+    ) {
+        let input = bench_api::Input {
+            event: bench_api::Event::FileOpened {
+                id: id.to_string(),
+                files: files
+                    .into_iter()
+                    .map(|(name, contents)| bench_api::OpenedFile { name, contents })
+                    .collect(),
+            },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        self.deliver_within(&mut inner, ctx, input, Budget::Long);
+    }
+
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        let mut inner = self.inner();
+        inner.stale = true;
+        inner.held.clear();
+        let state = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.suspend())
+            .and_then(|(state, _)| state);
+        // Until a tab comes on screen, a job started belongs to none.
+        let session = std::mem::replace(&mut inner.session, Arc::new(Session));
+        inner.guest.jobs.set_session(&inner.session);
+        Some(Box::new(Suspended {
+            load: self.load,
+            session,
+            state,
+        }))
+    }
+
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        // A tab's state from an earlier load of the package is not this
+        // load's: its jobs went with that load.
+        let kept = state
+            .and_then(|s| s.downcast::<Suspended>().ok())
+            .filter(|kept| kept.load == self.load);
+        let (session, bytes) = match kept {
+            Some(kept) => (kept.session, kept.state),
+            None => (Arc::new(Session), None),
+        };
+        let mut inner = self.inner();
+        inner.stale = true;
+        inner.guest.jobs.set_session(&session);
+        inner.session = session;
+        let _ = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.resume(bytes.as_deref()));
+    }
+}
+
+impl BenchFeatures for WasmWorkbench {
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
         self.info_and_status(node).0
     }
@@ -777,74 +877,6 @@ impl Workbench for WasmWorkbench {
         self.deliver_within(&mut inner, ctx, input, Budget::Long)
     }
 
-    fn has_viewport_strip(&self) -> bool {
-        !self.inner().frame.transport.is_empty()
-    }
-
-    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
-        let mut inner = self.inner();
-        let mut card = self.refresh(&mut inner, ctx).card.clone()?;
-        card.widgets = Self::with_progress(&inner, &card.widgets);
-        Some(card)
-    }
-
-    /// Only for the card the package shows: an event while it shows none,
-    /// or a `CardClose` naming another card, a stale one, never reaches it.
-    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
-        let Ok(json) = serde_json::to_string(event) else {
-            return;
-        };
-        let mut inner = self.inner();
-        let shown = self.refresh(&mut inner, ctx).card.as_ref().map(|c| &c.id);
-        let current = match (shown, event) {
-            (None, _) => false,
-            (Some(shown), bench_api::PanelEvent::CardClose { id, .. }) => shown == id,
-            (Some(_), _) => true,
-        };
-        if !current {
-            return;
-        }
-        let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
-            b.panel_event("card", &json)
-        });
-    }
-
-    /// The threads the body's plan declares for the feature with a
-    /// designation, each where its round face starts and down its axis.
-    fn cosmetic_threads(
-        &self,
-        document: &Document,
-        id: FeatureId,
-        node: &FeatureNode,
-    ) -> Vec<core_document::ThreadCallout> {
-        let Some(body) = node.body else {
-            return Vec::new();
-        };
-        let Some((mesh, _)) = document.local_geometry(body) else {
-            return Vec::new();
-        };
-        let mut inner = self.inner();
-        let threads = self.plan_threads(&mut inner, document, body);
-        let feature = id.0.to_string();
-        threads
-            .declared
-            .iter()
-            .filter(|t| t.feature == feature)
-            .filter_map(|thread| {
-                let designation = thread.designation.clone()?;
-                let face = crate::geometry::thread_face(&mesh, thread)?;
-                Some(core_document::ThreadCallout {
-                    feature: id,
-                    body,
-                    designation,
-                    mouth: face.start.as_dvec3().to_array(),
-                    axis: face.into.as_dvec3().to_array(),
-                    radius: f64::from(face.radius),
-                })
-            })
-            .collect()
-    }
-
     /// The cosmetic threads the body's plan declares for the feature, each
     /// a helix over its round face.
     fn passive_geometry(
@@ -890,6 +922,64 @@ impl Workbench for WasmWorkbench {
         })
     }
 
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        let input = bench_api::Input {
+            event: bench_api::Event::EditFeature {
+                feature: id.0.to_string(),
+            },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        // A double click is one deliberate action, not the stream of
+        // pointer events a frame waits on: it has a command's time.
+        self.deliver_within(&mut inner, ctx, input, Budget::Long);
+    }
+
+    fn editing_feature(&self) -> Option<FeatureId> {
+        let inner = self.inner();
+        inner
+            .frame
+            .editing
+            .as_deref()
+            .and_then(|id| crate::host::feature_id(id).ok())
+    }
+
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let input = bench_api::Input {
+            event: bench_api::Event::Action {
+                id: "finish-editing".into(),
+            },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        self.deliver(&mut inner, ctx, input);
+    }
+
+    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
+        let text = id.0.to_string();
+        let body = ctx.document.get_feature_meta(id).and_then(|n| n.body);
+        let mut inner = self.inner();
+        let handled = self
+            .write_call(&mut inner, ctx, Budget::Long, |b| b.delete_feature(&text))
+            .unwrap_or(false);
+        if handled {
+            return ctx.document.get_feature_meta(id).is_none();
+        }
+        let removed = ctx.document.remove_feature(id).is_ok();
+        if removed && let Some(body) = body {
+            invalidate_owned(ctx.document, &self.package, body);
+        }
+        removed
+    }
+}
+
+impl BenchTools for WasmWorkbench {
+    fn has_viewport_strip(&self) -> bool {
+        !self.inner().frame.transport.is_empty()
+    }
+
     fn locks_view_to_plane(&self) -> bool {
         self.inner().frame.locks_view
     }
@@ -898,11 +988,107 @@ impl Workbench for WasmWorkbench {
         self.inner().frame.numeric_input
     }
 
-    fn busy(&self) -> bool {
-        let inner = self.inner();
-        inner.guest.jobs.running()
-            || inner.guest.jobs.has_finished(&inner.session)
-            || (inner.active && inner.frame.animating)
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        let Some((event, position)) = convert::event(event) else {
+            return InputResult::ignored();
+        };
+        let input = bench_api::Input {
+            event,
+            tool: active_tool.map(str::to_string),
+            pointer: convert::pointer(ctx, position),
+        };
+        let mut inner = self.inner();
+        match input.event {
+            bench_api::Event::Press { button } if !inner.held.contains(&button) => {
+                inner.held.push(button)
+            }
+            bench_api::Event::Release { button } => inner.held.retain(|b| *b != button),
+            _ => {}
+        }
+        if self.deliver(&mut inner, ctx, input) {
+            InputResult::consumed()
+        } else {
+            InputResult::redraw_only()
+        }
+    }
+
+    /// What the frame shows, from one look at the package: refreshed
+    /// once, its regions worked out once.
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        let mut inner = self.inner();
+        self.refresh(&mut inner, ctx);
+        let regions = Self::regions(&mut inner, ctx);
+        core_document::ViewportOutput {
+            meshes: Self::overlay_meshes(&mut inner, &regions),
+            overlays: Self::screen_overlays(&inner, &regions, ctx),
+            marks: self.screen_marks(&inner, ctx),
+            labels: Self::screen_labels(&inner, ctx),
+            hud: self.viewport_hud(&inner),
+            status: Self::status_items(&inner),
+            ..Default::default()
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        self.inner().frame.toggled.iter().any(|t| t == tool_id)
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        let mut inner = self.inner();
+        !self
+            .refresh(&mut inner, ctx)
+            .disabled
+            .iter()
+            .any(|t| t == tool_id)
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        // The release the window will not see: the package hears it as
+        // one, where the pointer last was.
+        let mut inner = self.inner();
+        for button in std::mem::take(&mut inner.held) {
+            let input = bench_api::Input {
+                event: bench_api::Event::Release { button },
+                tool: None,
+                pointer: convert::pointer(ctx, None),
+            };
+            self.deliver(&mut inner, ctx, input);
+        }
+    }
+}
+
+impl BenchPanels for WasmWorkbench {
+    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+        let mut inner = self.inner();
+        let mut card = self.refresh(&mut inner, ctx).card.clone()?;
+        card.widgets = Self::with_progress(&inner, &card.widgets);
+        Some(card)
+    }
+
+    /// Only for the card the package shows: an event while it shows none,
+    /// or a `CardClose` naming another card, a stale one, never reaches it.
+    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
+        let Ok(json) = serde_json::to_string(event) else {
+            return;
+        };
+        let mut inner = self.inner();
+        let shown = self.refresh(&mut inner, ctx).card.as_ref().map(|c| &c.id);
+        let current = match (shown, event) {
+            (None, _) => false,
+            (Some(shown), bench_api::PanelEvent::CardClose { id, .. }) => shown == id,
+            (Some(_), _) => true,
+        };
+        if !current {
+            return;
+        }
+        let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+            b.panel_event("card", &json)
+        });
     }
 
     fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
@@ -935,74 +1121,56 @@ impl Workbench for WasmWorkbench {
         .unwrap_or(false)
     }
 
-    fn run_command(
-        &mut self,
-        id: &str,
-        args: &CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> CommandResult {
-        let args = serde_json::to_string(args).map_err(|e| CommandError::failed(e.to_string()))?;
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         let mut inner = self.inner();
-        let answer = self
-            .write_call(&mut inner, ctx, Budget::Long, |b| b.run_command(id, &args))
-            .ok_or_else(|| CommandError::failed(format!("the workbench {} failed", self.id())))?;
-        match answer {
-            Ok(json) if json.trim().is_empty() => Ok(serde_json::Value::Null),
-            Ok(json) => serde_json::from_str(&json)
-                .map_err(|e| CommandError::failed(format!("the answer is not JSON: {e}"))),
-            Err(message) => Err(CommandError::failed(message)),
-        }
+        let task = self.refresh(&mut inner, ctx).task.clone()?;
+        let header = task_header(&self.refresh(&mut inner, ctx).panel);
+        let status = header.status.map(|status| core_document::TaskStatus {
+            text: status.text,
+            detail: status.detail,
+            tone: match status.tone {
+                bench_api::Tone::Good => core_document::StatusTone::Good,
+                bench_api::Tone::Warning => core_document::StatusTone::Warning,
+                bench_api::Tone::Bad => core_document::StatusTone::Bad,
+                _ => core_document::StatusTone::Info,
+            },
+        });
+        Some(TaskInfo {
+            title: task.title,
+            subtitle: header.subtitle,
+            status,
+            icon: self.icon(&task.icon),
+            confirmable: task.confirmable,
+            stepwise: false,
+        })
     }
 
-    fn parameters(&self, node: &FeatureNode) -> Vec<Parameter> {
-        let key = hash_of((
-            node.workbench_id.as_str(),
-            core_document::feature::node_revision(node),
-        ));
+    fn has_settings(&self) -> bool {
+        !self.settings_panel().is_empty()
+    }
+
+    fn settings_json(&self) -> Option<serde_json::Value> {
         let mut inner = self.inner();
-        if let Some(params) = inner.params.get(&key) {
-            return params.clone();
-        }
-        let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
-        let params: Vec<Parameter> = inner
+        let (json, _) = inner
             .guest
-            .call(Budget::Frame, Access::None, |b| b.parameters(&json))
-            .and_then(|(json, _)| {
-                parse::<Vec<bench_api::Parameter>>(self.id(), "parameters", &json)
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .map(convert::parameter)
-            .collect();
-        if inner.params.len() > CACHE_LIMIT {
-            inner.params.clear();
-        }
-        inner.params.insert(key, params.clone());
-        params
+            .call(Budget::Long, Access::None, |b| b.settings())?;
+        let json = json?;
+        inner.guest.settings = Some(json.clone());
+        serde_json::from_str(&json).ok()
     }
 
-    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
-        let owned: Vec<String> = moved
-            .iter()
-            .filter(|id| {
-                ctx.document
-                    .get_feature_meta(**id)
-                    .is_some_and(|n| self.package.owns(n.workbench_id.as_str()))
-            })
-            .map(|id| id.0.to_string())
-            .collect();
-        if owned.is_empty() {
-            return;
-        }
-        let input = bench_api::Input {
-            event: bench_api::Event::ValuesMoved { features: owned },
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
+    fn apply_settings_json(&mut self, value: &serde_json::Value) {
+        let json = value.to_string();
         let mut inner = self.inner();
-        self.deliver(&mut inner, ctx, input);
+        inner.guest.settings = Some(json.clone());
+        inner.settings_panel = None;
+        let _ = inner
+            .guest
+            .call(Budget::Long, Access::None, |b| b.apply_settings(&json));
     }
+}
 
+impl BenchBuild for WasmWorkbench {
     fn settle(&self, node: &FeatureNode, values: &mut serde_json::Value) {
         let Ok(json) = serde_json::to_string(&convert::bare_node(node, values)) else {
             return;
@@ -1014,18 +1182,6 @@ impl Workbench for WasmWorkbench {
             && let Some(settled) = parse::<serde_json::Value>(self.id(), "settled data", &json)
         {
             *values = settled;
-        }
-    }
-
-    fn property_hints(&self) -> PropertyHints {
-        PropertyHints {
-            length_keys: self
-                .registration
-                .length_keys
-                .iter()
-                .map(|k| intern(k))
-                .collect(),
-            reference_keys: Vec::new(),
         }
     }
 
@@ -1160,175 +1316,51 @@ impl Workbench for WasmWorkbench {
             document.mark_feature_dirty(id);
         }
     }
+}
 
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+impl BenchParameters for WasmWorkbench {
+    fn parameters(&self, node: &FeatureNode) -> Vec<Parameter> {
+        let key = hash_of((
+            node.workbench_id.as_str(),
+            core_document::feature::node_revision(node),
+        ));
         let mut inner = self.inner();
-        inner.active = true;
-        let input = bench_api::Input {
-            event: bench_api::Event::Activated,
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        self.deliver(&mut inner, ctx, input);
-    }
-
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        inner.active = false;
-        let input = bench_api::Input {
-            event: bench_api::Event::Deactivated,
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        self.deliver(&mut inner, ctx, input);
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        self.deliver_finished_jobs(&mut inner, ctx);
-    }
-
-    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let mut inner = self.inner();
-        self.deliver_finished_jobs(&mut inner, ctx);
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        let Some((event, position)) = convert::event(event) else {
-            return InputResult::ignored();
-        };
-        let input = bench_api::Input {
-            event,
-            tool: active_tool.map(str::to_string),
-            pointer: convert::pointer(ctx, position),
-        };
-        let mut inner = self.inner();
-        match input.event {
-            bench_api::Event::Press { button } if !inner.held.contains(&button) => {
-                inner.held.push(button)
-            }
-            bench_api::Event::Release { button } => inner.held.retain(|b| *b != button),
-            _ => {}
+        if let Some(params) = inner.params.get(&key) {
+            return params.clone();
         }
-        if self.deliver(&mut inner, ctx, input) {
-            InputResult::consumed()
-        } else {
-            InputResult::redraw_only()
+        let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
+        let params: Vec<Parameter> = inner
+            .guest
+            .call(Budget::Frame, Access::None, |b| b.parameters(&json))
+            .and_then(|(json, _)| {
+                parse::<Vec<bench_api::Parameter>>(self.id(), "parameters", &json)
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(convert::parameter)
+            .collect();
+        if inner.params.len() > CACHE_LIMIT {
+            inner.params.clear();
         }
+        inner.params.insert(key, params.clone());
+        params
     }
 
-    fn files_opened(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        id: &str,
-        files: Vec<(String, Vec<u8>)>,
-    ) {
-        let input = bench_api::Input {
-            event: bench_api::Event::FileOpened {
-                id: id.to_string(),
-                files: files
-                    .into_iter()
-                    .map(|(name, contents)| bench_api::OpenedFile { name, contents })
-                    .collect(),
-            },
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        let mut inner = self.inner();
-        self.deliver_within(&mut inner, ctx, input, Budget::Long);
-    }
-
-    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
-        let input = bench_api::Input {
-            event: bench_api::Event::EditFeature {
-                feature: id.0.to_string(),
-            },
-            tool: None,
-            pointer: convert::pointer(ctx, None),
-        };
-        let mut inner = self.inner();
-        // A double click is one deliberate action, not the stream of
-        // pointer events a frame waits on: it has a command's time.
-        self.deliver_within(&mut inner, ctx, input, Budget::Long);
-    }
-
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        let mut inner = self.inner();
-        let task = self.refresh(&mut inner, ctx).task.clone()?;
-        let header = task_header(&self.refresh(&mut inner, ctx).panel);
-        let status = header.status.map(|status| core_document::TaskStatus {
-            text: status.text,
-            detail: status.detail,
-            tone: match status.tone {
-                bench_api::Tone::Good => core_document::StatusTone::Good,
-                bench_api::Tone::Warning => core_document::StatusTone::Warning,
-                bench_api::Tone::Bad => core_document::StatusTone::Bad,
-                _ => core_document::StatusTone::Info,
-            },
-        });
-        Some(TaskInfo {
-            title: task.title,
-            subtitle: header.subtitle,
-            status,
-            icon: self.icon(&task.icon),
-            confirmable: task.confirmable,
-            stepwise: false,
-        })
-    }
-
-    fn has_settings(&self) -> bool {
-        !self.settings_panel().is_empty()
-    }
-
-    /// What the frame shows, from one look at the package: refreshed
-    /// once, its regions worked out once.
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        let mut inner = self.inner();
-        self.refresh(&mut inner, ctx);
-        let regions = Self::regions(&mut inner, ctx);
-        core_document::ViewportOutput {
-            meshes: Self::overlay_meshes(&mut inner, &regions),
-            overlays: Self::screen_overlays(&inner, &regions, ctx),
-            marks: self.screen_marks(&inner, ctx),
-            labels: Self::screen_labels(&inner, ctx),
-            hud: self.viewport_hud(&inner),
-            status: Self::status_items(&inner),
-            ..Default::default()
-        }
-    }
-
-    fn editing_feature(&self) -> Option<FeatureId> {
-        let inner = self.inner();
-        inner
-            .frame
-            .editing
-            .as_deref()
-            .and_then(|id| crate::host::feature_id(id).ok())
-    }
-
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        self.inner().frame.toggled.iter().any(|t| t == tool_id)
-    }
-
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        let mut inner = self.inner();
-        !self
-            .refresh(&mut inner, ctx)
-            .disabled
+    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
+        let owned: Vec<String> = moved
             .iter()
-            .any(|t| t == tool_id)
-    }
-
-    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+            .filter(|id| {
+                ctx.document
+                    .get_feature_meta(**id)
+                    .is_some_and(|n| self.package.owns(n.workbench_id.as_str()))
+            })
+            .map(|id| id.0.to_string())
+            .collect();
+        if owned.is_empty() {
+            return;
+        }
         let input = bench_api::Input {
-            event: bench_api::Event::Action {
-                id: "finish-editing".into(),
-            },
+            event: bench_api::Event::ValuesMoved { features: owned },
             tool: None,
             pointer: convert::pointer(ctx, None),
         };
@@ -1336,92 +1368,75 @@ impl Workbench for WasmWorkbench {
         self.deliver(&mut inner, ctx, input);
     }
 
-    fn settings_json(&self) -> Option<serde_json::Value> {
-        let mut inner = self.inner();
-        let (json, _) = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.settings())?;
-        let json = json?;
-        inner.guest.settings = Some(json.clone());
-        serde_json::from_str(&json).ok()
-    }
-
-    fn apply_settings_json(&mut self, value: &serde_json::Value) {
-        let json = value.to_string();
-        let mut inner = self.inner();
-        inner.guest.settings = Some(json.clone());
-        inner.settings_panel = None;
-        let _ = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.apply_settings(&json));
-    }
-
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        // The release the window will not see: the package hears it as
-        // one, where the pointer last was.
-        let mut inner = self.inner();
-        for button in std::mem::take(&mut inner.held) {
-            let input = bench_api::Input {
-                event: bench_api::Event::Release { button },
-                tool: None,
-                pointer: convert::pointer(ctx, None),
-            };
-            self.deliver(&mut inner, ctx, input);
+    fn property_hints(&self) -> PropertyHints {
+        PropertyHints {
+            length_keys: self
+                .registration
+                .length_keys
+                .iter()
+                .map(|k| intern(k))
+                .collect(),
+            reference_keys: Vec::new(),
         }
     }
+}
 
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        let mut inner = self.inner();
-        inner.stale = true;
-        inner.held.clear();
-        let state = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.suspend())
-            .and_then(|(state, _)| state);
-        // Until a tab comes on screen, a job started belongs to none.
-        let session = std::mem::replace(&mut inner.session, Arc::new(Session));
-        inner.guest.jobs.set_session(&inner.session);
-        Some(Box::new(Suspended {
-            load: self.load,
-            session,
-            state,
-        }))
-    }
-
-    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        // A tab's state from an earlier load of the package is not this
-        // load's: its jobs went with that load.
-        let kept = state
-            .and_then(|s| s.downcast::<Suspended>().ok())
-            .filter(|kept| kept.load == self.load);
-        let (session, bytes) = match kept {
-            Some(kept) => (kept.session, kept.state),
-            None => (Arc::new(Session), None),
+impl BenchOutput for WasmWorkbench {
+    /// The threads the body's plan declares for the feature with a
+    /// designation, each where its round face starts and down its axis.
+    fn cosmetic_threads(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &FeatureNode,
+    ) -> Vec<core_document::ThreadCallout> {
+        let Some(body) = node.body else {
+            return Vec::new();
+        };
+        let Some((mesh, _)) = document.local_geometry(body) else {
+            return Vec::new();
         };
         let mut inner = self.inner();
-        inner.stale = true;
-        inner.guest.jobs.set_session(&session);
-        inner.session = session;
-        let _ = inner
-            .guest
-            .call(Budget::Long, Access::None, |b| b.resume(bytes.as_deref()));
+        let threads = self.plan_threads(&mut inner, document, body);
+        let feature = id.0.to_string();
+        threads
+            .declared
+            .iter()
+            .filter(|t| t.feature == feature)
+            .filter_map(|thread| {
+                let designation = thread.designation.clone()?;
+                let face = crate::geometry::thread_face(&mesh, thread)?;
+                Some(core_document::ThreadCallout {
+                    feature: id,
+                    body,
+                    designation,
+                    mouth: face.start.as_dvec3().to_array(),
+                    axis: face.into.as_dvec3().to_array(),
+                    radius: f64::from(face.radius),
+                })
+            })
+            .collect()
     }
+}
 
-    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
-        let text = id.0.to_string();
-        let body = ctx.document.get_feature_meta(id).and_then(|n| n.body);
+impl BenchCommands for WasmWorkbench {
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> CommandResult {
+        let args = serde_json::to_string(args).map_err(|e| CommandError::failed(e.to_string()))?;
         let mut inner = self.inner();
-        let handled = self
-            .write_call(&mut inner, ctx, Budget::Long, |b| b.delete_feature(&text))
-            .unwrap_or(false);
-        if handled {
-            return ctx.document.get_feature_meta(id).is_none();
+        let answer = self
+            .write_call(&mut inner, ctx, Budget::Long, |b| b.run_command(id, &args))
+            .ok_or_else(|| CommandError::failed(format!("the workbench {} failed", self.id())))?;
+        match answer {
+            Ok(json) if json.trim().is_empty() => Ok(serde_json::Value::Null),
+            Ok(json) => serde_json::from_str(&json)
+                .map_err(|e| CommandError::failed(format!("the answer is not JSON: {e}"))),
+            Err(message) => Err(CommandError::failed(message)),
         }
-        let removed = ctx.document.remove_feature(id).is_ok();
-        if removed && let Some(body) = body {
-            invalidate_owned(ctx.document, &self.package, body);
-        }
-        removed
     }
 }
 

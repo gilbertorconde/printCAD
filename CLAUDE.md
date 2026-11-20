@@ -91,7 +91,13 @@ are in the skill the index below names.
   `project_tools`; the `workbenches` facade; `app_shell` (`printcad`).
 
 The host never names a bench: everything crosses the `Workbench` trait
-(`scripts/check-workbench-seam.mjs`). Recompute loop: workbench edits
+(`scripts/check-workbench-seam.mjs`), which keeps a bench's descriptor and
+lifecycle; the rest is in its supertraits, one file each under
+`core_document/src/workbench/` (`BenchFeatures`, `BenchTools`,
+`BenchPanels`, `BenchBuild`, `BenchParameters`, `BenchOutput`,
+`BenchCommands`), every method defaulted, each bench implementing all
+seven (empty where unused). A new method goes in the group it belongs
+to. Recompute loop: workbench edits
 document → features marked dirty via the dependency DAG →
 `drive_part_recompute` (each frame) asks every bench for its `rebuild_jobs`
 → kernel worker thread → results land in the document's imported-geometry

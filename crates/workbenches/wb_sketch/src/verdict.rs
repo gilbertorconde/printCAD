@@ -231,7 +231,8 @@ impl SketchWorkbench {
 #[cfg(test)]
 mod tests {
     use core_document::{
-        Document, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+        BenchTools, Document, Workbench, WorkbenchFeature, WorkbenchInputEvent,
+        WorkbenchRuntimeContext,
     };
 
     use crate::sketch::{ConstraintKind, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};

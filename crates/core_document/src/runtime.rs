@@ -63,7 +63,7 @@ pub struct WorkbenchRuntimeContext<'a> {
 
     /// The origin plane under the cursor, with nothing drawn in front of
     /// it, while the active bench shows them
-    /// ([`crate::Workbench::shows_origin_planes`]).
+    /// ([`crate::BenchTools::shows_origin_planes`]).
     pub hovered_base_plane: Option<crate::datum::BasePlane>,
 
     /// ID of the currently selected body (if any).
@@ -74,7 +74,7 @@ pub struct WorkbenchRuntimeContext<'a> {
 
     /// Host → workbench: the plane the active document object offers to
     /// sketch on, in the document's frame, as the bench that owns it says
-    /// ([`crate::Workbench::feature_plane`]).
+    /// ([`crate::BenchFeatures::feature_plane`]).
     pub active_object_plane: Option<kernel_api::ProfilePlane>,
 
     /// Host → workbench: every feature of the tree's selection when there
@@ -368,7 +368,7 @@ pub struct CameraOrientRequest {
 }
 
 /// The host's answer to a bench's `CloseToolGesture` or `UndoToolGesture`,
-/// handed to `Workbench::tool_history`.
+/// handed to `BenchTools::tool_history`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolHistoryReply {
     /// The undo step the gesture closed: `None` when nothing closed (no

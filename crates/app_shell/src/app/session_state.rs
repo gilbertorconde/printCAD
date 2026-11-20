@@ -52,7 +52,7 @@ pub(crate) struct Hover {
     /// the document holds.
     pub triangle: Option<crate::app::input::HoveredTriangle>,
     /// The origin plane under the cursor, while the active bench shows them
-    /// to be picked from (`Workbench::shows_origin_planes`).
+    /// to be picked from (`BenchTools::shows_origin_planes`).
     pub base_plane: Option<core_document::BasePlane>,
     /// Feature under the cursor (CPU hit-test, drives hover tint).
     pub feature: Option<FeatureId>,

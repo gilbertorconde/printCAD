@@ -191,7 +191,7 @@ the source re-places them inside `SetBodyPlacement`'s apply, and
 array's occurrence copies every body of it (`ArrayInstance::members`)
 into a rigid component of its own (`group`). A path or point pattern
 carries the stations or points it was read with: the host reads them
-(`app/array_paths.rs`: a bench's `Workbench::feature_paths`, chains and
+(`app/array_paths.rs`: a bench's `BenchFeatures::feature_paths`, chains and
 free points, through the kernel's `wire_frames`, or a solid edge through
 `edge_frames`) whenever the array is made or edited. The body menu's
 Array of copies… is `ui/array_task.rs` (a component's tree row too;
@@ -244,7 +244,7 @@ the body's frame. Every mesh face records its exact surface
 ## Variables, tasks and undo
 
 **Variables and formulas.** Any number a bench lists
-(`Workbench::parameters`: a `Parameter` with a stable key, a JSON pointer
+(`BenchParameters::parameters`: a `Parameter` with a stable key, a JSON pointer
 into the feature's data, a `Dim`, a scale for radians, an integer flag)
 can be set by a formula. `core_document::expr` parses and evaluates them
 (units checked by powers of length and angle, a bare number taking the
@@ -266,7 +266,7 @@ dirty without marking the document edited. A slot whose formula fails
 stops its feature's build with the formula's error
 (`Document::build_formula_error`, `BuildPlan::stop_at_failing_formulas`),
 rather than build from the number its data held before. Results a bench records rather
-than derives follow through `Workbench::values_moved` (the assembly
+than derives follow through `BenchParameters::values_moved` (the assembly
 re-solves placements): the host calls it from `settle_formulas`, every
 frame and in `close_gesture`, which every undo boundary goes through, so
 an edit and what it moves are one step; headless runs settle after every
@@ -306,4 +306,4 @@ as `ctx.undo_entry`, `HostRequest::CloseToolGesture` closes the step
 through `close_gesture` and `UndoToolGesture` undoes `entry`
 (`OpJournal::undo_entry`, refused unless it is the newest step, while a
 script's run is open, or while undo itself is blocked), each answered
-to the bench at once through `Workbench::tool_history`.
+to the bench at once through `BenchTools::tool_history`.

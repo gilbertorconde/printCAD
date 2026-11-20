@@ -1400,13 +1400,19 @@ mod tests {
     /// with the body it is kept with named, and no eye of its own.
     #[test]
     fn a_linked_feature_shows_under_the_body_it_acts_on() {
-        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        use core_document::{
+            BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+            BenchTools, Workbench, WorkbenchContext, WorkbenchDescriptor,
+        };
         struct Bench;
         impl Workbench for Bench {
             fn descriptor(&self) -> WorkbenchDescriptor {
                 WorkbenchDescriptor::new("test.links", "Links", "")
             }
             fn configure(&self, _context: &mut WorkbenchContext) {}
+        }
+
+        impl BenchFeatures for Bench {
             fn linked_features(&self, document: &Document, body: BodyId) -> Vec<FeatureId> {
                 document
                     .feature_tree()
@@ -1416,6 +1422,18 @@ mod tests {
                     .collect()
             }
         }
+
+        impl BenchTools for Bench {}
+
+        impl BenchPanels for Bench {}
+
+        impl BenchBuild for Bench {}
+
+        impl BenchParameters for Bench {}
+
+        impl BenchOutput for Bench {}
+
+        impl BenchCommands for Bench {}
         let mut doc = Document::new("t");
         let base = doc.create_body(Some("Base".into()));
         let part = doc.create_body(Some("Part".into()));
@@ -1514,13 +1532,19 @@ mod tests {
     /// names it ("Hole · M12 thread"), above the family the Kind row shows.
     #[test]
     fn a_feature_row_tooltip_names_the_feature_as_its_bench_does() {
-        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        use core_document::{
+            BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+            BenchTools, Workbench, WorkbenchContext, WorkbenchDescriptor,
+        };
         struct Bench;
         impl Workbench for Bench {
             fn descriptor(&self) -> WorkbenchDescriptor {
                 WorkbenchDescriptor::new("test.holes", "Holes", "").feature_kinds(["test.hole"])
             }
             fn configure(&self, _context: &mut WorkbenchContext) {}
+        }
+
+        impl BenchFeatures for Bench {
             fn feature_info(&self, _node: &FeatureNode) -> FeatureInfo {
                 FeatureInfo {
                     icon: "tree-feature",
@@ -1530,6 +1554,18 @@ mod tests {
                 }
             }
         }
+
+        impl BenchTools for Bench {}
+
+        impl BenchPanels for Bench {}
+
+        impl BenchBuild for Bench {}
+
+        impl BenchParameters for Bench {}
+
+        impl BenchOutput for Bench {}
+
+        impl BenchCommands for Bench {}
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Body".into()));
         let hole = doc.add_feature_of_kind(
@@ -1564,7 +1600,10 @@ mod tests {
     /// order, round again from the last.
     #[test]
     fn each_problem_row_names_its_problem_and_the_jump_walks_them() {
-        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        use core_document::{
+            BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+            BenchTools, Workbench, WorkbenchContext, WorkbenchDescriptor,
+        };
         struct Bench;
         impl Workbench for Bench {
             fn descriptor(&self) -> WorkbenchDescriptor {
@@ -1572,6 +1611,20 @@ mod tests {
             }
             fn configure(&self, _context: &mut WorkbenchContext) {}
         }
+
+        impl BenchFeatures for Bench {}
+
+        impl BenchTools for Bench {}
+
+        impl BenchPanels for Bench {}
+
+        impl BenchBuild for Bench {}
+
+        impl BenchParameters for Bench {}
+
+        impl BenchOutput for Bench {}
+
+        impl BenchCommands for Bench {}
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Body".into()));
         let add = |doc: &mut Document, name: &str, deps: Vec<FeatureId>| {
@@ -1827,13 +1880,19 @@ mod tests {
     /// order, whatever it depends on.
     #[test]
     fn only_a_consumed_feature_holds_a_row_under_it() {
-        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        use core_document::{
+            BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+            BenchTools, Workbench, WorkbenchContext, WorkbenchDescriptor,
+        };
         struct Bench;
         impl Workbench for Bench {
             fn descriptor(&self) -> WorkbenchDescriptor {
                 WorkbenchDescriptor::new("test.steps", "Steps", "").feature_kinds(["test.step"])
             }
             fn configure(&self, _context: &mut WorkbenchContext) {}
+        }
+
+        impl BenchFeatures for Bench {
             fn consumed_feature(
                 &self,
                 _document: &Document,
@@ -1842,6 +1901,18 @@ mod tests {
                 serde_json::from_value(node.data.get("consumes")?.clone()).ok()
             }
         }
+
+        impl BenchTools for Bench {}
+
+        impl BenchPanels for Bench {}
+
+        impl BenchBuild for Bench {}
+
+        impl BenchParameters for Bench {}
+
+        impl BenchOutput for Bench {}
+
+        impl BenchCommands for Bench {}
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Body".into()));
         let mut add = |name: &str, deps: Vec<FeatureId>, consumes: Option<FeatureId>| {

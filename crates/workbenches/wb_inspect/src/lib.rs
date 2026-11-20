@@ -182,6 +182,27 @@ impl core_document::Workbench for InspectionWorkbench {
         self.register_tools(context);
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+
+    fn busy(&self) -> bool {
+        self.tab.maps.busy() || self.tab.tolerance_readings.busy() || self.tab.fitting.running()
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(kernel) = ctx.kernel {
+            let _ = self.kernel.set(kernel);
+        }
+        self.land_best_fit(ctx);
+    }
+
+    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.land_best_fit(ctx);
+    }
+}
+
+impl core_document::BenchFeatures for InspectionWorkbench {
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
         self.info_of(node)
     }
@@ -193,21 +214,6 @@ impl core_document::Workbench for InspectionWorkbench {
         node: &FeatureNode,
     ) -> Option<PassiveGeometry> {
         self.passive_of(document, id, node)
-    }
-
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        self.tool_enabled(tool_id, ctx)
-    }
-
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        (tool_id == PIN && self.tab.pinning)
-            || (tool_id == BEST_FIT && self.tab.fitting.running())
-            || (tool_id == align_commands::POINTS && self.tab.picks.aligning)
-            || (self.tab.armed.is_some() && kind_of_tool(tool_id) == self.tab.armed)
-    }
-
-    fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
-        self.parameters_of(node)
     }
 
     fn delete_feature(
@@ -234,34 +240,64 @@ impl core_document::Workbench for InspectionWorkbench {
         self.tab.tolerance_task.as_ref().map(|t| t.id)
     }
 
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
+    fn feature_solid(
+        &self,
+        document: &Document,
+        id: core_document::FeatureId,
+    ) -> Option<kernel_api::MeshOperand> {
+        let e = element_at(document, id)?;
+        e.result.solid(document.body_placement(e.scan).rows())
     }
 
-    fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        self.tab.tolerance_task.as_ref()?;
-        Some(core_document::TaskInfo {
-            title: "Geometric tolerance".into(),
-            icon: "constraint-perpendicular",
-            confirmable: true,
-            stepwise: false,
-            ..Default::default()
+    /// A section offers its first cut's plane, a fitted or constructed
+    /// plane its own, where the scan stands.
+    fn feature_plane(
+        &self,
+        document: &Document,
+        id: core_document::FeatureId,
+        node: &FeatureNode,
+    ) -> Option<kernel_api::ProfilePlane> {
+        let (scan, origin, normal) = if node.workbench_id.as_str() == section::KIND {
+            let s = document.feature_as::<section::Section>(id)?;
+            let n = DVec3::from(s.normal);
+            vec::unit(n)?;
+            let shift = n * (s.offset / n.length());
+            (s.scan, (DVec3::from(s.origin) + shift).to_array(), s.normal)
+        } else {
+            let e = element_at(document, id)?;
+            match e.result.shape {
+                kernel_api::FittedShape::Plane { origin, normal } => (e.scan, origin, normal),
+                _ => return None,
+            }
+        };
+        let rows = document.body_placement(scan).rows();
+        let place = |p: [f64; 3], w: f64| -> [f64; 3] {
+            std::array::from_fn(|r| {
+                rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + w * rows[r][3]
+            })
+        };
+        // A plane with no normal offers nothing to sketch on.
+        let n = vec::unit(normal.into())?;
+        let (x, y) = vec::basis(n)?;
+        Some(kernel_api::ProfilePlane {
+            origin: place(origin, 1.0),
+            normal: place(n.to_array(), 0.0),
+            x_axis: place(x.to_array(), 0.0),
+            y_axis: place(y.to_array(), 0.0),
         })
     }
+}
 
-    fn busy(&self) -> bool {
-        self.tab.maps.busy() || self.tab.tolerance_readings.busy() || self.tab.fitting.running()
+impl core_document::BenchTools for InspectionWorkbench {
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        self.tool_enabled(tool_id, ctx)
     }
 
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        if let Some(kernel) = ctx.kernel {
-            let _ = self.kernel.set(kernel);
-        }
-        self.land_best_fit(ctx);
-    }
-
-    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.land_best_fit(ctx);
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        (tool_id == PIN && self.tab.pinning)
+            || (tool_id == BEST_FIT && self.tab.fitting.running())
+            || (tool_id == align_commands::POINTS && self.tab.picks.aligning)
+            || (self.tab.armed.is_some() && kind_of_tool(tool_id) == self.tab.armed)
     }
 
     fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
@@ -275,6 +311,30 @@ impl core_document::Workbench for InspectionWorkbench {
         }
     }
 
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        self.handle_input(event, active_tool, ctx)
+    }
+}
+
+impl core_document::BenchPanels for InspectionWorkbench {
+    fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        self.tab.tolerance_task.as_ref()?;
+        Some(core_document::TaskInfo {
+            title: "Geometric tolerance".into(),
+            icon: "constraint-perpendicular",
+            confirmable: true,
+            stepwise: false,
+            ..Default::default()
+        })
+    }
+}
+
+impl core_document::BenchBuild for InspectionWorkbench {
     /// A shown comparison's reference draws see-through, so the scan's map
     /// shows where the reference would cover it.
     /// A shadow's outline follows the scan's mesh, where it stands and the
@@ -350,7 +410,15 @@ impl core_document::Workbench for InspectionWorkbench {
             document.mark_feature_dirty(id);
         }
     }
+}
 
+impl core_document::BenchParameters for InspectionWorkbench {
+    fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
+        self.parameters_of(node)
+    }
+}
+
+impl core_document::BenchOutput for InspectionWorkbench {
     /// Every element, constructed element, dimension and tolerance as one
     /// table, the tally above it, the scans they are on pictured.
     fn semantic_pmi(&self, document: &Document, body: BodyId) -> core_document::SemanticPmi {
@@ -402,63 +470,9 @@ impl core_document::Workbench for InspectionWorkbench {
             bodies,
         })
     }
+}
 
-    fn feature_solid(
-        &self,
-        document: &Document,
-        id: core_document::FeatureId,
-    ) -> Option<kernel_api::MeshOperand> {
-        let e = element_at(document, id)?;
-        e.result.solid(document.body_placement(e.scan).rows())
-    }
-
-    /// A section offers its first cut's plane, a fitted or constructed
-    /// plane its own, where the scan stands.
-    fn feature_plane(
-        &self,
-        document: &Document,
-        id: core_document::FeatureId,
-        node: &FeatureNode,
-    ) -> Option<kernel_api::ProfilePlane> {
-        let (scan, origin, normal) = if node.workbench_id.as_str() == section::KIND {
-            let s = document.feature_as::<section::Section>(id)?;
-            let n = DVec3::from(s.normal);
-            vec::unit(n)?;
-            let shift = n * (s.offset / n.length());
-            (s.scan, (DVec3::from(s.origin) + shift).to_array(), s.normal)
-        } else {
-            let e = element_at(document, id)?;
-            match e.result.shape {
-                kernel_api::FittedShape::Plane { origin, normal } => (e.scan, origin, normal),
-                _ => return None,
-            }
-        };
-        let rows = document.body_placement(scan).rows();
-        let place = |p: [f64; 3], w: f64| -> [f64; 3] {
-            std::array::from_fn(|r| {
-                rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + w * rows[r][3]
-            })
-        };
-        // A plane with no normal offers nothing to sketch on.
-        let n = vec::unit(normal.into())?;
-        let (x, y) = vec::basis(n)?;
-        Some(kernel_api::ProfilePlane {
-            origin: place(origin, 1.0),
-            normal: place(n.to_array(), 0.0),
-            x_axis: place(x.to_array(), 0.0),
-            y_axis: place(y.to_array(), 0.0),
-        })
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        self.handle_input(event, active_tool, ctx)
-    }
-
+impl core_document::BenchCommands for InspectionWorkbench {
     fn run_command(
         &mut self,
         id: &str,

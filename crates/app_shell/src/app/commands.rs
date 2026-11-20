@@ -720,7 +720,7 @@ impl PrintCadApp {
 
     /// A double click on a row: a feature opens for editing in the bench
     /// that claims its kind (a sketch in the sketcher, a solid feature or
-    /// datum in its bench's task panel), through `Workbench::edit_feature`.
+    /// datum in its bench's task panel), through `BenchFeatures::edit_feature`.
     /// A single click only selects.
     pub(crate) fn apply_tree_activation(&mut self, item: TreeItemId) {
         let TreeItemId::Feature(id) = item else {

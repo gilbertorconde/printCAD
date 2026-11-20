@@ -16,7 +16,7 @@ use egui::Ui;
 /// default.
 pub trait BenchUi {
     /// Draw the strip under the view, while
-    /// [`Workbench::has_viewport_strip`].
+    /// [`core_document::BenchTools::has_viewport_strip`].
     fn ui_viewport_strip(&mut self, _ui: &mut Ui, _ctx: &mut WorkbenchRuntimeContext) {}
 
     /// Draw custom UI in the left panel, above the feature tree.
@@ -34,10 +34,11 @@ pub trait BenchUi {
     }
 
     /// Draw this bench's Preferences page, while it is shown
-    /// ([`Workbench::has_settings`]). `filter` is the dialog's lowercase
-    /// search text; rows that do not match it stay hidden
-    /// (`ui_kit::widgets::pref_group` applies it). The settings it changes
-    /// are saved through [`Workbench::settings_json`].
+    /// ([`core_document::BenchPanels::has_settings`]). `filter` is the
+    /// dialog's lowercase search text; rows that do not match it stay
+    /// hidden (`ui_kit::widgets::pref_group` applies it). The settings it
+    /// changes are saved through
+    /// [`core_document::BenchPanels::settings_json`].
     fn ui_settings(&mut self, _ui: &mut Ui, _filter: &str) {}
 }
 

@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use bench_api::PanelEvent;
 use core_document::{
-    Document, DocumentService, FeatureInfo, Workbench, WorkbenchId, WorkbenchRuntimeContext,
+    BenchFeatures, Document, DocumentService, FeatureInfo, Workbench, WorkbenchId,
+    WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use wb_wasm::{Capabilities, Package};

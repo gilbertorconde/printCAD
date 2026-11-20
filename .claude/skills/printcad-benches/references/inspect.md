@@ -72,7 +72,7 @@
   (Save elements as STEP) writes elements, sections and outlines as
   construction geometry, `construction_export::construction_items` through
   `KernelQueries::write_construction_step`. `pmi.rs` answers
-  `Workbench::semantic_pmi` for each Comparison's reference: tolerances,
+  `BenchOutput::semantic_pmi` for each Comparison's reference: tolerances,
   datums lettered in first-use order and dimensions, their face probes
   placed from the scan into world coordinates. A `WallThickness`
   (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by

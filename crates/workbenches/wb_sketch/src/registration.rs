@@ -784,7 +784,7 @@ mod icon_coverage {
     use super::*;
     use crate::SketchFeature;
     use crate::sketch::{Sketch, SketchPlane};
-    use core_document::{FeatureId, Workbench, WorkbenchContext};
+    use core_document::{BenchFeatures, FeatureId, Workbench, WorkbenchContext};
 
     #[test]
     fn the_bench_and_its_feature_name_an_icon_in_the_set() {

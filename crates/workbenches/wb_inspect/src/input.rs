@@ -16,7 +16,7 @@ use crate::{
     tolerance, tolerance_task,
 };
 use core_document::{
-    BodyId, CommandArgs, InputResult, Workbench, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchCommands, BodyId, CommandArgs, InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde_json::json;
 

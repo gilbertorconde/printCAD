@@ -1,6 +1,6 @@
 //! Cosmetic threads: threads a feature declares on a bore without cutting
 //! them, each with its designation and where the bore opens. The benches
-//! answer them (`Workbench::cosmetic_threads`) and the registry keeps them
+//! answer them (`BenchOutput::cosmetic_threads`) and the registry keeps them
 //! on the document as derived state each time it evaluates, so the parts
 //! list, the annotations layer and export read them without knowing which
 //! bench made them.

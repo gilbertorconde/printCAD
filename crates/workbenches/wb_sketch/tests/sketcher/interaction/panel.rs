@@ -2,6 +2,7 @@
 //! with pointer events at where its rows and fields were drawn.
 
 use super::*;
+use core_document::BenchCommands;
 use sketch_model::generator::{GearSpec, Generator};
 use sketch_model::sketch::{ConstraintKind, Line};
 

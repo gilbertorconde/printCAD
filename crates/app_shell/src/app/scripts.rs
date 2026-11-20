@@ -4,7 +4,7 @@
 //! The application's own commands are the document's queries and edits
 //! (`doc.*`) and every command a key can run (`file.save`, `view.front`,
 //! ...). A workbench's command runs in the workbench through
-//! `Workbench::run_command`, with the same context its tools get, so the
+//! `BenchCommands::run_command`, with the same context its tools get, so the
 //! host never needs to know what the command does. Every call's arguments
 //! are checked against its spec before it runs.
 
@@ -1712,6 +1712,29 @@ mod tests {
             core_document::WorkbenchDescriptor::new("test.counted", "Counted", "")
         }
         fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
+        fn suspend_session(&mut self) -> BenchState {
+            self.0
+                .take()
+                .map(|n| Box::new(n) as Box<dyn std::any::Any + Send>)
+        }
+        fn resume_session(&mut self, state: BenchState) {
+            self.0 = state.and_then(|s| s.downcast::<u64>().ok()).map(|n| *n);
+        }
+    }
+
+    impl core_document::BenchFeatures for Counted {}
+
+    impl core_document::BenchTools for Counted {}
+
+    impl core_document::BenchPanels for Counted {}
+
+    impl core_document::BenchBuild for Counted {}
+
+    impl core_document::BenchParameters for Counted {}
+
+    impl core_document::BenchOutput for Counted {}
+
+    impl core_document::BenchCommands for Counted {
         fn run_command(
             &mut self,
             _id: &str,
@@ -1721,14 +1744,6 @@ mod tests {
             let was = self.0;
             self.0 = Some(was.unwrap_or(0) + 1);
             Ok(json!(was))
-        }
-        fn suspend_session(&mut self) -> BenchState {
-            self.0
-                .take()
-                .map(|n| Box::new(n) as Box<dyn std::any::Any + Send>)
-        }
-        fn resume_session(&mut self, state: BenchState) {
-            self.0 = state.and_then(|s| s.downcast::<u64>().ok()).map(|n| *n);
         }
     }
 

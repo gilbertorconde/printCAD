@@ -4,8 +4,9 @@
 //! features and bodies, which the benches owning them build and edit.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FileImport, ParamKind,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchRuntimeContext,
+    Args, BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FileImport,
+    ParamKind, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchRuntimeContext,
 };
 use project_archive::archive::FcstdArchive;
 use project_archive::document_xml::FcDocument;
@@ -46,7 +47,21 @@ impl Workbench for ProjectImportBench {
         );
         context.register_import(FileImport::new("FreeCAD file", ["fcstd"], IMPORT_COMMAND));
     }
+}
 
+impl BenchFeatures for ProjectImportBench {}
+
+impl BenchTools for ProjectImportBench {}
+
+impl BenchPanels for ProjectImportBench {}
+
+impl BenchBuild for ProjectImportBench {}
+
+impl BenchParameters for ProjectImportBench {}
+
+impl BenchOutput for ProjectImportBench {}
+
+impl BenchCommands for ProjectImportBench {
     fn run_command(
         &mut self,
         id: &str,

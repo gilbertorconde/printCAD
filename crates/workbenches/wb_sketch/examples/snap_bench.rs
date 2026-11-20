@@ -26,7 +26,8 @@ use std::time::Instant;
 
 use bench_panel::BenchUi;
 use core_document::{
-    Document, MouseButton, TaskRequest, Workbench, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BenchPanels, BenchTools, Document, MouseButton, TaskRequest, Workbench, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 use glam::{Mat4, Vec3};
 use sketch_model::SketchFeature;

@@ -2,7 +2,7 @@
 //! draws worked out afresh.
 
 use super::Harness;
-use core_document::{Workbench, WorkbenchInputEvent};
+use core_document::{BenchTools, Workbench, WorkbenchInputEvent};
 use sketch_model::sketch::{Circle, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
 use uuid::Uuid;
 

@@ -2,9 +2,10 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    CameraOrientRequest, Document, DocumentError, DocumentService, FeatureId, FeatureNode,
-    HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints, ViewportPick,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, CameraOrientRequest, Document, DocumentError, DocumentService, FeatureId,
+    FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints,
+    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
     WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
@@ -66,6 +67,9 @@ impl Workbench for FakeBench {
         if self.modal { d.modal() } else { d }
     }
     fn configure(&self, _context: &mut WorkbenchContext) {}
+}
+
+impl BenchFeatures for FakeBench {
     fn passive_geometry(
         &self,
         _document: &Document,
@@ -91,6 +95,11 @@ impl Workbench for FakeBench {
     ) -> Option<f32> {
         self.pick_distance
     }
+}
+
+impl BenchTools for FakeBench {}
+
+impl BenchPanels for FakeBench {
     fn menu_items(&self, _scope: &MenuScope, _document: &Document) -> Vec<MenuItem> {
         self.items
             .iter()
@@ -105,6 +114,11 @@ impl Workbench for FakeBench {
     ) -> bool {
         self.items.contains(&id)
     }
+}
+
+impl BenchBuild for FakeBench {}
+
+impl BenchParameters for FakeBench {
     fn property_hints(&self) -> PropertyHints {
         PropertyHints {
             length_keys: self.lengths.clone(),
@@ -112,6 +126,10 @@ impl Workbench for FakeBench {
         }
     }
 }
+
+impl BenchOutput for FakeBench {}
+
+impl BenchCommands for FakeBench {}
 
 /// A feature of a second kind, for a second bench.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -379,6 +397,15 @@ impl Workbench for Panicky {
         WorkbenchDescriptor::new("panicky", "Panicky", "").feature_kinds(["panicky.thing"])
     }
     fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
+}
+
+impl BenchFeatures for Panicky {}
+
+impl BenchTools for Panicky {}
+
+impl BenchPanels for Panicky {}
+
+impl BenchBuild for Panicky {
     fn rebuild_jobs(&self, _document: &mut Document) -> Vec<core_document::RebuildJob> {
         let sizes: Vec<u32> = Vec::new();
         vec![sizes[999] as usize; 0]
@@ -387,6 +414,12 @@ impl Workbench for Panicky {
             .collect()
     }
 }
+
+impl BenchParameters for Panicky {}
+
+impl BenchOutput for Panicky {}
+
+impl BenchCommands for Panicky {}
 
 #[test]
 fn a_bench_that_panics_planning_a_rebuild_marks_its_features_and_spares_the_app() {
@@ -441,6 +474,20 @@ impl Workbench for Importer {
         context.register_import(core_document::FileImport::new("Drawing", ["DRW"], command));
     }
 }
+
+impl BenchFeatures for Importer {}
+
+impl BenchTools for Importer {}
+
+impl BenchPanels for Importer {}
+
+impl BenchBuild for Importer {}
+
+impl BenchParameters for Importer {}
+
+impl BenchOutput for Importer {}
+
+impl BenchCommands for Importer {}
 
 #[test]
 fn a_file_goes_to_the_first_bench_importing_its_extension() {

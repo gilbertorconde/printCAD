@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use core_document::{InputResult, Workbench, WorkbenchRuntimeContext};
+use core_document::{BenchCommands, InputResult, WorkbenchRuntimeContext};
 use uuid::Uuid;
 
 use crate::sketch::{GeometryElement, Sketch, Vec2D};

@@ -9,9 +9,9 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, Document,
-    FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind, ToolDescriptor,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    Args, BenchBuild, BenchCommands, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec,
+    CommandTable, Document, FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind,
+    ToolDescriptor, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
@@ -428,6 +428,20 @@ impl core_document::Workbench for MeshWorkbench {
         }
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+
+    fn busy(&self) -> bool {
+        self.tab.deviations.busy() || self.tab.crossing_pairs.busy()
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.report_crossings(ctx);
+    }
+}
+
+impl core_document::BenchFeatures for MeshWorkbench {
     fn feature_info(&self, _node: &FeatureNode) -> FeatureInfo {
         FeatureInfo {
             icon: "workbench-mesh",
@@ -437,6 +451,146 @@ impl core_document::Workbench for MeshWorkbench {
         }
     }
 
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.tab.task.as_ref().map(|t| t.id)
+    }
+
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        self.open_edit(ctx, id);
+    }
+
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.close_task(
+            ctx,
+            core_document::TaskRequest {
+                cancel: true,
+                accept: false,
+            },
+        );
+    }
+}
+
+impl core_document::BenchTools for MeshWorkbench {
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        let Some(body) = ctx.selected_body_id.map(BodyId) else {
+            return false;
+        };
+        let mesh = ctx.document.is_mesh_body(body) || ctx.document.mesh_start(body).is_some();
+        match tool_id {
+            DELETE => {
+                mesh && ctx
+                    .current_marking()
+                    .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
+            }
+            ISLANDS | FLIP | CUT | SPLIT => mesh && self.tab.task.is_none(),
+            id if steps::is_tool(id) => mesh && self.tab.task.is_none(),
+            DEVIATION => true,
+            CROSSINGS => mesh,
+            _ => false,
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        (tool_id == DEVIATION && self.tab.deviation) || (tool_id == CROSSINGS && self.tab.crossings)
+    }
+
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            scalar_maps: [self.scalar_maps(ctx), self.crossing_maps(ctx)].concat(),
+            ..Default::default()
+        }
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        if self.pick_rim(event, ctx) {
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(DEVIATION)) = (event, active_tool) {
+            self.tab.deviation = !self.tab.deviation;
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(CROSSINGS)) = (event, active_tool) {
+            self.tab.crossings = !self.tab.crossings;
+            self.tab.crossings_said = None;
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(SPLIT)) = (event, active_tool) {
+            self.split_selected(ctx);
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(tool)) = (event, active_tool)
+            && (matches!(tool, ISLANDS | DELETE | FLIP | CUT) || steps::is_tool(tool))
+        {
+            if self.tab.task.is_some() {
+                return InputResult::consumed();
+            }
+            let args = CommandArgs::new();
+            match self.run_command(tool, &args, ctx) {
+                Ok(answer) => self.open_created(ctx, tool, args, answer),
+                Err(why) => ctx.log_warn(why.to_string()),
+            }
+            return InputResult::consumed();
+        }
+        InputResult::ignored()
+    }
+}
+
+impl core_document::BenchPanels for MeshWorkbench {
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        let t = self.tab.task.as_ref()?;
+        let node = ctx.document.get_feature_meta(t.id)?;
+        Some(core_document::TaskInfo {
+            title: node.name.clone(),
+            icon: "workbench-mesh",
+            confirmable: true,
+            stepwise: false,
+            ..Default::default()
+        })
+    }
+}
+
+impl core_document::BenchBuild for MeshWorkbench {
+    fn mesh_plans(&self, document: &Document) -> Vec<MeshPlan> {
+        let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<(u64, FeatureId, MeshOp)>> =
+            Default::default();
+        for (id, node) in document
+            .feature_tree()
+            .ordered_nodes(|node| node.workbench_id.as_str() == KIND && !node.suppressed)
+        {
+            let Some(f) = document.feature_as::<MeshFeature>(*id) else {
+                continue;
+            };
+            by_body
+                .entry(f.scan.0)
+                .or_default()
+                .push((node.seq, *id, f.step()));
+        }
+        by_body
+            .into_iter()
+            .map(|(body, mut steps)| {
+                // Steps after the body's tip are left out.
+                let tip = document
+                    .body(BodyId(body))
+                    .and_then(|b| b.tip)
+                    .and_then(|t| document.get_feature_meta(t))
+                    .map(|n| n.seq);
+                steps.retain(|(seq, _, _)| tip.is_none_or(|t| *seq <= t));
+                MeshPlan {
+                    body: BodyId(body),
+                    features: steps.iter().map(|(_, id, _)| *id).collect(),
+                    ops: steps.into_iter().map(|(_, _, op)| op).collect(),
+                }
+            })
+            .collect()
+    }
+}
+
+impl core_document::BenchParameters for MeshWorkbench {
     fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
         use core_document::{evaluate::Parameter, expr::Dim};
         match MeshFeature::from_json(&node.data).map(|f| f.op) {
@@ -493,151 +647,11 @@ impl core_document::Workbench for MeshWorkbench {
             _ => Vec::new(),
         }
     }
+}
 
-    fn mesh_plans(&self, document: &Document) -> Vec<MeshPlan> {
-        let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<(u64, FeatureId, MeshOp)>> =
-            Default::default();
-        for (id, node) in document
-            .feature_tree()
-            .ordered_nodes(|node| node.workbench_id.as_str() == KIND && !node.suppressed)
-        {
-            let Some(f) = document.feature_as::<MeshFeature>(*id) else {
-                continue;
-            };
-            by_body
-                .entry(f.scan.0)
-                .or_default()
-                .push((node.seq, *id, f.step()));
-        }
-        by_body
-            .into_iter()
-            .map(|(body, mut steps)| {
-                // Steps after the body's tip are left out.
-                let tip = document
-                    .body(BodyId(body))
-                    .and_then(|b| b.tip)
-                    .and_then(|t| document.get_feature_meta(t))
-                    .map(|n| n.seq);
-                steps.retain(|(seq, _, _)| tip.is_none_or(|t| *seq <= t));
-                MeshPlan {
-                    body: BodyId(body),
-                    features: steps.iter().map(|(_, id, _)| *id).collect(),
-                    ops: steps.into_iter().map(|(_, _, op)| op).collect(),
-                }
-            })
-            .collect()
-    }
+impl core_document::BenchOutput for MeshWorkbench {}
 
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        let Some(body) = ctx.selected_body_id.map(BodyId) else {
-            return false;
-        };
-        let mesh = ctx.document.is_mesh_body(body) || ctx.document.mesh_start(body).is_some();
-        match tool_id {
-            DELETE => {
-                mesh && ctx
-                    .current_marking()
-                    .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
-            }
-            ISLANDS | FLIP | CUT | SPLIT => mesh && self.tab.task.is_none(),
-            id if steps::is_tool(id) => mesh && self.tab.task.is_none(),
-            DEVIATION => true,
-            CROSSINGS => mesh,
-            _ => false,
-        }
-    }
-
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        let t = self.tab.task.as_ref()?;
-        let node = ctx.document.get_feature_meta(t.id)?;
-        Some(core_document::TaskInfo {
-            title: node.name.clone(),
-            icon: "workbench-mesh",
-            confirmable: true,
-            stepwise: false,
-            ..Default::default()
-        })
-    }
-
-    fn editing_feature(&self) -> Option<FeatureId> {
-        self.tab.task.as_ref().map(|t| t.id)
-    }
-
-    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
-        self.open_edit(ctx, id);
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
-    }
-
-    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.close_task(
-            ctx,
-            core_document::TaskRequest {
-                cancel: true,
-                accept: false,
-            },
-        );
-    }
-
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        (tool_id == DEVIATION && self.tab.deviation) || (tool_id == CROSSINGS && self.tab.crossings)
-    }
-
-    fn busy(&self) -> bool {
-        self.tab.deviations.busy() || self.tab.crossing_pairs.busy()
-    }
-
-    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        self.report_crossings(ctx);
-    }
-
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        core_document::ViewportOutput {
-            scalar_maps: [self.scalar_maps(ctx), self.crossing_maps(ctx)].concat(),
-            ..Default::default()
-        }
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        if self.pick_rim(event, ctx) {
-            return InputResult::consumed();
-        }
-        if let (WorkbenchInputEvent::ToolActivated, Some(DEVIATION)) = (event, active_tool) {
-            self.tab.deviation = !self.tab.deviation;
-            return InputResult::consumed();
-        }
-        if let (WorkbenchInputEvent::ToolActivated, Some(CROSSINGS)) = (event, active_tool) {
-            self.tab.crossings = !self.tab.crossings;
-            self.tab.crossings_said = None;
-            return InputResult::consumed();
-        }
-        if let (WorkbenchInputEvent::ToolActivated, Some(SPLIT)) = (event, active_tool) {
-            self.split_selected(ctx);
-            return InputResult::consumed();
-        }
-        if let (WorkbenchInputEvent::ToolActivated, Some(tool)) = (event, active_tool)
-            && (matches!(tool, ISLANDS | DELETE | FLIP | CUT) || steps::is_tool(tool))
-        {
-            if self.tab.task.is_some() {
-                return InputResult::consumed();
-            }
-            let args = CommandArgs::new();
-            match self.run_command(tool, &args, ctx) {
-                Ok(answer) => self.open_created(ctx, tool, args, answer),
-                Err(why) => ctx.log_warn(why.to_string()),
-            }
-            return InputResult::consumed();
-        }
-        InputResult::ignored()
-    }
-
+impl core_document::BenchCommands for MeshWorkbench {
     fn run_command(
         &mut self,
         id: &str,
@@ -755,7 +769,7 @@ impl MeshWorkbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::Workbench;
+    use core_document::{BenchBuild, BenchCommands, BenchFeatures, BenchTools, Workbench};
 
     #[test]
     fn every_section_of_the_mesh_prose_names_a_command() {

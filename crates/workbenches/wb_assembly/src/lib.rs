@@ -46,9 +46,10 @@ mod tasks;
 mod viewport_out;
 
 use core_document::{
-    BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest,
+    InputResult, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
 pub use coupling::{COUPLING_KIND, Coupling, Gearing};
@@ -522,10 +523,228 @@ impl AssemblyWorkbench {
 }
 
 impl Workbench for AssemblyWorkbench {
-    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
-        self.parameters_of(node)
+    fn descriptor(&self) -> WorkbenchDescriptor {
+        WorkbenchDescriptor::new(
+            JOINT_KIND,
+            "Assembly",
+            "Place bodies against each other with joints",
+        )
+        .icon("workbench-assembly")
+        .feature_kinds([
+            JOINT_KIND,
+            COUPLING_KIND,
+            parts::PARTS_KIND,
+            GROUP_KIND,
+            STATE_KIND,
+            EXPLODED_KIND,
+            MOTION_KIND,
+        ])
+        .radial([
+            "asm.mate",
+            "asm.align",
+            "asm.hinge",
+            "asm.slider",
+            "asm.fix",
+            "asm.distance",
+            "asm.move",
+            "asm.interference",
+        ])
     }
 
+    fn configure(&self, context: &mut WorkbenchContext) {
+        self.register_tools(context);
+    }
+
+    /// A check or a measuring running away from the window, its answer
+    /// shown once it comes, or a motion study, an exploded view or a
+    /// joint's drive playing.
+    fn busy(&self) -> bool {
+        self.tab.checking.is_some()
+            || self.tab.measuring.is_some()
+            || self.tab.sweeping.is_some()
+            || matches!(&self.tab.task, Some(Task::Explode { steps, .. }) if steps.playing)
+            || matches!(&self.tab.task, Some(Task::Motion(studying)) if studying.playing)
+            || self.panel_running()
+    }
+
+    fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.frame_turn(dt, ctx);
+        self.note_left(ctx.document);
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer_gesture(ctx);
+        self.put_back_motion(ctx);
+        self.tab.picking = None;
+        self.tab.checking = None;
+        self.tab.measuring = None;
+        self.put_back_explosion(ctx);
+        self.tab.task = None;
+    }
+}
+
+impl BenchFeatures for AssemblyWorkbench {
+    /// The joints of other bodies that hold them to `body`.
+    fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
+        joints(document)
+            .into_iter()
+            .filter(|j| {
+                j.feature.kind != JointKind::Ground
+                    && j.feature.other_body == body
+                    && j.body != body
+            })
+            .map(|j| j.id)
+            .collect()
+    }
+
+    fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == MOTION_KIND {
+            return FeatureInfo {
+                icon: "polar-pattern",
+                kind_label: "Motion".to_string(),
+                family_label: "Assembly motion over time".to_string(),
+                builds_solid: false,
+            };
+        }
+        if node.workbench_id.as_str() == EXPLODED_KIND {
+            return FeatureInfo {
+                icon: "scale-geometry",
+                kind_label: "Exploded view".to_string(),
+                family_label: "Assembly exploded view".to_string(),
+                builds_solid: false,
+            };
+        }
+        if node.workbench_id.as_str() == STATE_KIND {
+            return FeatureInfo {
+                icon: "save",
+                kind_label: "Assembly state".to_string(),
+                family_label: "Saved assembly state".to_string(),
+                builds_solid: false,
+            };
+        }
+        if node.workbench_id.as_str() == GROUP_KIND {
+            return FeatureInfo {
+                icon: "tree-group",
+                kind_label: "Rigid group".to_string(),
+                family_label: "Assembly rigid group".to_string(),
+                builds_solid: false,
+            };
+        }
+        if node.workbench_id.as_str() == parts::PARTS_KIND {
+            return FeatureInfo {
+                icon: "file-document",
+                kind_label: "Parts list".to_string(),
+                family_label: "Assembly parts list".to_string(),
+                builds_solid: false,
+            };
+        }
+        if node.workbench_id.as_str() == COUPLING_KIND {
+            let gearing = Coupling::from_json(&node.data).map(|c| c.gearing).ok();
+            return FeatureInfo {
+                icon: "involute-gear",
+                kind_label: gearing.map_or("Coupling", Gearing::label).to_string(),
+                family_label: "Assembly coupling".to_string(),
+                builds_solid: false,
+            };
+        }
+        let kind = JointFeature::from_json(&node.data).map(|j| j.kind).ok();
+        FeatureInfo {
+            icon: kind.map_or("joint-mate", |k| k.icon()),
+            kind_label: kind.map_or("Joint", |k| k.label()).to_string(),
+            family_label: "Assembly joint".to_string(),
+            builds_solid: false,
+        }
+    }
+
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        self.open_task(ctx, id);
+    }
+
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer_gesture(ctx);
+        self.put_back_motion(ctx);
+        self.tab.picking = None;
+        self.tab.checking = None;
+        self.tab.measuring = None;
+        self.put_back_explosion(ctx);
+        self.tab.task = None;
+    }
+}
+
+impl BenchTools for AssemblyWorkbench {
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            overlays: self.screen_overlays(ctx, ctx.active_document_object),
+            polygons: self.screen_polygons(ctx, ctx.active_document_object),
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            hud: self.viewport_hud(ctx),
+            status: self.status_items(ctx),
+            faded: self.faded_bodies(ctx),
+            ..Default::default()
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        tool_id == "asm.collisions" && !self.tab.collisions_off
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        self.tool_enabled(tool_id, ctx)
+    }
+
+    fn on_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        let result = self.input_turn(event, tool, ctx);
+        self.note_left(ctx.document);
+        result
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(body) = self.handled_body(ctx) {
+            self.tab.handles.cancel(ctx, body);
+        }
+        self.tab.handles.reset();
+        self.drop_grab(ctx);
+        self.note_left(ctx.document);
+    }
+}
+
+impl BenchPanels for AssemblyWorkbench {
+    fn menu_items(
+        &self,
+        scope: &core_document::MenuScope,
+        document: &core_document::Document,
+    ) -> Vec<core_document::MenuItem> {
+        self.menu_entries(scope, document)
+    }
+
+    fn on_command(
+        &mut self,
+        id: &str,
+        scope: &core_document::MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        self.menu_command(id, scope, ctx)
+    }
+
+    /// The task's title and the name of what it edits under it: the
+    /// panel itself carries no title.
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        self.task_of(ctx)
+    }
+}
+
+impl BenchBuild for AssemblyWorkbench {
     /// A joint's ends picked on named faces follow those faces: a body
     /// rebuilt with a face moved is searched for the face by name, and the
     /// end moves onto it, so the joint holds to the face wherever the rebuild put it.
@@ -588,6 +807,12 @@ impl Workbench for AssemblyWorkbench {
         }
         changed
     }
+}
+
+impl BenchParameters for AssemblyWorkbench {
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        self.parameters_of(node)
+    }
 
     /// A joint or coupling whose numbers a formula moved: the bodies
     /// follow.
@@ -602,21 +827,9 @@ impl Workbench for AssemblyWorkbench {
             self.note_left(ctx.document);
         }
     }
+}
 
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        core_document::ViewportOutput {
-            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
-            overlays: self.screen_overlays(ctx, ctx.active_document_object),
-            polygons: self.screen_polygons(ctx, ctx.active_document_object),
-            marks: self.screen_marks(ctx, ctx.active_document_object),
-            labels: self.screen_labels(ctx, ctx.active_document_object),
-            hud: self.viewport_hud(ctx),
-            status: self.status_items(ctx),
-            faded: self.faded_bodies(ctx),
-            ..Default::default()
-        }
-    }
-
+impl BenchOutput for AssemblyWorkbench {
     /// Bought parts are not made: exports of the model and the slicer
     /// leave them out.
     fn not_printed(
@@ -643,69 +856,9 @@ impl Workbench for AssemblyWorkbench {
                 .collect(),
         )
     }
+}
 
-    fn menu_items(
-        &self,
-        scope: &core_document::MenuScope,
-        document: &core_document::Document,
-    ) -> Vec<core_document::MenuItem> {
-        self.menu_entries(scope, document)
-    }
-
-    fn on_command(
-        &mut self,
-        id: &str,
-        scope: &core_document::MenuScope,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> bool {
-        self.menu_command(id, scope, ctx)
-    }
-
-    /// The joints of other bodies that hold them to `body`.
-    fn linked_features(&self, document: &core_document::Document, body: BodyId) -> Vec<FeatureId> {
-        joints(document)
-            .into_iter()
-            .filter(|j| {
-                j.feature.kind != JointKind::Ground
-                    && j.feature.other_body == body
-                    && j.body != body
-            })
-            .map(|j| j.id)
-            .collect()
-    }
-
-    fn descriptor(&self) -> WorkbenchDescriptor {
-        WorkbenchDescriptor::new(
-            JOINT_KIND,
-            "Assembly",
-            "Place bodies against each other with joints",
-        )
-        .icon("workbench-assembly")
-        .feature_kinds([
-            JOINT_KIND,
-            COUPLING_KIND,
-            parts::PARTS_KIND,
-            GROUP_KIND,
-            STATE_KIND,
-            EXPLODED_KIND,
-            MOTION_KIND,
-        ])
-        .radial([
-            "asm.mate",
-            "asm.align",
-            "asm.hinge",
-            "asm.slider",
-            "asm.fix",
-            "asm.distance",
-            "asm.move",
-            "asm.interference",
-        ])
-    }
-
-    fn configure(&self, context: &mut WorkbenchContext) {
-        self.register_tools(context);
-    }
-
+impl BenchCommands for AssemblyWorkbench {
     fn run_command(
         &mut self,
         id: &str,
@@ -713,144 +866,6 @@ impl Workbench for AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> core_document::CommandResult {
         commands::run(id, args, ctx)
-    }
-
-    fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
-        if node.workbench_id.as_str() == MOTION_KIND {
-            return FeatureInfo {
-                icon: "polar-pattern",
-                kind_label: "Motion".to_string(),
-                family_label: "Assembly motion over time".to_string(),
-                builds_solid: false,
-            };
-        }
-        if node.workbench_id.as_str() == EXPLODED_KIND {
-            return FeatureInfo {
-                icon: "scale-geometry",
-                kind_label: "Exploded view".to_string(),
-                family_label: "Assembly exploded view".to_string(),
-                builds_solid: false,
-            };
-        }
-        if node.workbench_id.as_str() == STATE_KIND {
-            return FeatureInfo {
-                icon: "save",
-                kind_label: "Assembly state".to_string(),
-                family_label: "Saved assembly state".to_string(),
-                builds_solid: false,
-            };
-        }
-        if node.workbench_id.as_str() == GROUP_KIND {
-            return FeatureInfo {
-                icon: "tree-group",
-                kind_label: "Rigid group".to_string(),
-                family_label: "Assembly rigid group".to_string(),
-                builds_solid: false,
-            };
-        }
-        if node.workbench_id.as_str() == parts::PARTS_KIND {
-            return FeatureInfo {
-                icon: "file-document",
-                kind_label: "Parts list".to_string(),
-                family_label: "Assembly parts list".to_string(),
-                builds_solid: false,
-            };
-        }
-        if node.workbench_id.as_str() == COUPLING_KIND {
-            let gearing = Coupling::from_json(&node.data).map(|c| c.gearing).ok();
-            return FeatureInfo {
-                icon: "involute-gear",
-                kind_label: gearing.map_or("Coupling", Gearing::label).to_string(),
-                family_label: "Assembly coupling".to_string(),
-                builds_solid: false,
-            };
-        }
-        let kind = JointFeature::from_json(&node.data).map(|j| j.kind).ok();
-        FeatureInfo {
-            icon: kind.map_or("joint-mate", |k| k.icon()),
-            kind_label: kind.map_or("Joint", |k| k.label()).to_string(),
-            family_label: "Assembly joint".to_string(),
-            builds_solid: false,
-        }
-    }
-
-    /// A check or a measuring running away from the window, its answer
-    /// shown once it comes, or a motion study, an exploded view or a
-    /// joint's drive playing.
-    fn busy(&self) -> bool {
-        self.tab.checking.is_some()
-            || self.tab.measuring.is_some()
-            || self.tab.sweeping.is_some()
-            || matches!(&self.tab.task, Some(Task::Explode { steps, .. }) if steps.playing)
-            || matches!(&self.tab.task, Some(Task::Motion(studying)) if studying.playing)
-            || self.panel_running()
-    }
-
-    fn tool_toggled(&self, tool_id: &str) -> bool {
-        tool_id == "asm.collisions" && !self.tab.collisions_off
-    }
-
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        self.tool_enabled(tool_id, ctx)
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        let result = self.input_turn(event, tool, ctx);
-        self.note_left(ctx.document);
-        result
-    }
-
-    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        if let Some(body) = self.handled_body(ctx) {
-            self.tab.handles.cancel(ctx, body);
-        }
-        self.tab.handles.reset();
-        self.drop_grab(ctx);
-        self.note_left(ctx.document);
-    }
-
-    fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        self.frame_turn(dt, ctx);
-        self.note_left(ctx.document);
-    }
-
-    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
-        self.open_task(ctx, id);
-    }
-
-    /// The task's title and the name of what it edits under it: the
-    /// panel itself carries no title.
-    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        self.task_of(ctx)
-    }
-
-    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.cancel_pointer_gesture(ctx);
-        self.put_back_motion(ctx);
-        self.tab.picking = None;
-        self.tab.checking = None;
-        self.tab.measuring = None;
-        self.put_back_explosion(ctx);
-        self.tab.task = None;
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
-    }
-
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.cancel_pointer_gesture(ctx);
-        self.put_back_motion(ctx);
-        self.tab.picking = None;
-        self.tab.checking = None;
-        self.tab.measuring = None;
-        self.put_back_explosion(ctx);
-        self.tab.task = None;
     }
 }
 

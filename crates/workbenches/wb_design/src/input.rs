@@ -7,7 +7,7 @@ use crate::{
     read_scan, recognize, region_pick,
 };
 use core_document::{
-    BodyId, HostRequest, InputResult, Workbench, WorkbenchFeature, WorkbenchId,
+    BenchCommands, BodyId, HostRequest, InputResult, WorkbenchFeature, WorkbenchId,
     WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id,
 };
 use sketch_model::SketchFeature;

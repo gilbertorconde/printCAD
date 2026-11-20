@@ -31,8 +31,9 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BodyId, CommandArgs, CommandResult, Document, FeatureId, FeatureInfo, HostRequest, InputResult,
-    Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext,
+    BenchBuild, BenchCommands, BenchFeatures, BenchOutput, BenchPanels, BenchParameters,
+    BenchTools, BodyId, CommandArgs, CommandResult, Document, FeatureId, FeatureInfo, HostRequest,
+    InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext,
     WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
@@ -679,16 +680,6 @@ impl Workbench for SurfaceWorkbench {
         ])
     }
 
-    fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
-        let kind = SurfaceFeature::from_json(&node.data).ok().map(|f| f.kind());
-        FeatureInfo {
-            icon: kind.map_or("workbench-surface", |k| k.icon),
-            kind_label: kind.map_or("Surface", |k| k.label).to_string(),
-            family_label: "Surface feature".to_string(),
-            builds_solid: true,
-        }
-    }
-
     fn configure(&self, context: &mut WorkbenchContext) {
         context.register_tool(
             ToolDescriptor::new_action(SKETCH_TOOL, "Create sketch", Some("structure"))
@@ -743,6 +734,41 @@ impl Workbench for SurfaceWorkbench {
         commands::configure(context);
     }
 
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+}
+
+impl BenchFeatures for SurfaceWorkbench {
+    fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
+        let kind = SurfaceFeature::from_json(&node.data).ok().map(|f| f.kind());
+        FeatureInfo {
+            icon: kind.map_or("workbench-surface", |k| k.icon),
+            kind_label: kind.map_or("Surface", |k| k.label).to_string(),
+            family_label: "Surface feature".to_string(),
+            builds_solid: true,
+        }
+    }
+
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.tab.task.as_ref().map(|t| t.feature)
+    }
+
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        if self.tab.task.is_some() {
+            return;
+        }
+        let Some(data) = ctx.document.get_feature_data(id).cloned() else {
+            return;
+        };
+        self.open_task(Task {
+            feature: id,
+            opened: Some(data),
+        });
+    }
+}
+
+impl BenchTools for SurfaceWorkbench {
     fn on_input(
         &mut self,
         event: &WorkbenchInputEvent,
@@ -803,6 +829,33 @@ impl Workbench for SurfaceWorkbench {
         InputResult::ignored()
     }
 
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            ..Default::default()
+        }
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        let shaped = |body: BodyId| ctx.document.imported_brep_blob(body).is_some();
+        match tool_id {
+            SKETCH_TOOL => true,
+            CHECK_TOOL | CURVATURE_TOOL | ZEBRA_TOOL => {
+                Self::selected_body(ctx).is_some_and(shaped)
+            }
+            "surface.sew" | "surface.mirror" => Self::selected_body(ctx)
+                .is_some_and(|b| build::is_surface_body(ctx.document, b) && shaped(b)),
+            tool => match SurfaceFeature::for_tool(tool) {
+                Some(feature) if !feature.curves_needed() => true,
+                Some(_) => Self::has_curves(ctx),
+                None => true,
+            },
+        }
+    }
+}
+
+impl BenchPanels for SurfaceWorkbench {
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         if self.tab.task.is_none()
             && let Some(analysis) = &self.tab.analysis
@@ -840,48 +893,36 @@ impl Workbench for SurfaceWorkbench {
         })
     }
 
-    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
-        core_document::ViewportOutput {
-            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
-            labels: self.screen_labels(ctx, ctx.active_document_object),
-            ..Default::default()
+    fn has_settings(&self) -> bool {
+        true
+    }
+
+    fn settings_json(&self) -> Option<Value> {
+        serde_json::to_value(&self.options).ok()
+    }
+
+    fn apply_settings_json(&mut self, value: &Value) {
+        if let Ok(options) = serde_json::from_value(value.clone()) {
+            self.options = options;
         }
     }
+}
 
-    fn editing_feature(&self) -> Option<FeatureId> {
-        self.tab.task.as_ref().map(|t| t.feature)
+impl BenchBuild for SurfaceWorkbench {
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
+        build::rebuild_jobs(document)
     }
 
-    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        let shaped = |body: BodyId| ctx.document.imported_brep_blob(body).is_some();
-        match tool_id {
-            SKETCH_TOOL => true,
-            CHECK_TOOL | CURVATURE_TOOL | ZEBRA_TOOL => {
-                Self::selected_body(ctx).is_some_and(shaped)
-            }
-            "surface.sew" | "surface.mirror" => Self::selected_body(ctx)
-                .is_some_and(|b| build::is_surface_body(ctx.document, b) && shaped(b)),
-            tool => match SurfaceFeature::for_tool(tool) {
-                Some(feature) if !feature.curves_needed() => true,
-                Some(_) => Self::has_curves(ctx),
-                None => true,
-            },
-        }
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        build::invalidate_body(document, body);
     }
 
-    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
-        if self.tab.task.is_some() {
-            return;
-        }
-        let Some(data) = ctx.document.get_feature_data(id).cloned() else {
-            return;
-        };
-        self.open_task(Task {
-            feature: id,
-            opened: Some(data),
-        });
+    fn invalidate_all(&self, document: &mut Document) {
+        build::invalidate_all(document);
     }
+}
 
+impl BenchParameters for SurfaceWorkbench {
     fn parameters(&self, node: &core_document::FeatureNode) -> Vec<Parameter> {
         use core_document::expr::Dim;
         let Ok(feature) = SurfaceFeature::from_json(&node.data) else {
@@ -918,19 +959,11 @@ impl Workbench for SurfaceWorkbench {
             _ => Vec::new(),
         }
     }
+}
 
-    fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
-        build::rebuild_jobs(document)
-    }
+impl BenchOutput for SurfaceWorkbench {}
 
-    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
-        build::invalidate_body(document, body);
-    }
-
-    fn invalidate_all(&self, document: &mut Document) {
-        build::invalidate_all(document);
-    }
-
+impl BenchCommands for SurfaceWorkbench {
     fn run_command(
         &mut self,
         id: &str,
@@ -938,24 +971,6 @@ impl Workbench for SurfaceWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
         commands::run(self, id, args, ctx)
-    }
-
-    fn has_settings(&self) -> bool {
-        true
-    }
-
-    fn settings_json(&self) -> Option<Value> {
-        serde_json::to_value(&self.options).ok()
-    }
-
-    fn apply_settings_json(&mut self, value: &Value) {
-        if let Ok(options) = serde_json::from_value(value.clone()) {
-            self.options = options;
-        }
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
     }
 }
 
