@@ -9,7 +9,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{destructive_button, primary_button, secondary_button};
 
 use super::UiCommand;
-use crate::app::unsaved::Unsaved;
+use file_session::Unsaved;
 
 /// Ask about the document `name`, for a close or, when `revert`, for
 /// Revert to saved; the answer, once given, as a command.

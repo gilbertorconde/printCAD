@@ -204,7 +204,7 @@ impl PrintCadApp {
         app_log::info(format!("Closed `{}`", closing.document.name()));
         // Closed, with its changes saved or let go: no copy to come back from.
         self.autosave.saved.remove(&closing.tab);
-        crate::app::recovery::forget(closing.tab);
+        file_session::recovery::forget(closing.tab);
         crate::app::crash::forget(closing.tab);
         if let Some(file) = &closing.file.path {
             if let Some(view) = closing.view.to_keep() {

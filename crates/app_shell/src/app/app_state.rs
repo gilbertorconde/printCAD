@@ -316,9 +316,9 @@ impl Default for SceneMeshes {
 #[derive(Default)]
 pub(crate) struct Questions {
     /// The unsaved-edits question, and what waits for it.
-    pub unsaved: Option<crate::app::unsaved::Asking>,
+    pub unsaved: Option<file_session::Asking>,
     /// A save over a file from another version, waiting for the user.
-    pub save_over: Option<crate::app::file_safety::SaveOver>,
+    pub save_over: Option<file_session::SaveOver>,
     /// Tabs whose edits the user answered for while quitting.
     pub quit_answered: HashSet<Uuid>,
     /// Tabs Save all saved or asked about in its run.
@@ -423,11 +423,11 @@ pub(crate) struct Autosave {
     /// Autosave writes on their threads, joined before an exit.
     pub jobs: Vec<app_platform::Job>,
     /// Copies a crash left, offered back on the start page.
-    pub recoverable: Vec<crate::app::recovery::Recoverable>,
+    pub recoverable: Vec<file_session::recovery::Recoverable>,
 }
 
 impl Autosave {
-    pub fn new(recoverable: Vec<crate::app::recovery::Recoverable>) -> Self {
+    pub fn new(recoverable: Vec<file_session::recovery::Recoverable>) -> Self {
         Self {
             at: Instant::now(),
             saved: HashMap::new(),

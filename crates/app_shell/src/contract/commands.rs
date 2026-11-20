@@ -227,10 +227,10 @@ pub enum UiCommand {
     /// Open again the file of the last tab closed.
     ReopenTab,
     /// The user answered the unsaved-edits question.
-    AnswerUnsaved(crate::app::unsaved::Unsaved),
+    AnswerUnsaved(file_session::Unsaved),
     /// The user answered the question about saving over a file another
     /// version wrote.
-    AnswerSaveOver(crate::app::file_safety::SaveOverAnswer),
+    AnswerSaveOver(file_session::SaveOverAnswer),
     /// The units an STL waiting for them is in, and whether to stop
     /// asking; `None` cancels its import.
     AnswerMeshUnits(Option<(kernel_api::LengthUnit, bool)>),

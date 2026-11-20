@@ -378,7 +378,7 @@ impl PrintCadApp {
                     }
                 })
             }),
-            autosave: app::app_state::Autosave::new(app::recovery::left_behind()),
+            autosave: app::app_state::Autosave::new(file_session::recovery::left_behind()),
             questions: Default::default(),
             agents: app::app_state::Agents::new({
                 let proxy = std::sync::Mutex::new(proxy.clone());

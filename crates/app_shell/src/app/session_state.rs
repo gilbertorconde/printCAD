@@ -146,7 +146,7 @@ pub(crate) struct FileState {
     /// the files they were made with.
     pub links_from: Option<PathBuf>,
     /// What wrote the tab's file and whether it can be written in place.
-    pub safety: crate::app::file_safety::FileSafety,
+    pub safety: file_session::FileSafety,
     /// The workers packing `.prtcad` archives, and how far each has got.
     /// Packing carries every blob in the document, so it happens off the
     /// UI thread and the window keeps drawing while it runs.

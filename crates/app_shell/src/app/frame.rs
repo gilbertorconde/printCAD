@@ -686,12 +686,12 @@ impl PrintCadApp {
                         file: crate::contract::FileMarks {
                             read_only: read_only_file,
                             read_only_links: &self.session.jobs.links.read_only,
-                            newer_notice: self
-                                .session
-                                .file
-                                .safety
-                                .newer_notice
-                                .then(|| self.session.file.safety.newer_text()),
+                            newer_notice: self.session.file.safety.newer_notice.then(|| {
+                                self.session
+                                    .file
+                                    .safety
+                                    .newer_text(crate::app::file_safety::RUNNING)
+                            }),
                             unsaved_in_log: self.session.file.unsaved_in_log,
                             save_over,
                             mesh_units: self.session.file.mesh_units_pending.as_ref().map(|path| {

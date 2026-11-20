@@ -388,15 +388,13 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         strikethrough: false,
         alert: false,
         badges: if options.read_only {
-            vec![read_only_badge(crate::app::file_safety::READ_ONLY_TIP)]
+            vec![read_only_badge(file_session::READ_ONLY_TIP)]
         } else {
             Vec::new()
         },
         problem: None,
         eye: None,
-        tooltip: options
-            .read_only
-            .then_some(crate::app::file_safety::READ_ONLY_TIP),
+        tooltip: options.read_only.then_some(file_session::READ_ONLY_TIP),
     };
     let open = draw_row(ui, &root, &options, &mut result, None);
     if open || !options.filter.is_empty() {
@@ -1062,7 +1060,7 @@ fn node_row(
             .body
             .is_some_and(|body| options.read_only_links.contains(&body))
     {
-        badges.push(read_only_badge(crate::app::file_safety::READ_ONLY_LINK_TIP));
+        badges.push(read_only_badge(file_session::READ_ONLY_LINK_TIP));
     }
     if let Some(status) = &node.status {
         badges.push(status_badge(status));

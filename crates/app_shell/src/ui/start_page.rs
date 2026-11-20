@@ -14,7 +14,7 @@ use crate::app::examples::Example;
 pub struct StartPageInputs<'a> {
     pub recent: &'a [RecentEntry],
     /// Autosaved copies a crash left.
-    pub recoverable: &'a [crate::app::recovery::Recoverable],
+    pub recoverable: &'a [file_session::recovery::Recoverable],
     /// Substring filter over recent names; UI-local.
     pub search: &'a mut String,
     /// The document the New cards start from, and the benches whose cards
@@ -309,7 +309,7 @@ fn nav_item(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
 /// document is, to bring back or let go.
 fn recover_section(
     ui: &mut Ui,
-    copies: &[crate::app::recovery::Recoverable],
+    copies: &[file_session::recovery::Recoverable],
     now: u64,
     commands: &mut Vec<UiCommand>,
 ) {
@@ -324,7 +324,7 @@ fn recover_section(
                             .font(sans_medium(FONT_MD))
                             .color(TEXT1),
                     );
-                    use crate::app::recovery::Source;
+                    use file_session::recovery::Source;
                     let whence = match &copy.file {
                         Some(file) if copy.source == Source::DocumentLog => format!(
                             "Unsaved edits, {} · {}",

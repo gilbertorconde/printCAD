@@ -60,10 +60,10 @@ struct FrameIntents {
     save_all: bool,
     revert_tab: Option<uuid::Uuid>,
     /// The answer to the unsaved-edits question.
-    unsaved_answer: Option<crate::app::unsaved::Unsaved>,
+    unsaved_answer: Option<file_session::Unsaved>,
     /// A close or quit to go on with, the save it waited on written (over
     /// a file from another version, or under a name just picked).
-    after_save_over: Option<(uuid::Uuid, crate::app::unsaved::Then)>,
+    after_save_over: Option<(uuid::Uuid, file_session::Then)>,
     request_workbench: Option<ActiveWorkbench>,
     undo: bool,
     redo: bool,

@@ -9,20 +9,7 @@ use anyhow::{Context, Result};
 use crate::app::view_fit::{aabb_fit_center_radius, document_imported_aabb};
 use crate::contract::TreeItemId;
 use crate::{Document, PrintCadApp};
-
-/// Derive a user-facing document name from a file name by stripping the
-/// known document extensions (case-insensitively), longest match first.
-/// Returns the original name when no known extension matches.
-pub(crate) fn document_name_from_file_name(file_name: &str) -> &str {
-    const SUFFIXES: [&str; 4] = [".prtcad.zst", ".prtcad.gz", ".prtcad", ".json"];
-    let lowered = file_name.to_ascii_lowercase();
-    for suffix in SUFFIXES {
-        if let Some(stripped) = lowered.strip_suffix(suffix) {
-            return &file_name[..stripped.len()];
-        }
-    }
-    file_name
-}
+pub(crate) use file_session::document_name_from_file_name;
 
 /// A document read from a file, made ready to build: its features' saved
 /// dirty flags are the saving run's, so every bench marks its own features
@@ -104,7 +91,7 @@ pub(crate) enum FileDialogKind {
     SaveAs,
     /// A name for the tab's document, asked by a close, quit or Save all
     /// that goes on once the document is saved under it.
-    SaveThen(crate::app::unsaved::Then),
+    SaveThen(file_session::Then),
     ImportStep,
     Export(kernel_ogeom::export::ExportFormat),
     /// The folder an export of a file per body writes into.
@@ -665,7 +652,7 @@ impl PrintCadApp {
                         self.session.document.mark_clean();
                         // Saved, the tab needs no copy to come back from.
                         self.autosave.saved.remove(&self.session.tab);
-                        crate::app::recovery::forget(self.session.tab);
+                        file_session::recovery::forget(self.session.tab);
                     }
                     // The server took up the untitled log with the write.
                     self.session.connection.untitled_log = None;
@@ -1100,7 +1087,7 @@ impl PrintCadApp {
         for slot in &self.tabs {
             if forget(slot.tab) {
                 self.autosave.saved.remove(&slot.tab);
-                crate::app::recovery::forget(slot.tab);
+                file_session::recovery::forget(slot.tab);
             }
         }
     }
@@ -1158,7 +1145,7 @@ impl PrintCadApp {
             let tab = session.tab;
             if !session.document.metadata().dirty() {
                 if self.autosave.saved.remove(&tab).is_some() {
-                    crate::app::recovery::forget(tab);
+                    file_session::recovery::forget(tab);
                 }
                 continue;
             }
@@ -1181,7 +1168,7 @@ impl PrintCadApp {
                     .save_to_bytes(core_document::Compression::Zstd)
                     .map_err(|e| e.to_string())
                     .and_then(|bytes| {
-                        crate::app::recovery::keep(tab, &name, file.as_deref(), &bytes)
+                        file_session::recovery::keep(tab, &name, file.as_deref(), &bytes)
                             .map_err(|e| e.to_string())
                     });
                 if let Err(why) = kept {
@@ -1208,17 +1195,17 @@ impl PrintCadApp {
             return;
         };
         match &entry.source {
-            crate::app::recovery::Source::DocumentLog => {
+            file_session::recovery::Source::DocumentLog => {
                 self.autosave.recoverable.retain(|r| r.copy != copy);
                 self.open_document_at(copy);
                 self.session.file.restore_unsaved_on_open = true;
                 return;
             }
-            crate::app::recovery::Source::UntitledLog { copy_too } => {
+            file_session::recovery::Source::UntitledLog { copy_too } => {
                 self.restore_untitled_log(&entry, copy_too.clone());
                 return;
             }
-            crate::app::recovery::Source::Copy { .. } => {}
+            file_session::recovery::Source::Copy { .. } => {}
         }
         let document = app_platform::read(&copy)
             .map_err(anyhow::Error::from)
@@ -1266,7 +1253,7 @@ impl PrintCadApp {
     /// sends any edit. The tab's copy, which the log stands for, goes.
     fn restore_untitled_log(
         &mut self,
-        entry: &crate::app::recovery::Recoverable,
+        entry: &file_session::recovery::Recoverable,
         copy_too: Option<PathBuf>,
     ) {
         self.reset_to_new_document();
@@ -1285,7 +1272,7 @@ impl PrintCadApp {
                 socket: entry.copy.clone(),
             });
         if let Some(copy) = copy_too {
-            crate::app::recovery::remove(&copy);
+            file_session::recovery::remove(&copy);
         }
         self.session
             .document
@@ -1297,7 +1284,7 @@ impl PrintCadApp {
 
     /// Let a copy a crash left go, or the edits a log holds.
     pub(crate) fn discard_recovery(&mut self, copy: PathBuf) {
-        use crate::app::recovery::Source;
+        use file_session::recovery::Source;
         match self
             .autosave
             .recoverable
@@ -1309,10 +1296,10 @@ impl PrintCadApp {
             Some(Source::UntitledLog { copy_too }) => {
                 doc_server::daemon::discard_untitled_log(&copy);
                 if let Some(copy_too) = copy_too {
-                    crate::app::recovery::remove(&copy_too);
+                    file_session::recovery::remove(&copy_too);
                 }
             }
-            Some(Source::Copy { .. }) | None => crate::app::recovery::remove(&copy),
+            Some(Source::Copy { .. }) | None => file_session::recovery::remove(&copy),
         }
         self.autosave.recoverable.retain(|r| r.copy != copy);
     }
@@ -1344,7 +1331,7 @@ impl PrintCadApp {
     /// whichever tab is on screen now; it is let go when that tab closed.
     /// A name picked for a close, quit or Save all that waits on the save
     /// gives back what goes on once it is written.
-    pub(crate) fn poll_file_dialog(&mut self) -> Option<(uuid::Uuid, crate::app::unsaved::Then)> {
+    pub(crate) fn poll_file_dialog(&mut self) -> Option<(uuid::Uuid, file_session::Then)> {
         let result = match app_platform::take_answer(&mut self.files.dialog_rx) {
             Some(Ok(result)) => result,
             Some(Err(_)) => {
@@ -1738,7 +1725,7 @@ fn any_case(extension: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{document_name_from_file_name, opened_from, write_into};
+    use super::{opened_from, write_into};
 
     /// Opening a file whose stored name is not its file name's names the
     /// document after the file without an edit: nothing for the log's
@@ -1784,36 +1771,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    #[test]
-    fn strips_known_extensions() {
-        assert_eq!(document_name_from_file_name("part.prtcad"), "part");
-        assert_eq!(document_name_from_file_name("part.prtcad.gz"), "part");
-        assert_eq!(document_name_from_file_name("part.prtcad.zst"), "part");
-        assert_eq!(document_name_from_file_name("part.json"), "part");
-    }
-
-    #[test]
-    fn strips_case_insensitively_but_preserves_name_case() {
-        assert_eq!(document_name_from_file_name("Bracket.PRTCAD"), "Bracket");
-        assert_eq!(
-            document_name_from_file_name("Bracket.PrtCad.ZST"),
-            "Bracket"
-        );
-    }
-
-    #[test]
-    fn leaves_unknown_extensions_alone() {
-        assert_eq!(document_name_from_file_name("part.step"), "part.step");
-        assert_eq!(document_name_from_file_name("Untitled"), "Untitled");
-        assert_eq!(document_name_from_file_name(""), "");
-    }
-
-    #[test]
-    fn keeps_inner_dots() {
-        assert_eq!(document_name_from_file_name("v1.2.prtcad"), "v1.2");
-        // `.gz` alone is not a document extension.
-        assert_eq!(document_name_from_file_name("part.gz"), "part.gz");
-    }
     #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
     fn an_opened_file_is_offered_whatever_the_case_of_its_extension() {

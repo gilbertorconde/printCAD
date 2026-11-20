@@ -38,9 +38,7 @@ pub fn draw_tab_bar(ui: &mut Ui, tabs: &[TabInfo], commands: &mut Vec<UiCommand>
                         .show(ui);
                     reorder.push(&shown);
                     if tab.read_only {
-                        shown.response = shown
-                            .response
-                            .on_hover_text(crate::app::file_safety::READ_ONLY_TIP);
+                        shown.response = shown.response.on_hover_text(file_session::READ_ONLY_TIP);
                     }
                     shown
                         .response

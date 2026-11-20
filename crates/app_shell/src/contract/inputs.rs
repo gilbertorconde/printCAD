@@ -30,7 +30,7 @@ pub struct UiFrameInputs<'a> {
     /// Recently opened documents, most recent first.
     pub recent: &'a [RecentEntry],
     /// Autosaved copies a crash left, which the start page offers back.
-    pub recoverable: &'a [crate::app::recovery::Recoverable],
+    pub recoverable: &'a [file_session::recovery::Recoverable],
     /// The document the unsaved-edits question asks about while it is
     /// open, and whether it asks for Revert to saved.
     pub unsaved_question: Option<(String, bool)>,
@@ -217,7 +217,7 @@ pub struct FileMarks<'a> {
     /// card asking is up.
     pub unsaved_in_log: Option<u32>,
     /// Saving over a file another version wrote, waiting for an answer.
-    pub save_over: Option<crate::app::file_safety::SaveOverQuestion>,
+    pub save_over: Option<file_session::SaveOverQuestion>,
     /// An STL waiting for its units: its file name and the answer offered.
     pub mesh_units: Option<(String, kernel_api::LengthUnit)>,
 }

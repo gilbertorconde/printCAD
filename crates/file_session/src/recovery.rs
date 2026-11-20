@@ -32,7 +32,7 @@ struct Note {
 
 /// A copy a crash left, which the start page offers back.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Recoverable {
+pub struct Recoverable {
     /// What names it: the copy, the document whose log holds the edits,
     /// or the socket of the untitled tab's daemon that kept them.
     pub copy: PathBuf,
@@ -44,7 +44,7 @@ pub(crate) struct Recoverable {
 
 /// Where the work a crash left is kept.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Source {
+pub enum Source {
     /// An autosave copy. `untitled` is the socket its tab had while it had
     /// no file, which names the log its daemon kept.
     Copy { untitled: Option<PathBuf> },
@@ -77,12 +77,7 @@ fn now_ms() -> u64 {
 
 /// Keep `bytes` as tab `tab`'s copy: written beside it and moved over it,
 /// so a crash mid-write leaves the last whole copy.
-pub(crate) fn keep(
-    tab: Uuid,
-    name: &str,
-    file: Option<&Path>,
-    bytes: &[u8],
-) -> std::io::Result<()> {
+pub fn keep(tab: Uuid, name: &str, file: Option<&Path>, bytes: &[u8]) -> std::io::Result<()> {
     let copy = copy_of(tab);
     std::fs::create_dir_all(dir())?;
     let partial = copy.with_extension("partial");
@@ -98,12 +93,12 @@ pub(crate) fn keep(
 }
 
 /// Take tab `tab`'s copy away: it was saved, closed, or the app quits.
-pub(crate) fn forget(tab: Uuid) {
+pub fn forget(tab: Uuid) {
     remove(&copy_of(tab));
 }
 
 /// Take a copy and its note away.
-pub(crate) fn remove(copy: &Path) {
+pub fn remove(copy: &Path) {
     app_platform::remove(copy);
     app_platform::remove(&note_of(copy));
 }
@@ -125,7 +120,7 @@ fn running(pid: u32) -> bool {
 
 /// The copies left by processes no longer running and the documents whose
 /// logs hold unsaved edits, the latest first.
-pub(crate) fn left_behind() -> Vec<Recoverable> {
+pub fn left_behind() -> Vec<Recoverable> {
     with_logs(
         left_behind_in(&dir()),
         doc_server::daemon::unsaved_logs(),
@@ -165,8 +160,7 @@ fn with_logs(
                 .document
                 .file_name()
                 .map(|name| {
-                    crate::app::doc_io::document_name_from_file_name(&name.to_string_lossy())
-                        .to_string()
+                    crate::document_name_from_file_name(&name.to_string_lossy()).to_string()
                 })
                 .unwrap_or_default(),
             file: Some(log.document.clone()),

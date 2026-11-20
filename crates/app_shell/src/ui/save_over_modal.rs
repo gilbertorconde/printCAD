@@ -10,7 +10,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{check_row, destructive_button, primary_button, secondary_button};
 
 use super::UiCommand;
-use crate::app::file_safety::{SaveOverAnswer, SaveOverQuestion};
+use file_session::{SaveOverAnswer, SaveOverQuestion};
 
 /// Ask about saving `question.name` over its file; the answer, once
 /// given, as a command.

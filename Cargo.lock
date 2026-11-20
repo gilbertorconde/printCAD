@@ -179,6 +179,7 @@ dependencies = [
  "doc_server",
  "egui",
  "egui-winit",
+ "file_session",
  "flate2",
  "gif",
  "glam 0.33.7",
@@ -1624,6 +1625,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "file_session"
+version = "0.1.0"
+dependencies = [
+ "app_platform",
+ "core_document",
+ "doc_server",
+ "serde",
+ "serde_json",
+ "settings",
+ "uuid",
 ]
 
 [[package]]
