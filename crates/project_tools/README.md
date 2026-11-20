@@ -22,6 +22,63 @@ converted document, rebuilt, to a `.prtcad`; `check` converts every `.FCStd` in
 the files and folders given and reports, as JSON, what came in, what was lost and
 whether each sketch holds still when solved.
 
+## Corpus check
+
+`corpus` is a local regression check over real projects: point it at a folder of
+your own project archives. It never runs in CI, and the archives stay where they
+are; none belongs in the repository.
+
+```bash
+cargo build --release -p project_tools --bin project-tool
+target/release/project-tool corpus ~/projects --report corpus.json
+target/release/project-tool corpus ~/projects --report next.json --baseline corpus.json
+```
+
+With no folder named it reads `PRINTCAD_PROJECT_CORPUS`. Each archive runs in a
+process of its own, stopped after `--time-limit` seconds (300 by default), so a
+broken or slow archive never stops the run. Each is converted the way File ›
+Import converts it, every body is rebuilt, and each rebuilt body is held to the
+solid the archive saved for it by volume and area (within 0.01 %, or 0.5 % when
+the kernel had to integrate a face over a tessellation), bounding box (within
+0.05 mm at every corner) and centre of mass (within 0.01 mm, or 0.01 % of the
+box's diagonal when that is larger). The tolerances are written into the report.
+
+A body's result is `matches`, `differs` (with both figures for every measure
+that strays), `no reference` (the archive saved no solid for it), `failed` (its
+history does not build), `saved solid` (it came in as the archive's own solid,
+without a history, so nothing was rebuilt) or `linked copy`. For a body that
+differs or fails, the check rebuilds its history a feature at a time and holds
+each step to the solid the archive saved for that feature, naming the first one
+that strays; where the steps saved no solids it names the feature the build
+stops at. An archive is `complete` only when every body matches and nothing was
+lost; otherwise it is `partial`, `failed` (unreadable, or the check crashed) or
+`timed out`. Losses are listed apart from the geometry, in two kinds:
+unsupported (features, settings and curves skipped, approximated or kept as
+saved solids) and lost parametric data (constraints, expressions, attachments,
+links to other geometry, group structure), so geometry that matches never hides
+a design that is no longer editable.
+
+The run prints a table, a line per body under its archive, then the losses and
+a summary line (matched, differ, failed, no reference, saved solids; complete,
+partial, failed and timed-out archives; unsupported and lost counts), and
+writes the whole report as JSON. With `--baseline` it compares against an
+earlier report, pairing archives by file name, and exits with 1 when a body
+that matched there no longer does or an archive that imported now fails.
+
+The same run is a test that only runs when asked:
+`PRINTCAD_PROJECT_CORPUS=~/projects cargo test -p project_tools --features
+heavy-tests -- --ignored the_local_project_corpus`
+(`PRINTCAD_PROJECT_CORPUS_BASELINE` and `PRINTCAD_PROJECT_CORPUS_REPORT` name
+the baseline and where the report goes).
+
+To turn a failing case into an ordinary test, reduce it until it still fails:
+keep the body and the features up to the first one that strays, drop the rest,
+and save the smallest archive you are free to share (or build the same few
+features in the app and save that). A conversion problem then becomes a test in
+`tests/projects/` over a generated fixture in `project_archive/tests/data`; a
+wrong solid from correct features becomes a kernel test, and when the kernel is
+at fault it follows the kernel gap protocol in the repository's agent notes.
+
 ## Conversion
 
 The archive itself is read by [`project_archive`](../project_archive/README.md).

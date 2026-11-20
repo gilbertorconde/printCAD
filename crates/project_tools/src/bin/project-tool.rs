@@ -20,8 +20,11 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let usage = "usage: project-tool inspect <file.FCStd> | convert <file.FCStd> <out.prtcad> | check <file-or-directory>...";
+    let usage = format!(
+        "{usage} | corpus [<file-or-directory>...] [--report <out.json>] [--time-limit <seconds>] [--baseline <earlier.json>]"
+    );
     let Some(command) = args.first().and_then(|s| s.to_str()) else {
-        return Err(usage.into());
+        return Err(usage);
     };
     match command {
         "inspect" if args.len() == 2 => {
@@ -145,9 +148,187 @@ fn run() -> Result<(), String> {
                 return Err(format!("{failures} parity/read/rebuild failure(s)"));
             }
         }
-        _ => return Err(usage.into()),
+        "corpus" => return corpus::run(&args[1..]),
+        // One archive of a corpus run, in a process of its own so a time
+        // limit can stop it and a crash takes only it down.
+        "corpus-archive" if args.len() == 2 => {
+            let report = project_tools::corpus::check_archive(
+                Path::new(&args[1]),
+                &project_tools::corpus::measure::Tolerances::default(),
+            );
+            print_json(&serde_json::to_value(report).map_err(|e| e.to_string())?)?;
+        }
+        _ => return Err(usage),
     }
     Ok(())
+}
+
+mod corpus {
+    use project_tools::corpus::ArchiveReport;
+    use project_tools::corpus::ArchiveStatus;
+    use project_tools::corpus::measure::Tolerances;
+    use project_tools::corpus::report::{CorpusReport, regressions, table};
+    use std::ffi::OsString;
+    use std::io::Read;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// The folder a corpus run reads when none is named.
+    pub const CORPUS_VAR: &str = "PRINTCAD_PROJECT_CORPUS";
+    const DEFAULT_TIME_LIMIT_S: f64 = 300.0;
+    const DEFAULT_REPORT: &str = "project-corpus-report.json";
+
+    pub fn run(args: &[OsString]) -> Result<(), String> {
+        let mut inputs = Vec::new();
+        let mut report_path = PathBuf::from(DEFAULT_REPORT);
+        let mut baseline = None;
+        let mut time_limit = DEFAULT_TIME_LIMIT_S;
+        let mut args = args.iter();
+        while let Some(arg) = args.next() {
+            let mut value = |name: &str| {
+                args.next()
+                    .cloned()
+                    .ok_or_else(|| format!("{name} needs a value"))
+            };
+            match arg.to_str() {
+                Some("--report") => report_path = value("--report")?.into(),
+                Some("--baseline") => baseline = Some(PathBuf::from(value("--baseline")?)),
+                Some("--time-limit") => {
+                    time_limit = value("--time-limit")?
+                        .to_str()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .filter(|s| *s >= 0.0)
+                        .ok_or("--time-limit takes a number of seconds")?;
+                }
+                _ => inputs.push(PathBuf::from(arg)),
+            }
+        }
+        if inputs.is_empty() {
+            let folder = std::env::var_os(CORPUS_VAR).ok_or_else(|| {
+                format!("name a folder of project archives, or set {CORPUS_VAR} to one")
+            })?;
+            inputs.push(folder.into());
+        }
+        let mut paths = Vec::new();
+        for input in &inputs {
+            super::collect(input, &mut paths)?;
+        }
+        paths.sort();
+        paths.dedup();
+        if paths.is_empty() {
+            return Err("no project archives found".into());
+        }
+        let program = std::env::current_exe().map_err(|e| e.to_string())?;
+        let limit = Duration::from_secs_f64(time_limit);
+        let archives = paths
+            .iter()
+            .map(|path| {
+                eprintln!("checking {}", path.display());
+                check_isolated(&program, path, limit)
+            })
+            .collect();
+        let mut report = CorpusReport::new(Tolerances::default(), time_limit, archives);
+        if let Some(baseline) = &baseline {
+            let text = std::fs::read_to_string(baseline)
+                .map_err(|e| format!("{}: {e}", baseline.display()))?;
+            let earlier: CorpusReport =
+                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", baseline.display()))?;
+            report.regressions = regressions(&earlier, &report);
+        }
+        let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+        std::fs::write(&report_path, json + "\n")
+            .map_err(|e| format!("{}: {e}", report_path.display()))?;
+        print!("{}", table(&report));
+        println!("report: {}", report_path.display());
+        if !report.regressions.is_empty() {
+            return Err(format!(
+                "{} regression(s) against {}",
+                report.regressions.len(),
+                baseline.unwrap_or_default().display()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check one archive in a child process, stopped once it runs past
+    /// `limit`; whatever ends it early comes back as a failed report.
+    fn check_isolated(program: &Path, path: &Path, limit: Duration) -> ArchiveReport {
+        let started = Instant::now();
+        let child = Command::new(program)
+            .arg("corpus-archive")
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        let mut child = match child {
+            Ok(child) => child,
+            Err(e) => return ArchiveReport::failed(path, ArchiveStatus::Failed, e.to_string()),
+        };
+        let drain = |pipe: Option<Box<dyn Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut text = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    let _ = pipe.read_to_end(&mut text);
+                }
+                text
+            })
+        };
+        let stdout = drain(
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let stderr = drain(
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if started.elapsed() >= limit => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                Err(e) => {
+                    let _ = child.kill();
+                    return ArchiveReport::failed(path, ArchiveStatus::Failed, e.to_string());
+                }
+            }
+        };
+        let stdout = stdout.join().unwrap_or_default();
+        let stderr = stderr.join().unwrap_or_default();
+        let Some(status) = status else {
+            let mut report = ArchiveReport::failed(
+                path,
+                ArchiveStatus::TimedOut,
+                format!("stopped after the {:.0} s time limit", limit.as_secs_f64()),
+            );
+            report.seconds = started.elapsed().as_secs_f64();
+            return report;
+        };
+        match serde_json::from_slice::<ArchiveReport>(&stdout) {
+            Ok(report) if status.success() => report,
+            _ => {
+                let stderr = String::from_utf8_lossy(&stderr);
+                let tail: Vec<&str> = stderr.lines().rev().take(5).collect();
+                let tail: Vec<&str> = tail.into_iter().rev().collect();
+                let mut report = ArchiveReport::failed(
+                    path,
+                    ArchiveStatus::Failed,
+                    format!("the check ended with {status}: {}", tail.join(" / ")),
+                );
+                report.seconds = started.elapsed().as_secs_f64();
+                report
+            }
+        }
+    }
 }
 
 fn read(path: &Path) -> Result<(FcstdArchive, FcDocument), Failure> {

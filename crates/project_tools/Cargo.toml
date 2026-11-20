@@ -7,6 +7,10 @@ rust-version.workspace = true
 publish = false
 description = "Archive project reader, document converter and parity checks"
 
+[features]
+# The local project-corpus test entry point (tests/projects/corpus.rs).
+heavy-tests = []
+
 [dependencies]
 core_document = { path = "../core_document" }
 wb_sketch = { path = "../workbenches/wb_sketch" }

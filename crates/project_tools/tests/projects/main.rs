@@ -1,5 +1,6 @@
 mod cli;
 mod conversion;
+mod corpus;
 mod features;
 mod numbers;
 mod parity;
