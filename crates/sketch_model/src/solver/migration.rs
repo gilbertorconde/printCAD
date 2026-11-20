@@ -1149,6 +1149,22 @@ fn constraint_count_is_the_prepared_problems() {
 }
 
 #[test]
+fn solved_fits_skip_answers_as_the_full_scan() {
+    let sketches = varied_cases();
+    let has_spline =
+        |s: &Sketch| (s.geometry.iter()).any(|g| matches!(g, GeometryElement::BSpline(_)));
+    assert!(sketches.iter().any(|s| !has_spline(s)));
+    assert!((sketches.iter()).any(|s| !crate::spline::solved_fits(s).is_empty()));
+    for sketch in sketches {
+        assert_eq!(
+            crate::spline::solved_fits(&sketch),
+            crate::spline::driven_fits(&sketch),
+            "{}",
+            sketch.name
+        );
+    }
+}
+#[test]
 fn corpus_checks_geometric_meaning_and_held_fallback() {
     for (mut sketch, held) in cases() {
         let name = sketch.name.clone();
