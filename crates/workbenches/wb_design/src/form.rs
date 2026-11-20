@@ -23,9 +23,6 @@ pub(crate) struct Form<'e> {
     pub(crate) freeze_errors: HashMap<core_document::FeatureId, String>,
     /// The field last edited, by its label: what a drawing lights.
     pub(crate) focus: Option<String>,
-    /// The bound number the applied event set, by its formula key (its
-    /// place in the feature's data).
-    pub(crate) edited: Option<String>,
 }
 
 impl<'e> Form<'e> {
@@ -35,7 +32,6 @@ impl<'e> Form<'e> {
             form: panel::Form::declare(),
             freeze_errors: HashMap::new(),
             focus: None,
-            edited: None,
         }
     }
 
@@ -45,7 +41,6 @@ impl<'e> Form<'e> {
             form: panel::Form::apply(event),
             freeze_errors: HashMap::new(),
             focus: None,
-            edited: None,
         }
     }
 
@@ -82,9 +77,6 @@ impl<'e> Form<'e> {
         let mut value = q.value;
         let name = q.label.clone();
         let bound = self.form.number(&name, &mut value, q);
-        if bound.set {
-            self.edited = bound.widget.bind.as_ref().map(|b| b.key.clone());
-        }
         self.push(hinted(hint, bound.widget.into()));
         bound.set.then_some(value)
     }

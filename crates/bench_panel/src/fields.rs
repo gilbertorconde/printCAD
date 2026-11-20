@@ -136,6 +136,8 @@ pub(super) struct Typed {
     pub(super) text: Option<String>,
     /// A live field left this frame: its text, and whether by Escape.
     pub(super) left: Option<(String, bool)>,
+    /// The field holds keyboard focus.
+    pub(super) focused: bool,
 }
 
 /// A one-line text field holding its draft while focused: the text as
@@ -203,9 +205,11 @@ pub(super) fn text_edit(
         return Typed {
             text: response.changed().then_some(draft),
             left,
+            focused: response.has_focus(),
         };
     }
-    if response.has_focus() {
+    let focused = response.has_focus();
+    if focused {
         ui.data_mut(|d| d.insert_temp(key, draft.clone()));
     }
     let mut text = None;
@@ -215,7 +219,11 @@ pub(super) fn text_edit(
             text = Some(draft);
         }
     }
-    Typed { text, left: None }
+    Typed {
+        text,
+        left: None,
+        focused,
+    }
 }
 
 /// A labelled row: the section's label column, then the control. An
@@ -413,7 +421,11 @@ fn quantity_control(
             } else if let Some(width) = width {
                 field = field.width(width);
             }
-            match field.show(ui) {
+            let (edit, focused) = field.show_focused(ui);
+            if focused {
+                out.focused = Some(q.id.clone());
+            }
+            match edit {
                 Some(widgets::FormulaEdit::Value(v)) => {
                     if formula.is_some() {
                         out.formulas.push(FormulaSet {
@@ -458,6 +470,9 @@ fn quantity_control(
                 drag = drag.fixed_decimals(0);
             }
             let response = ui.add(drag);
+            if response.has_focus() {
+                out.focused = Some(q.id.clone());
+            }
             widgets::hold_dragged(ui, &response, &mut v, &stops);
             if response.changed() {
                 out.events.push(PanelEvent::Number {
@@ -481,7 +496,11 @@ fn quantity_control(
         if let Some(width) = width {
             field = field.width(width);
         }
-        if field.show(ui) {
+        let edit = field.show_settling(ui);
+        if edit.response.is_some_and(|r| r.has_focus()) {
+            out.focused = Some(q.id.clone());
+        }
+        if edit.changed {
             out.events.push(PanelEvent::Number {
                 id: q.id.clone(),
                 value: clamp(v),

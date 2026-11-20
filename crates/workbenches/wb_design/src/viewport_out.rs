@@ -118,8 +118,8 @@ impl DesignWorkbench {
     }
 
     /// Whether `handle` is the one being edited: held, its value typed
-    /// beside it past the release, or its field the one the panel last
-    /// edited. The same number of the same feature, whatever it has been
+    /// beside it past the release, or its field the one in the panel
+    /// holding the keyboard. The same number of the same feature, whatever it has been
     /// dragged to.
     pub(crate) fn is_lit(&self, handle: &handles::Handle) -> bool {
         let same = |feature: FeatureId, pointer: &str| {
@@ -132,7 +132,7 @@ impl DesignWorkbench {
             .or(self.tab.typed.as_ref().map(|t| &t.0));
         match held {
             Some(held) => same(held.feature, &held.pointer),
-            None => (self.tab.edited.as_ref()).is_some_and(|(f, p)| same(*f, p)),
+            None => (self.tab.focused.as_ref()).is_some_and(|(f, p)| same(*f, p)),
         }
     }
 

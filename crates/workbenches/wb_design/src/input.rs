@@ -228,7 +228,7 @@ impl DesignWorkbench {
                     self.tab.snapped = None;
                     self.tab.held = Some(held);
                     self.tab.held_moved = false;
-                    self.tab.edited = None;
+                    self.tab.focused = None;
                     return Some(InputResult::consumed());
                 }
                 // A click on a region of the open task's sketch chooses it.

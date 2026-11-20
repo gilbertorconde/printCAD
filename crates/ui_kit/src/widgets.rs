@@ -1624,7 +1624,8 @@ pub struct QtyEdit {
     pub changed: bool,
     /// A drag was let go or typing finished.
     pub settled: bool,
-    /// The value's own response, for a tooltip.
+    /// The value's own response: its tooltip, whether it holds the
+    /// keyboard.
     pub response: Option<Response>,
 }
 
@@ -2428,6 +2429,12 @@ impl<'a> FormulaField<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Option<FormulaEdit> {
+        self.show_focused(ui).0
+    }
+
+    /// [`Self::show`], and whether the field holds keyboard focus: its
+    /// number being typed, or its formula.
+    pub fn show_focused(self, ui: &mut Ui) -> (Option<FormulaEdit>, bool) {
         let editing: Option<String> = ui.data(|d| d.get_temp(self.id));
         match editing {
             Some(text) => self.show_editing(ui, text),
@@ -2452,8 +2459,9 @@ impl<'a> FormulaField<'a> {
             .inner_margin(Margin::symmetric(SPACE_2 as i8, 0))
     }
 
-    fn show_value(self, ui: &mut Ui) -> Option<FormulaEdit> {
+    fn show_value(self, ui: &mut Ui) -> (Option<FormulaEdit>, bool) {
         let mut out = None;
+        let mut focused = false;
         let border = match (self.error, self.formula) {
             (Some(_), _) => DANGER,
             (None, Some(_)) => ACCENT,
@@ -2510,6 +2518,7 @@ impl<'a> FormulaField<'a> {
                                             .flatten()
                                     }),
                             );
+                            focused = resp.has_focus();
                             hold_dragged(ui, &resp, &mut v, &self.drag_range);
                             if let Some(w) =
                                 wheel_step(ui, &resp, v, self.decimals, &self.drag_range)
@@ -2545,13 +2554,14 @@ impl<'a> FormulaField<'a> {
                 field.response.on_hover_text(err);
             }
         });
-        out
+        (out, focused)
     }
 
-    fn show_editing(self, ui: &mut Ui, mut text: String) -> Option<FormulaEdit> {
+    fn show_editing(self, ui: &mut Ui, mut text: String) -> (Option<FormulaEdit>, bool) {
         let text_id = self.id.with("text");
         let host = self.host;
         let mut out = None;
+        let mut focused = false;
         let mut done = false;
         let inner = self.inner_width(ui, false);
         // Filling a space, the formula stays inside it; a free field lets a
@@ -2582,6 +2592,7 @@ impl<'a> FormulaField<'a> {
                             },
                         );
                         let resp = edit.response;
+                        focused = resp.has_focus();
                         // A name picked from the dropdown is not the end
                         // of the formula: the edit gets the keyboard back.
                         if resp.lost_focus() && !edit.picked {
@@ -2625,7 +2636,7 @@ impl<'a> FormulaField<'a> {
         } else {
             ui.data_mut(|d| d.insert_temp(self.id, text));
         }
-        out
+        (out, focused)
     }
 }
 
