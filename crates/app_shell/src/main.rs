@@ -3,32 +3,25 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
-mod camera;
-mod console;
 mod headless;
-mod kernel_worker;
-mod log_panel;
-mod orientation_cube;
-mod platform;
 #[cfg(all(feature = "profile", target_os = "linux"))]
 mod profile;
-mod script_library;
 #[cfg(test)]
 mod test_support;
-mod ui;
 
 use anyhow::{Context, Result};
 use core_document::{Document, DocumentService, WorkbenchId};
 use kernel_worker::KernelWorker;
-use log_panel as app_log;
 use render_wgpu::RenderBackend;
 use render_wgpu::{FrameSubmission, RenderSettings, Renderer};
 use settings::{SettingsStore, UserSettings};
 use std::path::PathBuf;
 
+use app_ui::UiLayer;
+use app_ui::contract::{ActiveWorkbench, Screen};
+use app_ui::{array_paths, console, contract, keymap, scans, script_library};
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use ui::{ActiveWorkbench, Screen, UiLayer};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -36,6 +29,9 @@ use winit::{
     window::{WindowAttributes, WindowId},
 };
 use workbenches::register_all_workbenches;
+
+/// The release notes What's new shows.
+const RELEASE_NOTES: &str = include_str!("../RELEASE_NOTES.md");
 
 fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>>
 {
@@ -88,6 +84,7 @@ fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_bloc
 
 fn main() -> Result<()> {
     core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
+    app_ui::build::set(env!("CARGO_PKG_VERSION"), RELEASE_NOTES);
     app::bench_hooks::hooks();
     #[cfg(all(feature = "profile", target_os = "linux"))]
     profile::start();
@@ -118,7 +115,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let packages = app::packages::register(&mut registry, &user_settings.packages);
+    let packages = package_store::register(&mut registry, &user_settings.packages);
     let user_settings_check_updates = user_settings.packages.check_updates;
 
     // The benches' own settings, back from the file.
@@ -126,7 +123,7 @@ fn main() -> Result<()> {
     match headless::parse(&words) {
         Ok(Some(invocation)) => {
             let finished = headless::run(&invocation, registry);
-            crate::platform::remove_scratch_folder();
+            app_platform::remove_scratch_folder();
             let finished = finished?;
             #[cfg(all(feature = "profile", target_os = "linux"))]
             profile::finish();
@@ -180,7 +177,7 @@ fn main() -> Result<()> {
     // A desktop logout or Ctrl+C in a terminal quits the way the window's
     // close does, though with no one to answer a question.
     let proxy = std::sync::Mutex::new(event_loop.create_proxy());
-    if let Err(err) = platform::on_termination(move || {
+    if let Err(err) = app_platform::on_termination(move || {
         if let Ok(proxy) = proxy.lock() {
             let _ = proxy.send_event(AppEvent::Terminate);
         }
@@ -193,7 +190,7 @@ fn main() -> Result<()> {
     // The dialog's thread ends with the process; a chooser it started as
     // a process of its own would not.
     if app.files.dialog_rx.is_some() {
-        platform::end_file_choosers();
+        app_platform::end_file_choosers();
     }
     #[cfg(all(feature = "profile", target_os = "linux"))]
     profile::finish();
@@ -378,7 +375,7 @@ impl PrintCadApp {
                     }
                 })
             }),
-            autosave: app::app_state::Autosave::new(app::recovery::left_behind()),
+            autosave: app::app_state::Autosave::new(file_session::recovery::left_behind()),
             questions: Default::default(),
             agents: app::app_state::Agents::new({
                 let proxy = std::sync::Mutex::new(proxy.clone());
@@ -554,7 +551,15 @@ impl PrintCadApp {
     /// The window and its renderer are made: the UI on them, and the
     /// camera sized to the window.
     fn finish_gfx(&mut self, renderer: Renderer, window: winit::window::Window) {
-        let mut ui_layer = UiLayer::new(&window);
+        let hooks = app::bench_hooks::hooks();
+        let mut ui_layer = UiLayer::new(
+            &window,
+            contract::UiHooks {
+                steps: hooks.ui.clone(),
+                prefs: hooks.prefs.clone(),
+                chat: hooks.chat.is_some(),
+            },
+        );
         if let Some(panels) = &self.kept.last_session.panels {
             ui_layer.restore_panel_layout(panels);
         }
@@ -583,5 +588,35 @@ mod icon_tests {
     #[test]
     fn the_window_icon_decodes_from_the_bundled_picture() {
         assert!(super::window_icon().is_some());
+    }
+}
+
+#[cfg(test)]
+mod release_notes_tests {
+    #[test]
+    fn the_running_version_has_notes_and_every_topic_says_something() {
+        let releases = app_ui::build::parse(super::RELEASE_NOTES);
+        assert!(
+            releases
+                .iter()
+                .any(|r| r.version == env!("CARGO_PKG_VERSION")),
+            "RELEASE_NOTES.md has no notes for {}",
+            env!("CARGO_PKG_VERSION")
+        );
+        for release in &releases {
+            assert!(
+                !release.topics.is_empty(),
+                "{} has no topics",
+                release.version
+            );
+            for topic in &release.topics {
+                assert!(
+                    !topic.changes.is_empty(),
+                    "{} › {} is empty",
+                    release.version,
+                    topic.title
+                );
+            }
+        }
     }
 }

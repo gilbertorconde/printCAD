@@ -10,8 +10,8 @@ use super::gesture::HandleTarget;
 use super::scalar_arrow::{ARROW_PT, Held, ScalarArrow, ScalarDrag};
 use crate::PrintCadApp;
 use crate::app::measure::{DatumPick, MeasurePick};
-use crate::camera::CameraController;
-use crate::camera::section::{SectionAim, SectionPick, SectionPlane, SectionToggle};
+use view_camera::CameraController;
+use view_camera::section::{SectionAim, SectionPick, SectionPlane, SectionToggle};
 
 /// The steps a dragged offset goes in, mm.
 const STEP_MM: f32 = 0.1;
@@ -188,9 +188,9 @@ impl PrintCadApp {
     }
 
     /// What the scene is cut with, as the renderer has it.
-    pub(crate) fn scene_clip(&self) -> Option<crate::camera::section::Clip> {
+    pub(crate) fn scene_clip(&self) -> Option<view_camera::section::Clip> {
         let frame = &self.frame_submission;
-        frame.clip_plane.map(|plane| crate::camera::section::Clip {
+        frame.clip_plane.map(|plane| view_camera::section::Clip {
             plane,
             wedge: frame.clip_wedge,
         })
@@ -201,12 +201,8 @@ impl PrintCadApp {
     pub(crate) fn clip_of(
         &self,
         body: core_document::BodyId,
-    ) -> Option<crate::camera::section::Clip> {
-        crate::camera::section::clip_for(
-            self.scene_clip(),
-            self.session.view.section.as_ref(),
-            body,
-        )
+    ) -> Option<view_camera::section::Clip> {
+        view_camera::section::clip_for(self.scene_clip(), self.session.view.section.as_ref(), body)
     }
 
     /// The plane of a flat face or a datum plane the selection holds.
@@ -221,7 +217,7 @@ impl PrintCadApp {
                 eye,
             );
         }
-        let Some(crate::ui::TreeItemId::Feature(id)) = self.session.selection.tree else {
+        let Some(crate::contract::TreeItemId::Feature(id)) = self.session.selection.tree else {
             return None;
         };
         let (origin, normal) = self.datum_plane(id)?;
@@ -296,9 +292,7 @@ impl PrintCadApp {
                         eye,
                     ),
                     _ => {
-                        crate::app_log::info(
-                            "The clipping plane takes a flat face or a datum plane",
-                        );
+                        app_log::info("The clipping plane takes a flat face or a datum plane");
                         return true;
                     }
                 };
@@ -323,7 +317,7 @@ impl PrintCadApp {
                             self.session.view.section_pick = None;
                         }
                         None => {
-                            crate::app_log::info(
+                            app_log::info(
                                 "Those three points stand in a line: pick the third again",
                             );
                             points.pop();
@@ -418,7 +412,7 @@ impl PrintCadApp {
         let toggle = match aim {
             "view" => SectionToggle::View,
             saved if saved.starts_with("saved:") => {
-                self.saved_section_action(crate::ui::SavedSectionAction::Show(
+                self.saved_section_action(crate::contract::SavedSectionAction::Show(
                     saved["saved:".len()..].to_string(),
                 ));
                 return;
@@ -426,9 +420,9 @@ impl PrintCadApp {
             "face" => SectionToggle::Pick(SectionPick::Plane),
             "x" | "y" | "z" => {
                 let axis = match aim {
-                    "x" => crate::camera::section::SectionAxis::X,
-                    "y" => crate::camera::section::SectionAxis::Y,
-                    _ => crate::camera::section::SectionAxis::Z,
+                    "x" => view_camera::section::SectionAxis::X,
+                    "y" => view_camera::section::SectionAxis::Y,
+                    _ => view_camera::section::SectionAxis::Z,
                 };
                 let (_, forward) = self.eye_and_forward();
                 let bounds = self.session.view.camera.scene_bounds();

@@ -1,0 +1,22 @@
+[package]
+name = "view_camera"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The app's view camera: window input, settings and device readings steering viewport_camera, the clipping plane, the views kept between runs."
+
+[dependencies]
+axes = { path = "../axes" }
+core_document = { path = "../core_document" }
+glam.workspace = true
+kernel_api.workspace = true
+orientation_cube = { path = "../orientation_cube" }
+serde.workspace = true
+settings = { path = "../settings" }
+tracing.workspace = true
+viewport_camera = { path = "../viewport_camera" }
+winit.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

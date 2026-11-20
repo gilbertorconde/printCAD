@@ -17,9 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::PrintCadApp;
 use crate::app::session_state::ViewState;
-use crate::camera::KeptView;
-use crate::log_panel as app_log;
-use crate::ui::PanelLayout;
+use crate::contract::PanelLayout;
+use view_camera::KeptView;
 
 /// How many documents' views are kept: the latest looked at.
 pub(crate) const VIEWS_KEPT: usize = 50;
@@ -323,7 +322,7 @@ impl PrintCadApp {
     /// Write `now` to the stores. A run a bench hook opened leaves the
     /// user's session as it was, as it leaves it unopened at start.
     fn keep(&mut self, now: Standing) {
-        if crate::launch_screen() == crate::ui::Screen::Start {
+        if crate::launch_screen() == crate::contract::Screen::Start {
             keep_views(now.views.clone());
             keep_session(&now.session);
         }

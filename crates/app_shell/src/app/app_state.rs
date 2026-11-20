@@ -214,9 +214,9 @@ pub(crate) struct FileWork {
     /// Pending file dialog result from its background thread.
     pub dialog_rx: Option<std::sync::mpsc::Receiver<crate::app::doc_io::FileDialogResult>>,
     /// An export being written on its own thread.
-    pub export_rx: Option<std::sync::mpsc::Receiver<crate::app::export::ExportOutcome>>,
+    pub export_rx: Option<std::sync::mpsc::Receiver<doc_export::ExportOutcome>>,
     /// The export options last confirmed, which the dialog opens on.
-    pub last_export: crate::app::export::ExportDraft,
+    pub last_export: doc_export::ExportDraft,
     /// Recently opened documents and the last dialog directory.
     pub recent: settings::recent::RecentStore,
     /// The files of the tabs closed, the latest last: what Reopen closed
@@ -228,7 +228,7 @@ pub(crate) struct FileWork {
     /// has been sent.
     pub slicer_folder: Option<PathBuf>,
     /// Animations being drawn and written on threads of their own.
-    pub animations: Vec<crate::platform::Job>,
+    pub animations: Vec<app_platform::Job>,
 }
 
 impl FileWork {
@@ -316,9 +316,9 @@ impl Default for SceneMeshes {
 #[derive(Default)]
 pub(crate) struct Questions {
     /// The unsaved-edits question, and what waits for it.
-    pub unsaved: Option<crate::app::unsaved::Asking>,
+    pub unsaved: Option<file_session::Asking>,
     /// A save over a file from another version, waiting for the user.
-    pub save_over: Option<crate::app::file_safety::SaveOver>,
+    pub save_over: Option<file_session::SaveOver>,
     /// Tabs whose edits the user answered for while quitting.
     pub quit_answered: HashSet<Uuid>,
     /// Tabs Save all saved or asked about in its run.
@@ -421,13 +421,13 @@ pub(crate) struct Autosave {
     /// Each tab's document as last autosaved, by its mutation seq.
     pub saved: HashMap<Uuid, u64>,
     /// Autosave writes on their threads, joined before an exit.
-    pub jobs: Vec<crate::platform::Job>,
+    pub jobs: Vec<app_platform::Job>,
     /// Copies a crash left, offered back on the start page.
-    pub recoverable: Vec<crate::app::recovery::Recoverable>,
+    pub recoverable: Vec<file_session::recovery::Recoverable>,
 }
 
 impl Autosave {
-    pub fn new(recoverable: Vec<crate::app::recovery::Recoverable>) -> Self {
+    pub fn new(recoverable: Vec<file_session::recovery::Recoverable>) -> Self {
         Self {
             at: Instant::now(),
             saved: HashMap::new(),
@@ -442,21 +442,21 @@ pub(crate) struct Agents {
     /// The MCP server agents reach the document through.
     pub mcp: Option<crate::app::mcp::McpServer>,
     /// Changes agents asked for, waiting for the user's OK.
-    pub approvals: Vec<crate::app::mcp::Approval>,
+    pub approvals: Vec<assistant::Approval>,
     /// `screen` calls waiting for the next picture of the view.
     pub screen_waiting: Vec<std::sync::mpsc::Sender<agents::mcp::ToolAnswer>>,
     /// An agent needs the user: the assistant panel opens.
     pub assistant_attention: bool,
     /// The chats with agents, in the order they were opened.
-    pub chats: Vec<crate::app::chats::Chat>,
+    pub chats: Vec<assistant::Chat>,
     /// How many chats this session has opened, for the next one's name.
     pub chats_made: usize,
     /// The closed chats the assistant's history lists, read again whenever
     /// one closes, reopens or is forgotten, and when the list opens.
-    pub history: Vec<crate::app::chats::PastChat>,
+    pub history: Vec<assistant::PastChat>,
     /// Chats closed on documents not saved, by tab: kept for the run, and
     /// moved into the store when the document is first saved.
-    pub closed_unsaved: Vec<(Uuid, crate::app::chat_store::SavedChat)>,
+    pub closed_unsaved: Vec<(Uuid, assistant::chat_store::SavedChat)>,
     /// Wakes the loop from another thread.
     pub waker: Arc<dyn Fn() + Send + Sync>,
 }
@@ -485,9 +485,9 @@ pub(crate) struct Packages {
     /// or removed while the app runs.
     pub installed: Vec<workbenches::PackageStatus>,
     /// Package installs, update checks and updates running on threads.
-    pub work: crate::app::packages::PackageWork,
+    pub work: package_store::PackageWork,
     /// The workbench stores' indexes, and which are being fetched.
-    pub store: crate::app::packages::StoreView,
+    pub store: package_store::StoreView,
     /// What the last look for a newer printCAD found.
-    pub release_check: crate::app::updates::ReleaseCheck,
+    pub release_check: package_store::ReleaseCheck,
 }

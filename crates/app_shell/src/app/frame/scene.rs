@@ -28,7 +28,7 @@ impl PrintCadApp {
                 // even on hairline geometry.
                 let is_active = self.session.active_document_object == Some(feature_id)
                     || self.session.selection.tree
-                        == Some(crate::ui::TreeItemId::Feature(feature_id));
+                        == Some(crate::contract::TreeItemId::Feature(feature_id));
                 // Parts of it picked on their own leave the rest plain.
                 let parts: &[core_document::FeaturePart] =
                     if self.session.active_document_object == Some(feature_id) {
@@ -43,7 +43,8 @@ impl PrintCadApp {
                     .as_ref()
                     .is_some_and(|(f, _)| *f == feature_id);
                 let is_hovered = (self.session.hover.feature == Some(feature_id) && !curve_lit)
-                    || self.session.hover.tree == Some(crate::ui::TreeItemId::Feature(feature_id));
+                    || self.session.hover.tree
+                        == Some(crate::contract::TreeItemId::Feature(feature_id));
                 let palette = core_document::SketchPalette::default();
                 let plain = match geometry.tint {
                     core_document::PassiveTint::Plain => palette.geometry,
@@ -384,13 +385,13 @@ impl PrintCadApp {
                 // as the shell it is; a closed one is capped. A body the
                 // toolbar's section leaves whole is neither.
                 let uncut = scene_clip.is_some()
-                    && crate::camera::section::clip_for(scene_clip, section.as_ref(), *body_id)
+                    && view_camera::section::clip_for(scene_clip, section.as_ref(), *body_id)
                         .is_none();
                 let open = !uncut && {
                     let closed = match self.session.drawn.closed.get(body_id) {
                         Some((at, closed)) if *at == geometry.revision => *closed,
                         _ => {
-                            let closed = crate::app::scans::closes(&geometry.mesh);
+                            let closed = crate::scans::closes(&geometry.mesh);
                             self.session
                                 .drawn
                                 .closed

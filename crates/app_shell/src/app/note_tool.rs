@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::PrintCadApp;
 use crate::app::face_pick::MeshStamp;
+use crate::contract::NoteCardView;
 
 /// How near the cursor a note's point or label must be to be under it, in
 /// logical pixels.
@@ -34,28 +35,6 @@ pub(crate) struct NoteCard {
 pub(crate) enum NoteEditing {
     New(Box<Note>),
     Existing(NoteId),
-}
-
-/// What the UI draws of the note card.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NoteCardView {
-    pub id: NoteId,
-    /// The note's number, or the one a new note will take.
-    pub number: u32,
-    pub new: bool,
-    /// What the field opens with: the note's text, or the answer to its
-    /// question so far.
-    pub text: String,
-    /// The note is a question still open: the field answers it.
-    pub answering: bool,
-    /// The question, when the field answers one.
-    pub question: String,
-    pub resolved: bool,
-    pub author: NoteAuthor,
-    pub lost: bool,
-    pub from_file: bool,
-    /// Where the note's point is, in viewport pixels; `None` off screen.
-    pub at: Option<[f32; 2]>,
 }
 
 impl PrintCadApp {

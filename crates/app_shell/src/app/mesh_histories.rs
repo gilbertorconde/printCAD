@@ -44,11 +44,11 @@ impl MeshHistories {
             .making
             .iter_mut()
             .filter_map(|(body, building)| {
-                let answer = crate::platform::take_answer(&mut building.answer)?;
+                let answer = app_platform::take_answer(&mut building.answer)?;
                 Some((
                     *body,
                     answer.unwrap_or_else(|_| {
-                        crate::log_panel::warn(format!("{ENDED}."));
+                        app_log::warn(format!("{ENDED}."));
                         Err(ENDED.to_string())
                     }),
                 ))
@@ -127,7 +127,7 @@ impl crate::PrintCadApp {
                     answer: Some(rx),
                 },
             );
-            let spawned = crate::platform::spawn("printcad-mesh-history", move || {
+            let spawned = app_platform::spawn("printcad-mesh-history", move || {
                 use kernel_api::KernelQueries;
                 let answer = kernel_ogeom::QUERIES
                     .build_mesh_chain(&mesh, &ops)
@@ -135,7 +135,7 @@ impl crate::PrintCadApp {
                 let _ = tx.send(answer);
             });
             if let Err(err) = spawned {
-                crate::log_panel::warn(format!("A mesh history could not start: {err}"));
+                app_log::warn(format!("A mesh history could not start: {err}"));
                 self.session.jobs.mesh_histories.making.remove(&body);
             }
         }

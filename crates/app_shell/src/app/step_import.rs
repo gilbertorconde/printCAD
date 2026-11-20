@@ -15,9 +15,8 @@ use uuid::Uuid;
 
 use crate::PrintCadApp;
 use crate::app::view_fit::aabb_fit_center_radius;
-use crate::kernel_worker::KernelResponse;
-use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
+use kernel_worker::KernelResponse;
 
 /// Map a STEP-declared length unit onto the document's display unit enum.
 fn length_unit_to_document_unit(unit: LengthUnit) -> Unit {
@@ -63,7 +62,7 @@ impl PrintCadApp {
         if let Some(unit) = self.imports.units.get(path) {
             args.insert(
                 "units".to_string(),
-                serde_json::json!(crate::app::scans::unit_key(*unit)),
+                serde_json::json!(crate::scans::unit_key(*unit)),
             );
         }
         self.record_calls(vec![core_document::Recorded {
@@ -337,8 +336,8 @@ impl PrintCadApp {
                     result,
                 } => {
                     let reading = match result {
-                        Ok(props) => crate::ui::Physical::Ready(Box::new(props)),
-                        Err(error) => crate::ui::Physical::Failed(error),
+                        Ok(props) => crate::contract::Physical::Ready(Box::new(props)),
+                        Err(error) => crate::contract::Physical::Failed(error),
                     };
                     self.session
                         .drawn
@@ -453,7 +452,7 @@ impl PrintCadApp {
             .units
             .remove(path)
             .unwrap_or(kernel_api::LengthUnit::Millimetre);
-        crate::app::scans::scale_to_millimetres(&mut imported, unit);
+        crate::scans::scale_to_millimetres(&mut imported, unit);
         let landed = land_import(
             &mut self.session.document,
             path,
@@ -462,7 +461,7 @@ impl PrintCadApp {
             detail,
         );
         if self.imports.scans.remove(path) {
-            crate::app::scans::mark_scans(&mut self.session.document, &landed.bodies, unit);
+            crate::scans::mark_scans(&mut self.session.document, &landed.bodies, unit);
         }
 
         // The reader's warnings never reach the terminal one by one: a
@@ -558,7 +557,7 @@ impl PrintCadApp {
         }
 
         self.remember_recent_dir(path);
-        self.session.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::contract::Screen::Workspace;
         let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
         info!(
             path = %path.display(),

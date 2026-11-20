@@ -144,35 +144,58 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app_log"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "app_platform"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "local_ipc",
+ "uuid",
+]
+
+[[package]]
 name = "app_shell"
 version = "0.18.0"
 dependencies = [
  "agents",
  "anyhow",
+ "app_log",
+ "app_platform",
+ "app_ui",
  "arboard",
+ "assistant",
  "axes",
  "base64 0.23.1",
  "bench_fixtures",
  "bench_panel",
  "build_driver",
  "core_document",
+ "doc_export",
  "doc_render",
  "doc_server",
  "egui",
  "egui-winit",
+ "file_session",
  "flate2",
  "gif",
  "glam 0.33.7",
  "kernel_ogeom",
- "libc",
+ "kernel_worker",
  "local_ipc",
  "notify-rust",
+ "orientation_cube",
+ "package_store",
  "png",
  "pprof",
  "printcad-bench-api",
  "printcad-kernel-api",
  "render_wgpu",
- "resvg",
  "rfd",
  "scripting",
  "serde",
@@ -185,11 +208,47 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "ui_kit",
- "usvg",
  "uuid",
+ "view_camera",
  "viewport_camera",
  "winit",
  "winresource",
+ "workbenches",
+]
+
+[[package]]
+name = "app_ui"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "app_log",
+ "assistant",
+ "axes",
+ "bench_panel",
+ "core_document",
+ "doc_export",
+ "doc_render",
+ "egui",
+ "egui-winit",
+ "file_session",
+ "glam 0.33.7",
+ "kernel_ogeom",
+ "local_ipc",
+ "orientation_cube",
+ "package_store",
+ "printcad-bench-api",
+ "printcad-kernel-api",
+ "render_wgpu",
+ "serde",
+ "serde_json",
+ "settings",
+ "surface_texture",
+ "tiny-skia 0.12.0",
+ "tracing",
+ "ui_kit",
+ "uuid",
+ "view_camera",
+ "winit",
  "workbenches",
 ]
 
@@ -257,6 +316,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "assistant"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "app_log",
+ "core_document",
+ "local_ipc",
+ "serde_json",
+ "settings",
+ "uuid",
 ]
 
 [[package]]
@@ -1255,6 +1327,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc_export"
+version = "0.1.0"
+dependencies = [
+ "app_log",
+ "app_platform",
+ "core_document",
+ "doc_render",
+ "glam 0.33.7",
+ "kernel_ogeom",
+ "local_ipc",
+ "printcad-kernel-api",
+ "serde_json",
+ "settings",
+ "surface_texture",
+ "uuid",
+]
+
+[[package]]
 name = "doc_render"
 version = "0.1.0"
 dependencies = [
@@ -1592,6 +1682,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "file_session"
+version = "0.1.0"
+dependencies = [
+ "app_platform",
+ "core_document",
+ "doc_server",
+ "serde",
+ "serde_json",
+ "settings",
+ "uuid",
 ]
 
 [[package]]
@@ -2445,6 +2548,21 @@ dependencies = [
  "wb_design",
  "wb_sketch",
  "wb_surface",
+]
+
+[[package]]
+name = "kernel_worker"
+version = "0.1.0"
+dependencies = [
+ "app_platform",
+ "build_driver",
+ "core_document",
+ "kernel_ogeom",
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3587,6 +3705,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "orientation_cube"
+version = "0.1.0"
+dependencies = [
+ "axes",
+ "egui",
+ "glam 0.33.7",
+ "printcad-kernel-api",
+ "resvg",
+ "tiny-skia 0.12.0",
+ "ui_kit",
+ "usvg",
+]
+
+[[package]]
 name = "os_pipe"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3603,6 +3735,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "package_store"
+version = "0.1.0"
+dependencies = [
+ "app_log",
+ "app_platform",
+ "core_document",
+ "serde_json",
+ "settings",
+ "workbenches",
 ]
 
 [[package]]
@@ -5543,6 +5687,23 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "view_camera"
+version = "0.1.0"
+dependencies = [
+ "axes",
+ "core_document",
+ "glam 0.33.7",
+ "orientation_cube",
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+ "settings",
+ "tracing",
+ "viewport_camera",
+ "winit",
+]
 
 [[package]]
 name = "viewport_camera"

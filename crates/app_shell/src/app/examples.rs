@@ -5,41 +5,20 @@
 use core_document::{Document, FeatureId};
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
+use crate::contract::Example;
+use crate::contract::TreeItemId;
 
-/// One of the examples the start page offers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Example {
-    /// A rectangle with a hole, fully dimensioned, opened in the
-    /// sketcher.
-    SketcherBasics,
-    /// The same sketch padded, with a face sketch pocketed into its top.
-    DesignWorkflow,
+/// The example's file as shipped.
+fn bytes(example: Example) -> &'static [u8] {
+    match example {
+        Example::SketcherBasics => include_bytes!("../../assets/examples/sketcher-basics.prtcad"),
+        Example::DesignWorkflow => include_bytes!("../../assets/examples/design-workflow.prtcad"),
+    }
 }
 
-impl Example {
-    fn bytes(self) -> &'static [u8] {
-        match self {
-            Example::SketcherBasics => {
-                include_bytes!("../../assets/examples/sketcher-basics.prtcad")
-            }
-            Example::DesignWorkflow => {
-                include_bytes!("../../assets/examples/design-workflow.prtcad")
-            }
-        }
-    }
-
-    /// Whether the example opens its feature for editing rather than
-    /// only selecting it.
-    pub fn opens_for_editing(self) -> bool {
-        self == Example::SketcherBasics
-    }
-
-    /// The example's document as stored, not yet made ready to build.
-    pub fn document(self) -> Result<Document, String> {
-        Document::load_from_bytes(self.bytes().to_vec()).map_err(|err| err.to_string())
-    }
+/// The example's document as stored, not yet made ready to build.
+pub(crate) fn document(example: Example) -> Result<Document, String> {
+    Document::load_from_bytes(bytes(example).to_vec()).map_err(|err| err.to_string())
 }
 
 /// The feature an example opens on: the last in its build history.
@@ -57,7 +36,7 @@ impl PrintCadApp {
     /// target and its last feature selected, or opened for editing in the
     /// bench that claims it.
     pub(crate) fn open_example(&mut self, example: Example) {
-        let document = match example.document() {
+        let document = match document(example) {
             Ok(document) => document,
             Err(err) => {
                 app_log::error(format!("Example: {err}"));
@@ -205,7 +184,7 @@ mod tests {
             }
         }
         for example in ALL {
-            let shipped = example.document().unwrap();
+            let shipped = document(example).unwrap();
             let (fresh, opens) = built(example);
             assert_eq!(canonical(&shipped), canonical(&fresh), "{example:?}");
             assert_eq!(shipped.bodies().len(), 1, "{example:?}");

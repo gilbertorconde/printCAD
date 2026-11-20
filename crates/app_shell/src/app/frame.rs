@@ -17,9 +17,9 @@ use uuid::Uuid;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
 use super::scene_guides::{self, GuideView};
-use crate::log_panel as app_log;
-use crate::orientation_cube::{CameraSnapView, OrientationCubeInput};
-use crate::{Document, PrintCadApp, ui};
+use crate::contract;
+use crate::{Document, PrintCadApp};
+use orientation_cube::{CameraSnapView, OrientationCubeInput};
 
 mod scene;
 
@@ -84,11 +84,11 @@ pub(crate) fn lighting_data_from_settings(user: &UserSettings) -> LightingData {
 fn device_button_command(
     action: SixDofButtonAction,
     projection: ProjectionMode,
-) -> Option<ui::UiCommand> {
-    let snap = |view| Some(ui::UiCommand::CameraSnap(view));
+) -> Option<contract::UiCommand> {
+    let snap = |view| Some(contract::UiCommand::CameraSnap(view));
     match action {
         SixDofButtonAction::None => None,
-        SixDofButtonAction::FitView => Some(ui::UiCommand::FitView),
+        SixDofButtonAction::FitView => Some(contract::UiCommand::FitView),
         SixDofButtonAction::ViewIsometric => snap(CameraSnapView::FrontTopRight),
         SixDofButtonAction::ViewFront => snap(CameraSnapView::Front),
         SixDofButtonAction::ViewRear => snap(CameraSnapView::Rear),
@@ -97,7 +97,7 @@ fn device_button_command(
         SixDofButtonAction::ViewTop => snap(CameraSnapView::Top),
         SixDofButtonAction::ViewBottom => snap(CameraSnapView::Bottom),
         SixDofButtonAction::ToggleProjection => {
-            Some(ui::UiCommand::SetProjection(match projection {
+            Some(contract::UiCommand::SetProjection(match projection {
                 ProjectionMode::Perspective => ProjectionMode::Orthographic,
                 ProjectionMode::Orthographic => ProjectionMode::Perspective,
             }))
@@ -130,7 +130,7 @@ impl PrintCadApp {
     /// imported part's, or a feature's that builds its body's solid. A
     /// hidden body lights nothing.
     fn tree_hovered_body(&self) -> Option<core_document::BodyId> {
-        use crate::ui::TreeItemId;
+        use crate::contract::TreeItemId;
         let document = &self.session.document;
         let body = match self.session.hover.tree? {
             TreeItemId::Body(id) => Some(id),
@@ -222,7 +222,7 @@ impl PrintCadApp {
     /// reports a press and a release; the press is the one that acts.
     /// Its motion is read in [`Self::build_scene_submission`], where the
     /// camera is.
-    fn device_button_commands(&mut self) -> Vec<ui::UiCommand> {
+    fn device_button_commands(&mut self) -> Vec<contract::UiCommand> {
         let mut commands = Vec::new();
         for button in self.nav_device.take_buttons() {
             tracing::debug!(
@@ -373,7 +373,7 @@ impl PrintCadApp {
         // The workspace drawn last frame laid the viewport out: the opened
         // document is framed in it once its bodies have geometry.
         if self.session.view.fit_on_layout
-            && self.session.screen == crate::ui::Screen::Workspace
+            && self.session.screen == crate::contract::Screen::Workspace
             && crate::app::view_fit::document_imported_aabb(&self.session.document).is_some()
         {
             self.session.view.fit_on_layout = false;
@@ -418,7 +418,7 @@ impl PrintCadApp {
         // before the UI/render block takes its borrows on `gfx`.
         self.call_workbench_on_frame(dt_secs);
         let viewport_data = self.build_scene_submission(dt_secs);
-        if self.session.screen == crate::ui::Screen::Start {
+        if self.session.screen == crate::contract::Screen::Start {
             self.frame_submission.bodies.clear();
             self.frame_submission.grids.clear();
         }
@@ -441,7 +441,7 @@ impl PrintCadApp {
         let hover_card = self.hover_card();
         let picks = self.session.selection.summary();
         let picked_faces = self.picked_face_ids();
-        let dimensions = self.selection_dimensions();
+        let selection_bounds = self.selection_bounds();
         let quick_measure = self.drive_quick_measure();
         self.follow_section_formula();
         let selection_mass = self.selection_mass();
@@ -449,7 +449,7 @@ impl PrintCadApp {
         let physical = self.panel_physical();
         let panel_bounds_mm = self.panel_body().and_then(|body| self.body_bounds(body));
         let inertia_references = self.inertia_references();
-        let host_params = ui::HostCtxParams {
+        let host_params = contract::HostCtxParams {
             pixels_per_point: self.pixels_per_point(),
             camera_position: self.session.view.camera.position(),
             camera_target: self.session.view.camera.target(),
@@ -489,7 +489,7 @@ impl PrintCadApp {
             let read_only_file = self.current_file_read_only();
             let marking = self.marking_counts();
             let note_card = self.note_card_view();
-            let mut mentions: Vec<(Uuid, Vec<crate::app::mentions::MentionOption>)> = Vec::new();
+            let mut mentions: Vec<(Uuid, Vec<assistant::mentions::MentionOption>)> = Vec::new();
             for chat in &self.agents.chats {
                 if !mentions.iter().any(|(tab, _)| *tab == chat.tab) {
                     mentions.push((chat.tab, self.mention_options(chat.tab)));
@@ -529,17 +529,20 @@ impl PrintCadApp {
                             .document
                             .face_maker(core_document::BodyId(body), face.name)
                     });
-                let measure_bar = self.session.tools.measure.as_ref().map(|picks| {
-                    crate::ui::view_toolbar::MeasureBar {
-                        unit: self.session.document.measure_unit(),
-                        document_unit: self.session.document.display_unit(),
-                        picks: picks.len(),
-                    }
-                });
+                let measure_bar =
+                    self.session
+                        .tools
+                        .measure
+                        .as_ref()
+                        .map(|picks| crate::contract::MeasureBar {
+                            unit: self.session.document.measure_unit(),
+                            document_unit: self.session.document.display_unit(),
+                            picks: picks.len(),
+                        });
                 let ui_started = Instant::now();
                 let ui_result = ui_layer.run(
                     window,
-                    ui::UiFrameInputs {
+                    contract::UiFrameInputs {
                         screen: self.session.screen,
                         split_view: self.session.view.split
                             && self
@@ -578,7 +581,7 @@ impl PrintCadApp {
                         task,
                         hover_card,
                         picks,
-                        dimensions,
+                        selection_bounds,
                         quick_measure,
                         selection_mass,
                         bodies_selected,
@@ -618,7 +621,7 @@ impl PrintCadApp {
                         document_saving: !self.session.file.saves.is_empty()
                             || server_status.saves_in_flight > 0,
                         save_progress: self.session.file.saves.progress().and_then(|p| p.read()),
-                        server: crate::ui::status_bar::ServerBadge {
+                        server: crate::contract::ServerBadge {
                             name: self.session.connection.server.name().to_string(),
                             standalone: self.session.connection.server.standalone(),
                             connected: server_status.connected,
@@ -632,7 +635,7 @@ impl PrintCadApp {
                                 .input
                                 .cursor_in_viewport
                                 .map_or(radial.centre, |(x, y)| glam::Vec2::new(x, y));
-                            ui::radial::RadialView {
+                            contract::RadialView {
                                 centre: radial.centre.to_array(),
                                 slices: radial
                                     .slices
@@ -670,6 +673,7 @@ impl PrintCadApp {
                         store: &self.packages.store,
                         console_attention: std::mem::take(&mut self.scripting.console_attention),
                         command_ids: &self.command_ids,
+                        command_specs: crate::app::scripts::command_specs,
                         script_running: self.scripting.runs.front().map(|r| r.label.as_str()),
                         recording: self.scripting.recording.is_some(),
                         chats: &self.agents.chats,
@@ -680,15 +684,15 @@ impl PrintCadApp {
                         paste_pressed: std::mem::take(&mut self.input.paste_pressed),
                         print_layout: self.session.tools.print_layout.as_ref().map(|s| &s.layout),
                         marking,
-                        file: crate::ui::FileMarks {
+                        file: crate::contract::FileMarks {
                             read_only: read_only_file,
                             read_only_links: &self.session.jobs.links.read_only,
-                            newer_notice: self
-                                .session
-                                .file
-                                .safety
-                                .newer_notice
-                                .then(|| self.session.file.safety.newer_text()),
+                            newer_notice: self.session.file.safety.newer_notice.then(|| {
+                                self.session
+                                    .file
+                                    .safety
+                                    .newer_text(crate::app::file_safety::RUNNING)
+                            }),
                             unsaved_in_log: self.session.file.unsaved_in_log,
                             save_over,
                             mesh_units: self.session.file.mesh_units_pending.as_ref().map(|path| {
@@ -704,7 +708,6 @@ impl PrintCadApp {
                     },
                 );
                 self.stats.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
-                ui::widget_map::publish();
                 ui_repaint_delay = ui_result.repaint_delay;
                 self.frame_submission.egui = Some(ui_result.submission);
                 // A tool that started this frame is what Repeat starts again.
@@ -736,7 +739,7 @@ impl PrintCadApp {
                 self.session.hover.tree = ui_result.tree_hovered;
 
                 // The window title follows the document and its dirty state.
-                let title = if self.session.screen == crate::ui::Screen::Start {
+                let title = if self.session.screen == crate::contract::Screen::Start {
                     "printCAD".to_string()
                 } else if self.session.document.metadata().dirty() {
                     format!("• {} - printCAD", self.session.document.name())
@@ -1593,7 +1596,7 @@ impl PrintCadApp {
     /// The body under the cursor, named with its last feature, and the
     /// point hit on it. Hidden while a button is down or a sketch is being
     /// edited, when the card would only get in the way.
-    fn hover_card(&self) -> Option<ui::HoverCard> {
+    fn hover_card(&self) -> Option<contract::HoverCard> {
         if self.input.mouse_buttons_down > 0
             || self.sketch_editing_active()
             || self.session.viewport_menu.is_some()
@@ -1646,22 +1649,18 @@ impl PrintCadApp {
             (None, Some(kind)) => format!("{body_name} · {kind}"),
             (None, None) => body_name,
         };
-        Some(ui::HoverCard { title, point_mm })
+        Some(contract::HoverCard { title, point_mm })
     }
 
-    /// "x × y × z" of the selected (else active) body in the display unit.
-    fn selection_dimensions(&mut self) -> Option<String> {
+    /// The selected (else active) body's bounds where it sits.
+    fn selection_bounds(&mut self) -> Option<([f32; 3], [f32; 3])> {
         let body = self
             .session
             .selection
             .body
             .map(core_document::BodyId)
             .or(self.session.active_body_id)?;
-        let bounds = self.body_bounds(body)?;
-        Some(ui::status_bar::size_text(
-            bounds,
-            self.session.document.display_unit(),
-        ))
+        self.body_bounds(body)
     }
 
     /// `body`'s bounds where it sits, millimetres in document axes.
@@ -1710,7 +1709,7 @@ fn meshes_bounds(meshes: &[BodySubmission]) -> Option<(Vec3, Vec3)> {
 /// Grow `camera`'s scene to hold `extra` and set its clip planes again
 /// when that changed it.
 fn widen_clip(
-    camera: &mut crate::camera::CameraController,
+    camera: &mut view_camera::CameraController,
     extra: (Vec3, Vec3),
     settings: &settings::CameraSettings,
 ) {
@@ -1772,7 +1771,7 @@ mod tests {
     #[test]
     fn a_preview_past_the_bodies_widens_the_clip_planes() {
         let settings = settings::CameraSettings::default();
-        let mut camera = crate::camera::CameraController::new(&settings, (800, 600));
+        let mut camera = view_camera::CameraController::new(&settings, (800, 600));
         camera.reset_to_fit(Vec3::ZERO, 10.0, &settings);
         camera.set_scene_bounds(Some((Vec3::splat(-5.0), Vec3::splat(5.0))));
         camera.apply_auto_clip_planes(&settings);

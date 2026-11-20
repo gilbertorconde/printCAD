@@ -1,0 +1,16 @@
+[package]
+name = "file_session"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "What the app keeps of a document's file: recovery copies, what wrote it, the unsaved and save-over questions."
+
+[dependencies]
+app_platform = { path = "../app_platform" }
+core_document = { path = "../core_document" }
+doc_server = { path = "../doc_server" }
+serde.workspace = true
+serde_json.workspace = true
+settings = { path = "../settings" }
+uuid.workspace = true

@@ -14,14 +14,24 @@ winresource = "0.1"
 
 [dependencies]
 viewport_camera = { path = "../viewport_camera" }
+view_camera = { path = "../view_camera" }
 local_ipc = { path = "../local_ipc" }
+app_log = { path = "../app_log" }
+app_ui = { path = "../app_ui" }
+app_platform = { path = "../app_platform" }
+package_store = { path = "../package_store" }
+file_session = { path = "../file_session" }
 anyhow.workspace = true
 agents = { path = "../agents" }
+assistant = { path = "../assistant" }
 base64.workspace = true
 core_document = { path = "../core_document" }
 build_driver = { path = "../build_driver" }
+kernel_worker = { path = "../kernel_worker" }
+orientation_cube = { path = "../orientation_cube" }
 bench_panel = { path = "../bench_panel" }
 doc_render = { path = "../doc_render" }
+doc_export = { path = "../doc_export" }
 bench_api.workspace = true
 render_wgpu = { path = "../render_wgpu" }
 tracing.workspace = true
@@ -37,10 +47,6 @@ ui_kit = { path = "../ui_kit" }
 glam.workspace = true
 uuid.workspace = true
 axes = { path = "../axes" }
-# The proof's labels and the orientation cube's faces are text; the cube
-# falls back on system fonts.
-resvg = { workspace = true, features = ["text", "system-fonts", "memmap-fonts"] }
-usvg = { workspace = true, features = ["text", "system-fonts", "memmap-fonts"] }
 tiny-skia.workspace = true
 png = "0.18"
 flate2.workspace = true
@@ -60,10 +66,8 @@ rfd = "0.17"
 notify-rust = "4.18"
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
 
-[target.'cfg(unix)'.dependencies]
-# Ending a file chooser process left open at exit; SIGTERM and SIGINT
-# turned into a quit.
-libc = "0.2"
+[dev-dependencies]
+assistant = { path = "../assistant", features = ["testing"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pprof = { version = "0.15", optional = true }

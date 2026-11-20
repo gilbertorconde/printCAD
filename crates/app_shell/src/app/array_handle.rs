@@ -12,7 +12,7 @@ use glam::{Vec2, Vec3};
 use super::gesture::HandleTarget;
 use super::scalar_arrow::{ARROW_PT, HandleEvent, Held, ScalarArrow, ScalarDrag};
 use crate::PrintCadApp;
-use crate::camera::CameraController;
+use view_camera::CameraController;
 
 /// The steps a dragged spacing goes in, mm.
 const STEP_MM: f32 = 0.1;

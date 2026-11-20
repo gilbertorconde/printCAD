@@ -2,8 +2,7 @@
 //! against the restored document after each history jump.
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 
 impl PrintCadApp {
     pub(crate) fn perform_undo(&mut self) {

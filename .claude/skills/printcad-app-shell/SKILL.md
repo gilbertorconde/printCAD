@@ -1,6 +1,6 @@
 ---
 name: printcad-app-shell
-description: "The app_shell binary's structure and its application-level features: tabs and DocumentSession, the grouped app and tab state, the app/ and ui/ module map (frame, input, commands, recompute, links, kernel_worker, updates, session_store, sixdof), application tasks, unsaved-edit prompts, and the features paragraph (external geometry wiring, File > Export with PMI, Send to slicer, Print layout, save thumbnails, What's new, Edit menu, clipping plane, Measure, print bed, PLANNED placeholders). Use when working in crates/app_shell/src/app or src/ui structure, adding per-tab or app state, export, slicer, print layout, clipping or measure, or a disabled placeholder control. Not for styling and widgets (use printcad-ui-conventions), bindings and picking (use printcad-interaction-model) or frame scheduling (use printcad-render-loop)."
+description: "The app_shell binary's structure and its application-level features: tabs and DocumentSession, the grouped app and tab state, the app/ and ui/ module map (frame, input, commands, recompute, links, kernel_worker, updates, session_store, sixdof), application tasks, unsaved-edit prompts, and the features paragraph (external geometry wiring, File > Export with PMI, Send to slicer, Print layout, save thumbnails, What's new, Edit menu, clipping plane, Measure, print bed, PLANNED placeholders). Use when working in crates/app_shell/src/app or crates/app_ui structure, adding per-tab or app state, export, slicer, print layout, clipping or measure, or a disabled placeholder control. Not for styling and widgets (use printcad-ui-conventions), bindings and picking (use printcad-interaction-model) or frame scheduling (use printcad-render-loop)."
 ---
 
 # printCAD: the app shell
@@ -9,6 +9,42 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
 
 ## app_shell
 
+- **Halves.** The UI (`crates/app_ui`, its `ui` module private: egui,
+  one module per region) and the host (`crates/app_shell/src/app/`: tabs,
+  input, commands, builds) never import each other. What both read is
+  `app_ui::contract`, which names nothing of the UI: `UiFrameInputs`
+  (`inputs.rs`), `UiCommand` and its payloads (`commands.rs`), and the
+  state both read (`view.rs`: `TreeItemId`, `PickFilter`, the menus,
+  `TabInfo`, `HostCtxParams`, `OpenTask`, the marking tool, the note
+  card, `Example`, `UiHooks`, `RadialView::chosen_ids`,
+  `InertiaReference::of_datum`; `mod.rs`: `Screen`, `ActiveTool` with
+  `activate`, `ActiveWorkbench`, `PanelLayout`, `UiFrameOutput`).
+  `app_ui` hands out `UiLayer` and nothing else of its UI;
+  `UiLayer::new` takes the bench hooks the UI plays (`UiHooks`) once, and
+  `app_ui::build::set` names the running version and release notes at
+  start (`env!("CARGO_PKG_VERSION")` in any crate but `app_shell` would be
+  that crate's own). Beside the UI in `app_ui`, for both sides: the
+  keymap, the script console's lines (`console`), the scripts folder
+  (`script_library`), `scans` and `array_paths`; `app_shell`'s root
+  imports them, so the host writes `crate::contract::…` and the like.
+  `scripts/check-ui-boundary.mjs` (a lint gate) fails when `app_ui`'s
+  root hands out more of its UI, when a module beside the UI names it,
+  or when `app_shell` names an `app_ui::ui` path. A value the UI shows
+  reaches it through `UiFrameInputs` or from a crate below: the
+  window-free halves of the app's features are crates of their own,
+  `assistant` (the chat model and how agent events fold into it,
+  `chat_store`, the text side of mentions, `ToolRequest` and `Approval`),
+  `package_store` (packages loaded at start, the package threads'
+  `PackageWork`, the stores' `StoreView`, `ReleaseCheck`),
+  `file_session` (`recovery`, `FileSafety` and the save-over question,
+  the unsaved question's `Unsaved` and `Then`, a document's name from its
+  file) and `doc_export` (export options and writing, the slicer's
+  command line, pressed textures), over `app_log` and `app_platform`;
+  with `kernel_worker`, `view_camera` and `orientation_cube`. `app/`
+  keeps the glue that drives them over its tabs (`chats.rs`,
+  `mentions.rs`, `mcp.rs`, `packages.rs`, `updates.rs`, `file_safety.rs`,
+  `unsaved.rs`, `export.rs`, `textures.rs`). The UI's tests run with
+  `cargo test -p app_ui`, the host's with `-p app_shell`.
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,
@@ -48,7 +84,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   path from `FileState::links_from`, the folder the document was opened
   from; a link found nowhere is `link_missing` and Relink… records a
   `SetBodyLink`), `workbench_host.rs` (ctx
-  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive; runs each
+  plumbing), the `kernel_worker` crate (kernel thread, keeps the UI responsive; runs each
   body's chain through `build_driver::build_until_failure` and lands
   answers through the driver's store steps in `step_import.rs`; keeps
   the last few solids per body by what they were built from, so moving a
@@ -79,7 +115,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   does),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
   which `camera::apply_device_motion` integrates once per frame).
-  `ui/` is one module per region: `menu_bar` (the menus, New/Open/Save
+  `app_ui`'s `ui/` is one module per region: `menu_bar` (the menus, New/Open/Save
   and Undo/Redo buttons beside the app mark, the tool search at the
   right), `toolbar` (groups: the bench switcher and each run of a bench
   category along `ToolDescriptor.row`; each dragged by its grip along a
@@ -118,7 +154,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   handing a `PanelEvent` it gets back to the field it names (`event`),
   which edits through the same document mutators and `UiCommand`s.
   Closing a tab, the window or the app with unsaved edits asks in the
-  window (`app/unsaved.rs`, `ui/unsaved_modal.rs`) and the close waits for
+  window (`app/unsaved.rs` over `file_session::Unsaved`, `ui/unsaved_modal.rs`) and the close waits for
   the answer; quitting asks for each tab with edits in turn. Close other
   tabs, Save all and Revert to saved run through the same questions
   (`unsaved::Then` names what goes on after each answer); a document with
@@ -163,7 +199,7 @@ intersection variant takes picked faces instead and adds the curves where
 each crosses the sketch plane (`KernelQueries::section_face`, the face's
 solid sectioned by the plane's half space and the edges on the face kept;
 `ExternalSource::section`), refreshed the same way. File › Export
-(`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
+(`app/export.rs` over `doc_export` and `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own, in one file or a
 file per body (`ExportDraft::per_body`: a folder from
@@ -177,7 +213,7 @@ names each body that stops at the feature (`Builds::stopped_at_task`).
 A waiting export is written, or logged as not written, when its tab
 closes or the app exits (`settle_waiting_export`). The registry gathers
 `BenchOutput::semantic_pmi` (`kernel_api::SemanticPmi`, re-exported by
-`core_document`); `app/export.rs::export_pmi` takes its world probes into
+`core_document`); `doc_export::export_pmi` takes its world probes into
 each body's frame, and `kernel_ogeom::export::export_with_annotations`
 writes AP242 tolerances, datums and dimensions on the probed faces beside
 the drawn notes. Annotated bodies have distinct parts, and datum letters
@@ -209,7 +245,7 @@ container's first entry, `thumbnail.png`, which
 cards show it. What's new reads `crates/app_shell/RELEASE_NOTES.md`, and
 a test fails when the running version has no entry there. The Edit menu's Cut/Copy/Paste go to the
 active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
-geometry clipboard); the view toolbar's clipping plane (`camera/section.rs`, per tab, a
+geometry clipboard); the view toolbar's clipping plane (`view_camera::section`, per tab, a
 plane square to X, Y, Z or the view, on a flat face or a datum plane, or
 through three points, with an offset along its normal that a formula may
 set and a drag handle, `app/section.rs`, and bodies it leaves uncut,

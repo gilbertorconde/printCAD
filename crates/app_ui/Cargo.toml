@@ -1,0 +1,42 @@
+[package]
+name = "app_ui"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The window's UI, drawn with egui from each frame's inputs and answering with commands, and the contract it shares with the application."
+
+[dependencies]
+agents = { path = "../agents" }
+app_log = { path = "../app_log" }
+assistant = { path = "../assistant" }
+axes = { path = "../axes" }
+bench_api.workspace = true
+bench_panel = { path = "../bench_panel" }
+core_document = { path = "../core_document" }
+doc_export = { path = "../doc_export" }
+doc_render = { path = "../doc_render" }
+egui.workspace = true
+egui-winit.workspace = true
+file_session = { path = "../file_session" }
+glam.workspace = true
+kernel_api.workspace = true
+kernel_ogeom = { path = "../kernel_ogeom" }
+local_ipc = { path = "../local_ipc" }
+orientation_cube = { path = "../orientation_cube" }
+package_store = { path = "../package_store" }
+render_wgpu = { path = "../render_wgpu" }
+serde.workspace = true
+serde_json.workspace = true
+settings = { path = "../settings" }
+surface_texture = { path = "../surface_texture" }
+tiny-skia.workspace = true
+tracing.workspace = true
+ui_kit = { path = "../ui_kit" }
+uuid.workspace = true
+view_camera = { path = "../view_camera" }
+winit.workspace = true
+workbenches = { path = "../workbenches" }
+
+[dev-dependencies]
+assistant = { path = "../assistant", features = ["testing"] }

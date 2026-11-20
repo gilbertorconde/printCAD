@@ -486,7 +486,7 @@ impl Headless {
                     use doc_render::print_layout::{LayoutSettings, lay_out, parts_to_print};
                     let parts = parts_to_print(&self.document, &self.registry);
                     let parts = match &bodies {
-                        Some(bodies) => crate::app::export::parts_of(parts, bodies),
+                        Some(bodies) => doc_export::parts_of(parts, bodies),
                         None => parts,
                     };
                     lay_out(
@@ -496,7 +496,7 @@ impl Headless {
                     )
                 });
                 let folder = draft.per_body.then(|| path.clone());
-                let files = crate::app::export::export_document(
+                let files = doc_export::export_document(
                     (&self.document, &self.registry),
                     path,
                     &draft,
@@ -505,7 +505,7 @@ impl Headless {
                     None,
                 )
                 .map_err(CommandError::failed)?;
-                Ok(crate::app::export::export_answer(folder.as_deref(), &files))
+                Ok(doc_export::export_answer(folder.as_deref(), &files))
             }
             _ => {
                 let (bench, _) = self
@@ -548,7 +548,7 @@ impl build_driver::ShapeReader for ShapeFiles {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let shape = crate::platform::scratch_file(&name, &bytes)
+        let shape = app_platform::scratch_file(&name, &bytes)
             .map_err(|e| e.to_string())
             .and_then(|path| {
                 let shape = kernel.read_solid(&path, detail).map_err(|e| e.to_string());
@@ -606,7 +606,7 @@ impl Headless {
             .import_step(path, &detail)
             .map_err(|e| CommandError::failed(e.to_string()))?;
         let unit = unit.unwrap_or(kernel_api::LengthUnit::Millimetre);
-        crate::app::scans::scale_to_millimetres(&mut model, unit);
+        crate::scans::scale_to_millimetres(&mut model, unit);
         let bytes = std::fs::read(path).map_err(|e| CommandError::failed(e.to_string()))?;
         let landed =
             crate::app::step_import::land_import(&mut self.document, path, model, bytes, detail);
@@ -614,7 +614,7 @@ impl Headless {
             return Err(CommandError::failed("the file held no geometry"));
         }
         if scan {
-            crate::app::scans::mark_scans(&mut self.document, &landed.bodies, unit);
+            crate::scans::mark_scans(&mut self.document, &landed.bodies, unit);
         }
         Ok(())
     }
@@ -622,7 +622,7 @@ impl Headless {
     fn save(&mut self, path: &Path) -> Result<()> {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             self.document
-                .name_after_file(crate::app::doc_io::document_name_from_file_name(name));
+                .name_after_file(file_session::document_name_from_file_name(name));
         }
         let folder = |file: &Path| {
             std::path::absolute(file)
@@ -1299,11 +1299,11 @@ endsolid t
             pc.config.activate{name = "Small"}
         "#;
         // The NURBS kind of STEP, which the file's extension cannot say.
-        let draft = crate::app::export::ExportDraft {
+        let draft = doc_export::ExportDraft {
             format: kernel_ogeom::export::ExportFormat::StepNurbs,
             ..Default::default()
         };
-        let export = crate::app::export::every_configuration_script(
+        let export = doc_export::every_configuration_script(
             &dir.join("part").display().to_string(),
             &draft,
             None,
@@ -1330,8 +1330,8 @@ endsolid t
     /// stops at a failing fillet and one built against another body.
     #[test]
     fn the_app_s_kernel_worker_builds_what_a_script_builds() {
-        use crate::kernel_worker::{KernelResponse, KernelWorker};
         use build_driver::{Next, clear_unbuilt, record_failure, store_answers, store_solid};
+        use kernel_worker::{KernelResponse, KernelWorker};
         let mut registry = registry();
         let made = r#"
             local s = pc.sketch.new{plane = "XY"}

@@ -1,5 +1,5 @@
 //! Application of per-frame [`UiCommand`]s. THE place a new UI action lands:
-//! add a variant in `ui/commands.rs` and its arm in
+//! add a variant in `contract/commands.rs` and its arm in
 //! [`PrintCadApp::fold_command`], which either acts at once or folds it
 //! into [`FrameIntents`], applied in their fixed order by
 //! `intents.rs`. A change to settings alone needs no variant of its own:
@@ -13,11 +13,10 @@ use arms::ShapeWork;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::doc_io::FileDialogKind;
-use crate::log_panel as app_log;
-use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
+use orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 use crate::PrintCadApp;
-use crate::ui::{
+use crate::contract::{
     ActiveWorkbench, FileCommand, StartKind, TreeFeatureCommand, TreeItemId, UiCommand,
 };
 
@@ -45,7 +44,7 @@ struct FrameIntents {
     toggle_grid: bool,
     toggle_origin_planes: bool,
     toggle_measure: bool,
-    edit: Vec<crate::ui::EditCommand>,
+    edit: Vec<crate::contract::EditCommand>,
     body_display: Vec<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
     set_visibility: Vec<(uuid::Uuid, bool)>,
     select_tree_item: Option<TreeItemId>,
@@ -61,10 +60,10 @@ struct FrameIntents {
     save_all: bool,
     revert_tab: Option<uuid::Uuid>,
     /// The answer to the unsaved-edits question.
-    unsaved_answer: Option<crate::app::unsaved::Unsaved>,
+    unsaved_answer: Option<file_session::Unsaved>,
     /// A close or quit to go on with, the save it waited on written (over
     /// a file from another version, or under a name just picked).
-    after_save_over: Option<(uuid::Uuid, crate::app::unsaved::Then)>,
+    after_save_over: Option<(uuid::Uuid, file_session::Then)>,
     request_workbench: Option<ActiveWorkbench>,
     undo: bool,
     redo: bool,
@@ -138,7 +137,7 @@ impl PrintCadApp {
             if self.scripting.recording.is_some()
                 && matches!(command, UiCommand::Undo | UiCommand::Redo)
             {
-                crate::app_log::warn(
+                app_log::warn(
                     "Undo and Redo are not in the recording: what they took back stays in it",
                 );
             }
@@ -497,7 +496,7 @@ impl PrintCadApp {
         if tool.planned.is_some() {
             return;
         }
-        crate::ui::toolbar::activate_tool(&mut self.session.active_tool, tools, tool, &id);
+        self.session.active_tool.activate(tools, tool, &id);
         self.redraw_needed = true;
     }
 
@@ -872,8 +871,8 @@ impl PrintCadApp {
 
     /// A change a body menu asked for, one undo step, run as the command
     /// a script would call.
-    fn apply_body_edit(&mut self, body: core_document::BodyId, edit: crate::ui::BodyEdit) {
-        use crate::ui::BodyEdit;
+    fn apply_body_edit(&mut self, body: core_document::BodyId, edit: crate::contract::BodyEdit) {
+        use crate::contract::BodyEdit;
         let (id, args) = crate::app::scripts::body_edit_call(body, &edit);
         let args = match args {
             serde_json::Value::Object(map) => map,
@@ -916,9 +915,9 @@ impl PrintCadApp {
                 app_log::info("Rebuilding the body");
                 return;
             }
-            BodyEdit::PrintOn(crate::ui::PrintOn::Face(_)) => "Print on this face",
-            BodyEdit::PrintOn(crate::ui::PrintOn::AsModelled) => "Print as modelled",
-            BodyEdit::PrintOn(crate::ui::PrintOn::Auto) => "Print on its best face",
+            BodyEdit::PrintOn(crate::contract::PrintOn::Face(_)) => "Print on this face",
+            BodyEdit::PrintOn(crate::contract::PrintOn::AsModelled) => "Print as modelled",
+            BodyEdit::PrintOn(crate::contract::PrintOn::Auto) => "Print on its best face",
         };
         self.session.journal.label_next(label);
         self.close_gesture();
@@ -932,7 +931,7 @@ impl PrintCadApp {
         index: usize,
         path: &std::path::Path,
     ) {
-        let bytes = match crate::platform::read(path) {
+        let bytes = match app_platform::read(path) {
             Ok(bytes) => bytes,
             Err(err) => {
                 app_log::error(format!("Could not read {}: {err}", path.display()));
@@ -1163,7 +1162,7 @@ impl PrintCadApp {
     fn start_new_document(&mut self, kind: StartKind) {
         let walkthrough = kind == StartKind::ExportWalkthrough;
         let kind = if walkthrough {
-            StartKind::Example(crate::app::examples::Example::DesignWorkflow)
+            StartKind::Example(crate::contract::Example::DesignWorkflow)
         } else {
             kind
         };
@@ -1251,7 +1250,7 @@ impl PrintCadApp {
     /// of the tree's selection (every body of a component, the bodies of
     /// the features Ctrl-clicked beside it).
     fn bodies_to_isolate(&self) -> Vec<core_document::BodyId> {
-        use crate::ui::TreeItemId;
+        use crate::contract::TreeItemId;
         if self.session.selection.body.is_some() {
             let mut bodies: Vec<core_document::BodyId> = self
                 .session
@@ -1283,7 +1282,7 @@ impl PrintCadApp {
     /// The body Hide others keeps: the one selected in the view, else the
     /// body of the tree's selection.
     fn selected_body_for_isolate(&self) -> Option<core_document::BodyId> {
-        use crate::ui::TreeItemId;
+        use crate::contract::TreeItemId;
         if let Some(body) = self.session.selection.body {
             return Some(core_document::BodyId(body));
         }
@@ -1317,7 +1316,7 @@ impl PrintCadApp {
                 if let Err(why) =
                     doc.set_feature_formula(feature, parameter.key.clone(), Some(text))
                 {
-                    crate::log_panel::warn(why.to_string());
+                    app_log::warn(why.to_string());
                 }
             }
             FormulaEdit::Value(v) => {
@@ -1325,7 +1324,7 @@ impl PrintCadApp {
                     .registry
                     .set_parameter_value(doc, feature, parameter, v)
                 {
-                    crate::log_panel::warn(why);
+                    app_log::warn(why);
                 }
             }
         }
@@ -1349,7 +1348,7 @@ impl PrintCadApp {
             .expect("a free name");
         match doc.add_variable_set(&name) {
             Ok(id) => {
-                self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                self.apply_tree_selection(crate::contract::TreeItemId::Feature(id));
                 self.record_calls(vec![core_document::Recorded {
                     id: "var.new".to_string(),
                     args: serde_json::json!({"name": name})
@@ -1361,7 +1360,7 @@ impl PrintCadApp {
                 self.session.journal.label_next("New variable set");
                 self.close_gesture();
             }
-            Err(why) => crate::log_panel::warn(why),
+            Err(why) => app_log::warn(why),
         }
     }
 
@@ -1371,15 +1370,15 @@ impl PrintCadApp {
                 self.session.journal.label_next(label);
                 self.close_gesture();
             }
-            Err(why) => crate::log_panel::warn(why),
+            Err(why) => app_log::warn(why),
         }
     }
 }
 
 impl PrintCadApp {
     /// Apply an edit of the configurations table as one undo step.
-    fn apply_config_edit(&mut self, edit: crate::ui::ConfigEdit) {
-        use crate::ui::ConfigEdit;
+    fn apply_config_edit(&mut self, edit: crate::contract::ConfigEdit) {
+        use crate::contract::ConfigEdit;
         let doc = &mut self.session.document;
         let (done, label) = match &edit {
             ConfigEdit::NewTable => {
@@ -1387,9 +1386,9 @@ impl PrintCadApp {
                     Ok(id) => {
                         self.session.journal.label_next("New configurations table");
                         self.close_gesture();
-                        self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                        self.apply_tree_selection(crate::contract::TreeItemId::Feature(id));
                     }
-                    Err(why) => crate::log_panel::warn(why),
+                    Err(why) => app_log::warn(why),
                 }
                 return;
             }

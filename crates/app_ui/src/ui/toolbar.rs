@@ -1,0 +1,1501 @@
+//! The toolbar rows under the menu bar: the workbench switcher and the
+//! active workbench's tools, one row per `ToolDescriptor::row`, separated
+//! where the category changes. The file and undo buttons and the tool
+//! search sit in the menu bar, the view's switches on the view's pill.
+
+use core_document::{DocumentService, ToolDescriptor, WorkbenchId};
+use egui::{Popup, RichText, Vec2};
+use ui_kit::sans;
+use ui_kit::tokens::*;
+use ui_kit::widgets::{TOOL_MENU_STRIP, ToolButtonState, tool_button, vseparator};
+use workbenches::REGISTERED_WORKBENCHES;
+
+use super::host_ctx::panel_ctx;
+use super::{ActiveTool, ActiveWorkbench, SettingsEdit, UiCommand};
+use crate::contract::HostCtxParams;
+
+/// Everything the toolbar needs from the frame.
+pub struct ToolbarInputs<'a> {
+    pub registry: &'a mut DocumentService,
+    pub document: &'a mut core_document::Document,
+    pub host: HostCtxParams,
+    pub active_document_object: Option<core_document::FeatureId>,
+    /// The keys buttons name in their tooltips.
+    pub keymap: &'a super::keymap::Keymap,
+    /// Where the user put the toolbar groups.
+    pub layout: &'a [Vec<String>],
+    /// Choose a workbench through tabs rather than the dropdown.
+    pub workbench_tabs: bool,
+    /// The user's order of the workbenches, by id.
+    pub workbench_order: &'a [String],
+    /// Show category panels with pinned tools and dropdown menus.
+    pub panels: bool,
+    /// Host-owned pin choices, seeded from settings each frame.
+    pub pins: &'a std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// A button's tooltip: its name, and its key when it has one.
+fn with_key(label: &str, key: Option<&core_document::Chord>) -> String {
+    match key {
+        Some(key) => format!("{label} ({key})"),
+        None => label.to_string(),
+    }
+}
+
+/// A menu row with an icon before its label and its keys at the end.
+fn menu_row<'a>(
+    ctx: &egui::Context,
+    icon: &str,
+    icon_tint: egui::Color32,
+    label: &str,
+    color: egui::Color32,
+    key: Option<String>,
+) -> egui::Button<'a> {
+    let text = RichText::new(label).font(sans(FONT_SM)).color(color);
+    let mut button = match ui_kit::icon::image(ctx, icon, 16.0, icon_tint) {
+        Some(image) => egui::Button::image_and_text(image, text),
+        None => egui::Button::new(text),
+    };
+    if let Some(key) = key {
+        button = button.shortcut_text(RichText::new(key).font(sans(FONT_XS)).color(TEXT3));
+    }
+    button
+}
+
+/// The tool a variant dropdown last picked, remembered per tool id.
+fn remembered_variant(ctx: &egui::Context, tool_id: &str) -> Option<usize> {
+    ctx.data_mut(|d| d.get_persisted::<usize>(egui::Id::new(("toolbar_variant", tool_id))))
+}
+
+fn remember_variant(ctx: &egui::Context, tool_id: &str, index: usize) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::new(("toolbar_variant", tool_id)), index));
+}
+
+fn tool_is_active(active_tool: &ActiveTool, tool_id: &str) -> bool {
+    active_tool
+        .active_ids
+        .iter()
+        .any(|id| core_document::base_tool_id(id) == tool_id)
+}
+
+/// Whether a button shows the variant arrow: every tool with variants,
+/// unless the button is a pin of one variant (`tool:variant`), which
+/// stands for that variant alone.
+fn shows_variant_arrow(tool: &ToolDescriptor, panel_pin: Option<&str>) -> bool {
+    !tool.variants.is_empty() && !panel_pin.is_some_and(|id| id.contains(':'))
+}
+
+/// The variant a button starts: the one its pin names, else the one its
+/// list last picked.
+fn button_variant(
+    ctx: &egui::Context,
+    tool: &ToolDescriptor,
+    panel_pin: Option<&str>,
+) -> Option<usize> {
+    panel_pin
+        .and_then(|id| id.split_once(':'))
+        .and_then(|(_, id)| tool.variants.iter().position(|v| v.id == id))
+        .or_else(|| remembered_variant(ctx, &tool.id))
+        .filter(|i| *i < tool.variants.len())
+}
+
+/// The id a button starts: its tool, or the variant it shows.
+fn activation_id(tool: &ToolDescriptor, variant: Option<usize>) -> String {
+    match variant {
+        Some(i) => format!("{}:{}", tool.id, tool.variants[i].id),
+        None => tool.id.clone(),
+    }
+}
+
+/// A variant picked from a button's list: it becomes the button's
+/// default and starts when the tool is enabled.
+fn pick_variant(
+    ctx: &egui::Context,
+    active_tool: &mut ActiveTool,
+    tools: &[ToolDescriptor],
+    tool: &ToolDescriptor,
+    index: usize,
+    enabled: bool,
+) {
+    remember_variant(ctx, &tool.id, index);
+    if enabled {
+        active_tool.activate(tools, tool, &activation_id(tool, Some(index)));
+    }
+}
+
+/// Draw one workbench tool and activate it on click. A tool with variants
+/// carries a chevron strip at its end, in the compact rows and the panels
+/// alike, that opens the variant list under the button.
+fn draw_tool(
+    ui: &mut egui::Ui,
+    tool: &ToolDescriptor,
+    tools: &[ToolDescriptor],
+    status: (bool, bool),
+    panel_pin: Option<&str>,
+    active_tool: &mut ActiveTool,
+) -> egui::Response {
+    let (enabled, toggled) = status;
+    let variant_index = button_variant(ui.ctx(), tool, panel_pin);
+    let (icon, label, planned): (&str, String, Option<&'static str>) = match variant_index {
+        Some(i) => {
+            let v = &tool.variants[i];
+            (
+                v.icon,
+                format!("{} · {}", tool.label, v.label),
+                v.planned.or(tool.planned),
+            )
+        }
+        None => (
+            tool.icon.unwrap_or("more"),
+            tool.label.clone(),
+            tool.planned,
+        ),
+    };
+    let button_id = panel_pin.unwrap_or(&tool.id);
+    let menu = shows_variant_arrow(tool, panel_pin);
+    let popup_id = ui.id().with(("variants", button_id));
+    let state = ToolButtonState {
+        enabled,
+        // The button stays lit while its list is open.
+        active: Popup::is_id_open(ui.ctx(), popup_id)
+            || if let Some(id) = panel_pin.filter(|id| id.contains(':')) {
+                active_tool.active_ids.contains(id)
+            } else {
+                toggled || tool_is_active(active_tool, &tool.id)
+            },
+        planned,
+        menu,
+    };
+    let label = with_key(&label, tool.shortcuts.first());
+    let label = if !enabled && planned.is_none() {
+        format!("{label}\nUnavailable for the current selection or editing state")
+    } else {
+        label
+    };
+    let size = if panel_pin.is_some() {
+        TOOL_PANEL_BUTTON
+    } else {
+        TOOLBAR_BUTTON
+    };
+    let response = tool_button(ui, icon, &label, size, state);
+    super::widget_map::note(ui.ctx(), || format!("button:{button_id}"), response.rect);
+
+    if response.clicked() && enabled && planned.is_none() {
+        active_tool.activate(tools, tool, &activation_id(tool, variant_index));
+    }
+    if !menu {
+        return response;
+    }
+
+    // The chevron strip at the button's end opens the variant list; the rest
+    // of the button activates the remembered variant. On a compact button a
+    // right click or a long press opens the list too; a panel pin keeps
+    // those for its own menu.
+    let chevron = egui::Rect::from_min_max(
+        egui::pos2(response.rect.right() - TOOL_MENU_STRIP, response.rect.top()),
+        response.rect.right_bottom(),
+    );
+    let chevron_response = ui
+        .interact(chevron, response.id.with("chevron"), egui::Sense::click())
+        .on_hover_text(format!("{} variants", tool.label));
+    super::widget_map::note(ui.ctx(), || format!("arrow:{button_id}"), chevron);
+    if panel_pin.is_none() && (response.secondary_clicked() || response.long_touched()) {
+        Popup::toggle_id(ui.ctx(), popup_id);
+    }
+    Popup::menu(&chevron_response).id(popup_id).show(|ui| {
+        for (i, variant) in tool.variants.iter().enumerate() {
+            let planned = variant.planned.is_some();
+            // The tool's own key starts its first variant.
+            let key = (i == 0)
+                .then(|| tool.shortcuts.first().map(ToString::to_string))
+                .flatten();
+            let row = menu_row(
+                ui.ctx(),
+                variant.icon,
+                if planned { TEXT3 } else { TEXT2 },
+                variant.label,
+                if planned { TEXT3 } else { TEXT1 },
+                key,
+            )
+            .selected(variant_index == Some(i));
+            let r = ui.add_enabled(!planned, row);
+            super::widget_map::note(
+                ui.ctx(),
+                || format!("variant:{}:{}", tool.id, variant.id),
+                r.rect,
+            );
+            if let Some(note) = variant.planned {
+                r.on_disabled_hover_text(format!("{} (planned)\n{note}", variant.label));
+            } else if r.clicked() {
+                pick_variant(ui.ctx(), active_tool, tools, tool, i, enabled);
+                ui.close();
+            }
+        }
+    });
+    response
+}
+
+fn tool_category(tool: &ToolDescriptor) -> &str {
+    tool.category
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("General")
+}
+
+fn tool_tab(tool: &ToolDescriptor) -> &str {
+    tool_category(tool).split('.').next().unwrap_or("General")
+}
+
+fn category_label(category: &str) -> String {
+    let mut chars = category.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+        None => String::new(),
+    }
+}
+
+fn tool_categories(tools: &[ToolDescriptor]) -> Vec<&str> {
+    let mut categories = Vec::new();
+    for tool in tools {
+        let category = tool_tab(tool);
+        if !categories.contains(&category) {
+            categories.push(category);
+        }
+    }
+    categories
+}
+
+/// Resolve stored pins without filling deliberately empty panels.
+fn resolved_pins(
+    tools: &[ToolDescriptor],
+    radial: &[String],
+    saved: Option<&Vec<String>>,
+) -> Vec<String> {
+    let mut pins = Vec::new();
+    for id in saved.map(Vec::as_slice).unwrap_or(radial) {
+        if pin_tool(tools, id).is_some() && !pins.contains(id) {
+            pins.push(id.clone());
+        }
+    }
+    if saved.is_none() {
+        for category in tool_categories(tools) {
+            if !pins
+                .iter()
+                .any(|id| pin_tool(tools, id).is_some_and(|(_, t)| tool_tab(t) == category))
+                && let Some(tool) = tools
+                    .iter()
+                    .find(|t| tool_tab(t) == category && t.planned.is_none())
+            {
+                pins.push(tool.id.clone());
+            }
+        }
+    }
+    pins
+}
+
+fn pin_tool<'a>(tools: &'a [ToolDescriptor], id: &str) -> Option<(usize, &'a ToolDescriptor)> {
+    let (base, variant) = id.split_once(':').map_or((id, None), |(b, v)| (b, Some(v)));
+    tools.iter().enumerate().find(|(_, tool)| {
+        tool.id == base && variant.is_none_or(|id| tool.variants.iter().any(|v| v.id == id))
+    })
+}
+
+/// The space round each panel of the tool strip: from its caption down to
+/// the toolbar's bottom edge, and across to the lines between panels.
+const PANEL_PADDING: f32 = SPACE_3;
+
+struct ToolPanels<'a> {
+    tools: &'a [ToolDescriptor],
+    enabled: &'a [bool],
+    toggled: &'a [bool],
+    pins: Vec<String>,
+    reset: bool,
+    active_tool: &'a mut ActiveTool,
+}
+
+impl ToolPanels<'_> {
+    /// The bench's panels in a row, a line between each two with
+    /// `PANEL_PADDING` either side of it.
+    fn draw_strip(&mut self, ui: &mut egui::Ui, bench: &str) -> egui::Response {
+        let tools = self.tools;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (index, category) in tool_categories(tools).into_iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(PANEL_PADDING);
+                    vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
+                    ui.add_space(PANEL_PADDING);
+                }
+                ui.push_id((bench, category), |ui| self.draw(ui, category));
+            }
+        })
+        .response
+    }
+
+    fn draw(&mut self, ui: &mut egui::Ui, category: &str) {
+        let pinned: Vec<_> = self
+            .pins
+            .iter()
+            .filter(|id| {
+                pin_tool(self.tools, id).is_some_and(|(_, tool)| tool_tab(tool) == category)
+            })
+            .cloned()
+            .collect();
+        let caption = category_label(category).to_uppercase();
+        let caption_width = ui
+            .painter()
+            .layout_no_wrap(caption.clone(), ui_kit::sans_semibold(FONT_XS), TEXT2)
+            .size()
+            .x
+            + SPACE_4
+            + SPACE_3;
+        let buttons_width = (pinned
+            .iter()
+            .map(|id| {
+                let (_, tool) = pin_tool(self.tools, id).unwrap();
+                let arrow = shows_variant_arrow(tool, Some(id));
+                TOOL_PANEL_BUTTON + if arrow { TOOL_MENU_STRIP } else { 0.0 } + SPACE_1
+            })
+            .sum::<f32>()
+            - SPACE_1)
+            .max(0.0);
+        let width = caption_width.max(buttons_width);
+        ui.allocate_ui_with_layout(
+            Vec2::new(width, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing = Vec2::splat(SPACE_1);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(width, TOOL_PANEL_BUTTON),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_height(TOOL_PANEL_BUTTON);
+                        // A caption wider than the pins: they sit centred over
+                        // its text, which stands left of the chevron.
+                        ui.add_space(((width - buttons_width) / 2.0 - SPACE_2).max(0.0));
+                        for id in &pinned {
+                            let (i, tool) = pin_tool(self.tools, id).unwrap();
+                            let response = draw_tool(
+                                ui,
+                                tool,
+                                self.tools,
+                                (self.enabled[i], self.toggled[i]),
+                                Some(id),
+                                self.active_tool,
+                            );
+                            response.context_menu(|ui| {
+                                ui_kit::widgets::fitted_menu(ui, |ui| {
+                                    if ui.button("Unpin from toolbar").clicked() {
+                                        self.pins.retain(|pin| pin != id);
+                                        ui.close();
+                                    }
+                                });
+                            });
+                        }
+                    },
+                );
+                ui.spacing_mut().interact_size.y = TOOL_PANEL_CAPTION;
+                let response = ui.add_sized(
+                    Vec2::new(width, TOOL_PANEL_CAPTION),
+                    egui::Button::new(RichText::new("").font(sans(FONT_XS))),
+                );
+                ui.painter().text(
+                    response.rect.center() - Vec2::new(SPACE_2, 0.0),
+                    egui::Align2::CENTER_CENTER,
+                    &caption,
+                    ui_kit::sans_semibold(FONT_XS),
+                    TEXT2,
+                );
+                if let Some(icon) = ui_kit::icon::image(ui.ctx(), "chevron-down", SPACE_3, TEXT3) {
+                    icon.paint_at(
+                        ui,
+                        egui::Rect::from_center_size(
+                            egui::pos2(response.rect.right() - SPACE_2, response.rect.center().y),
+                            Vec2::splat(SPACE_3),
+                        ),
+                    );
+                }
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        category_label(category),
+                    )
+                });
+                super::widget_map::note(ui.ctx(), || format!("panel:{category}"), response.rect);
+                Popup::menu(&response)
+                    .id(ui.make_persistent_id("panel_menu"))
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui_kit::widgets::fitted_menu(ui, |ui| self.menu(ui, category));
+                    });
+            },
+        );
+    }
+
+    fn menu(&mut self, ui: &mut egui::Ui, category: &str) {
+        ui.set_min_width(TOOL_PANEL_MENU_WIDTH);
+        let mut previous = None;
+        for (i, tool) in self
+            .tools
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| tool_tab(t) == category)
+        {
+            let full = tool_category(tool);
+            if previous != Some(full) {
+                if previous.is_some() {
+                    ui.separator();
+                }
+                ui_kit::widgets::overline(
+                    ui,
+                    &full
+                        .split('.')
+                        .map(category_label)
+                        .collect::<Vec<_>>()
+                        .join(" › "),
+                );
+                previous = Some(full);
+            }
+            self.menu_tool(ui, i, None);
+            for variant in 0..tool.variants.len() {
+                ui.indent((&tool.id, variant), |ui| {
+                    self.menu_tool(ui, i, Some(variant))
+                });
+            }
+        }
+        ui.separator();
+        if ui
+            .button("Reset pins")
+            .on_hover_text("Restore this workbench's default pins in every panel")
+            .clicked()
+        {
+            self.reset = true;
+            ui.close();
+        }
+    }
+
+    fn menu_tool(&mut self, ui: &mut egui::Ui, index: usize, variant: Option<usize>) {
+        let tool = &self.tools[index];
+        let (id, label, icon, planned) = match variant {
+            Some(i) => {
+                let v = &tool.variants[i];
+                (
+                    format!("{}:{}", tool.id, v.id),
+                    v.label,
+                    v.icon,
+                    v.planned.or(tool.planned),
+                )
+            }
+            None => (
+                tool.id.clone(),
+                tool.label.as_str(),
+                tool.icon.unwrap_or("more"),
+                tool.planned,
+            ),
+        };
+        let enabled = self.enabled[index] && planned.is_none();
+        ui.horizontal(|ui| {
+            let pin_width = INPUT;
+            let row_width = ui.available_width() - pin_width - SPACE_2;
+            let key = variant
+                .is_none()
+                .then(|| tool.shortcuts.first().map(ToString::to_string))
+                .flatten();
+            // A row with no key still carries an empty one: a sized button
+            // without shortcut text centres its label.
+            let row = menu_row(
+                ui.ctx(),
+                icon,
+                TEXT2,
+                label,
+                TEXT1,
+                Some(key.unwrap_or_default()),
+            )
+            .selected(
+                self.active_tool.active_ids.contains(&id)
+                    || (variant.is_none() && self.toggled[index]),
+            );
+            let response = ui
+                .add_enabled_ui(enabled, |ui| ui.add_sized(Vec2::new(row_width, INPUT), row))
+                .inner;
+            super::widget_map::note(ui.ctx(), || format!("menu:{id}"), response.rect);
+            if response.clicked() {
+                if let Some(i) = variant {
+                    remember_variant(ui.ctx(), &tool.id, i);
+                } else {
+                    ui.ctx().data_mut(|d| {
+                        d.remove::<usize>(egui::Id::new(("toolbar_variant", &tool.id)))
+                    });
+                }
+                self.active_tool.activate(self.tools, tool, &id);
+                ui.close();
+            }
+            let hint = planned.map_or_else(
+                || {
+                    if enabled {
+                        label.to_owned()
+                    } else {
+                        format!("{label}\nUnavailable for the current selection or editing state")
+                    }
+                },
+                |note| format!("{label} (planned)\n{note}"),
+            );
+            response.on_hover_text(&hint).on_disabled_hover_text(hint);
+            let mut pinned = self.pins.contains(&id);
+            if ui
+                .checkbox(&mut pinned, "")
+                .on_hover_text("Pin to toolbar")
+                .changed()
+            {
+                if pinned {
+                    self.pins.push(id);
+                } else {
+                    self.pins.retain(|pin| pin != &id);
+                }
+            }
+        });
+    }
+}
+
+/// The registered workbenches in the user's order: those `order` names
+/// first, as it lists them, then the rest as they registered.
+fn ordered_workbenches(order: &[String]) -> Vec<core_document::WorkbenchDescriptor> {
+    let mut benches = REGISTERED_WORKBENCHES.lock().unwrap().clone();
+    benches.sort_by_key(|wb| {
+        order
+            .iter()
+            .position(|id| id == wb.id.as_str())
+            .unwrap_or(usize::MAX)
+    });
+    benches
+}
+
+fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench, order: &[String]) {
+    let workbenches = ordered_workbenches(order);
+    let (current, icon) = workbenches
+        .iter()
+        .find(|wb| wb.id == active_workbench.0)
+        .map(|wb| ((wb.label.clone(), wb.description.clone()), wb.icon))
+        .unwrap_or_else(|| (("(none)".to_string(), String::new()), "workbench-print"));
+    // An exact footprint: a frame grown inside the row would claim the
+    // rest of it.
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(180.0, INPUT + 2.0), egui::Sense::click());
+    ui.painter().rect(
+        rect,
+        5.0,
+        BG2,
+        egui::Stroke::new(1.0, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut inner = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(8.0, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    inner.spacing_mut().item_spacing.x = SPACE_2;
+    ui_kit::icon::draw(&mut inner, icon, 16.0, ACCENT);
+    inner.label(RichText::new(&current.0).font(sans(FONT_SM)).color(TEXT1));
+    inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui_kit::icon::draw(ui, "chevron-down", 14.0, TEXT3);
+    });
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(if current.1.is_empty() {
+            "Active workbench".to_string()
+        } else {
+            format!("Active workbench: {}", current.1)
+        });
+    Popup::menu(&response).show(|ui| {
+        for wb in workbenches.iter() {
+            let target = ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
+            let selected = *active_workbench == target;
+            let row = menu_row(
+                ui.ctx(),
+                wb.icon,
+                if selected { ACCENT } else { TEXT2 },
+                &wb.label,
+                TEXT1,
+                None,
+            )
+            .selected(selected);
+            let r = ui.add(row).on_hover_text(&wb.description);
+            if r.clicked() {
+                *active_workbench = target;
+                ui.close();
+            }
+        }
+    });
+}
+
+fn row_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(BG1)
+        .inner_margin(egui::Margin::symmetric(6, 0))
+}
+
+/// A run of buttons the user can drag, by the grip at its start, to
+/// another place in its row, to another row or to a row of its own.
+struct Group {
+    /// Its name in the saved layout.
+    id: String,
+    /// What its grip calls it.
+    label: String,
+    /// The row its bench puts it on.
+    default_row: usize,
+    /// It sits at its row's right end.
+    end: bool,
+    content: GroupContent,
+}
+
+enum GroupContent {
+    Workbench,
+    /// The active bench's tools, by index.
+    Tools(Vec<usize>),
+}
+
+fn groups(tools: &[ToolDescriptor], bench: &str) -> Vec<Group> {
+    let mut out = Vec::new();
+    out.push(Group {
+        id: "std.workbench".into(),
+        label: "Workbench".into(),
+        default_row: 0,
+        end: false,
+        content: GroupContent::Workbench,
+    });
+    // The bench's tools, one group per run of a category along a row and
+    // side.
+    let mut open: Vec<((u8, bool), usize)> = Vec::new();
+    let mut seen: std::collections::HashMap<String, usize> = Default::default();
+    for (i, tool) in tools.iter().enumerate() {
+        let side = (tool.row, tool.align_end);
+        let category = tool.category.clone();
+        let current = open.iter().find(|(s, _)| *s == side).map(|(_, g)| *g);
+        if let Some(g) = current
+            && let GroupContent::Tools(members) = &mut out[g].content
+            && tools[members[0]].category == category
+        {
+            members.push(i);
+            continue;
+        }
+        let name = category.clone().unwrap_or_else(|| "tools".into());
+        let count = seen.entry(name.clone()).or_default();
+        *count += 1;
+        let id = if *count == 1 {
+            format!("{bench}/{name}")
+        } else {
+            format!("{bench}/{name}#{count}")
+        };
+        out.push(Group {
+            id,
+            label: category.unwrap_or_else(|| "Tools".into()),
+            default_row: tool.row as usize,
+            end: tool.align_end,
+            content: GroupContent::Tools(vec![i]),
+        });
+        let g = out.len() - 1;
+        match open.iter_mut().find(|(s, _)| *s == side) {
+            Some(slot) => slot.1 = g,
+            None => open.push((side, g)),
+        }
+    }
+    out
+}
+
+/// The saved rows with every group this frame knows that they do not
+/// list put where its bench puts it: after the group before it, when that
+/// one sits on the same row, else at the row's end. Ids of groups not
+/// drawn now (another bench's) stay where they are.
+fn full_layout(groups: &[Group], saved: &[Vec<String>]) -> Vec<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut rows: Vec<Vec<String>> = saved
+        .iter()
+        .map(|row| {
+            row.iter()
+                .filter(|id| seen.insert((*id).clone()))
+                .cloned()
+                .collect()
+        })
+        .collect();
+    for (i, group) in groups.iter().enumerate() {
+        if seen.contains(&group.id) {
+            continue;
+        }
+        while rows.len() <= group.default_row {
+            rows.push(Vec::new());
+        }
+        let row = &mut rows[group.default_row];
+        let at = groups[..i]
+            .iter()
+            .rev()
+            .find_map(|before| row.iter().position(|id| *id == before.id))
+            .map_or(row.len(), |k| k + 1);
+        row.insert(at, group.id.clone());
+    }
+    rows
+}
+
+/// The rows drawn: each the index of its row in the full layout and its
+/// groups, left to right. A row with nothing to draw is left out.
+fn visible_rows(groups: &[Group], full: &[Vec<String>]) -> Vec<(usize, Vec<usize>)> {
+    full.iter()
+        .enumerate()
+        .filter_map(|(k, row)| {
+            let members: Vec<usize> = row
+                .iter()
+                .filter_map(|id| groups.iter().position(|g| g.id == *id))
+                .collect();
+            (!members.is_empty()).then_some((k, members))
+        })
+        .collect()
+}
+
+/// Where a dragged group would land.
+#[derive(Debug, Clone, PartialEq)]
+enum Drop {
+    /// On row `row` of the full layout, before `before` (after the last
+    /// group of its side when `None`).
+    Row { row: usize, before: Option<String> },
+    /// On a new row under the others.
+    NewRow,
+}
+
+/// The full layout with `id` moved to `to`; rows left empty are dropped,
+/// the first excepted.
+fn moved(
+    mut rows: Vec<Vec<String>>,
+    id: &str,
+    to: &Drop,
+    same_side: impl Fn(&str) -> bool,
+) -> Vec<Vec<String>> {
+    for row in &mut rows {
+        row.retain(|x| x != id);
+    }
+    match to {
+        Drop::NewRow => rows.push(vec![id.to_string()]),
+        Drop::Row { row, before } => {
+            while rows.len() <= *row {
+                rows.push(Vec::new());
+            }
+            let row = &mut rows[*row];
+            let at = match before {
+                Some(before) => row.iter().position(|x| x == before),
+                None => row.iter().rposition(|x| same_side(x)).map(|k| k + 1),
+            }
+            .unwrap_or(row.len());
+            row.insert(at, id.to_string());
+        }
+    }
+    let mut kept = Vec::new();
+    for (k, row) in rows.into_iter().enumerate() {
+        if k == 0 || !row.is_empty() {
+            kept.push(row);
+        }
+    }
+    kept
+}
+
+/// The grip a group is dragged by: two columns of dots.
+fn grip(ui: &mut egui::Ui, group: &Group) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(8.0, 22.0), egui::Sense::click_and_drag());
+    super::widget_map::note(ui.ctx(), || format!("group:{}", group.id), rect);
+    let color = if response.dragged() {
+        ACCENT
+    } else if response.hovered() {
+        TEXT2
+    } else {
+        BORDER_STRONG
+    };
+    for column in [-1.5_f32, 1.5] {
+        for row in [-5.0_f32, 0.0, 5.0] {
+            ui.painter()
+                .circle_filled(rect.center() + Vec2::new(column, row), 1.0, color);
+        }
+    }
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    response.on_hover_text(format!(
+        "{}: drag to move it along the row, to another row or to a row of its own",
+        group.label
+    ))
+}
+
+/// Draws every toolbar row. Tool activation goes straight into
+/// `active_tool`; shell buttons push commands.
+pub fn draw_toolbars(
+    ui: &mut egui::Ui,
+    inputs: ToolbarInputs<'_>,
+    active_workbench: &mut ActiveWorkbench,
+    active_tool: &mut ActiveTool,
+    commands: &mut Vec<UiCommand>,
+) {
+    let ToolbarInputs {
+        registry,
+        document,
+        host,
+        active_document_object,
+        keymap,
+        layout,
+        workbench_tabs,
+        workbench_order,
+        panels,
+        pins,
+    } = inputs;
+    // This copy carries the keys in effect, which the tooltips name.
+    let mut tools: Vec<ToolDescriptor> = registry
+        .tools_for(&active_workbench.0)
+        .map(|t| t.to_vec())
+        .unwrap_or_default();
+    for tool in &mut tools {
+        tool.shortcuts = keymap
+            .get(&tool.id)
+            .map(|b| b.keys.clone())
+            .unwrap_or_default();
+    }
+    // Enablement and toggle state come from the workbench, evaluated once
+    // per frame against a context with the real camera and viewport.
+    let (enabled, toggled): (Vec<bool>, Vec<bool>) =
+        match registry.workbench_mut(&active_workbench.0) {
+            Ok(wb) => {
+                let ctx = panel_ctx(document, &host, active_document_object);
+                tools
+                    .iter()
+                    .map(|t| (wb.is_tool_enabled(&t.id, &ctx), wb.tool_toggled(&t.id)))
+                    .unzip()
+            }
+            Err(_) => (vec![false; tools.len()], vec![false; tools.len()]),
+        };
+
+    let tools_bench = active_workbench.0.clone();
+    if workbench_tabs {
+        egui::Panel::top("workbench_tabs")
+            .frame(row_frame())
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal()
+                    .id_salt("workbench_tabs_scroll")
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let benches = ordered_workbenches(workbench_order);
+                            let mut reorder = ui_kit::widgets::TabReorder::default();
+                            for wb in &benches {
+                                let selected = active_workbench.0 == wb.id;
+                                let tab = ui_kit::widgets::Tab::new(&wb.label, selected)
+                                    .marked(Some((wb.icon, ACCENT)))
+                                    .draggable()
+                                    .show(ui);
+                                reorder.push(&tab);
+                                super::widget_map::note(
+                                    ui.ctx(),
+                                    || format!("tab:{}", wb.id.as_str()),
+                                    tab.response.rect,
+                                );
+                                tab.response.on_hover_text(&wb.description);
+                                if tab.selected {
+                                    *active_workbench =
+                                        ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
+                                }
+                            }
+                            if let Some((from, to)) = reorder.finish(ui) {
+                                let mut order: Vec<String> =
+                                    benches.iter().map(|wb| wb.id.as_str().to_owned()).collect();
+                                let moved = order.remove(from);
+                                order.insert(to, moved);
+                                commands.push(UiCommand::EditSettings(SettingsEdit::set(
+                                    |s| &mut s.workbench_order,
+                                    order,
+                                )));
+                            }
+                        });
+                    });
+            });
+    }
+    if panels {
+        let radial = registry
+            .workbench_mut(&tools_bench)
+            .map(|wb| wb.descriptor().radial)
+            .unwrap_or_default();
+        let initial_pins = resolved_pins(&tools, &radial, pins.get(tools_bench.as_str()));
+        let mut panels = ToolPanels {
+            tools: &tools,
+            enabled: &enabled,
+            toggled: &toggled,
+            pins: initial_pins.clone(),
+            reset: false,
+            active_tool,
+        };
+        egui::Panel::top("tool_panels")
+            .frame(row_frame().inner_margin(egui::Margin {
+                bottom: PANEL_PADDING as i8,
+                ..row_frame().inner_margin
+            }))
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal()
+                    .id_salt(("tool_panels_scroll", tools_bench.as_str()))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            // Without the bench tabs, the switcher leads the
+                            // row, set off as a panel is.
+                            if !workbench_tabs {
+                                workbench_combo(ui, active_workbench, workbench_order);
+                                ui.add_space(PANEL_PADDING);
+                                vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
+                                ui.add_space(PANEL_PADDING);
+                            }
+                            panels.draw_strip(ui, tools_bench.as_str());
+                        });
+                    });
+            });
+        if panels.reset || panels.pins != initial_pins {
+            let bench = tools_bench.as_str().to_owned();
+            let pins = (!panels.reset).then_some(panels.pins);
+            commands.push(UiCommand::EditSettings(SettingsEdit::new(
+                move |settings| match &pins {
+                    Some(pins) => {
+                        settings.tool_panel_pins.insert(bench.clone(), pins.clone());
+                    }
+                    None => {
+                        settings.tool_panel_pins.remove(&bench);
+                    }
+                },
+            )));
+        }
+        return;
+    }
+    let mut groups = groups(&tools, active_workbench.0.as_str());
+    if workbench_tabs {
+        groups.retain(|group| !matches!(group.content, GroupContent::Workbench));
+    }
+    let full = full_layout(&groups, layout);
+    let rows = visible_rows(&groups, &full);
+    let drag_id = egui::Id::new("toolbar_drag");
+    let dragging: Option<String> = ui.ctx().data(|d| d.get_temp(drag_id));
+    // While a group is dragged, a strip under the rows takes it to a row
+    // of its own.
+    let strip = dragging.is_some() as usize;
+    let height = TOOLBAR * (rows.len() + strip) as f32;
+    if height <= 0.0 {
+        return;
+    }
+
+    // What was drawn where, for the drop: each row's rect and each group's.
+    let mut row_rects: Vec<(usize, egui::Rect)> = Vec::new();
+    let mut group_rects: Vec<(usize, usize, egui::Rect)> = Vec::new();
+    let mut drag: Option<(usize, bool)> = None;
+    let mut reset = false;
+
+    egui::Panel::top("toolbars")
+        .exact_size(height)
+        .frame(row_frame())
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut draw_group = |ui: &mut egui::Ui, g: usize, first: bool, reversed: bool| {
+                let group = &groups[g];
+                let inner = ui.scope(|ui| {
+                    let mut grip_response = None;
+                    if !reversed {
+                        if !first {
+                            separator(ui);
+                        }
+                        grip_response = Some(grip(ui, group));
+                        ui.add_space(2.0);
+                    }
+                    match &group.content {
+                        GroupContent::Workbench => {
+                            workbench_combo(ui, active_workbench, workbench_order)
+                        }
+                        GroupContent::Tools(members) => {
+                            let order: Vec<usize> = if reversed {
+                                members.iter().rev().copied().collect()
+                            } else {
+                                members.clone()
+                            };
+                            for i in order {
+                                draw_tool(
+                                    ui,
+                                    &tools[i],
+                                    &tools,
+                                    (enabled[i], toggled[i]),
+                                    None,
+                                    active_tool,
+                                );
+                            }
+                        }
+                    }
+                    if reversed {
+                        ui.add_space(2.0);
+                        grip_response = Some(grip(ui, group));
+                        if !first {
+                            separator(ui);
+                        }
+                    }
+                    grip_response
+                });
+                (inner.response.rect, inner.inner)
+            };
+            for (k, (full_row, members)) in rows.iter().enumerate() {
+                let row_rect = row(ui, k, |ui| {
+                    let mut first = true;
+                    for &g in members.iter().filter(|&&g| !groups[g].end) {
+                        let (rect, grip) = draw_group(ui, g, first, false);
+                        first = false;
+                        group_rects.push((*full_row, g, rect));
+                        if let Some(grip) = grip {
+                            watch_grip(&grip, g, &mut drag, &mut reset);
+                        }
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let ends: Vec<usize> =
+                            members.iter().copied().filter(|&g| groups[g].end).collect();
+                        let count = ends.len();
+                        for (n, &g) in ends.iter().rev().enumerate() {
+                            // The leftmost end group takes no separator.
+                            let (rect, grip) = draw_group(ui, g, n + 1 == count, true);
+                            group_rects.push((*full_row, g, rect));
+                            if let Some(grip) = grip {
+                                watch_grip(&grip, g, &mut drag, &mut reset);
+                            }
+                        }
+                    });
+                });
+                row_rects.push((*full_row, row_rect));
+            }
+            if strip == 1 {
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), TOOLBAR),
+                    egui::Sense::hover(),
+                );
+                let over = ui
+                    .ctx()
+                    .pointer_interact_pos()
+                    .is_some_and(|p| p.y >= rect.top());
+                ui.painter().rect(
+                    rect.shrink(4.0),
+                    RADIUS_MD,
+                    if over { ACCENT_FAINT } else { BG2 },
+                    egui::Stroke::new(1.0, if over { ACCENT } else { BORDER }),
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Drop here for a row of its own",
+                    sans(FONT_SM),
+                    if over { TEXT1 } else { TEXT3 },
+                );
+                row_rects.push((usize::MAX, rect));
+            }
+        });
+
+    if reset {
+        commands.push(toolbar_layout(Vec::new()));
+        return;
+    }
+    let Some((g, stopped)) = drag else {
+        return;
+    };
+    let ctx = ui.ctx().clone();
+    ctx.data_mut(|d| {
+        if stopped {
+            d.remove::<String>(drag_id);
+        } else {
+            d.insert_temp(drag_id, groups[g].id.clone());
+        }
+    });
+    let Some(pointer) = ctx.pointer_interact_pos() else {
+        return;
+    };
+    let target = drop_target(&groups, g, pointer, &row_rects, &group_rects);
+    if stopped {
+        if let Some(to) = target {
+            let side = groups[g].end;
+            let same_side = |id: &str| {
+                groups
+                    .iter()
+                    .find(|x| x.id == id)
+                    .is_some_and(|x| x.end == side)
+            };
+            let rows = moved(full, &groups[g].id, &to, same_side);
+            commands.push(toolbar_layout(rows));
+        }
+        return;
+    }
+    // The group follows the pointer as a card, and a line shows where it
+    // would land.
+    egui::Area::new(egui::Id::new("toolbar_drag_card"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(pointer + Vec2::new(12.0, 12.0))
+        .interactable(false)
+        .show(&ctx, |ui| {
+            ui_kit::widgets::Card::floating().show(ui, |ui| {
+                ui.label(
+                    RichText::new(&groups[g].label)
+                        .font(sans(FONT_SM))
+                        .color(TEXT1),
+                );
+            });
+        });
+    if let Some(Drop::Row { row, before }) = &target {
+        let row_rect = row_rects.iter().find(|(r, _)| r == row).map(|(_, r)| *r);
+        let side = groups[g].end;
+        let x = match before {
+            Some(before) => group_rects
+                .iter()
+                .find(|(_, b, _)| groups[*b].id == *before)
+                .map(|(_, _, r)| r.left() - 2.0),
+            None => group_rects
+                .iter()
+                .filter(|(r, b, _)| r == row && groups[*b].end == side && *b != g)
+                .map(|(_, _, r)| r.right() + 2.0)
+                .reduce(f32::max),
+        };
+        if let (Some(row_rect), Some(x)) = (row_rect, x.or(row_rect.map(|r| r.left() + 4.0))) {
+            ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("toolbar_drop"),
+            ))
+            .vline(
+                x,
+                row_rect.y_range().shrink(6.0),
+                egui::Stroke::new(2.0, ACCENT),
+            );
+        }
+    }
+    ctx.request_repaint();
+}
+
+/// Notes a group's grip being dragged or let go, and its menu.
+fn watch_grip(grip: &egui::Response, g: usize, drag: &mut Option<(usize, bool)>, reset: &mut bool) {
+    if grip.drag_stopped() {
+        *drag = Some((g, true));
+    } else if grip.dragged() {
+        *drag = Some((g, false));
+    }
+    grip.context_menu(|ui| {
+        if ui
+            .button("Reset toolbars")
+            .on_hover_text("Put every group back where its workbench puts it")
+            .clicked()
+        {
+            *reset = true;
+            ui.close();
+        }
+    });
+}
+
+/// Where group `g`, dragged, would land with the pointer at `pointer`.
+fn drop_target(
+    groups: &[Group],
+    g: usize,
+    pointer: egui::Pos2,
+    row_rects: &[(usize, egui::Rect)],
+    group_rects: &[(usize, usize, egui::Rect)],
+) -> Option<Drop> {
+    let (row, _) = row_rects
+        .iter()
+        .find(|(_, r)| r.y_range().contains(pointer.y))
+        .or_else(|| {
+            // Above the rows is the first; below them, the last.
+            let first = row_rects.first()?;
+            let last = row_rects.last()?;
+            if pointer.y < first.1.top() {
+                Some(first)
+            } else if pointer.y > last.1.bottom() {
+                Some(last)
+            } else {
+                None
+            }
+        })?;
+    if *row == usize::MAX {
+        return Some(Drop::NewRow);
+    }
+    let side = groups[g].end;
+    let before = group_rects
+        .iter()
+        .filter(|(r, b, _)| r == row && groups[*b].end == side && *b != g)
+        .map(|(_, b, rect)| (*b, rect.center().x))
+        .filter(|(_, x)| *x > pointer.x)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(b, _)| groups[b].id.clone());
+    Some(Drop::Row { row: *row, before })
+}
+
+fn row(ui: &mut egui::Ui, index: usize, add: impl FnOnce(&mut egui::Ui)) -> egui::Rect {
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), TOOLBAR),
+        egui::Sense::hover(),
+    );
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        egui::Stroke::new(1.0, BORDER),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(0.0, 4.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center))
+            .id_salt(("toolbar_row", index)),
+    );
+    child.spacing_mut().item_spacing.x = 2.0;
+    add(&mut child);
+    rect
+}
+
+fn separator(ui: &mut egui::Ui) {
+    ui.add_space(5.0);
+    vseparator(ui, 22.0);
+    ui.add_space(5.0);
+}
+
+/// Keep the toolbar groups where the user dragged them; empty puts every
+/// group back where its bench puts it.
+fn toolbar_layout(rows: Vec<Vec<String>>) -> UiCommand {
+    UiCommand::EditSettings(SettingsEdit::set(|s| &mut s.toolbars.rows, rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool(id: &str, category: &str, row: u8) -> ToolDescriptor {
+        ToolDescriptor::new(id, id, Some(category)).row(row)
+    }
+
+    fn bench_tools() -> Vec<ToolDescriptor> {
+        vec![
+            tool("a", "Make", 0),
+            tool("b", "Make", 0),
+            tool("c", "Change", 1),
+            tool("d", "Make", 1),
+            tool("e", "Finish", 0).align_end(),
+        ]
+    }
+
+    #[test]
+    fn a_panel_pin_offers_its_variants_and_starts_the_one_picked() {
+        let ctx = egui::Context::default();
+        let rect = tool("rect", "Make", 0).variants(vec![
+            core_document::ToolVariant::new("corners", "Two corners", "rectangle"),
+            core_document::ToolVariant::new("center", "Center and corner", "rectangle"),
+        ]);
+        let tools = vec![rect.clone(), tool("line", "Make", 0)];
+        assert!(shows_variant_arrow(&rect, Some("rect")));
+        assert!(shows_variant_arrow(&rect, None));
+        assert!(!shows_variant_arrow(&rect, Some("rect:corners")));
+        assert!(!shows_variant_arrow(&tools[1], Some("line")));
+
+        let mut active = ActiveTool::default();
+        pick_variant(&ctx, &mut active, &tools, &rect, 1, true);
+        assert!(active.active_ids.contains("rect:center"));
+        // A plain click starts the variant last picked, a variant's pin its own.
+        let plain = button_variant(&ctx, &rect, Some("rect"));
+        assert_eq!(activation_id(&rect, plain), "rect:center");
+        let pinned = button_variant(&ctx, &rect, Some("rect:corners"));
+        assert_eq!(activation_id(&rect, pinned), "rect:corners");
+        // A disabled tool remembers the pick without starting it.
+        let mut idle = ActiveTool::default();
+        pick_variant(&ctx, &mut idle, &tools, &rect, 0, false);
+        assert!(idle.active_ids.is_empty());
+        assert_eq!(button_variant(&ctx, &rect, None), Some(0));
+    }
+
+    #[test]
+    fn panels_group_tools_and_resolve_default_or_custom_pins() {
+        let mut tools = bench_tools();
+        tools.extend([
+            tool("planned", "geometry.basic", 0).planned("Not available"),
+            tool("curve", "geometry.curves", 0)
+                .variants(vec![core_document::ToolVariant::new("arc", "Arc", "more")]),
+            tool("line", "geometry.basic", 1),
+            tool("rule", "constraints.geometric", 0),
+            tool("f", "", 0),
+            ToolDescriptor::new("g", "g", None::<String>),
+            tool("future", "Future", 0).planned("Not available"),
+        ]);
+        assert_eq!(
+            tool_categories(&tools),
+            [
+                "Make",
+                "Change",
+                "Finish",
+                "geometry",
+                "constraints",
+                "General",
+                "Future"
+            ]
+        );
+        assert_eq!(category_label("geometry"), "Geometry");
+        let radial = vec!["d".into(), "missing".into(), "d".into(), "line".into()];
+        for (saved, expected) in [
+            (None, vec!["d", "line", "c", "e", "rule", "f"]),
+            (Some(vec![]), vec![]),
+            (
+                Some(vec![
+                    "missing".into(),
+                    "g".into(),
+                    "g".into(),
+                    "a:gone".into(),
+                    "curve:arc".into(),
+                ]),
+                vec!["g", "curve:arc"],
+            ),
+        ] {
+            let mut settings = settings::UserSettings::default();
+            if let Some(saved) = saved {
+                settings.tool_panel_pins.insert("bench".into(), saved);
+            }
+            let saved = serde_json::to_value(settings).unwrap();
+            let loaded: settings::UserSettings = serde_json::from_value(saved).unwrap();
+            assert_eq!(
+                resolved_pins(&tools, &radial, loaded.tool_panel_pins.get("bench")),
+                expected
+            );
+        }
+        assert!(tool_categories(&[]).is_empty());
+        assert_eq!(
+            resolved_pins(&tools, &[], None),
+            ["a", "c", "e", "curve", "rule", "f"]
+        );
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        for bench in registry.workbench_descriptors() {
+            for custom in [None, Some(Vec::new())] {
+                let tools = registry.tools_for(&bench.id).unwrap_or_default();
+                let flags = vec![true; tools.len()];
+                let mut active_tool = ActiveTool::default();
+                let mut panels = ToolPanels {
+                    tools,
+                    enabled: &flags,
+                    toggled: &flags,
+                    pins: resolved_pins(tools, &bench.radial, custom.as_ref()),
+                    reset: false,
+                    active_tool: &mut active_tool,
+                };
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let row = panels.draw_strip(ui, bench.id.as_str());
+                    eprintln!(
+                        "{} panels: {:.0} × {:.0} px",
+                        bench.label,
+                        row.rect.width(),
+                        row.rect.height()
+                    );
+                    assert!(
+                        row.rect.width() < if bench.modal { 1020.0 } else { 1920.0 },
+                        "{}: {:?}",
+                        bench.label,
+                        row.rect
+                    );
+                    assert!(
+                        row.rect.height() <= TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1,
+                        "{}: {:?}",
+                        bench.label,
+                        row.rect
+                    );
+                });
+                output.textures_delta.clear();
+            }
+        }
+    }
+
+    fn ids(rows: &[Vec<String>]) -> Vec<Vec<&str>> {
+        rows.iter()
+            .map(|r| r.iter().map(String::as_str).collect())
+            .collect()
+    }
+
+    #[test]
+    fn groups_follow_the_bench_s_rows_and_categories() {
+        let groups = groups(&bench_tools(), "b");
+        let names: Vec<(&str, usize, bool)> = groups
+            .iter()
+            .map(|g| (g.id.as_str(), g.default_row, g.end))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("std.workbench", 0, false),
+                ("b/Make", 0, false),
+                ("b/Change", 1, false),
+                ("b/Make#2", 1, false),
+                ("b/Finish", 0, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_saved_is_the_bench_s_own_layout() {
+        let groups = groups(&bench_tools(), "b");
+        let full = full_layout(&groups, &[]);
+        assert_eq!(
+            ids(&full),
+            [
+                vec!["std.workbench", "b/Make", "b/Finish"],
+                vec!["b/Change", "b/Make#2"],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_saved_layout_keeps_groups_it_cannot_see_and_places_new_ones() {
+        let groups = groups(&bench_tools(), "b");
+        // "std.file" names a group nothing draws, as an older layout may.
+        let saved = vec![
+            vec!["std.workbench".to_string(), "other/Tools".to_string()],
+            vec!["b/Make".to_string(), "std.file".to_string()],
+        ];
+        let full = full_layout(&groups, &saved);
+        assert_eq!(full[0][0], "std.workbench");
+        assert!(full[0].iter().any(|g| g == "other/Tools"));
+        assert_eq!(full[1][..2], ["b/Make", "b/Change"]);
+        // A group the layout does not list goes on its own row, after the
+        // group before it there.
+        assert_eq!(full[0][1], "b/Finish");
+        // Only drawn groups draw; the ids nothing draws are skipped.
+        let rows = visible_rows(&groups, &full);
+        let drawn: usize = rows.iter().map(|(_, m)| m.len()).sum();
+        assert_eq!(drawn, groups.len());
+        // A row holding only ids nothing draws is left out.
+        let stale = vec![vec!["std.file".to_string()], vec!["b/Make".to_string()]];
+        let rows = visible_rows(&groups, &full_layout(&groups, &stale));
+        assert!(rows.iter().all(|(_, members)| !members.is_empty()));
+    }
+
+    #[test]
+    fn a_group_moves_along_its_row_to_another_and_to_a_new_one() {
+        let rows = vec![
+            vec!["x".to_string(), "y".to_string(), "z".to_string()],
+            vec!["w".to_string()],
+        ];
+        let any = |_: &str| true;
+        let to_front = moved(
+            rows.clone(),
+            "z",
+            &Drop::Row {
+                row: 0,
+                before: Some("x".into()),
+            },
+            any,
+        );
+        assert_eq!(ids(&to_front), [vec!["z", "x", "y"], vec!["w"]]);
+        // The last group of a row moved out takes its row with it.
+        let up = moved(
+            rows.clone(),
+            "w",
+            &Drop::Row {
+                row: 0,
+                before: None,
+            },
+            any,
+        );
+        assert_eq!(ids(&up), [vec!["x", "y", "z", "w"]]);
+        let alone = moved(rows, "y", &Drop::NewRow, any);
+        assert_eq!(ids(&alone), [vec!["x", "z"], vec!["w"], vec!["y"]]);
+    }
+}

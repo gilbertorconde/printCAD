@@ -1,0 +1,21 @@
+[package]
+name = "doc_export"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Writing a document's bodies out: export options, the writer thread's bodies, textures pressed in, the print layout's copies, the slicer."
+
+[dependencies]
+app_log = { path = "../app_log" }
+app_platform = { path = "../app_platform" }
+core_document = { path = "../core_document" }
+doc_render = { path = "../doc_render" }
+glam.workspace = true
+kernel_api.workspace = true
+kernel_ogeom = { path = "../kernel_ogeom" }
+local_ipc = { path = "../local_ipc" }
+serde_json.workspace = true
+settings = { path = "../settings" }
+surface_texture = { path = "../surface_texture" }
+uuid.workspace = true

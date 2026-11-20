@@ -163,7 +163,7 @@ the `printcad://rules` and `printcad://context` resources, with requests
 no client can name), the `context` tool, the prompts, and the user's rules
 (`AiSettings.rules` for every document, `Document::agent_rules` saved with
 one, op `SetAgentRules`), which also go with a chat's first prompt and with
-the next one after they change. `app/chats.rs` keeps
+the next one after they change. `app/chats.rs` (over `assistant::Chat`) keeps
 `PrintCadApp.agents.chats`, each started with the relay as its MCP server
 (every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
 client that defers tools behind a search has them in its first turn;
@@ -182,7 +182,7 @@ or the script it runs), from the arguments ACP sends as `rawInput`. A chat belon
 to the tab it started in (`Chat::tab`; its tool calls run there through
 `submit_script_in`), and once it has a session id and the tab a file,
 `persist_chats` keeps `{agent, session, title, folder, used}` with the file in the
-app's `chats.json` (`app/chat_store.rs`); opening the file
+app's `chats.json` (`assistant::chat_store`); opening the file
 (`restore_chats`) brings them back `Resting`, and the first time one is
 shown `wake_chat` starts its agent with `session/load`
 (`AgentChat::start`'s `resume`), which replays the conversation.
@@ -209,7 +209,7 @@ images, small UTF-8 files embedded, the rest as `resource_link`s. They
 come from the "+" menu (`FileDialogKind::Attach`, `attach_view` over
 `view_png`), a paste of file paths, or a drop on the panel (winit delivers
 drops on X11 only). Typing `@` in the box completes mentions
-(`app/mentions.rs`, through `ui_kit::completion::Completion`, the
+(`app/mentions.rs` over `assistant::mentions`, through `ui_kit::completion::Completion`, the
 formula fields' dropdown made general): every open file and the chat
 tab's selection, `PrintCadApp::mention_options`. A pick puts its token in
 the text, drawn as a chip by the box's layouter and taken away whole by

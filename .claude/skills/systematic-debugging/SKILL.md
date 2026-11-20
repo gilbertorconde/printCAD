@@ -97,7 +97,7 @@ You MUST complete each phase before proceeding to the next.
 
    **printCAD boundaries.** Name the suspected boundary before you
    instrument:
-   - the UI thread and the kernel worker (`kernel_worker.rs`,
+   - the UI thread and the kernel worker (the `kernel_worker` crate,
      `app/recompute.rs`): plans in, `SolidBuildResult` out, routed by body
      id or `import_owner`, a build dropped or replaced by a newer plan;
    - the document and its server (`core_document/src/server.rs`,
@@ -111,7 +111,7 @@ You MUST complete each phase before proceeding to the next.
    - the script thread (`Event::Call` run on the UI thread in
      `drive_scripts`, pinned to `in_script_tab`, the journal held per run);
    - the MCP relay and chats (`app/mcp.rs`, approvals, `agent_check`,
-     `app/chats.rs`);
+     `app/chats.rs` over the `assistant` crate);
    - the renderer (`scene_fingerprint`, the on-demand frame schedule and
      its pending flags, the mesh cache keyed by id and revision);
    - the kernel itself (a refusal surfaces as `ChainError` with its op

@@ -32,25 +32,10 @@ use agents::mcp::{Prompt, Resource, ServerInfo, ToolHost};
 use serde_json::Value;
 use serde_json::json;
 
+use assistant::{Approval, ToolRequest};
+
 use crate::PrintCadApp;
 use crate::app::scripts::{RunKind, command_specs};
-
-/// A tool call from a connection, for the UI thread.
-pub(crate) struct ToolRequest {
-    /// The chat whose agent asked, when a chat's did.
-    pub chat: Option<String>,
-    pub tool: String,
-    pub args: Value,
-    pub reply: Sender<ToolAnswer>,
-}
-
-/// A change an agent asked for, waiting for the user's OK.
-pub(crate) struct Approval {
-    pub chat: Option<String>,
-    /// What it does, as a line of script.
-    pub summary: String,
-    pub request: ToolRequest,
-}
 
 /// The server: its socket, and the calls its connections hand over.
 pub(crate) struct McpServer {
@@ -471,7 +456,7 @@ impl PrintCadApp {
                 self.agents.mcp = Some(server);
             }
             Err(err) => {
-                crate::app_log::warn(format!("Agents cannot reach the document: {err}"));
+                app_log::warn(format!("Agents cannot reach the document: {err}"));
             }
         }
     }
@@ -525,7 +510,7 @@ impl PrintCadApp {
                 .map_or_else(ToolAnswer::error, ToolAnswer::text),
             "log" => {
                 let lines = args.get("lines").and_then(Value::as_u64).unwrap_or(50) as usize;
-                let entries = crate::log_panel::entries();
+                let entries = app_log::entries();
                 let from = entries.len().saturating_sub(lines);
                 ToolAnswer::text(
                     entries[from..]

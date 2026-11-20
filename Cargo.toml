@@ -1,6 +1,11 @@
 [workspace]
 members = [
   "crates/app_shell",
+  "crates/app_ui",
+  "crates/app_log",
+  "crates/app_platform",
+  "crates/package_store",
+  "crates/file_session",
   "crates/core_document",
   "crates/bench_panel",
   "crates/feature_walk",
@@ -12,7 +17,10 @@ members = [
   "crates/panel_api",
   "crates/doc_server",
   "crates/doc_render",
+  "crates/doc_export",
   "crates/build_driver",
+  "crates/kernel_worker",
+  "crates/orientation_cube",
   "crates/kernel_api",
   "crates/kernel_ogeom",
   "crates/project_tools",
@@ -30,8 +38,10 @@ members = [
   "crates/ui_kit",
   "crates/scripting",
   "crates/agents",
+  "crates/assistant",
   "crates/local_ipc",
   "crates/viewport_camera",
+  "crates/view_camera",
   "crates/transform_gizmo",
 ]
 resolver = "2"

@@ -1,0 +1,23 @@
+[package]
+name = "assistant"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The assistant's model: chats with AI agents, the chats kept per file, mentions and agents' tool calls."
+
+[features]
+# `Chat::for_test`, for the app's tests of the assistant panel.
+testing = ["dep:local_ipc"]
+
+[dependencies]
+agents = { path = "../agents" }
+app_log = { path = "../app_log" }
+core_document = { path = "../core_document" }
+local_ipc = { path = "../local_ipc", optional = true }
+serde_json.workspace = true
+settings = { path = "../settings" }
+uuid.workspace = true
+
+[dev-dependencies]
+local_ipc = { path = "../local_ipc" }

@@ -78,7 +78,7 @@ Start the system model from `CLAUDE.md` and the `printcad-*` skills (crate map d
 - Scripts: the Lua engine (`crates/scripting`), files in `settings::scripts_dir()` bound to keys, menus and the palette, `printcad --script`, file commands taking a `path`, the slicer command the user configures (`slicer_command` runs a program on a written file), `open_with_system`.
 - The document server: `printcad-serverd` on a unix socket under `$XDG_RUNTIME_DIR/printcad`, single client, the op log beside the file, the `DirectFiles` fallback, `PRINTCAD_SERVERD` overriding the binary, the app spawning it from its own directory.
 - File readers on untrusted bytes: STEP, IGES, STL, OBJ, 3MF, PLY, glTF, VRML, DXF, PNG, JPEG, the `.prtcad` tar (and its `brep/` blobs and assets), `.pcbench`, linked parts read from other files (`app/links.rs`), `Replace shape` assets, recovery copies.
-- Network: the update check (`app/updates.rs`, informs only), store fetches, package downloads; nothing else talks to the network.
+- Network: the update check (`package_store::latest_release`, informs only), store fetches, package downloads; nothing else talks to the network.
 - The user's data: the settings and data folder (`crates/settings`), recovery copies, `hole_cuts.json`, documents and the files beside them (`.oplog.jsonl`), export and slicer output under `$TMPDIR/printcad/`.
 - CI and release: `.github/workflows/release.yml` publishes with `contents: write` (see gha-security-review); the Linux archive's `install.sh`.
 

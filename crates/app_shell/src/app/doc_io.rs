@@ -7,23 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result};
 
 use crate::app::view_fit::{aabb_fit_center_radius, document_imported_aabb};
-use crate::log_panel as app_log;
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 use crate::{Document, PrintCadApp};
-
-/// Derive a user-facing document name from a file name by stripping the
-/// known document extensions (case-insensitively), longest match first.
-/// Returns the original name when no known extension matches.
-pub(crate) fn document_name_from_file_name(file_name: &str) -> &str {
-    const SUFFIXES: [&str; 4] = [".prtcad.zst", ".prtcad.gz", ".prtcad", ".json"];
-    let lowered = file_name.to_ascii_lowercase();
-    for suffix in SUFFIXES {
-        if let Some(stripped) = lowered.strip_suffix(suffix) {
-            return &file_name[..stripped.len()];
-        }
-    }
-    file_name
-}
+pub(crate) use file_session::document_name_from_file_name;
 
 /// A document read from a file, made ready to build: its features' saved
 /// dirty flags are the saving run's, so every bench marks its own features
@@ -105,7 +91,7 @@ pub(crate) enum FileDialogKind {
     SaveAs,
     /// A name for the tab's document, asked by a close, quit or Save all
     /// that goes on once the document is saved under it.
-    SaveThen(crate::app::unsaved::Then),
+    SaveThen(file_session::Then),
     ImportStep,
     Export(kernel_ogeom::export::ExportFormat),
     /// The folder an export of a file per body writes into.
@@ -211,7 +197,7 @@ impl PrintCadApp {
     /// happened in it, a new tab beside it otherwise.
     pub(crate) fn reset_to_new_document(&mut self) {
         self.ensure_fresh_tab();
-        self.session.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::contract::Screen::Workspace;
         app_log::info("New document");
     }
 
@@ -274,7 +260,7 @@ impl PrintCadApp {
 
         self.session.document.mark_clean();
         self.touch_recent(&path);
-        self.session.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::contract::Screen::Workspace;
         // Reframe on the imported meshes' bounds, as a STEP import does, so the
         // scene bounds and the automatic near/far planes agree with the view;
         // keeping the old eye and target would clip the model at the margins.
@@ -388,7 +374,7 @@ impl PrintCadApp {
         let Some(path) = self.session.file.import_in_turn(path) else {
             return;
         };
-        if crate::app::scans::has_no_units(&path) {
+        if crate::scans::has_no_units(&path) {
             if self.user_settings.files.ask_mesh_units {
                 self.session.file.mesh_units_pending = Some(path);
             } else {
@@ -403,7 +389,7 @@ impl PrintCadApp {
             self.import_step_at(&path, self.imports.last_detail.clone());
         } else {
             // The import dialog is drawn on the workspace only.
-            self.session.screen = crate::ui::Screen::Workspace;
+            self.session.screen = crate::contract::Screen::Workspace;
             self.session.file.step_import_pending = Some((path, self.imports.last_detail.clone()));
         }
     }
@@ -525,7 +511,7 @@ impl PrintCadApp {
         // A file already open is that tab; otherwise it gets a blank one.
         if let Some(index) = self.tab_index_of_file(&path) {
             self.switch_tab(index);
-            self.session.screen = crate::ui::Screen::Workspace;
+            self.session.screen = crate::contract::Screen::Workspace;
             return;
         }
         self.ensure_fresh_tab();
@@ -666,7 +652,7 @@ impl PrintCadApp {
                         self.session.document.mark_clean();
                         // Saved, the tab needs no copy to come back from.
                         self.autosave.saved.remove(&self.session.tab);
-                        crate::app::recovery::forget(self.session.tab);
+                        file_session::recovery::forget(self.session.tab);
                     }
                     // The server took up the untitled log with the write.
                     self.session.connection.untitled_log = None;
@@ -685,7 +671,7 @@ impl PrintCadApp {
     }
 
     pub(crate) fn save_document_at(&mut self, path: &Path) -> Result<()> {
-        if crate::platform::read_only(path) {
+        if app_platform::read_only(path) {
             return Err(anyhow::anyhow!(
                 "{} is read-only: save the document under another name",
                 path.display()
@@ -721,7 +707,7 @@ impl PrintCadApp {
             Some(ext) if ext == "json" => {
                 let bytes = serde_json::to_vec_pretty(&self.session.document)
                     .with_context(|| "Failed to serialize document")?;
-                crate::platform::write(path, &bytes)
+                app_platform::write(path, &bytes)
                     .with_context(|| format!("Failed to write document file {}", path.display()))?;
             }
             _ => {
@@ -928,7 +914,7 @@ impl PrintCadApp {
     /// packing one does, so it does not belong on the UI thread either.
     fn start_document_parse(&mut self, token: u64, path: PathBuf, bytes: Vec<u8>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = crate::platform::spawn("printcad-document-open", move || {
+        let spawned = app_platform::spawn("printcad-document-open", move || {
             let parsed = Self::parse_document_bytes(&path, bytes);
             let _ = tx.send(OpenJob {
                 token,
@@ -1006,7 +992,7 @@ impl PrintCadApp {
         let worker_progress = Arc::clone(&progress);
         let (tx, rx) = std::sync::mpsc::channel();
 
-        let spawned = crate::platform::spawn("printcad-document-save", move || {
+        let spawned = app_platform::spawn("printcad-document-save", move || {
             document.set_thumbnail(doc_render::thumbnail::render(&preview, forward, up));
             let packed = document.save_to_bytes_watched(compression, &move |done, total| {
                 worker_progress.set(done, total);
@@ -1101,7 +1087,7 @@ impl PrintCadApp {
         for slot in &self.tabs {
             if forget(slot.tab) {
                 self.autosave.saved.remove(&slot.tab);
-                crate::app::recovery::forget(slot.tab);
+                file_session::recovery::forget(slot.tab);
             }
         }
     }
@@ -1159,7 +1145,7 @@ impl PrintCadApp {
             let tab = session.tab;
             if !session.document.metadata().dirty() {
                 if self.autosave.saved.remove(&tab).is_some() {
-                    crate::app::recovery::forget(tab);
+                    file_session::recovery::forget(tab);
                 }
                 continue;
             }
@@ -1177,12 +1163,12 @@ impl PrintCadApp {
         for (tab, seq, mut document, file) in wanted {
             self.autosave.saved.insert(tab, seq);
             let name = document.name().to_string();
-            let spawned = crate::platform::spawn("printcad-autosave", move || {
+            let spawned = app_platform::spawn("printcad-autosave", move || {
                 let kept = document
                     .save_to_bytes(core_document::Compression::Zstd)
                     .map_err(|e| e.to_string())
                     .and_then(|bytes| {
-                        crate::app::recovery::keep(tab, &name, file.as_deref(), &bytes)
+                        file_session::recovery::keep(tab, &name, file.as_deref(), &bytes)
                             .map_err(|e| e.to_string())
                     });
                 if let Err(why) = kept {
@@ -1209,19 +1195,19 @@ impl PrintCadApp {
             return;
         };
         match &entry.source {
-            crate::app::recovery::Source::DocumentLog => {
+            file_session::recovery::Source::DocumentLog => {
                 self.autosave.recoverable.retain(|r| r.copy != copy);
                 self.open_document_at(copy);
                 self.session.file.restore_unsaved_on_open = true;
                 return;
             }
-            crate::app::recovery::Source::UntitledLog { copy_too } => {
+            file_session::recovery::Source::UntitledLog { copy_too } => {
                 self.restore_untitled_log(&entry, copy_too.clone());
                 return;
             }
-            crate::app::recovery::Source::Copy { .. } => {}
+            file_session::recovery::Source::Copy { .. } => {}
         }
-        let document = crate::platform::read(&copy)
+        let document = app_platform::read(&copy)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| Self::parse_document_bytes(&copy, bytes));
         let document = match document {
@@ -1267,7 +1253,7 @@ impl PrintCadApp {
     /// sends any edit. The tab's copy, which the log stands for, goes.
     fn restore_untitled_log(
         &mut self,
-        entry: &crate::app::recovery::Recoverable,
+        entry: &file_session::recovery::Recoverable,
         copy_too: Option<PathBuf>,
     ) {
         self.reset_to_new_document();
@@ -1286,7 +1272,7 @@ impl PrintCadApp {
                 socket: entry.copy.clone(),
             });
         if let Some(copy) = copy_too {
-            crate::app::recovery::remove(&copy);
+            file_session::recovery::remove(&copy);
         }
         self.session
             .document
@@ -1298,7 +1284,7 @@ impl PrintCadApp {
 
     /// Let a copy a crash left go, or the edits a log holds.
     pub(crate) fn discard_recovery(&mut self, copy: PathBuf) {
-        use crate::app::recovery::Source;
+        use file_session::recovery::Source;
         match self
             .autosave
             .recoverable
@@ -1310,10 +1296,10 @@ impl PrintCadApp {
             Some(Source::UntitledLog { copy_too }) => {
                 doc_server::daemon::discard_untitled_log(&copy);
                 if let Some(copy_too) = copy_too {
-                    crate::app::recovery::remove(&copy_too);
+                    file_session::recovery::remove(&copy_too);
                 }
             }
-            Some(Source::Copy { .. }) | None => crate::app::recovery::remove(&copy),
+            Some(Source::Copy { .. }) | None => file_session::recovery::remove(&copy),
         }
         self.autosave.recoverable.retain(|r| r.copy != copy);
     }
@@ -1345,8 +1331,8 @@ impl PrintCadApp {
     /// whichever tab is on screen now; it is let go when that tab closed.
     /// A name picked for a close, quit or Save all that waits on the save
     /// gives back what goes on once it is written.
-    pub(crate) fn poll_file_dialog(&mut self) -> Option<(uuid::Uuid, crate::app::unsaved::Then)> {
-        let result = match crate::platform::take_answer(&mut self.files.dialog_rx) {
+    pub(crate) fn poll_file_dialog(&mut self) -> Option<(uuid::Uuid, file_session::Then)> {
+        let result = match app_platform::take_answer(&mut self.files.dialog_rx) {
             Some(Ok(result)) => result,
             Some(Err(_)) => {
                 app_log::error("The file dialog closed without an answer: nothing done");
@@ -1409,7 +1395,7 @@ impl PrintCadApp {
             FileDialogKind::Attach(chat) => self.attach_files(&chat, result.paths),
             FileDialogKind::SaveFile(file) => {
                 if let Some(path) = path {
-                    match crate::platform::write(&path, &file.contents) {
+                    match app_platform::write(&path, &file.contents) {
                         Ok(()) => app_log::info(format!("Saved {}", path.display())),
                         Err(err) => {
                             app_log::error(format!("Could not save {}: {err}", path.display()))
@@ -1654,7 +1640,7 @@ fn write_into(folder: &std::path::Path, files: &[(String, Vec<u8>)]) {
             continue;
         }
         let path = folder.join(name);
-        match crate::platform::write(&path, contents) {
+        match app_platform::write(&path, contents) {
             Ok(()) => app_log::info(format!("Saved {}", path.display())),
             Err(err) => app_log::error(format!("Could not save {}: {err}", path.display())),
         }
@@ -1739,7 +1725,7 @@ fn any_case(extension: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{document_name_from_file_name, opened_from, write_into};
+    use super::{opened_from, write_into};
 
     /// Opening a file whose stored name is not its file name's names the
     /// document after the file without an edit: nothing for the log's
@@ -1785,36 +1771,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    #[test]
-    fn strips_known_extensions() {
-        assert_eq!(document_name_from_file_name("part.prtcad"), "part");
-        assert_eq!(document_name_from_file_name("part.prtcad.gz"), "part");
-        assert_eq!(document_name_from_file_name("part.prtcad.zst"), "part");
-        assert_eq!(document_name_from_file_name("part.json"), "part");
-    }
-
-    #[test]
-    fn strips_case_insensitively_but_preserves_name_case() {
-        assert_eq!(document_name_from_file_name("Bracket.PRTCAD"), "Bracket");
-        assert_eq!(
-            document_name_from_file_name("Bracket.PrtCad.ZST"),
-            "Bracket"
-        );
-    }
-
-    #[test]
-    fn leaves_unknown_extensions_alone() {
-        assert_eq!(document_name_from_file_name("part.step"), "part.step");
-        assert_eq!(document_name_from_file_name("Untitled"), "Untitled");
-        assert_eq!(document_name_from_file_name(""), "");
-    }
-
-    #[test]
-    fn keeps_inner_dots() {
-        assert_eq!(document_name_from_file_name("v1.2.prtcad"), "v1.2");
-        // `.gz` alone is not a document extension.
-        assert_eq!(document_name_from_file_name("part.gz"), "part.gz");
-    }
     #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
     fn an_opened_file_is_offered_whatever_the_case_of_its_extension() {

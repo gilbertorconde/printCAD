@@ -10,7 +10,7 @@ use glam::Vec3;
 use serde_json::{Value, json};
 
 use crate::PrintCadApp;
-use crate::camera::section::{SectionAim, SectionAxis, SectionPlane, SectionToggle, Wedge};
+use view_camera::section::{SectionAim, SectionAxis, SectionPlane, SectionToggle, Wedge};
 
 pub(crate) fn doc_section_commands() -> Vec<CommandSpec> {
     vec![
@@ -237,8 +237,8 @@ impl PrintCadApp {
     /// The clip pill's Sections menu: saving is one undo step under the
     /// section's name; showing and dropping a name the document lacks do
     /// nothing.
-    pub(crate) fn saved_section_action(&mut self, action: crate::ui::SavedSectionAction) {
-        use crate::ui::SavedSectionAction as Action;
+    pub(crate) fn saved_section_action(&mut self, action: crate::contract::SavedSectionAction) {
+        use crate::contract::SavedSectionAction as Action;
         match action {
             Action::Save(name) => {
                 let Some(plane) = &self.session.view.section else {

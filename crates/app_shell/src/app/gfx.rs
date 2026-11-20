@@ -1,6 +1,6 @@
 //! Window + GPU resource bundle with a structurally enforced teardown order.
 
-use crate::ui::UiLayer;
+use app_ui::UiLayer;
 use render_wgpu::Renderer;
 use winit::window::{Window, WindowId};
 

@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // The host composes workbenches through the facade and registry, never by
-// naming a concrete bench, its kinds or its feature types.
+// naming a concrete bench, its kinds or its feature types. The host is the
+// app and the crates of its own beneath it.
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const hostCrates = ["app_shell", "app_ui", "assistant", "doc_export", "file_session", "kernel_worker",
+  "orientation_cube", "package_store", "view_camera"];
 const concreteFeatures = /\b(?:Design|Sketch|Surface|Mesh|Joint|Coupling)Feature\b/;
 const crates = readdirSync(resolve(root, "crates/workbenches"))
   .filter(name => name.startsWith("wb_"));
@@ -55,19 +58,21 @@ function fixtures() {
 function check() {
   fixtures();
   const problems = [];
-  for (const path of sources(resolve(root, "crates/app_shell/src"))) {
-    readFileSync(path, "utf8").split("\n").forEach((line, i) => {
-      if (bypass(line)) problems.push(`${relative(root, path)}:${i + 1}: ${line.trim()}`);
+  for (const host of hostCrates) {
+    for (const path of sources(resolve(root, "crates", host, "src"))) {
+      readFileSync(path, "utf8").split("\n").forEach((line, i) => {
+        if (bypass(line)) problems.push(`${relative(root, path)}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    // Also catch renamed dependencies: the package/path still identifies
+    // a concrete workbench even when its import has a neutral alias.
+    const manifest = readFileSync(resolve(root, "crates", host, "Cargo.toml"), "utf8");
+    manifest.split("\n").forEach((line, i) => {
+      if (cratePattern.test(line)) {
+        problems.push(`crates/${host}/Cargo.toml:${i + 1}: ${line.trim()}`);
+      }
     });
   }
-  // Also catch renamed dependencies: the package/path still identifies
-  // a concrete workbench even when its import has a neutral alias.
-  const manifest = readFileSync(resolve(root, "crates/app_shell/Cargo.toml"), "utf8");
-  manifest.split("\n").forEach((line, i) => {
-    if (cratePattern.test(line)) {
-      problems.push(`crates/app_shell/Cargo.toml:${i + 1}: ${line.trim()}`);
-    }
-  });
   if (problems.length) throw new Error(`host/workbench boundary violations:\n${problems.join("\n")}`);
   console.log("workbench seam: source, dependencies and checker fixtures pass");
 }

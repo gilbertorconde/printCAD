@@ -12,8 +12,7 @@ use uuid::Uuid;
 
 use crate::PrintCadApp;
 use crate::app::input::PickedFace;
-use crate::log_panel as app_log;
-use crate::ui::PickFilter;
+use crate::contract::PickFilter;
 
 /// Dash pattern of a crossing box, in pixels.
 const CROSSING_DASH: (f32, f32) = (6.0, 4.0);
@@ -171,7 +170,7 @@ pub(crate) struct Probe<P> {
     pub rect: Rect,
     pub catch: Catch,
     pub project: P,
-    pub clip: Option<crate::camera::section::Clip>,
+    pub clip: Option<view_camera::section::Clip>,
 }
 
 /// What projected bounds say before the triangles are read.
@@ -217,7 +216,7 @@ impl<P: Fn(Vec3) -> Option<Vec2>> Probe<P> {
         if let Some(plane) = self.clip
             && points
                 .iter()
-                .any(|p| !crate::camera::section::keeps(plane, *p))
+                .any(|p| !view_camera::section::keeps(plane, *p))
         {
             return Shown::Clipped;
         }
@@ -261,7 +260,7 @@ impl<P: Fn(Vec3) -> Option<Vec2>> Probe<P> {
         if let Some(plane) = self.clip
             && corners
                 .clone()
-                .all(|p| !crate::camera::section::keeps(plane, p))
+                .all(|p| !view_camera::section::keeps(plane, p))
         {
             return Verdict::Missed;
         }
@@ -681,7 +680,7 @@ mod tests {
             rect: drag.rect(),
             catch: drag.catch(),
             project: |p: Vec3| (p.z < 10.0).then_some(Vec2::new(p.x, p.y)),
-            clip: clip.map(crate::camera::section::Clip::from),
+            clip: clip.map(view_camera::section::Clip::from),
         }
     }
 

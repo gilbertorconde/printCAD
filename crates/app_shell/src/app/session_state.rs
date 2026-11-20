@@ -10,17 +10,17 @@ use uuid::Uuid;
 
 use crate::app::doc_io::{OpenJob, SaveJob, SaveProgress};
 use crate::app::session::BodyPreview;
-use crate::camera::CameraController;
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 use crate::{DimensionCache, RemoteImportRoute};
+use view_camera::CameraController;
 
 /// Where the tab looks from and how the view is laid out.
 pub(crate) struct ViewState {
     pub camera: CameraController,
     /// The view toolbar's clipping plane, when on.
-    pub section: Option<crate::camera::section::SectionPlane>,
+    pub section: Option<view_camera::section::SectionPlane>,
     /// The pick in the view the clipping plane waits for, while aiming.
-    pub section_pick: Option<crate::camera::section::SectionPick>,
+    pub section_pick: Option<view_camera::section::SectionPick>,
     /// View › Split view is on for this tab.
     pub split: bool,
     /// The side pane's own camera, while View › Link split cameras is off;
@@ -36,10 +36,10 @@ pub(crate) struct ViewState {
     /// leaves the view as the user puts it.
     pub fit_on_layout: bool,
     /// What a click in the view picks.
-    pub pick_filter: crate::ui::PickFilter,
+    pub pick_filter: crate::contract::PickFilter,
     /// Where the view stood when an edit session began, to go back to
     /// when it ends.
-    pub before_edit: Option<crate::camera::KeptView>,
+    pub before_edit: Option<view_camera::KeptView>,
 }
 
 /// What lies under the pointer, in the view and in the tree.
@@ -73,7 +73,7 @@ pub(crate) struct Hover {
     /// drew them with: which edges near the cursor are in view.
     pub pick_depths: Option<render_wgpu::DepthWindow>,
     /// The tree row under the pointer: what it stands for lights up.
-    pub tree: Option<crate::ui::TreeItemId>,
+    pub tree: Option<crate::contract::TreeItemId>,
 }
 
 /// What is picked in the view and the tree.
@@ -146,7 +146,7 @@ pub(crate) struct FileState {
     /// the files they were made with.
     pub links_from: Option<PathBuf>,
     /// What wrote the tab's file and whether it can be written in place.
-    pub safety: crate::app::file_safety::FileSafety,
+    pub safety: file_session::FileSafety,
     /// The workers packing `.prtcad` archives, and how far each has got.
     /// Packing carries every blob in the document, so it happens off the
     /// UI thread and the window keeps drawing while it runs.
@@ -154,7 +154,7 @@ pub(crate) struct FileState {
     /// The worker parsing an opened document, for the same reason.
     pub open_rx: Option<std::sync::mpsc::Receiver<OpenJob>>,
     /// The export dialog's draft, while it is open.
-    pub export_pending: Option<crate::app::export::ExportDraft>,
+    pub export_pending: Option<doc_export::ExportDraft>,
     /// The exporting walkthrough is waiting on a solid to open the export
     /// dialog over.
     pub export_when_ready: bool,
@@ -334,7 +334,7 @@ pub(crate) struct HostTools {
     pub note_card: Option<crate::app::note_tool::NoteCard>,
     /// The marked surface of a scan, and the marking tool in hand.
     pub marking: Option<crate::app::marking::Marking>,
-    pub mark_arm: Option<crate::app::marking::MarkArm>,
+    pub mark_arm: Option<crate::contract::MarkArm>,
     pub print_layout_shown: bool,
     /// The print layout shown while its task is open.
     pub print_layout: Option<crate::app::print_layout::ShownLayout>,
@@ -443,11 +443,11 @@ pub(crate) struct Drawn {
     /// The Print layout task is open: the scene shows the layout.
     /// Each textured body as drawn: its textures pressed into its own
     /// mesh, made on a thread of its own.
-    pub textured: std::collections::HashMap<core_document::BodyId, crate::app::textures::Preview>,
+    pub textured: std::collections::HashMap<core_document::BodyId, doc_export::textures::Preview>,
     /// The pressed meshes those previews share, made and being made.
-    pub texture_meshes: crate::app::textures::PressedMeshes,
+    pub texture_meshes: doc_export::textures::PressedMeshes,
     /// Pictures textures use, read once each.
-    pub texture_pictures: crate::app::textures::Pictures,
+    pub texture_pictures: doc_export::textures::Pictures,
     /// Whether each shown note's point is hidden by its own body, kept
     /// with what it was worked out from.
     pub note_occlusions: crate::app::note_tool::Occlusions,
@@ -456,7 +456,7 @@ pub(crate) struct Drawn {
     pub dimension_cache: Vec<DimensionCache>,
     /// Each measured body's volume, area and centre, with the geometry
     /// revision it was measured at.
-    pub physical: std::collections::HashMap<Uuid, (u64, crate::ui::Physical)>,
+    pub physical: std::collections::HashMap<Uuid, (u64, crate::contract::Physical)>,
 }
 impl ViewState {
     /// The view from `camera`, with no clipping plane, split or grid.

@@ -19,8 +19,6 @@ use std::time::Duration;
 
 use sixdof::{EventMask, Source};
 
-use crate::log_panel as app_log;
-
 /// How long a blocked read waits before the thread checks whether it should
 /// stop. Long enough that an idle device costs nothing measurable.
 const READ_TIMEOUT: Duration = Duration::from_millis(250);

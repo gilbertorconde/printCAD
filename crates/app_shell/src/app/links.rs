@@ -9,7 +9,6 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use core_document::{BodyId, Document, FileLink, ImportedGeometry};
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
 
 /// How often linked files are looked at for changes.
 const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
@@ -62,7 +61,7 @@ pub(crate) fn stamp(path: &Path) -> u64 {
 
 fn read(path: PathBuf) -> Receiver<Result<Document, String>> {
     let (send, answer) = channel();
-    let spawned = crate::platform::spawn("printcad-link", move || {
+    let spawned = app_platform::spawn("printcad-link", move || {
         let _ = send.send(Document::load_from_file(&path).map_err(|e| e.to_string()));
     });
     if let Err(err) = spawned {
@@ -176,7 +175,7 @@ impl PrintCadApp {
                 self.session
                     .document
                     .set_link_stale(body, now != link.stamp);
-                if crate::platform::read_only(&path) {
+                if app_platform::read_only(&path) {
                     self.session.jobs.links.read_only.push(body);
                 }
             }

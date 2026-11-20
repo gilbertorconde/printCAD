@@ -68,7 +68,7 @@ on the start page (`Screen::Start`); the recent list lives in
 
 ## Keyboard shortcuts
 
-**Keyboard shortcuts.** One keymap (`ui/keymap.rs`) holds the
+**Keyboard shortcuts.** One keymap (`app_ui/src/keymap.rs`, beside the UI, read by the app too) holds the
 application's commands (`HOST`, ids like `file.save`) and every bench's
 tools and registered actions, each with default keys
 (`ToolDescriptor::shortcut`, `WorkbenchContext::register_action`,
@@ -98,9 +98,9 @@ owns the moment.
   `focal_view` holds the app's view: the preset-relative `f64` state
   (`ViewState`, the preset as an `AxisFrame`, the settings as `ViewSettings`),
   the one `view_projection`, the holds converting to the shared camera,
-  zoom, fits, auto near/far planes and tweens. The app's `camera/` owns
-  input routing, settings, device input and kept views, and the clipping
-  plane (`camera/section.rs`).
+  zoom, fits, auto near/far planes and tweens. The `view_camera` crate
+  owns input routing, settings, device input and kept views, and the
+  clipping plane (`view_camera::section`).
 - `transform_gizmo`: move, turn and scale handles without a window
   (`gizmo::Gizmo`: layout, hit-test, press/drag/release and the delta from
   the press; `paint::Shape`s in colour roles, `paint::Ink`, for the host to

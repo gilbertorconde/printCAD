@@ -17,13 +17,13 @@ pub(crate) use catalog::{
 };
 use catalog::{all_commands, app_commands, key_commands};
 mod document;
+pub(crate) use doc_export::export_draft;
 #[cfg(test)]
 use document::faces_of;
 pub(crate) use document::{
-    body_list, delete_item, document_command, drop_place, export_args, export_draft,
-    features_in_order, kind_of, move_after, move_in_history, print_layout_command,
-    rebuild_failures, set_body_tip, set_item_visible, set_tip, suppress, suppress_all,
-    suppress_call, surface_json, tree_item, user_note_guard,
+    body_list, delete_item, document_command, drop_place, features_in_order, kind_of, move_after,
+    move_in_history, print_layout_command, rebuild_failures, set_body_tip, set_item_visible,
+    set_tip, suppress, suppress_all, suppress_call, surface_json, tree_item, user_note_guard,
 };
 mod recording;
 use recording::item_id;
@@ -42,7 +42,7 @@ use winit::event_loop::ActiveEventLoop;
 use crate::PrintCadApp;
 use crate::app::workbench_host::HookSite;
 use crate::console::{self, LineKind};
-use crate::ui::keymap::{self, HostOutcome, HostState};
+use crate::keymap::{self, HostOutcome, HostState};
 
 impl PrintCadApp {
     /// Run command `id` for a script, its arguments checked against its
@@ -228,7 +228,7 @@ impl PrintCadApp {
                 if (given || a.has("on"))
                     && let Err(err) = self.settings_store.save(&self.user_settings)
                 {
-                    crate::log_panel::warn(format!("Failed to save settings: {err}"));
+                    app_log::warn(format!("Failed to save settings: {err}"));
                 }
                 Ok(answer)
             }
@@ -275,12 +275,7 @@ impl PrintCadApp {
                 }
                 let tools = self.registry.tools_for(&bench).unwrap_or_default().to_vec();
                 if let Some(tool) = tools.iter().find(|t| t.id == id) {
-                    crate::ui::toolbar::activate_tool(
-                        &mut self.session.active_tool,
-                        &tools,
-                        tool,
-                        id,
-                    );
+                    self.session.active_tool.activate(&tools, tool, id);
                 }
                 Ok(Value::Null)
             }
@@ -344,7 +339,7 @@ impl PrintCadApp {
                     .as_ref()
                     .filter(|_| printing.apply_compensation);
                 let folder = draft.per_body.then(|| path.clone());
-                let files = crate::app::export::export_document(
+                let files = doc_export::export_document(
                     (&self.whole_solids(), &self.registry),
                     path,
                     &draft,
@@ -353,7 +348,7 @@ impl PrintCadApp {
                     compensation,
                 )
                 .map_err(CommandError::failed)?;
-                Ok(crate::app::export::export_answer(folder.as_deref(), &files))
+                Ok(doc_export::export_answer(folder.as_deref(), &files))
             }
             _ => Err(CommandError::failed("this command takes no file")),
         }
@@ -366,7 +361,7 @@ impl PrintCadApp {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        let read = crate::platform::read(path).and_then(|bytes| {
+        let read = app_platform::read(path).and_then(|bytes| {
             String::from_utf8(bytes)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
         });
@@ -553,10 +548,10 @@ impl PrintCadApp {
                         console::push(LineKind::Error, error.clone());
                         if from_file {
                             self.scripting.console_attention = true;
-                            crate::app_log::warn(format!("Script {label} stopped: {error}"));
+                            app_log::warn(format!("Script {label} stopped: {error}"));
                         }
                     }
-                    None if from_file => crate::app_log::info(format!("Ran {label}")),
+                    None if from_file => app_log::info(format!("Ran {label}")),
                     None => {}
                 }
                 self.redraw_needed = true;
@@ -708,15 +703,15 @@ impl PrintCadApp {
     pub(crate) fn toggle_recording(&mut self) {
         let Some(recorder) = self.scripting.recording.take() else {
             self.scripting.recording = Some(scripting::Recorder::default());
-            crate::app_log::info("Recording: what you do now is written as a script when you stop");
+            app_log::info("Recording: what you do now is written as a script when you stop");
             return;
         };
         if recorder.is_empty() {
-            crate::app_log::info("Recording stopped; nothing was recorded");
+            app_log::info("Recording stopped; nothing was recorded");
             return;
         }
         let Some(dir) = settings::scripts_dir() else {
-            crate::app_log::warn("The system names no configuration folder for scripts");
+            app_log::warn("The system names no configuration folder for scripts");
             return;
         };
         let path = crate::script_library::fresh_name(&dir, "recording");
@@ -732,10 +727,10 @@ impl PrintCadApp {
                     LineKind::Printed,
                     format!("Recording saved as {}", path.display()),
                 );
-                crate::app_log::info(format!("Recording saved as {}", path.display()));
+                app_log::info(format!("Recording saved as {}", path.display()));
             }
             Err(err) => {
-                crate::app_log::error(format!("Could not write {}: {err}", path.display()));
+                app_log::error(format!("Could not write {}: {err}", path.display()));
             }
         }
     }
@@ -750,7 +745,7 @@ impl PrintCadApp {
     /// editor.
     pub(crate) fn new_script(&mut self, runs: Option<Vec<String>>) {
         let Some(dir) = settings::scripts_dir() else {
-            crate::app_log::warn("The system names no configuration folder for scripts");
+            app_log::warn("The system names no configuration folder for scripts");
             return;
         };
         let path = crate::script_library::fresh_path(&dir);
@@ -761,11 +756,11 @@ impl PrintCadApp {
         let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, text));
         match written {
             Ok(()) => {
-                crate::app_log::info(format!("New script {}", path.display()));
+                app_log::info(format!("New script {}", path.display()));
                 self.scripting.library_changed();
                 self.edit_script(Some(path));
             }
-            Err(err) => crate::app_log::error(format!("Could not write {}: {err}", path.display())),
+            Err(err) => app_log::error(format!("Could not write {}: {err}", path.display())),
         }
     }
 
@@ -779,14 +774,14 @@ impl PrintCadApp {
                     return;
                 };
                 if let Err(err) = std::fs::create_dir_all(&dir) {
-                    crate::app_log::error(format!("Could not make {}: {err}", dir.display()));
+                    app_log::error(format!("Could not make {}: {err}", dir.display()));
                     return;
                 }
                 dir
             }
         };
         if let Err(err) = local_ipc::open_with_system(&target) {
-            crate::app_log::error(format!("Could not open {}: {err}", target.display()));
+            app_log::error(format!("Could not open {}: {err}", target.display()));
         }
     }
 
@@ -860,9 +855,9 @@ impl PrintCadApp {
             "doc.repair" | "doc.convert_to_solid" | "doc.refine" => {
                 let bodies = body_list(args.get("bodies"))?.unwrap_or_default();
                 let command = match id {
-                    "doc.repair" => crate::ui::UiCommand::RepairShapes(bodies),
-                    "doc.refine" => crate::ui::UiCommand::RefineShapes(bodies),
-                    _ => crate::ui::UiCommand::ConvertToSolid(bodies),
+                    "doc.repair" => crate::contract::UiCommand::RepairShapes(bodies),
+                    "doc.refine" => crate::contract::UiCommand::RefineShapes(bodies),
+                    _ => crate::contract::UiCommand::ConvertToSolid(bodies),
                 };
                 self.apply_ui_commands(vec![command], event_loop);
                 Ok(Value::Null)
@@ -1042,8 +1037,8 @@ fn return_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::TreeItemId;
     use crate::test_support::datum_points as points;
-    use crate::ui::TreeItemId;
     use core_document::{BodyId, FeatureId};
 
     /// One of the document's own commands, its arguments checked first.
@@ -1409,7 +1404,7 @@ mod tests {
                 .flat_map(|h| h.join().unwrap())
                 .collect()
         });
-        crate::platform::remove_temp_folder();
+        app_platform::remove_temp_folder();
         failed.sort();
         assert!(
             failed.is_empty(),
@@ -1456,7 +1451,7 @@ mod tests {
 
     #[test]
     fn host_ui_edits_record_as_the_document_s_commands() {
-        use crate::ui::{TreeFeatureCommand, UiCommand};
+        use crate::contract::{TreeFeatureCommand, UiCommand};
         let body = BodyId(Uuid::new_v4());
         let feature = FeatureId(Uuid::new_v4());
         let rename = recorded_of(&UiCommand::RenameTreeItem {
@@ -1625,7 +1620,7 @@ mod tests {
         )
         .unwrap();
         assert!(doc.bodies()[0].face_colors.is_empty());
-        let face_down = crate::ui::BodyEdit::PrintOn(crate::ui::PrintOn::Face(1));
+        let face_down = crate::contract::BodyEdit::PrintOn(crate::contract::PrintOn::Face(1));
         let (call, args) = body_edit_call(body, &face_down);
         run(&mut doc, call, args).unwrap();
         let face = core_document::FaceKey { name: 12, index: 1 };
@@ -1649,9 +1644,9 @@ mod tests {
         );
         // What the menus record is a call a script can make.
         for edit in [
-            crate::ui::BodyEdit::Frozen(false),
-            crate::ui::BodyEdit::Selectable(true),
-            crate::ui::BodyEdit::Recompute,
+            crate::contract::BodyEdit::Frozen(false),
+            crate::contract::BodyEdit::Selectable(true),
+            crate::contract::BodyEdit::Recompute,
         ] {
             let (id, args) = body_edit_call(body, &edit);
             run(&mut doc, id, args).unwrap();

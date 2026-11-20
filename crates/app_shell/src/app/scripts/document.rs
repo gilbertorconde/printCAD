@@ -1,6 +1,6 @@
 //! Document command handlers shared by desktop and headless execution.
 
-use crate::ui::TreeItemId;
+use crate::contract::TreeItemId;
 use core_document::{Args, BodyId, CommandArgs, CommandError, CommandResult, FeatureId};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -76,8 +76,8 @@ fn slot_answer(
 fn inertia_reference(
     document: &core_document::Document,
     value: &Value,
-) -> Result<crate::ui::InertiaReference, CommandError> {
-    use crate::ui::InertiaReference as R;
+) -> Result<crate::contract::InertiaReference, CommandError> {
+    use crate::contract::InertiaReference as R;
     let bad = || {
         CommandError::bad(
             "about",
@@ -197,7 +197,7 @@ pub(crate) fn document_command(
         "file.temp_path" => {
             let name = a.opt_string("name")?.unwrap_or("file");
             let text = a.opt_string("text")?.unwrap_or_default();
-            let path = crate::platform::temp_file(name, text.as_bytes())
+            let path = app_platform::temp_file(name, text.as_bytes())
                 .map_err(|e| CommandError::failed(format!("could not make the file: {e}")))?;
             Ok(json!(path.display().to_string()))
         }
@@ -223,7 +223,7 @@ pub(crate) fn document_command(
                         "visible": !b.hidden,
                         "frozen": b.frozen,
                         "scan": b.scan.map(|s| json!({
-                            "units": crate::app::scans::unit_key(
+                            "units": crate::scans::unit_key(
                                 s.read_in.unwrap_or(kernel_api::LengthUnit::Millimetre),
                             ),
                         })),
@@ -486,7 +486,7 @@ pub(crate) fn document_command(
         "doc.replace_shape" => {
             let body = a.body(document, "body")?;
             let path = a.string("path")?;
-            let bytes = crate::platform::read(std::path::Path::new(path))
+            let bytes = app_platform::read(std::path::Path::new(path))
                 .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
             if !document.replace_body_shape(body, path, bytes) {
                 return Err(CommandError::bad(
@@ -671,7 +671,7 @@ pub(crate) fn document_command(
                     document.body_placement(body).quat().as_dquat(),
                 );
                 let about = about.as_ref().map(|about| match about {
-                    crate::ui::InertiaReference::Axis {
+                    crate::contract::InertiaReference::Axis {
                         point, direction, ..
                     } => json!({
                         "point": point,
@@ -684,7 +684,7 @@ pub(crate) fn document_command(
                             *direction,
                         ),
                     }),
-                    crate::ui::InertiaReference::Point { at, .. } => {
+                    crate::contract::InertiaReference::Point { at, .. } => {
                         let tensor = core_document::inertia::about_point(
                             &turned.about_centre,
                             volume,
@@ -697,7 +697,7 @@ pub(crate) fn document_command(
                             "principal": principal(core_document::inertia::principal(&tensor)),
                         })
                     }
-                    crate::ui::InertiaReference::CentreOfMass => json!({
+                    crate::contract::InertiaReference::CentreOfMass => json!({
                         "point": centre_wide,
                         "tensor": turned.about_centre,
                         "principal": principal(turned.principal),
@@ -1435,7 +1435,7 @@ fn array_pattern(
             };
             let spacing = spacing.or(was.and_then(|w| w.1));
             let align = a.opt_bool("align")?.or(was.map(|w| w.2)).unwrap_or(false);
-            crate::app::array_paths::path_pattern(document, registry, along, count, spacing, align)
+            crate::array_paths::path_pattern(document, registry, along, count, spacing, align)
                 .map_err(|e| CommandError::bad("count", e))?
         }
         "points" => {
@@ -1444,7 +1444,7 @@ fn array_pattern(
                 (None, Some(ArrayPattern::Points { from, .. })) => *from,
                 (None, _) => return Err(CommandError::bad("sketch", "is needed for points")),
             };
-            crate::app::array_paths::points_pattern(document, registry, from)
+            crate::array_paths::points_pattern(document, registry, from)
                 .map_err(|e| CommandError::bad("sketch", e))?
         }
         _ => {
@@ -1641,81 +1641,6 @@ pub(crate) fn tree_item(
     } else {
         Err(CommandError::bad("id", "is not in this document"))
     }
-}
-
-/// The format an export names, else the one its path's extension says.
-fn export_format(
-    name: Option<&str>,
-    path: &std::path::Path,
-) -> Result<kernel_ogeom::export::ExportFormat, CommandError> {
-    use kernel_ogeom::export::ExportFormat;
-    match name {
-        Some(name) => match name.to_ascii_lowercase().as_str() {
-            "step" | "stp" => Ok(ExportFormat::Step),
-            "step_nurbs" => Ok(ExportFormat::StepNurbs),
-            "stl" => Ok(ExportFormat::Stl),
-            "3mf" => Ok(ExportFormat::ThreeMf),
-            _ => Err(CommandError::bad(
-                "format",
-                "must be step, step_nurbs, stl or 3mf",
-            )),
-        },
-        None => ExportFormat::of_path(path).ok_or_else(|| {
-            CommandError::bad(
-                "format",
-                "is needed when the path has no .step, .stl or .3mf",
-            )
-        }),
-    }
-}
-
-/// The name `export_format` reads for `format`.
-pub(crate) fn format_name(format: kernel_ogeom::export::ExportFormat) -> &'static str {
-    use kernel_ogeom::export::ExportFormat;
-    match format {
-        ExportFormat::Step => "step",
-        ExportFormat::StepNurbs => "step_nurbs",
-        ExportFormat::Stl => "stl",
-        ExportFormat::ThreeMf => "3mf",
-    }
-}
-
-/// The export a script's arguments ask for, as the File › Export dialog's
-/// options: each one left out as the dialog first opens on it.
-pub(crate) fn export_draft(
-    a: &Args,
-    path: &std::path::Path,
-) -> Result<crate::app::export::ExportDraft, CommandError> {
-    let mut draft = crate::app::export::ExportDraft {
-        format: export_format(a.opt_string("format")?, path)?,
-        ..Default::default()
-    };
-    if let Some(tolerance) = a.opt_number("tolerance")? {
-        draft.detail.chord_tolerance = tolerance as f32;
-    }
-    if let Some(angle) = a.opt_number("angle")? {
-        draft.detail.angular_tolerance_deg = angle as f32;
-    }
-    if let Some(textures) = a.opt_bool("textures")? {
-        draft.textures = textures;
-    }
-    draft.layout = a.opt_bool("layout")? == Some(true);
-    draft.per_body = a.opt_bool("per_body")? == Some(true);
-    Ok(draft)
-}
-
-/// The arguments that ask `export_draft` for what `draft` writes.
-pub(crate) fn export_args(draft: &crate::app::export::ExportDraft) -> CommandArgs {
-    let mut args = CommandArgs::new();
-    args.insert("format".into(), json!(format_name(draft.format)));
-    args.insert("tolerance".into(), json!(draft.detail.chord_tolerance));
-    args.insert("angle".into(), json!(draft.detail.angular_tolerance_deg));
-    args.insert("textures".into(), json!(draft.textures));
-    args.insert("layout".into(), json!(draft.layout));
-    if draft.per_body {
-        args.insert("per_body".into(), json!(true));
-    }
-    args
 }
 
 /// A list of body ids, when one is given.

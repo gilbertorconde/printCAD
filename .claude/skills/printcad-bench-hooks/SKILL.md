@@ -62,7 +62,7 @@ and `PRINTCAD_BENCH_WINDOW=<path>` one of the whole window, panels and
 menus with it (`CaptureKind::Window`); while steps, a click, an edit, a
 chat or a picture still wait, the loop keeps frames coming
 (`BenchProgress::waiting`), so none of them sleeps through its turn;
-`PRINTCAD_AUTOSAVE_SECS` shortens the autosave wait (`app/recovery.rs`:
+`PRINTCAD_AUTOSAVE_SECS` shortens the autosave wait (`file_session::recovery`:
 copies of edited tabs in the data folder's `recovery/`, taken away when
 saved, closed or on exit, offered on the start page after a crash);
 `PRINTCAD_BENCH_WORKBENCH=<bench id>` switches to that bench once the

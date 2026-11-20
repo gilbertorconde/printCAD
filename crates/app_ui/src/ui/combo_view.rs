@@ -1,0 +1,606 @@
+//! The left "combo view": the model tree with a filter, the details line,
+//! and the active workbench's left-panel content beneath; folded, a bar of
+//! the bodies' and features' icons in the tree's order.
+
+use egui::RichText;
+use ui_kit::tokens::*;
+use ui_kit::widgets::vseparator;
+use ui_kit::{sans, sans_medium};
+
+use super::ActiveWorkbench;
+use super::feature_tree;
+use super::host_ctx::{PanelWriteback, flush_ctx_logs, panel_ctx};
+use super::property_panel;
+use crate::contract::HostCtxParams;
+use crate::contract::PropertyTab;
+use crate::contract::TreeItemId;
+
+#[derive(Default)]
+pub struct ComboViewResult {
+    pub writeback: PanelWriteback,
+    pub tree_selection: Option<TreeItemId>,
+    pub tree_activation: Option<TreeItemId>,
+    /// The tree row under the pointer, lit up in the view.
+    pub tree_hovered: Option<TreeItemId>,
+    pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
+    /// A body shown or hidden, from its tree row or the property panel.
+    pub body_visibility_change: Option<(core_document::BodyId, bool)>,
+    pub tree_feature_command: Option<(
+        core_document::FeatureId,
+        crate::contract::TreeFeatureCommand,
+    )>,
+    /// The property panel's Label row committed a new name.
+    pub rename: Option<(TreeItemId, String)>,
+    /// A row the user asked to delete.
+    pub delete_item: Option<TreeItemId>,
+    /// A tree row's message the user asked to read in full.
+    pub details: Option<(String, String)>,
+    /// Bodies whose shape the user asked the kernel to repair.
+    pub repair: Option<Vec<core_document::BodyId>>,
+    /// Mesh bodies the user asked the kernel to turn into solids.
+    pub convert: Option<Vec<core_document::BodyId>>,
+    /// A bench's own row-menu entry was picked.
+    pub bench_command: Option<(core_document::WorkbenchId, String, core_document::MenuScope)>,
+    /// The property panel changed a body's look.
+    pub body_display: Option<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
+    /// Edits of variables and configurations, and what the tree's
+    /// document row made.
+    pub commands: Vec<super::UiCommand>,
+    /// A tree menu entry that changes the window.
+    pub local: Option<super::MenuLocal>,
+    /// The panel asked to fold (`true`) or unfold.
+    pub fold: Option<bool>,
+    pub parameter: Option<(
+        core_document::FeatureId,
+        core_document::Parameter,
+        ui_kit::widgets::FormulaEdit,
+    )>,
+}
+
+pub struct ComboViewInputs<'a> {
+    pub active_workbench: ActiveWorkbench,
+    pub document: &'a mut core_document::Document,
+    pub registry: &'a mut core_document::DocumentService,
+    pub host: HostCtxParams,
+    pub active_tree_selection: Option<TreeItemId>,
+    /// Features Ctrl-clicked into the tree's selection beside it.
+    pub tree_also: &'a [core_document::FeatureId],
+    pub active_document_object: Option<core_document::FeatureId>,
+    pub editing_feature: Option<core_document::FeatureId>,
+    /// A body double-clicked in the viewport: the tree jumps to its row.
+    pub reveal_body: Option<core_document::BodyId>,
+    /// The feature that made the face picked in the view, its row lit;
+    /// opened and scrolled to when `reveal_face_maker` is set.
+    pub face_maker: Option<core_document::FeatureId>,
+    pub reveal_face_maker: bool,
+    /// UI-local substring filter over tree labels.
+    pub filter: &'a mut String,
+    pub property_tab: &'a mut PropertyTab,
+    /// The Label row's in-progress edit.
+    pub rename_buffer: &'a mut Option<(TreeItemId, String)>,
+    /// The measure of the body the property panel shows.
+    pub physical: Option<&'a super::Physical>,
+    /// That body's bounds where it sits.
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+    /// What the inertia can be taken about, and the one chosen.
+    pub inertia_references: &'a [crate::contract::InertiaReference],
+    pub inertia_about: &'a mut Option<String>,
+    /// The keys the tree's menus name.
+    pub keymap: &'a super::keymap::Keymap,
+    /// The Data tab's variable and configuration editors.
+    pub variables: &'a mut super::variables_view::VariablesState,
+    /// The tree's share of the height below the header; the property
+    /// panel has the rest. The divider between them drags it.
+    pub tree_share: &'a mut f32,
+    /// The document's file cannot be written in place.
+    pub read_only: bool,
+    /// Linked parts whose file cannot be written in place.
+    pub read_only_links: &'a [core_document::BodyId],
+    /// Folded to the bar of icons.
+    pub folded: bool,
+}
+
+pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
+    let ComboViewInputs {
+        active_workbench,
+        document,
+        registry,
+        host,
+        active_tree_selection,
+        tree_also,
+        active_document_object,
+        editing_feature,
+        reveal_body,
+        face_maker,
+        reveal_face_maker,
+        filter,
+        property_tab,
+        rename_buffer,
+        physical,
+        bounds_mm,
+        inertia_references,
+        inertia_about,
+        keymap,
+        variables,
+        tree_share,
+        read_only,
+        read_only_links,
+        folded,
+    } = inputs;
+    let mut result = ComboViewResult::default();
+    let fold_keys = keymap
+        .text("view.left_panel")
+        .map(|k| format!("  ({k})"))
+        .unwrap_or_default();
+    if folded {
+        let tree_model = feature_tree::DocumentTree::build(document, registry);
+        let selected =
+            active_tree_selection.or_else(|| active_document_object.map(TreeItemId::from));
+        let reveal = reveal_body.is_some() || reveal_face_maker;
+        draw_rail(
+            ui,
+            &tree_model.rail(),
+            RailState {
+                selected,
+                editing: editing_feature.map(TreeItemId::from),
+                lit: face_maker.map(TreeItemId::from),
+                reveal,
+                unfold_hint: &format!("Unfold the left panel{fold_keys}"),
+            },
+            &mut result,
+        );
+        return result;
+    }
+
+    egui::Panel::left("combo_view")
+        .resizable(true)
+        .default_size(300.0)
+        .size_range(240.0..=420.0)
+        .frame(egui::Frame::new().fill(BG1))
+        .show(ui, |ui| {
+            // Nothing paints past the panel, whatever the content's height.
+            ui.set_clip_rect(ui.max_rect());
+            let rect = ui.max_rect().intersect(ui.clip_rect());
+            ui.painter().vline(
+                rect.right() - 0.5,
+                rect.y_range(),
+                egui::Stroke::new(1.0, BORDER),
+            );
+
+            let tree_model = feature_tree::DocumentTree::build(document, registry);
+            let selected_id = active_tree_selection
+                .or_else(|| active_document_object.map(TreeItemId::from))
+                .unwrap_or(TreeItemId::DocumentRoot);
+            let mut jump_to = None;
+
+            // Header: "Model", the problem count and the filter box.
+            let (header, _) = ui.allocate_exact_size(
+                egui::Vec2::new(ui.available_width(), TAB_BAR),
+                egui::Sense::hover(),
+            );
+            ui.painter().hline(
+                header.x_range(),
+                header.bottom() - 0.5,
+                egui::Stroke::new(1.0, BORDER),
+            );
+            let mut h = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(header.shrink2(egui::Vec2::new(10.0, 0.0)))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            h.spacing_mut().item_spacing.x = SPACE_2;
+            ui_kit::icon::draw(&mut h, "tree-group", 14.0, TEXT2);
+            h.label(
+                RichText::new("Model")
+                    .font(sans_medium(FONT_SM))
+                    .color(TEXT1),
+            );
+            h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let fold = format!("Fold the panel to its icons{fold_keys}");
+                if ui_kit::widgets::icon_button(ui, "panel-left-close", &fold).clicked() {
+                    result.fold = Some(true);
+                }
+                // An exact footprint: a frame grown inside the header would
+                // take the header's full height.
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::Vec2::new(104.0, 22.0), egui::Sense::hover());
+                ui.painter().rect(
+                    rect,
+                    4.0,
+                    BG2,
+                    egui::Stroke::new(1.0, BORDER),
+                    egui::StrokeKind::Inside,
+                );
+                let mut inner = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect.shrink2(egui::Vec2::new(6.0, 0.0)))
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                inner.spacing_mut().item_spacing.x = 4.0;
+                ui_kit::icon::draw(&mut inner, "search", 11.0, TEXT3);
+                inner.add(
+                    egui::TextEdit::singleline(filter)
+                        .desired_width(f32::INFINITY)
+                        .frame(egui::Frame::NONE)
+                        .hint_text(RichText::new("Filter").color(TEXT3))
+                        .font(sans(FONT_XS)),
+                );
+                let problems = tree_model.problems().len();
+                if problems > 0 {
+                    let note = if tree_model.has_errors() {
+                        ui_kit::widgets::Note::Error
+                    } else {
+                        ui_kit::widgets::Note::Warning
+                    };
+                    let text =
+                        format!("{problems} problem{}", if problems == 1 { "" } else { "s" });
+                    let pill = ui_kit::widgets::status_pill(
+                        ui,
+                        note,
+                        &text,
+                        "Click to go to the next one",
+                    )
+                    .interact(egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if pill.clicked() {
+                        jump_to = tree_model.next_problem(Some(selected_id));
+                    }
+                }
+            });
+
+            // The active workbench's own panel content.
+            if registry.workbench_mut(&active_workbench.0).is_ok() {
+                let wb = bench_panel::bench_ui(registry, &active_workbench.0);
+                let mut ctx = panel_ctx(document, &host, active_document_object);
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        if let Some(wb) = wb {
+                            wb.ui_left_panel(ui, &mut ctx);
+                        }
+                    });
+                result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
+                flush_ctx_logs(&mut ctx);
+            }
+            ui.add_space(SPACE_1);
+            // The tree takes the upper part and the property panel the
+            // rest, split where the divider between them was dragged.
+            let total = ui.available_height();
+            let tree_height = tree_height(total, *tree_share);
+            let mut selected_detail: Option<String> = None;
+            egui::ScrollArea::vertical()
+                .id_salt("model_tree")
+                .max_height(tree_height)
+                .min_scrolled_height(tree_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let in_hand: Vec<core_document::FeatureId> = match selected_id {
+                        TreeItemId::Feature(id) => Some(id),
+                        _ => None,
+                    }
+                    .into_iter()
+                    .chain(tree_also.iter().copied())
+                    .collect();
+                    let related = feature_tree::related_features(
+                        document,
+                        feature_tree::last_hovered_feature(ui),
+                        &in_hand,
+                    );
+                    let tree_ui = feature_tree::draw_tree(
+                        ui,
+                        &tree_model,
+                        feature_tree::TreeDrawOptions::new(
+                            Some(selected_id),
+                            editing_feature,
+                            filter.trim(),
+                        )
+                        .with_also(tree_also)
+                        .revealing(reveal_body)
+                        .jumping_to(jump_to)
+                        .relating(&related)
+                        .lighting(face_maker, reveal_face_maker)
+                        .with_bench_menus(document, registry)
+                        .with_keys(keymap)
+                        .with_file_marks(read_only, read_only_links),
+                    );
+                    result.bench_command = tree_ui.bench_command;
+                    result.tree_selection = tree_ui.selection;
+                    if let Some(feature) = tree_ui.toggle_feature {
+                        result
+                            .commands
+                            .push(super::UiCommand::ToggleTreeFeature(feature));
+                    }
+                    result.tree_activation = tree_ui.activation;
+                    result.tree_hovered = tree_ui.hovered;
+                    result.imported_visibility_change = tree_ui.imported_visibility_change;
+                    result.body_visibility_change = tree_ui.body_visibility_change;
+                    result.tree_feature_command = tree_ui.feature_command;
+                    result.delete_item = tree_ui.delete_item;
+                    result.repair = tree_ui.repair;
+                    result.details = tree_ui.details;
+                    result.convert = tree_ui.convert;
+                    result.commands.extend(tree_ui.commands);
+                    result.local = tree_ui.local;
+                    if let Some(repo) = tree_ui.install_package {
+                        result
+                            .commands
+                            .push(super::UiCommand::InstallPackageFromGithub(repo));
+                    }
+                    if tree_ui.new_variable_set {
+                        result.commands.push(super::UiCommand::NewVariableSet);
+                    }
+                    if tree_ui.new_configurations {
+                        result
+                            .commands
+                            .push(super::UiCommand::Config(super::ConfigEdit::NewTable));
+                    }
+                    // Hover wins; the selection stands in when the pointer
+                    // is elsewhere, so the line never goes blank mid-glance.
+                    selected_detail = tree_ui
+                        .hovered
+                        .and_then(|id| tree_model.detail_for(id))
+                        .or_else(|| tree_model.detail_for(selected_id));
+                });
+
+            divider(ui, total, tree_share);
+            let props = property_panel::draw_property_panel(
+                ui,
+                document,
+                registry,
+                property_panel::PanelSubject {
+                    selected: selected_id,
+                    detail: selected_detail.as_deref(),
+                    physical,
+                    bounds_mm,
+                    inertia_references,
+                    inertia_about,
+                },
+                property_tab,
+                rename_buffer,
+                variables,
+            );
+            result.commands.extend(props.commands);
+            if props.feature_command.is_some() {
+                result.tree_feature_command = props.feature_command;
+            }
+            if props.imported_visibility.is_some() {
+                result.imported_visibility_change = props.imported_visibility;
+            }
+            if props.body_visibility.is_some() {
+                result.body_visibility_change = props.body_visibility;
+            }
+            if props.parameter.is_some() {
+                result.parameter = props.parameter;
+            }
+            if props.body_display.is_some() {
+                result.body_display = props.body_display;
+            }
+            result.rename = props.rename;
+            let _ = vseparator;
+        });
+
+    result
+}
+
+/// The tree's share of the height when nothing has moved the divider.
+pub const TREE_SHARE: f32 = 0.55;
+/// The least either part keeps, in points.
+const MIN_PART: f32 = 80.0;
+const DIVIDER: f32 = 6.0;
+
+/// How tall the tree is in `total`, at `share`, leaving each part its
+/// least.
+fn tree_height(total: f32, share: f32) -> f32 {
+    let most = (total - MIN_PART - DIVIDER).max(MIN_PART);
+    (total * share).clamp(MIN_PART, most)
+}
+
+/// The handle between the tree and the property panel: dragging it moves
+/// `share`, and a double click puts it back.
+fn divider(ui: &mut egui::Ui, total: f32, share: &mut f32) {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), DIVIDER),
+        egui::Sense::click_and_drag(),
+    );
+    let active = response.hovered() || response.dragged();
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(
+            if active { 2.0 } else { 1.0 },
+            if active { ACCENT } else { BORDER },
+        ),
+    );
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+        .on_hover_text("Drag to share the height between the tree and the properties");
+    if response.dragged() && total > 0.0 {
+        let height = tree_height(total, *share) + response.drag_delta().y;
+        *share = (height / total).clamp(0.0, 1.0);
+    }
+    if response.double_clicked() {
+        *share = TREE_SHARE;
+    }
+}
+
+/// The folded panel's width: one icon and its margin.
+const RAIL_WIDTH: f32 = 40.0;
+/// Each icon's row in the bar, and the icon in it.
+const RAIL_ROW: f32 = 30.0;
+const RAIL_ICON: f32 = 18.0;
+
+/// What the folded bar marks.
+struct RailState<'a> {
+    selected: Option<TreeItemId>,
+    editing: Option<TreeItemId>,
+    /// The feature that made the face picked in the view.
+    lit: Option<TreeItemId>,
+    /// Scroll the selected icon into view.
+    reveal: bool,
+    unfold_hint: &'a str,
+}
+
+/// The folded panel: its unfold button, then a scrolling column of the
+/// bodies' and features' icons, each named on hover, clicked to select and
+/// double-clicked to edit as its tree row is.
+fn draw_rail(
+    ui: &mut egui::Ui,
+    items: &[feature_tree::RailItem],
+    state: RailState<'_>,
+    result: &mut ComboViewResult,
+) {
+    egui::Panel::left("combo_rail")
+        .resizable(false)
+        .exact_size(RAIL_WIDTH)
+        .frame(egui::Frame::new().fill(BG1))
+        .show(ui, |ui| {
+            ui.set_clip_rect(ui.max_rect());
+            let rect = ui.max_rect();
+            ui.painter().vline(
+                rect.right() - 0.5,
+                rect.y_range(),
+                egui::Stroke::new(1.0, BORDER),
+            );
+            let (header, _) = ui.allocate_exact_size(
+                egui::Vec2::new(ui.available_width(), TAB_BAR),
+                egui::Sense::hover(),
+            );
+            ui.painter().hline(
+                header.x_range(),
+                header.bottom() - 0.5,
+                egui::Stroke::new(1.0, BORDER),
+            );
+            // The button's own 20 px square, in the middle of the header.
+            let button = egui::Rect::from_center_size(header.center(), egui::Vec2::splat(20.0));
+            let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(button));
+            if ui_kit::widgets::icon_button(&mut slot, "panel-left-open", state.unfold_hint)
+                .clicked()
+            {
+                result.fold = Some(false);
+            }
+            egui::ScrollArea::vertical()
+                .id_salt("model_rail")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.add_space(SPACE_1);
+                    for (i, item) in items.iter().enumerate() {
+                        if item.body && i > 0 {
+                            let (gap, _) = ui.allocate_exact_size(
+                                egui::Vec2::new(ui.available_width(), SPACE_2),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().hline(
+                                gap.shrink2(egui::Vec2::new(8.0, 0.0)).x_range(),
+                                gap.center().y,
+                                egui::Stroke::new(1.0, BORDER),
+                            );
+                        }
+                        rail_icon(ui, item, &state, result);
+                    }
+                });
+        });
+}
+
+fn rail_icon(
+    ui: &mut egui::Ui,
+    item: &feature_tree::RailItem,
+    state: &RailState<'_>,
+    result: &mut ComboViewResult,
+) {
+    let (row, response) = ui.allocate_exact_size(
+        egui::Vec2::new(ui.available_width(), RAIL_ROW),
+        egui::Sense::click(),
+    );
+    let cell = egui::Rect::from_center_size(row.center(), egui::Vec2::splat(RAIL_ROW));
+    let selected = state.selected == Some(item.id);
+    let editing = state.editing == Some(item.id);
+    let painter = ui.painter();
+    if selected || editing || response.hovered() {
+        painter.rect_filled(cell, RADIUS_SM, BG2);
+    }
+    if selected || editing {
+        painter.vline(
+            row.left() + 2.0,
+            cell.shrink(6.0).y_range(),
+            egui::Stroke::new(2.0, ACCENT),
+        );
+    } else if state.lit == Some(item.id) {
+        painter.rect_stroke(
+            cell,
+            RADIUS_SM,
+            egui::Stroke::new(1.0, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let tint = match (editing, item.after_tip) {
+        (true, _) => ACCENT,
+        (false, true) => item.tint.gamma_multiply(0.4),
+        (false, false) => item.tint,
+    };
+    if let Some(texture) = ui_kit::icon::texture(ui.ctx(), item.icon) {
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let icon = egui::Rect::from_center_size(cell.center(), egui::Vec2::splat(RAIL_ICON));
+        painter.image(texture.id(), icon, uv, tint);
+    }
+    if selected && state.reveal {
+        response.scroll_to_me(None);
+    }
+    if response.hovered() {
+        result.tree_hovered = Some(item.id);
+    }
+    if response.double_clicked() {
+        result.tree_activation = Some(item.id);
+    } else if response.clicked() {
+        result.tree_selection = Some(item.id);
+    }
+    response.on_hover_text(&item.label);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_split_leaves_each_part_its_least() {
+        assert_eq!(tree_height(1000.0, TREE_SHARE), 550.0);
+        assert_eq!(tree_height(1000.0, 0.0), MIN_PART);
+        assert_eq!(tree_height(1000.0, 1.0), 1000.0 - MIN_PART - DIVIDER);
+        // Too short for both: the tree keeps its least.
+        assert_eq!(tree_height(100.0, 0.5), MIN_PART);
+    }
+
+    #[test]
+    fn dragging_the_divider_moves_the_split_by_as_much() {
+        let ctx = egui::Context::default();
+        let mut share = TREE_SHARE;
+        let total = 1000.0;
+        let at = egui::pos2(100.0, DIVIDER / 2.0);
+        let below = egui::pos2(100.0, DIVIDER / 2.0 + 100.0);
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![press(at, true)],
+            vec![egui::Event::PointerMoved(egui::pos2(100.0, 40.0))],
+            vec![egui::Event::PointerMoved(below)],
+            vec![press(below, false)],
+        ] {
+            let raw = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| divider(ui, total, &mut share));
+            output.textures_delta.clear();
+        }
+        assert!(
+            (share - (TREE_SHARE + 0.1)).abs() < 0.002,
+            "100 of 1000 points down: {share}"
+        );
+    }
+}

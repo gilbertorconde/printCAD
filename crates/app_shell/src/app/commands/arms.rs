@@ -3,7 +3,6 @@
 //! a body asks the kernel for, and small edits of the tab's tools.
 
 use crate::PrintCadApp;
-use crate::log_panel as app_log;
 
 /// Work a body asks the kernel for, each a history barrier.
 pub(super) enum ShapeWork {
@@ -44,7 +43,7 @@ impl PrintCadApp {
         }
     }
 
-    pub(super) fn set_pick_filter(&mut self, filter: crate::ui::PickFilter) {
+    pub(super) fn set_pick_filter(&mut self, filter: crate::contract::PickFilter) {
         self.session.view.pick_filter = filter;
         self.session.hover.edge = None;
         app_log::info(format!("Picking: {}", filter.label()));

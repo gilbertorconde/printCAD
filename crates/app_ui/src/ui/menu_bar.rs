@@ -1,0 +1,922 @@
+//! The menu bar: app mark, the file and undo buttons, the menus, and at
+//! the right the document name and the tool search.
+
+use core_document::{DocumentService, WorkbenchId};
+use egui::RichText;
+use settings::ProjectionMode;
+use ui_kit::tokens::*;
+use ui_kit::widgets::{ToolButtonState, fitted_menu, mono_label, tool_button};
+use ui_kit::{mono, sans, sans_semibold};
+use workbenches::REGISTERED_WORKBENCHES;
+
+use super::{ActiveTool, ActiveWorkbench, FileCommand, Screen, UiCommand};
+use orientation_cube::CameraSnapView;
+
+/// What the menu bar reads this frame.
+pub struct MenuBarInputs<'a> {
+    /// The keys each command answers to, shown beside its row.
+    pub keymap: &'a super::keymap::Keymap,
+    pub registry: &'a DocumentService,
+    pub document_name: &'a str,
+    pub document_dirty: bool,
+    /// "Body › Sketch001" while a sketch is being edited.
+    pub breadcrumb: Option<&'a str>,
+    pub show_log_panel: bool,
+    /// Imported annotations are drawn over the scene.
+    pub show_annotations: bool,
+    /// The print bed is drawn.
+    pub show_print_bed: bool,
+    /// The ground grid and the origin's planes are drawn.
+    pub show_grid: bool,
+    pub show_origin_planes: bool,
+    /// The view is split, scans beside the other bodies.
+    pub split_view: bool,
+    /// The split view's panes share one camera.
+    pub split_linked: bool,
+    /// The window fills the screen.
+    pub fullscreen: bool,
+    pub show_console: bool,
+    pub show_assistant: bool,
+    pub projection: ProjectionMode,
+    pub draw_style: settings::DrawStyle,
+    pub recent: &'a [settings::recent::RecentEntry],
+    pub screen: Screen,
+    /// The tab on screen has nothing in it yet: leaving its start page
+    /// means starting a document, not returning to one.
+    pub active_tab_blank: bool,
+    /// The tab on screen, for Close tab.
+    pub active_tab: Option<uuid::Uuid>,
+    /// The tab on screen has a file, which Revert to saved reads again.
+    pub active_has_file: bool,
+    /// Another tab is open beside the one on screen.
+    pub other_tabs: bool,
+    /// Some tab has unsaved edits, which Save all saves.
+    pub any_edits: bool,
+    /// The scripts folder's scripts.
+    pub scripts: &'a [crate::script_library::ScriptEntry],
+    /// A recording is on.
+    pub recording: bool,
+    /// The clipping plane cuts the view.
+    pub section_on: bool,
+    /// Whether a body is selected, for Send selection to slicer.
+    pub bodies_selected: bool,
+    /// The measure tool is armed.
+    pub measuring: bool,
+}
+
+/// The guides on the website, which Help opens.
+const GUIDES: &str = "https://gilbertorconde.github.io/printCAD/docs/";
+
+/// Menu-driven requests that are UI-local state rather than app commands.
+#[derive(Default)]
+pub struct MenuBarResult {
+    pub show_preferences: bool,
+    pub show_about: bool,
+    /// Help › Check for updates: the Updates page, looking now.
+    pub check_updates: bool,
+    pub open_palette: bool,
+    /// Inspect › a bench's check: switch to the bench, then start it.
+    pub activate_tool: Option<(ActiveWorkbench, String)>,
+    pub toggle_console: bool,
+    pub toggle_assistant: bool,
+    /// File › Print layout: its task in the right panel.
+    pub print_layout: bool,
+}
+
+fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> bool {
+    let mut button = egui::Button::new(RichText::new(label).font(sans(FONT_SM)));
+    if let Some(sc) = shortcut {
+        button = button.shortcut_text(sc);
+    }
+    let clicked = ui.add(button).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// One of a set of choices, the current one marked, with its key.
+fn choice(ui: &mut egui::Ui, on: bool, label: &str, shortcut: Option<String>) -> bool {
+    let mut button = egui::Button::selectable(on, RichText::new(label).font(sans(FONT_SM)));
+    if let Some(sc) = shortcut {
+        button = button.shortcut_text(sc);
+    }
+    let clicked = ui.add(button).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// A row that needs a document on screen. Disabled rows say what they are
+/// waiting for rather than doing nothing when clicked.
+fn item_needing_document(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: Option<String>,
+    have_document: bool,
+) -> bool {
+    item_when(
+        ui,
+        label,
+        shortcut,
+        have_document,
+        "open or create a document first",
+    )
+}
+
+/// A row enabled when `enabled`, saying `waiting` for what otherwise.
+fn item_when(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: Option<String>,
+    enabled: bool,
+    waiting: &str,
+) -> bool {
+    let mut button = egui::Button::new(RichText::new(label).font(sans(FONT_SM)));
+    if let Some(sc) = shortcut {
+        button = button.shortcut_text(sc);
+    }
+    let response = ui
+        .add_enabled(enabled, button)
+        .on_disabled_hover_text(format!("{label}: {waiting}"));
+    let clicked = response.clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// A choice that needs a document on screen, as `item_needing_document`.
+fn choice_needing_document(
+    ui: &mut egui::Ui,
+    on: bool,
+    label: &str,
+    shortcut: Option<String>,
+    have_document: bool,
+) -> bool {
+    let mut button = egui::Button::selectable(on, RichText::new(label).font(sans(FONT_SM)));
+    if let Some(sc) = shortcut {
+        button = button.shortcut_text(sc);
+    }
+    let response = ui
+        .add_enabled(have_document, button)
+        .on_disabled_hover_text(format!("{label}: open or create a document first"));
+    let clicked = response.clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// New, Open and Save, then Undo and Redo, as small buttons beside the
+/// app mark; each names its key in its tooltip.
+fn quick_buttons(
+    ui: &mut egui::Ui,
+    inputs: &MenuBarInputs<'_>,
+    have_document: bool,
+    commands: &mut Vec<UiCommand>,
+) {
+    let buttons: [Option<QuickButton>; 6] = [
+        Some((
+            "new-file",
+            "New",
+            "file.new",
+            true,
+            UiCommand::File(FileCommand::New),
+        )),
+        Some((
+            "open",
+            "Open",
+            "file.open",
+            true,
+            UiCommand::File(FileCommand::Open),
+        )),
+        Some((
+            "save",
+            "Save",
+            "file.save",
+            have_document,
+            UiCommand::File(FileCommand::Save),
+        )),
+        None,
+        Some(("undo", "Undo", "edit.undo", have_document, UiCommand::Undo)),
+        Some(("redo", "Redo", "edit.redo", have_document, UiCommand::Redo)),
+    ];
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_1;
+        for button in buttons {
+            let Some((icon, label, binding, enabled, command)) = button else {
+                ui.add_space(SPACE_2);
+                continue;
+            };
+            let label = match inputs.keymap.text(binding) {
+                Some(key) => format!("{label} ({key})"),
+                None => label.to_owned(),
+            };
+            let state = ToolButtonState {
+                enabled,
+                active: false,
+                planned: None,
+                menu: false,
+            };
+            let response = tool_button(ui, icon, &label, QUICK_BUTTON, state);
+            super::widget_map::note(ui.ctx(), || format!("button:{binding}"), response.rect);
+            if response.clicked() {
+                commands.push(command);
+            }
+        }
+    });
+}
+
+/// A quick button: its icon, name, keymap id, whether it is enabled,
+/// and its command.
+type QuickButton = (&'static str, &'static str, &'static str, bool, UiCommand);
+
+/// The quick buttons' size: a little under the bar's height.
+const QUICK_BUTTON: f32 = MENU_BAR - 6.0;
+
+/// The tool search's width.
+const SEARCH_WIDTH: f32 = 220.0;
+/// Below this much room past the menus the document title is left out
+/// rather than cut to a few letters.
+const TITLE_MIN_WIDTH: f32 = 48.0;
+
+/// The tool search's box: a click opens the command palette.
+fn search_box(ui: &mut egui::Ui, key: Option<String>) -> egui::Response {
+    // Allocate the exact footprint first: a frame grown inside a
+    // right-to-left layout reports its size after placement and overflows
+    // the row.
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(SEARCH_WIDTH, MENU_BAR - 6.0),
+        egui::Sense::click(),
+    );
+    ui.painter().rect(
+        rect,
+        RADIUS_SM,
+        BG2,
+        egui::Stroke::new(1.0, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut inner = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(egui::vec2(SPACE_2, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    inner.spacing_mut().item_spacing.x = SPACE_2;
+    ui_kit::icon::draw(&mut inner, "search", 13.0, TEXT3);
+    inner.label(
+        RichText::new("Search tools…")
+            .font(sans(FONT_SM))
+            .color(TEXT3),
+    );
+    inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if let Some(key) = key {
+            mono_label(ui, key, FONT_XS, TEXT3);
+        }
+    });
+    super::widget_map::note(ui.ctx(), || "button:app.palette".into(), rect);
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Search tools and commands")
+}
+
+fn menu_title(label: &str) -> RichText {
+    RichText::new(label).font(sans(FONT_SM)).color(TEXT2)
+}
+
+/// Draws the bar and consumes the global shortcuts.
+pub fn draw_menu_bar(
+    ui: &mut egui::Ui,
+    inputs: MenuBarInputs<'_>,
+    active_workbench: &mut ActiveWorkbench,
+    active_tool: &mut ActiveTool,
+    commands: &mut Vec<UiCommand>,
+) -> MenuBarResult {
+    let mut result = MenuBarResult::default();
+    // The start page has no document and no viewport: the rows that act on
+    // one say so instead of doing nothing, and their shortcuts hold their
+    // fire.
+    let have_document = inputs.screen == Screen::Workspace;
+
+    let key = |id: &str| inputs.keymap.text(id);
+
+    egui::Panel::top("menu_bar")
+        .exact_size(MENU_BAR)
+        .frame(
+            egui::Frame::new()
+                .fill(BG0)
+                .inner_margin(egui::Margin::symmetric(8, 0)),
+        )
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            ui.painter().hline(
+                rect.x_range(),
+                rect.bottom() - 0.5,
+                egui::Stroke::new(1.0, BORDER),
+            );
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 7.0;
+                    ui_kit::icon::draw(ui, "workbench-print", 16.0, ACCENT);
+                    ui.label(
+                        RichText::new("printCAD")
+                            .font(sans_semibold(FONT_SM))
+                            .color(TEXT1),
+                    );
+                });
+                ui.add_space(6.0);
+                ui_kit::widgets::vseparator(ui, MENU_BAR);
+                ui.add_space(4.0);
+                quick_buttons(ui, &inputs, have_document, commands);
+                ui.add_space(4.0);
+                ui_kit::widgets::vseparator(ui, MENU_BAR);
+                ui.add_space(4.0);
+
+                // The menu bar stretches to the row's end, so the room left
+                // for the right side is measured from its last menu.
+                let row = ui.max_rect();
+                let mut menus_end = row.left();
+                egui::MenuBar::new().ui(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_2;
+                    ui.spacing_mut().button_padding = egui::vec2(SPACE_2, 4.0);
+                    ui.menu_button(menu_title("File"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "New", key("file.new")) {
+                                commands.push(UiCommand::File(FileCommand::New));
+                            }
+                            if item(ui, "Open…", key("file.open")) {
+                                commands.push(UiCommand::File(FileCommand::Open));
+                            }
+                            if item(ui, "New tab", key("tab.new")) {
+                                commands.push(UiCommand::NewTab);
+                            }
+                            ui.menu_button(
+                                RichText::new("Open recent").font(sans(FONT_SM)),
+                                |ui| {
+                                    if inputs.recent.is_empty() {
+                                        ui.add_enabled(
+                                            false,
+                                            egui::Button::new(
+                                                RichText::new("Nothing yet").font(sans(FONT_SM)),
+                                            ),
+                                        );
+                                    }
+                                    for entry in inputs.recent {
+                                        if item(ui, &entry.name(), None) {
+                                            commands
+                                                .push(UiCommand::OpenRecent(entry.path.clone()));
+                                            ui.close();
+                                        }
+                                    }
+                                },
+                            );
+                            ui.separator();
+                            if item_needing_document(ui, "Save", key("file.save"), have_document) {
+                                commands.push(UiCommand::File(FileCommand::Save));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Save As…",
+                                key("file.save_as"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SaveAs));
+                            }
+                            if item_when(
+                                ui,
+                                "Save all",
+                                key("file.save_all"),
+                                inputs.any_edits,
+                                "no document has unsaved edits",
+                            ) {
+                                commands.push(UiCommand::SaveAll);
+                            }
+                            if let Some(active) = inputs.active_tab
+                                && item_when(
+                                    ui,
+                                    "Revert to saved",
+                                    key("file.revert"),
+                                    have_document && inputs.active_has_file,
+                                    "the document has no saved file",
+                                )
+                            {
+                                commands.push(UiCommand::RevertTab(active));
+                            }
+                            ui.separator();
+                            if item_needing_document(
+                                ui,
+                                "Import…",
+                                key("file.import"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::ImportStep));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Export…",
+                                key("file.export"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::Export));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Save view as picture…",
+                                key("file.save_picture"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SavePicture));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Send to slicer",
+                                key("file.send_to_slicer"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SendToSlicer));
+                            }
+                            if item_when(
+                                ui,
+                                "Send selection to slicer",
+                                None,
+                                have_document && inputs.bodies_selected,
+                                "select a body first",
+                            ) {
+                                commands.push(UiCommand::File(FileCommand::SendSelectionToSlicer));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Print layout…",
+                                key("file.print_layout"),
+                                have_document,
+                            ) {
+                                result.print_layout = true;
+                            }
+                            ui.separator();
+                            if let Some(active) = inputs.active_tab
+                                && item(ui, "Close tab", key("tab.close"))
+                            {
+                                commands.push(UiCommand::CloseTab(active));
+                            }
+                            if let Some(active) = inputs.active_tab
+                                && item_when(
+                                    ui,
+                                    "Close other tabs",
+                                    key("tab.close_others"),
+                                    inputs.other_tabs,
+                                    "no other tab is open",
+                                )
+                            {
+                                commands.push(UiCommand::CloseOtherTabs(active));
+                            }
+                            if item(ui, "Reopen closed tab", key("tab.reopen")) {
+                                commands.push(UiCommand::ReopenTab);
+                            }
+                            ui.separator();
+                            if inputs.screen == Screen::Start {
+                                if item(ui, "Workspace", None) {
+                                    commands.push(if inputs.active_tab_blank {
+                                        UiCommand::StartNew(super::StartKind::Landing)
+                                    } else {
+                                        UiCommand::ShowWorkspace
+                                    });
+                                }
+                            } else if item(ui, "Start page", None) {
+                                commands.push(UiCommand::ShowStartPage);
+                            }
+                            ui.separator();
+                            if item(ui, "Quit", key("app.quit")) {
+                                commands.push(UiCommand::Quit);
+                            }
+                        });
+                    });
+                    ui.menu_button(menu_title("Edit"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if item_needing_document(ui, "Undo", key("edit.undo"), have_document) {
+                                commands.push(UiCommand::Undo);
+                            }
+                            if item_needing_document(ui, "Redo", key("edit.redo"), have_document) {
+                                commands.push(UiCommand::Redo);
+                            }
+                            ui.separator();
+                            for (label, command, id) in [
+                                ("Cut", super::EditCommand::Cut, "edit.cut"),
+                                ("Copy", super::EditCommand::Copy, "edit.copy"),
+                                ("Paste", super::EditCommand::Paste, "edit.paste"),
+                            ] {
+                                if item_needing_document(ui, label, key(id), have_document) {
+                                    commands.push(UiCommand::Edit(command));
+                                }
+                            }
+                            ui.separator();
+                            if item_needing_document(
+                                ui,
+                                "Recompute",
+                                key("edit.recompute"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::RecomputeAll);
+                            }
+                            ui.separator();
+                            if item(ui, "Preferences…", key("app.preferences")) {
+                                result.show_preferences = true;
+                            }
+                        });
+                    });
+                    ui.menu_button(menu_title("View"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "Fit view", key("view.fit_all")) {
+                                commands.push(UiCommand::FitView);
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Fit selection",
+                                key("view.fit_selection"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::FitSelection);
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Isolate selection",
+                                key("view.isolate"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::Isolate(None));
+                            }
+                            if item_needing_document(
+                                ui,
+                                "Show all bodies",
+                                key("view.show_all"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::ShowAllBodies);
+                            }
+                            ui.separator();
+                            ui.menu_button(
+                                RichText::new("Standard views").font(sans(FONT_SM)),
+                                |ui| {
+                                    for (label, view, id) in [
+                                        (
+                                            "Isometric",
+                                            CameraSnapView::FrontTopRight,
+                                            "view.isometric",
+                                        ),
+                                        ("Front", CameraSnapView::Front, "view.front"),
+                                        ("Top", CameraSnapView::Top, "view.top"),
+                                        ("Right", CameraSnapView::Right, "view.right"),
+                                        ("Rear", CameraSnapView::Rear, "view.rear"),
+                                        ("Bottom", CameraSnapView::Bottom, "view.bottom"),
+                                        ("Left", CameraSnapView::Left, "view.left"),
+                                    ] {
+                                        if item(ui, label, key(id)) {
+                                            commands.push(UiCommand::CameraSnap(view));
+                                        }
+                                    }
+                                },
+                            );
+                            let ortho = inputs.projection == ProjectionMode::Orthographic;
+                            if choice(ui, ortho, "Orthographic", key("view.orthographic")) {
+                                commands
+                                    .push(UiCommand::SetProjection(ProjectionMode::Orthographic));
+                            }
+                            if choice(ui, !ortho, "Perspective", key("view.perspective")) {
+                                commands
+                                    .push(UiCommand::SetProjection(ProjectionMode::Perspective));
+                            }
+                            ui.separator();
+                            ui.menu_button(RichText::new("Draw style").font(sans(FONT_SM)), |ui| {
+                                for style in settings::DrawStyle::ALL {
+                                    let id = match style {
+                                        settings::DrawStyle::ShadedEdges => "view.shaded_edges",
+                                        settings::DrawStyle::Shaded => "view.shaded",
+                                        settings::DrawStyle::Wireframe => "view.wireframe",
+                                    };
+                                    if choice(
+                                        ui,
+                                        inputs.draw_style == style,
+                                        style.label(),
+                                        key(id),
+                                    ) {
+                                        commands.push(UiCommand::SetDrawStyle(style));
+                                    }
+                                }
+                            });
+                            if choice(
+                                ui,
+                                inputs.show_annotations,
+                                "Annotations",
+                                key("view.annotations"),
+                            ) {
+                                commands.push(UiCommand::ToggleAnnotations);
+                            }
+                            if choice(
+                                ui,
+                                inputs.show_print_bed,
+                                "Print bed",
+                                key("view.print_bed"),
+                            ) {
+                                commands.push(UiCommand::TogglePrintBed);
+                            }
+                            if choice(ui, inputs.show_grid, "Grid", key("view.grid")) {
+                                commands.push(UiCommand::ToggleGrid);
+                            }
+                            if choice(
+                                ui,
+                                inputs.show_origin_planes,
+                                "Origin planes",
+                                key("view.origin_planes"),
+                            ) {
+                                commands.push(UiCommand::ToggleOriginPlanes);
+                            }
+                            if choice(ui, inputs.split_view, "Split view", key("view.split")) {
+                                commands.push(UiCommand::ToggleSplitView);
+                            }
+                            if inputs.split_view
+                                && choice(
+                                    ui,
+                                    inputs.split_linked,
+                                    "Link split cameras",
+                                    key("view.split_link"),
+                                )
+                            {
+                                commands.push(UiCommand::ToggleSplitLink);
+                            }
+                            if choice(ui, inputs.fullscreen, "Full screen", key("view.fullscreen"))
+                            {
+                                commands.push(UiCommand::ToggleFullscreen);
+                            }
+                            ui.separator();
+                            ui.menu_button(RichText::new("Workbench").font(sans(FONT_SM)), |ui| {
+                                let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
+                                for wb in workbenches.iter() {
+                                    let target = ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
+                                    let is_active = *active_workbench == target;
+                                    if ui
+                                        .selectable_label(
+                                            is_active,
+                                            RichText::new(&wb.label).font(sans(FONT_SM)),
+                                        )
+                                        .on_hover_text(&wb.description)
+                                        .clicked()
+                                    {
+                                        *active_workbench = target;
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
+                    });
+
+                    // The active workbench's menu, listing its tools. Another
+                    // bench's menu would name work that belongs to a bench
+                    // the user is not in; View › Workbench is how they get
+                    // there, and the start page has no bench at all.
+                    let benches: Vec<(WorkbenchId, String)> = REGISTERED_WORKBENCHES
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|wb| {
+                            have_document && active_workbench.0 == WorkbenchId::from(wb.id.as_str())
+                        })
+                        .map(|wb| (WorkbenchId::from(wb.id.as_str()), wb.label.clone()))
+                        .collect();
+                    for (wb_id, label) in benches {
+                        let tools: Vec<_> = inputs
+                            .registry
+                            .tools_for(&wb_id)
+                            .map(|t| t.to_vec())
+                            .unwrap_or_default();
+                        ui.menu_button(menu_title(&label), |ui| {
+                            fitted_menu(ui, |ui| {
+                                let mut last_category: Option<String> = None;
+                                for tool in &tools {
+                                    if last_category.is_some() && tool.category != last_category {
+                                        ui.separator();
+                                    }
+                                    last_category = tool.category.clone();
+                                    let text = RichText::new(&tool.label).font(sans(FONT_SM));
+                                    let mut button = match ui_kit::icon::image(
+                                        ui.ctx(),
+                                        tool.icon.unwrap_or("more"),
+                                        16.0,
+                                        if tool.planned.is_some() { TEXT3 } else { TEXT2 },
+                                    ) {
+                                        Some(image) => egui::Button::image_and_text(image, text),
+                                        None => egui::Button::new(text),
+                                    };
+                                    if let Some(keys) = key(&tool.id) {
+                                        button = button.shortcut_text(keys);
+                                    }
+                                    let r = ui.add_enabled(tool.planned.is_none(), button);
+                                    if let Some(note) = tool.planned {
+                                        r.on_disabled_hover_text(format!(
+                                            "{} (planned)\n{note}",
+                                            tool.label
+                                        ));
+                                        continue;
+                                    }
+                                    if r.clicked() {
+                                        active_tool.activate(&tools, tool, &tool.id);
+                                        ui.close();
+                                    }
+                                }
+                                if tools.is_empty() {
+                                    ui.label(
+                                        RichText::new("No tools").font(sans(FONT_SM)).color(TEXT3),
+                                    );
+                                }
+                            });
+                        });
+                    }
+
+                    // Every check in one place: the host's own, then each
+                    // bench's tools of the inspect category, whichever
+                    // bench is on screen.
+                    ui.menu_button(menu_title("Inspect"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if choice_needing_document(
+                                ui,
+                                inputs.measuring,
+                                "Measure",
+                                key("view.measure"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::ToggleMeasure);
+                            }
+                            if choice_needing_document(
+                                ui,
+                                inputs.section_on,
+                                "Clipping plane",
+                                key("view.clipping_plane"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::SetSection(
+                                    (!inputs.section_on)
+                                        .then_some(view_camera::section::SectionToggle::On),
+                                ));
+                            }
+                            let benches = REGISTERED_WORKBENCHES.lock().unwrap().clone();
+                            for wb in benches.iter() {
+                                let bench = WorkbenchId::from(wb.id.as_str());
+                                let checks: Vec<_> = inputs
+                                    .registry
+                                    .tools_for(&bench)
+                                    .map(|t| t.to_vec())
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .filter(|t| {
+                                        t.planned.is_none()
+                                            && t.category.as_deref()
+                                                == Some(core_document::INSPECT_CATEGORY)
+                                    })
+                                    .collect();
+                                if checks.is_empty() {
+                                    continue;
+                                }
+                                ui.separator();
+                                ui.label(RichText::new(&wb.label).font(sans(FONT_XS)).color(TEXT3));
+                                for tool in checks {
+                                    if item_needing_document(
+                                        ui,
+                                        &tool.label,
+                                        key(&tool.id),
+                                        have_document,
+                                    ) {
+                                        result.activate_tool =
+                                            Some((ActiveWorkbench(bench.clone()), tool.id.clone()));
+                                    }
+                                }
+                            }
+                        });
+                    });
+
+                    ui.menu_button(menu_title("Scripts"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "Run script…", key("file.run_script")) {
+                                commands.push(UiCommand::File(super::FileCommand::RunScript));
+                            }
+                            let record = if inputs.recording {
+                                "Stop recording"
+                            } else {
+                                "Record…"
+                            };
+                            if item(ui, record, key("app.record")) {
+                                commands.push(UiCommand::ToggleRecording);
+                            }
+                            ui.separator();
+                            if inputs.scripts.is_empty() {
+                                ui.label(
+                                    RichText::new("No scripts in the scripts folder yet")
+                                        .font(sans(FONT_SM))
+                                        .color(TEXT3),
+                                );
+                            }
+                            for script in inputs.scripts {
+                                let mut button = egui::Button::new(
+                                    RichText::new(&script.name).font(sans(FONT_SM)),
+                                );
+                                if let Some(k) = key(&script.id) {
+                                    button = button.shortcut_text(k);
+                                }
+                                let response = ui.add(button);
+                                let response = match &script.about {
+                                    Some(about) => response.on_hover_text(about),
+                                    None => response,
+                                };
+                                if response.clicked() {
+                                    commands.push(UiCommand::RunScriptFile(script.path.clone()));
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            if item(ui, "New script", None) {
+                                commands.push(UiCommand::NewScript);
+                            }
+                            if item(ui, "Open scripts folder", None) {
+                                commands.push(UiCommand::EditScript(None));
+                            }
+                        });
+                    });
+
+                    ui.menu_button(menu_title("Windows"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if choice(ui, inputs.show_log_panel, "Log panel", key("app.log")) {
+                                commands.push(UiCommand::ToggleLogPanel);
+                            }
+                            if choice(ui, inputs.show_console, "Console", key("app.console")) {
+                                result.toggle_console = true;
+                            }
+                            if choice(ui, inputs.show_assistant, "Assistant", key("app.assistant"))
+                            {
+                                result.toggle_assistant = true;
+                            }
+                        });
+                    });
+                    let help = ui.menu_button(menu_title("Help"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if item(ui, "Guides", None) {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(GUIDES));
+                            }
+                            if item(ui, "Glossary", None) {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                                    "{GUIDES}GLOSSARY.html"
+                                )));
+                            }
+                            ui.separator();
+                            if item(ui, "Check for updates…", None) {
+                                result.check_updates = true;
+                            }
+                            if item(ui, "About printCAD", None) {
+                                result.show_about = true;
+                            }
+                        });
+                    });
+                    menus_end = help.response.rect.right();
+                });
+
+                let right = egui::Rect::from_min_max(
+                    egui::pos2(menus_end + SPACE_3, row.top()),
+                    egui::pos2(row.right(), row.bottom()),
+                );
+                let layout = egui::Layout::right_to_left(egui::Align::Center);
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(right).layout(layout),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        // In a narrow window the search gives way to the menus;
+                        // the palette's key opens it all the same.
+                        if ui.available_width() >= SEARCH_WIDTH + SPACE_3 {
+                            if search_box(ui, key("app.palette")).clicked() {
+                                result.open_palette = true;
+                            }
+                            ui.add_space(SPACE_3);
+                        }
+                        // The title takes what room the menus leave, cut short
+                        // with an ellipsis, and goes when too little is left
+                        // to read; the tab bar names the document all the same.
+                        if ui.available_width() < TITLE_MIN_WIDTH {
+                            return;
+                        }
+                        if inputs.document_dirty {
+                            let (rect, r) = ui
+                                .allocate_exact_size(egui::Vec2::splat(6.0), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 3.0, WARNING);
+                            r.on_hover_text("Unsaved changes");
+                        }
+                        let title = match inputs.breadcrumb {
+                            Some(crumb) => format!("{} › {crumb}", inputs.document_name),
+                            None => inputs.document_name.to_owned(),
+                        };
+                        ui.add(
+                            egui::Label::new(RichText::new(title).font(mono(FONT_XS)).color(TEXT3))
+                                .truncate(),
+                        );
+                    },
+                );
+            });
+        });
+    result
+}
