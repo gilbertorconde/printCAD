@@ -11,9 +11,15 @@
 //!
 //! Non-invertible ops (imports, asset registration) are barriers: the
 //! journal clears rather than store an inverse that would lie.
+//!
+//! Entries keep feature payloads as compressed JSON text ([`packed`]),
+//! the tree built again when a step is applied.
+
+mod packed;
 
 use crate::Document;
 use crate::op::DocumentOp;
+use packed::{Kept, Packer};
 
 /// Names one closed gesture of a journal: every op it took, however they
 /// coalesced, under one identity that undo and redo carry with the entry.
@@ -26,9 +32,9 @@ pub struct JournalEntryId(uuid::Uuid);
 struct Entry {
     id: JournalEntryId,
     label: String,
-    forward: Vec<DocumentOp>,
+    forward: Vec<Kept>,
     /// Stored in capture order; applied back-to-front on undo.
-    inverse: Vec<DocumentOp>,
+    inverse: Vec<Kept>,
 }
 
 /// A move of a journal's stacks while a run is open, kept so a run that
@@ -74,6 +80,7 @@ pub struct OpJournal {
     /// A task is open: its edits wait for it to end, as one step when it
     /// is accepted and taken back when it is cancelled.
     task: bool,
+    packer: Packer,
 }
 
 impl OpJournal {
@@ -220,7 +227,10 @@ impl OpJournal {
             .pending_label
             .take()
             .unwrap_or_else(|| "Edit".to_string());
-        let (forward, inverse): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+        let (forward, inverse): (Vec<_>, Vec<_>) = pairs
+            .into_iter()
+            .map(|(op, inverse)| (self.packer.pack(op), self.packer.pack(inverse)))
+            .unzip();
         let id = JournalEntryId(uuid::Uuid::new_v4());
         self.undo.push(Entry {
             id,
@@ -259,18 +269,18 @@ impl OpJournal {
             match step {
                 RunMove::Closed => {
                     if let Some(entry) = self.undo.pop() {
-                        undone += apply_back(document, &entry);
+                        undone += apply_back(document, &mut self.packer, &entry);
                     }
                 }
                 RunMove::Undone => {
                     if let Some(entry) = self.redo.pop() {
-                        undone += apply_forward(document, &entry);
+                        undone += apply_forward(document, &mut self.packer, &entry);
                         self.undo.push(entry);
                     }
                 }
                 RunMove::Redone => {
                     if let Some(entry) = self.undo.pop() {
-                        undone += apply_back(document, &entry);
+                        undone += apply_back(document, &mut self.packer, &entry);
                         self.redo.push(entry);
                     }
                 }
@@ -337,7 +347,7 @@ impl OpJournal {
         // in a run or not.
         self.close(document);
         let entry = self.undo.pop()?;
-        apply_back(document, &entry);
+        apply_back(document, &mut self.packer, &entry);
         let label = entry.label.clone();
         self.redo.push(entry);
         if let Some(run) = &mut self.run {
@@ -349,7 +359,7 @@ impl OpJournal {
     /// Re-apply the most recently undone gesture. Returns its label.
     pub fn redo(&mut self, document: &mut Document) -> Option<String> {
         let entry = self.redo.pop()?;
-        apply_forward(document, &entry);
+        apply_forward(document, &mut self.packer, &entry);
         let label = entry.label.clone();
         self.undo.push(entry);
         if let Some(run) = &mut self.run {
@@ -398,20 +408,20 @@ impl OpJournal {
 }
 
 /// Take `entry` back: its inverses, newest first. Answers how many.
-fn apply_back(document: &mut Document, entry: &Entry) -> usize {
+fn apply_back(document: &mut Document, packer: &mut Packer, entry: &Entry) -> usize {
     document.without_journal(|doc| {
-        for op in entry.inverse.iter().rev() {
-            doc.apply_history_op(op);
+        for kept in entry.inverse.iter().rev() {
+            doc.apply_history_op(&packer.unpack(kept));
         }
     });
     entry.inverse.len()
 }
 
 /// Do `entry` again: its ops, oldest first. Answers how many.
-fn apply_forward(document: &mut Document, entry: &Entry) -> usize {
+fn apply_forward(document: &mut Document, packer: &mut Packer, entry: &Entry) -> usize {
     document.without_journal(|doc| {
-        for op in &entry.forward {
-            doc.apply_history_op(op);
+        for kept in &entry.forward {
+            doc.apply_history_op(&packer.unpack(kept));
         }
     });
     entry.forward.len()
@@ -632,6 +642,104 @@ mod tests {
         assert_eq!(journal.end_run(&mut doc), None);
         assert!(!journal.can_undo());
         assert_eq!(journal.redo(&mut doc).as_deref(), Some("Create body"));
+    }
+
+    /// A payload as a large sketch's is: many elements, each with ids,
+    /// numbers no shorter text writes exactly, and text.
+    fn payload(elements: usize, tag: f64) -> serde_json::Value {
+        let items: Vec<_> = (0..elements)
+            .map(|i| {
+                serde_json::json!({
+                    "id": uuid::Uuid::new_v4(),
+                    "at": [i as f64 * 0.1 + tag, -0.0, 1e-300, f64::MAX / 3.0],
+                    "count": u64::MAX - i as u64,
+                    "offset": i64::MIN + i as i64,
+                    "name": format!("élément {i} \"quoted\" \u{1F4D0}"),
+                    "construction": i % 2 == 0,
+                    "label": null,
+                })
+            })
+            .collect();
+        serde_json::json!({"geometry": items, "tag": tag})
+    }
+
+    /// Undo and redo put back the very payloads written, to the last bit
+    /// of every double, however the journal keeps them; a removed
+    /// feature's payload comes back with it.
+    #[test]
+    fn undo_and_redo_restore_payloads_bit_for_bit() {
+        let mut doc = Document::new("Exact");
+        let mut journal = OpJournal::new(16);
+        let body = doc.create_body(None);
+        let d = doc
+            .add_feature_in_body(datum(), "D".into(), Some(body))
+            .expect("add");
+        let states: Vec<_> = (0..3).map(|k| payload(50, k as f64 + 0.3)).collect();
+        for state in &states {
+            doc.update_feature_data(d, state.clone()).expect("update");
+            journal.note(&mut doc);
+        }
+        let text = |doc: &Document| doc.get_feature_data(d).expect("data").to_string();
+        for state in states.iter().rev().skip(1) {
+            journal.undo(&mut doc);
+            assert_eq!(*doc.get_feature_data(d).unwrap(), *state);
+            assert_eq!(text(&doc), state.to_string(), "every double as written");
+        }
+        for state in states.iter().skip(1) {
+            journal.redo(&mut doc);
+            assert_eq!(text(&doc), state.to_string());
+        }
+
+        doc.remove_feature(d).expect("remove");
+        journal.note(&mut doc);
+        journal.undo(&mut doc);
+        assert_eq!(text(&doc), states[2].to_string(), "the removed payload");
+        journal.redo(&mut doc);
+        assert!(doc.get_feature_data(d).is_none());
+    }
+
+    /// The history keeps no payload tree of its own: each one an edit
+    /// replaced is gone once its step closes, though undo still reaches
+    /// it, and one undo put back goes once the next edit replaces it.
+    #[test]
+    fn the_history_holds_no_payload_tree() {
+        let mut doc = Document::new("Compact");
+        let mut journal = OpJournal::new(16);
+        let body = doc.create_body(None);
+        let d = doc
+            .add_feature_in_body(datum(), "D".into(), Some(body))
+            .expect("add");
+        doc.update_feature_data(d, payload(2000, 0.0))
+            .expect("update");
+        journal.note(&mut doc);
+        let held = |doc: &Document| {
+            std::sync::Arc::downgrade(&doc.get_feature_meta(d).expect("node").data)
+        };
+        let mut replaced = Vec::new();
+        for k in 1..=4 {
+            replaced.push(held(&doc));
+            doc.update_feature_data(d, payload(2000, f64::from(k)))
+                .expect("update");
+            journal.note(&mut doc);
+            let _ = doc.take_pending_ops();
+            doc.confirm_sent_ops();
+        }
+        assert!(
+            replaced.iter().all(|tree| tree.strong_count() == 0),
+            "every replaced payload dropped"
+        );
+
+        journal.undo(&mut doc);
+        assert_eq!(doc.get_feature_data(d).unwrap()["tag"], 3.0);
+        let restored = held(&doc);
+        doc.update_feature_data(d, payload(10, 9.0))
+            .expect("update");
+        journal.note(&mut doc);
+        let _ = doc.take_pending_ops();
+        doc.confirm_sent_ops();
+        assert_eq!(restored.strong_count(), 0, "the undone-to payload too");
+        journal.undo(&mut doc);
+        assert_eq!(doc.get_feature_data(d).unwrap()["tag"], 3.0);
     }
 
     #[test]
