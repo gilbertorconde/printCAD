@@ -175,45 +175,229 @@ fn clear(g: &mut Glyph, taken: &Taken, direction: Vec2, size: f32) {
     }
 }
 
-pub(super) fn arrange(glyphs: &mut [Glyph], sketch: &Sketch, proj: &SketchProjector, size: f32) {
-    let constraints: std::collections::HashMap<_, _> =
-        sketch.constraints.iter().map(|c| (c.id, c)).collect();
-    let mut taken = Taken::default();
-    for g in glyphs
-        .iter()
-        .filter(|g| g.dimensional && constraints[&g.constraint].label_offset.is_some())
-    {
-        taken.push(bounds(g, size));
-    }
-    for g in glyphs.iter_mut().filter(|g| g.dimensional) {
-        let c = constraints[&g.constraint];
-        if c.label_offset.is_some() {
-            continue;
-        }
-        let before = g.pos;
-        let direction = (Vec2::from_array(g.pos) - Vec2::from_array(g.anchor))
-            .try_normalize()
-            .expect("automatic dimension label leaves its anchor");
-        clear(g, &taken, direction, size);
-        if g.pos != before {
-            let label = proj
-                .sketch_at(g.pos)
-                .expect("visible label projects onto its sketch");
-            g.lines = super::curve_dimension_lines(sketch, proj, &c.kind, label, g.pos)
-                .unwrap_or_else(|| super::dimension_lines(sketch, proj, &c.kind, g.pos, g.anchor));
-        }
-        taken.push(bounds(g, size));
-    }
-    arrange_icons(glyphs, &mut taken, size);
+/// What a glyph's clearance walk reads of the glyph: where it starts,
+/// the anchor it leaves along, what it shows and whether it is placed by
+/// hand.
+#[derive(Clone, PartialEq)]
+struct Start {
+    pos: [u32; 2],
+    anchor: [u32; 2],
+    dimensional: bool,
+    manual: bool,
+    visual: GlyphVisual,
 }
 
+impl Start {
+    fn of(g: &Glyph, manual: bool) -> Self {
+        Self {
+            pos: g.pos.map(f32::to_bits),
+            anchor: g.anchor.map(f32::to_bits),
+            dimensional: g.dimensional,
+            manual,
+            visual: g.visual.clone(),
+        }
+    }
+}
+
+/// One glyph as the last arrangement placed it.
+struct Placed {
+    /// Its place in the order placed.
+    at: usize,
+    start: Start,
+    /// Where it ended.
+    pos: [f32; 2],
+    /// Its box where it ended.
+    end: Bounds,
+    /// The box round every place its walk passed: whatever it met on the
+    /// way overlaps it.
+    swept: Bounds,
+}
+
+/// A glyph's name across arrangements: its constraint, and which of that
+/// constraint's glyphs it is.
+type GlyphId = (uuid::Uuid, u32);
+
+/// The last arrangement, so the next walks again only the glyphs whose
+/// start changed or whose swept box a changed box overlaps. A walk meets
+/// only boxes placed before it that overlap its swept box, the first of
+/// them in the order placed, so while its start and those boxes stay it
+/// ends where it ended.
+#[derive(Default)]
+pub(crate) struct Arrangement {
+    size: u32,
+    placed: HashMap<GlyphId, Placed>,
+}
+
+impl Bounds {
+    fn bits(self) -> [u32; 4] {
+        [self.min.x, self.min.y, self.max.x, self.max.y].map(f32::to_bits)
+    }
+
+    fn is_finite(self) -> bool {
+        self.min.is_finite() && self.max.is_finite()
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            min: self.min.min(other.min),
+            max: self.max.max(other.max),
+        }
+    }
+}
+
+/// The boxes an arrangement holds that the last did not, and those the
+/// last held that this one does not.
+#[derive(Default)]
+struct Changed {
+    boxes: Vec<Bounds>,
+    grid: Option<Taken>,
+}
+
+impl Changed {
+    /// Past this many boxes a query reads a grid of them.
+    const LINEAR: usize = 32;
+
+    fn push(&mut self, b: Bounds) {
+        self.boxes.push(b);
+        match &mut self.grid {
+            Some(grid) => grid.push(b),
+            None if self.boxes.len() > Self::LINEAR => {
+                let mut grid = Taken::default();
+                for b in &self.boxes {
+                    grid.push(*b);
+                }
+                self.grid = Some(grid);
+            }
+            None => {}
+        }
+    }
+
+    fn meets(&self, b: Bounds) -> bool {
+        match &self.grid {
+            Some(grid) => grid.first_overlap(b).is_some(),
+            None => self.boxes.iter().any(|other| b.overlaps(*other)),
+        }
+    }
+}
+
+/// Moves each automatic dimension label out along its leader and each
+/// icon to the right until it clears the boxes placed before it: the
+/// labels placed by hand first, then the automatic ones, then the icons,
+/// each in the order given. `kept` is the last arrangement and becomes
+/// this one; the result is the same as from an empty one.
+pub(super) fn arrange(
+    glyphs: &mut [Glyph],
+    sketch: &Sketch,
+    proj: &SketchProjector,
+    size: f32,
+    kept: &mut Arrangement,
+) {
+    let constraints: HashMap<_, _> = sketch.constraints.iter().map(|c| (c.id, c)).collect();
+    let manual = |g: &Glyph| g.dimensional && constraints[&g.constraint].label_offset.is_some();
+    let mut order: Vec<usize> = Vec::with_capacity(glyphs.len());
+    order.extend((0..glyphs.len()).filter(|&i| manual(&glyphs[i])));
+    order.extend((0..glyphs.len()).filter(|&i| glyphs[i].dimensional && !manual(&glyphs[i])));
+    order.extend((0..glyphs.len()).filter(|&i| !glyphs[i].dimensional));
+    let mut seen: HashMap<uuid::Uuid, u32> = HashMap::new();
+    let ids: Vec<GlyphId> = glyphs
+        .iter()
+        .map(|g| {
+            let n = seen.entry(g.constraint).or_default();
+            *n += 1;
+            (g.constraint, *n - 1)
+        })
+        .collect();
+    let mut last = std::mem::take(&mut kept.placed);
+    if kept.size != size.to_bits() {
+        last.clear();
+    }
+    // The walks hold only while the glyphs kept stand in the same order.
+    let mut previous = None;
+    for &i in &order {
+        if let Some(p) = last.get(&ids[i]) {
+            if previous.is_some_and(|before| p.at < before) {
+                last.clear();
+                break;
+            }
+            previous = Some(p.at);
+        }
+    }
+    let mut changed = Changed::default();
+    {
+        let now: std::collections::HashSet<&GlyphId> = ids.iter().collect();
+        for (id, gone) in &last {
+            if !now.contains(id) {
+                changed.push(gone.end);
+            }
+        }
+    }
+    let mut taken = Taken::default();
+    let mut placed = HashMap::with_capacity(order.len());
+    for (at, &i) in order.iter().enumerate() {
+        let g = &mut glyphs[i];
+        let manual = manual(g);
+        let start = Start::of(g, manual);
+        let before = g.pos;
+        let from = bounds(g, size);
+        let was = last.remove(&ids[i]);
+        if !manual {
+            let walked = was
+                .as_ref()
+                .filter(|p| p.start == start && p.swept.is_finite() && !changed.meets(p.swept));
+            match walked {
+                Some(p) => g.pos = p.pos,
+                None => {
+                    let direction = if g.dimensional {
+                        (Vec2::from_array(g.pos) - Vec2::from_array(g.anchor))
+                            .try_normalize()
+                            .expect("automatic dimension label leaves its anchor")
+                    } else {
+                        Vec2::X
+                    };
+                    clear(g, &taken, direction, size);
+                }
+            }
+            if g.dimensional && g.pos != before {
+                let c = constraints[&g.constraint];
+                let label = proj
+                    .sketch_at(g.pos)
+                    .expect("visible label projects onto its sketch");
+                g.lines = super::curve_dimension_lines(sketch, proj, &c.kind, label, g.pos)
+                    .unwrap_or_else(|| {
+                        super::dimension_lines(sketch, proj, &c.kind, g.pos, g.anchor)
+                    });
+            }
+        }
+        let end = bounds(g, size);
+        if was.as_ref().is_none_or(|p| p.end.bits() != end.bits()) {
+            if let Some(p) = &was {
+                changed.push(p.end);
+            }
+            changed.push(end);
+        }
+        taken.push(end);
+        placed.insert(
+            ids[i],
+            Placed {
+                at,
+                start,
+                pos: g.pos,
+                end,
+                swept: from.union(end),
+            },
+        );
+    }
+    kept.size = size.to_bits();
+    kept.placed = placed;
+}
+
+#[cfg(test)]
 pub(super) fn arrange_icons(glyphs: &mut [Glyph], taken: &mut Taken, size: f32) {
     for g in glyphs.iter_mut().filter(|g| !g.dimensional) {
         clear(g, taken, Vec2::X, size);
         taken.push(bounds(g, size));
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

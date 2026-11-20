@@ -729,6 +729,7 @@ impl SketchWorkbench {
             self.tab.parked_layer,
             self.options.dimension_labels,
             self.options.appearance.label_px(ctx.pixels_per_point),
+            &mut self.frame.arrangement(),
         )
     }
 
