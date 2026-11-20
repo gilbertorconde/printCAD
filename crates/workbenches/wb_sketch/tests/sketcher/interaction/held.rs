@@ -3,10 +3,10 @@
 //! carries the shape along. The holds say nothing twice.
 
 use super::Harness;
-use wb_sketch::sketch::{
+use sketch_model::shape::distance_to_element;
+use sketch_model::sketch::{
     Conic, ConicKind, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
 };
-use wb_sketch::snap::distance_to_element;
 
 /// Each tool's clicks on a sketch holding a level line along y = 10, an
 /// upright one along x = 20 and a point at (0, -6); the clicks on them
@@ -172,8 +172,8 @@ fn a_shape_through_snapped_clicks_follows_what_they_snapped_to() {
         }
         assert!(
             matches!(
-                wb_sketch::operations::solve(&mut sketch),
-                Ok(wb_sketch::operations::SolveOutcome::Converged { .. })
+                sketch_model::operations::solve(&mut sketch),
+                Ok(sketch_model::operations::SolveOutcome::Converged { .. })
             ),
             "{case}: solves"
         );
@@ -336,11 +336,11 @@ fn an_arc_end_reuses_a_point_on_its_circle_past_a_nearer_one_off_it() {
 #[test]
 fn a_click_on_a_text_outline_is_not_held_on_it() {
     let mut h = Harness::sketching();
-    let spec = wb_sketch::text::TextSpec {
+    let spec = sketch_model::text::TextSpec {
         text: "I".into(),
         ..Default::default()
     };
-    h.edit_sketch(|s| wb_sketch::text::add(s, Vec2D::new(0.0, 0.0), &spec).unwrap());
+    h.edit_sketch(|s| sketch_model::text::add(s, Vec2D::new(0.0, 0.0), &spec).unwrap());
     let sketch = h.sketch();
     let longest = sketch
         .geometry

@@ -1051,6 +1051,9 @@ pub fn fits(tool: &str, shape: &SelectionShape) -> bool {
 }
 
 #[cfg(test)]
+mod solved;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::sketch::{Arc, Circle, Line, Point};

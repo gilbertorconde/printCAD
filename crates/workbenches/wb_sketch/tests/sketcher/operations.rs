@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use uuid::Uuid;
-use wb_sketch::operations::{PointJoinError, SolveOutcome, join_points, solve};
-use wb_sketch::sketch::{
+use sketch_model::operations::{PointJoinError, SolveOutcome, join_points, solve};
+use sketch_model::sketch::{
     Circle, ConstraintKind, GeometryElement, Line, ORIGIN_ID, Point, Sketch, Vec2D, group_of,
 };
+use std::collections::HashMap;
+use uuid::Uuid;
 
 fn point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
     sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))

@@ -1170,7 +1170,7 @@ mod panel_width {
         let body = doc.create_body(None);
         let sketch = doc
             .add_feature_in_body(
-                wb_sketch::SketchFeature::from_sketch(wb_sketch::sketch::Sketch::new("s")),
+                sketch_model::SketchFeature::from_sketch(sketch_model::sketch::Sketch::new("s")),
                 "Sketch".into(),
                 Some(body),
             )

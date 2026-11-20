@@ -2,8 +2,8 @@
 //! with pointer events at where its rows and fields were drawn.
 
 use super::*;
-use wb_sketch::generator::{GearSpec, Generator};
-use wb_sketch::sketch::{ConstraintKind, Line};
+use sketch_model::generator::{GearSpec, Generator};
+use sketch_model::sketch::{ConstraintKind, Line};
 
 /// A panel drawn frame by frame for a harness.
 struct Panel {
@@ -310,7 +310,7 @@ fn a_generated_sketch_takes_its_switches_from_the_panel() {
     let sketch = Sketch::new("gear");
     let mut feature = SketchFeature::new(sketch.clone(), sketch.plane);
     feature.generator = Some(Generator::Gear(GearSpec::default()));
-    wb_sketch::generator::regenerate(&mut feature).expect("a gear");
+    sketch_model::generator::regenerate(&mut feature).expect("a gear");
     let id = h
         .doc
         .add_feature_in_body(feature, "sketch".into(), None)
@@ -337,7 +337,7 @@ fn command(h: &mut Harness, id: &str, args: serde_json::Value) -> serde_json::Va
     h.wb.run_command(id, &args, &mut ctx).expect(id)
 }
 
-fn spline(h: &Harness) -> wb_sketch::sketch::BSpline {
+fn spline(h: &Harness) -> sketch_model::sketch::BSpline {
     h.sketch()
         .geometry
         .iter()

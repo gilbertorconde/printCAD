@@ -1,8 +1,8 @@
 //! What the crate's tests build their documents from.
 
 use core_document::{FeatureId, ImportedGeometry};
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
 
 use crate::feature::{DesignFeature, DrillPoint, HoleCut, ThreadLength, ThreadSpec};
 

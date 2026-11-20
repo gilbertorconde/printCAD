@@ -367,6 +367,7 @@ Preferences (Ctrl+,).
 | `surface_texture` | Patterns pressed into faces for printing |
 | `axes` | Axis presets, so no code assumes which way is up |
 | `sketch_solver` | The sketch constraint solver, standing alone |
+| `sketch_model` | The sketch as data: geometry, constraints, profiles, text, generated profiles |
 | `viewport_camera` | Camera pose, projection, navigation and fitting |
 | `transform_gizmo` | Move, turn and scale handles, independent of any window |
 | `workbenches/wb_sketch` | Sketcher |

@@ -5,7 +5,7 @@
 use super::Harness;
 use crate::all_lines;
 use core_document::Workbench;
-use wb_sketch::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
+use sketch_model::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 
 fn sketching() -> Harness {
     let mut h = Harness::new();
@@ -129,7 +129,7 @@ fn a_corner_taken_away_ends_the_gesture() {
         }
         let sketch = h.sketch();
         for g in &sketch.geometry {
-            let ids = wb_sketch::sketch::Sketch::curve_point_ids(g);
+            let ids = sketch_model::sketch::Sketch::curve_point_ids(g);
             assert!(
                 ids.iter().all(|id| sketch.point_position(*id).is_some()),
                 "{tool}: a curve on a point that is gone"

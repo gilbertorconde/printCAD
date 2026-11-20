@@ -5,6 +5,7 @@ members = [
   "crates/bench_panel",
   "crates/feature_walk",
   "crates/sketch_solver",
+  "crates/sketch_model",
   "crates/metrology",
   "crates/image_edges",
   "crates/bench_api",

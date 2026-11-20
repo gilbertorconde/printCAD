@@ -285,7 +285,7 @@ pub(crate) fn add_external(
         match crate::project_source(ctx, plane, source) {
             Ok(curves) => {
                 // An edge or element the sketch already holds comes once.
-                let held = crate::external::groups(sketch)
+                let held = crate::sketch::external_groups(sketch)
                     .iter()
                     .any(|(_, group)| crate::external::already_holds(sketch, group, &curves));
                 if held {

@@ -536,9 +536,9 @@ mod tests {
         }
 
         fn sketch_in(&mut self, body: BodyId, name: &str) -> FeatureId {
-            let sketch = wb_sketch::SketchFeature::new(
-                wb_sketch::sketch::Sketch::new(name),
-                wb_sketch::sketch::SketchPlane::default(),
+            let sketch = sketch_model::SketchFeature::new(
+                sketch_model::sketch::Sketch::new(name),
+                sketch_model::sketch::SketchPlane::default(),
             );
             self.doc
                 .add_feature_in_body(sketch, name.to_string(), Some(body))
@@ -689,7 +689,7 @@ mod tests {
         );
         assert_eq!(s.doc.feature_tree().dependencies(id), vec![sketch]);
         let read = |s: &Session| {
-            wb_sketch::SketchFeature::from_json(s.doc.get_feature_data(sketch).unwrap()).unwrap()
+            sketch_model::SketchFeature::from_json(s.doc.get_feature_data(sketch).unwrap()).unwrap()
         };
         let own = read(&s);
         assert_eq!(own.plane.origin, [5.0, 2.5, 12.0], "2 mm off the face");
@@ -778,7 +778,7 @@ mod tests {
         let shown = |s: &mut Session, registry: &core_document::DocumentService| {
             crate::text_feature::sync(&mut s.doc, id).unwrap();
             registry.evaluate(&mut s.doc);
-            let read = s.doc.read_feature::<wb_sketch::SketchFeature>(sketch);
+            let read = s.doc.read_feature::<sketch_model::SketchFeature>(sketch);
             read.unwrap().sketch.texts[0].size
         };
         registry
@@ -1281,7 +1281,7 @@ mod tests {
             "its sketch is hidden"
         );
         let own = crate::build::load_sketch(&s.doc, sketch).unwrap();
-        let plane = wb_sketch::profile::plane_of(&own.plane);
+        let plane = sketch_model::profile::plane_of(&own.plane);
         let centres = crate::build::hole_centers(&own.sketch);
         assert_eq!(centres.len(), 1, "{centres:?}");
         let at: Vec<f64> = (0..3)
@@ -1305,7 +1305,7 @@ mod tests {
     /// saying so), 5 mm for points alone; a diameter given stands.
     #[test]
     fn a_hole_is_sized_from_its_sketchs_circles() {
-        use wb_sketch::sketch::{Circle, GeometryElement, Point, Sketch, SketchPlane, Vec2D};
+        use sketch_model::sketch::{Circle, GeometryElement, Point, Sketch, SketchPlane, Vec2D};
         let mut s = Session::new();
         let (body, profile) = s.sketch();
         s.run("design.pad", json!({"sketch": profile, "length": 10.0}))
@@ -1322,7 +1322,7 @@ mod tests {
                 let at = Vec2D::new(10.0 * i as f64, 20.0);
                 sketch.add_geometry(GeometryElement::Point(Point::new(at)));
             }
-            let feature = wb_sketch::SketchFeature::new(sketch, SketchPlane::default());
+            let feature = sketch_model::SketchFeature::new(sketch, SketchPlane::default());
             s.doc
                 .add_feature_in_body(feature, name.to_string(), Some(body))
                 .unwrap()

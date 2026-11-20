@@ -1040,63 +1040,6 @@ mod tests {
         near(end.y, 5.0 / 2f64.sqrt());
     }
 
-    #[test]
-    fn an_arc_opens_to_its_angle_and_three_points_hold_theirs() {
-        let mut sketch = Sketch::new("t");
-        let c = add_point(&mut sketch, 0.0, 0.0);
-        let s = add_point(&mut sketch, 5.0, 0.0);
-        let e = add_point(&mut sketch, 0.0, 5.0);
-        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
-        pin(&mut sketch, c);
-        pin(&mut sketch, s);
-        sketch.radius(arc, 5.0);
-        sketch.add_constraint(ConstraintKind::ArcAngle {
-            arc,
-            angle_rad: 135f64.to_radians(),
-        });
-        converged(&mut sketch);
-        near(
-            measure::arc_sweep(&sketch, arc).unwrap().to_degrees(),
-            135.0,
-        );
-
-        // Picked arm, corner, arm: the corner is the vertex, and a reflex
-        // pick is turned round to the short way.
-        let mut sketch = Sketch::new("t");
-        let arm1 = add_point(&mut sketch, 10.0, 0.0);
-        let corner = add_point(&mut sketch, 0.0, 0.0);
-        let arm2 = add_point(&mut sketch, 0.0, 10.0);
-        let selected: std::collections::HashSet<Uuid> = [arm1, corner, arm2].into();
-        let shape =
-            crate::constrain::SelectionShape::picked_in(&sketch, &selected, &[arm2, corner, arm1]);
-        let kinds = crate::constrain::kinds_for("angle_three_points", &shape, &sketch).unwrap();
-        let [
-            ConstraintKind::AngleThreePoints {
-                vertex, angle_rad, ..
-            },
-        ] = kinds[..]
-        else {
-            panic!("{kinds:?}");
-        };
-        assert_eq!(vertex, corner);
-        near(angle_rad.to_degrees(), 90.0);
-        pin(&mut sketch, arm1);
-        pin(&mut sketch, corner);
-        sketch.add_constraint(with_dimension_value_kind(&kinds[0], 60.0));
-        sketch.add_constraint(ConstraintKind::Distance {
-            point1: corner,
-            point2: arm2,
-            distance: 10.0,
-        });
-        converged(&mut sketch);
-        let at = sketch.point_position(arm2).unwrap();
-        near(at.y.atan2(at.x).to_degrees(), 60.0);
-    }
-
-    fn with_dimension_value_kind(kind: &ConstraintKind, v: f64) -> ConstraintKind {
-        crate::sketch::with_dimension_value(kind, v)
-    }
-
     /// The distance from `p` to the nearest of `samples`.
     fn off(samples: &[glam::DVec2], p: glam::DVec2) -> f64 {
         samples
@@ -1417,60 +1360,6 @@ mod tests {
     }
 
     #[test]
-    fn two_ends_picked_are_joined_smoothly() {
-        let mut sketch = Sketch::new("t");
-        let (a, b) = (
-            add_point(&mut sketch, 0.0, 0.0),
-            add_point(&mut sketch, 10.0, 0.0),
-        );
-        let line = add_line(&mut sketch, a, b);
-        pin(&mut sketch, a);
-        pin(&mut sketch, b);
-        let c = add_point(&mut sketch, 12.0, 6.0);
-        let s = add_point(&mut sketch, 12.0, 1.0);
-        let e = add_point(&mut sketch, 17.0, 6.0);
-        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
-        let selected: std::collections::HashSet<Uuid> = [b, s].into();
-        let shape = crate::constrain::SelectionShape::of(&sketch, &selected);
-        let kinds = crate::constrain::kinds_for("tangent", &shape, &sketch).unwrap();
-        assert!(
-            matches!(
-                kinds[..],
-                [
-                    ConstraintKind::Coincident { .. },
-                    ConstraintKind::Tangent { line_or_circle1, item2 },
-                ] if line_or_circle1 == line && item2 == arc
-            ),
-            "{kinds:?}"
-        );
-        for kind in kinds {
-            sketch.add_constraint(kind);
-        }
-        converged(&mut sketch);
-        let joint = sketch.point_position(s).unwrap();
-        assert_near(joint.x, 10.0, 1e-3);
-        assert_near(joint.y, 0.0, 1e-3);
-        let center = sketch.point_position(c).unwrap();
-        assert_near(center.x, 10.0, 1e-3);
-        let r = match sketch.get_geometry(arc) {
-            Some(GeometryElement::Arc(a)) => a.radius,
-            _ => unreachable!(),
-        };
-        assert_near(center.y.abs(), r, 1e-3);
-
-        // A point and the two curves meeting at it take the same join.
-        let selected: std::collections::HashSet<Uuid> = [b, line, arc].into();
-        let shape = crate::constrain::SelectionShape::of(&sketch, &selected);
-        let kinds = crate::constrain::kinds_for("tangent", &shape, &sketch).unwrap();
-        assert!(
-            kinds
-                .iter()
-                .any(|k| matches!(k, ConstraintKind::Tangent { .. })),
-            "{kinds:?}"
-        );
-    }
-
-    #[test]
     fn two_ellipses_are_held_the_same_size() {
         let mut sketch = Sketch::new("t");
         let c1 = add_point(&mut sketch, 0.0, 0.0);
@@ -1512,42 +1401,6 @@ mod tests {
         converged(&mut sketch);
         near(sketch.point_position(b).unwrap().y, 0.0);
         near(sketch.point_position(c).unwrap().x, 0.0);
-    }
-
-    #[test]
-    fn a_gap_holds_two_parallel_lines_apart_and_the_dimension_tool_picks_it() {
-        let mut sketch = Sketch::new("t");
-        let (a, b) = (
-            add_point(&mut sketch, 0.0, 0.0),
-            add_point(&mut sketch, 10.0, 0.0),
-        );
-        let (c, d) = (
-            add_point(&mut sketch, 0.0, 3.0),
-            add_point(&mut sketch, 10.0, 3.0),
-        );
-        let (bottom, top) = (add_line(&mut sketch, a, b), add_line(&mut sketch, c, d));
-        pin(&mut sketch, a);
-        pin(&mut sketch, b);
-        sketch.parallel(bottom, top);
-        let shape = crate::constrain::SelectionShape::of(
-            &sketch,
-            &std::collections::HashSet::from([bottom, top]),
-        );
-        assert_eq!(
-            crate::constrain::dimension_in(&shape, &sketch),
-            Some("distance"),
-            "parallel lines take a distance, not an angle"
-        );
-        let kinds = crate::constrain::kinds_for("distance", &shape, &sketch).unwrap();
-        assert!(
-            matches!(kinds[0], ConstraintKind::Gap { distance, .. } if (distance - 3.0).abs() < 1e-4),
-            "{kinds:?}"
-        );
-        sketch.gap(bottom, top, 5.0);
-        converged(&mut sketch);
-        near(measure::gap(&sketch, bottom, top).unwrap().distance, 5.0);
-        near(sketch.point_position(c).unwrap().y, 5.0);
-        near(sketch.point_position(d).unwrap().y, 5.0);
     }
 
     #[test]

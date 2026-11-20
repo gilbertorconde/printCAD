@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use core_document::{BodyId, BodyPlacement, Document, FeatureId, WorkbenchFeature};
 use kernel_api::nearest::{nearest_on_segment, nearest_on_triangle};
 use kernel_api::{FaceSurface, KernelQueries, TriMesh};
-use wb_sketch::SketchFeature;
+use sketch_model::SketchFeature;
 
 use crate::feature::{
     BorrowOptions, BorrowSource, BorrowedRef, DesignFeature, EdgePick, FacePick, FrozenBorrow,
@@ -101,7 +101,7 @@ pub(crate) fn refusal(document: &Document, using: BodyId, source: &BorrowSource)
             let Some(node) = document.get_feature_meta(*sketch) else {
                 return Some("the borrowed sketch is not in this document".into());
             };
-            if node.workbench_id.as_str() != wb_sketch::KIND {
+            if node.workbench_id.as_str() != sketch_model::KIND {
                 return Some("what it borrows is not a sketch".into());
             }
             (node.body == Some(using))
@@ -122,8 +122,8 @@ pub(crate) fn refusal(document: &Document, using: BodyId, source: &BorrowSource)
 /// A sketch feature's plane (and its sketch's copy of it) moved by
 /// `placement`: the same sketch, seen from another frame.
 fn placed_sketch(mut feature: SketchFeature, placement: &BodyPlacement) -> SketchFeature {
-    use wb_sketch::boundary::{place_direction, place_point};
-    let place = |plane: &mut wb_sketch::sketch::SketchPlane| {
+    use sketch_model::boundary::{place_direction, place_point};
+    let place = |plane: &mut sketch_model::sketch::SketchPlane| {
         plane.origin = place_point(placement, plane.origin);
         plane.normal = place_direction(placement, plane.normal);
         plane.x_axis = place_direction(placement, plane.x_axis);
@@ -198,8 +198,8 @@ const JOIN_MM: f64 = kernel_api::JOIN_MM;
 /// arc of it. Refused when they leave the plane or do not close.
 pub(crate) fn filled(edges: &[FrozenEdge]) -> Result<SketchFeature, String> {
     use glam::DVec3;
-    use wb_sketch::boundary::widen3;
-    use wb_sketch::sketch::{
+    use sketch_model::boundary::widen3;
+    use sketch_model::sketch::{
         Arc, Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
     };
     let points: Vec<DVec3> = edges
@@ -296,7 +296,7 @@ pub(crate) fn filled(edges: &[FrozenEdge]) -> Result<SketchFeature, String> {
             }
         }
     }
-    match wb_sketch::profile::extract_wires(&sketch) {
+    match sketch_model::profile::extract_wires(&sketch) {
         Ok(wires) if !wires.is_empty() => Ok(SketchFeature::new(sketch, plane)),
         _ => Err("the borrowed edges do not close into a loop".into()),
     }
@@ -338,8 +338,8 @@ fn chain(pairs: &[[f32; 3]]) -> Vec<[f32; 3]> {
 }
 
 /// The circle every point of `run` keeps to, when there is one.
-fn round(run: &[wb_sketch::sketch::Vec2D]) -> Option<(wb_sketch::sketch::Vec2D, f64)> {
-    use wb_sketch::sketch::Vec2D;
+fn round(run: &[sketch_model::sketch::Vec2D]) -> Option<(sketch_model::sketch::Vec2D, f64)> {
+    use sketch_model::sketch::Vec2D;
     let (a, b, c) = (
         run[0].to_glam(),
         run[run.len() / 3].to_glam(),
@@ -853,7 +853,7 @@ pub(crate) fn map_sketch(
     let node = document
         .get_feature_meta(sketch)
         .ok_or("the sketch is not in this document")?;
-    if node.workbench_id.as_str() != wb_sketch::KIND {
+    if node.workbench_id.as_str() != sketch_model::KIND {
         return Err("only a sketch is mapped onto a face".into());
     }
     let body = node.body.ok_or("the sketch belongs to no body")?;
@@ -870,21 +870,21 @@ pub(crate) fn map_sketch(
         .ok_or("the sketch is not in this document")?;
     let mut feature = SketchFeature::from_json(data).map_err(|e| format!("invalid sketch: {e}"))?;
     let (point, normal) = (
-        wb_sketch::boundary::widen3(point),
-        wb_sketch::boundary::widen3(normal),
+        sketch_model::boundary::widen3(point),
+        sketch_model::boundary::widen3(normal),
     );
-    let plane = wb_sketch::sketch::SketchPlane::from_face(point, normal);
+    let plane = sketch_model::sketch::SketchPlane::from_face(point, normal);
     feature.plane = plane;
     feature.sketch.plane = plane;
     feature.offset = Default::default();
     feature.support = None;
     feature.attached = None;
-    feature.face = Some(wb_sketch::FaceSupport {
+    feature.face = Some(sketch_model::FaceSupport {
         point,
         normal,
         name: 0,
         placed: plane,
-        lent_by: Some(wb_sketch::LentFace {
+        lent_by: Some(sketch_model::LentFace {
             borrow: face.borrow,
             index: face.index,
         }),
@@ -946,7 +946,7 @@ pub(crate) fn lent_face(
 pub(crate) fn lines(document: &Document, borrow: &Borrow) -> TriMesh {
     if borrow.lends_sketch() && !borrow.options.fill {
         return match borrowed_sketch(document, borrow) {
-            Ok(feature) => wb_sketch::render::sketch_to_lines(&feature.sketch, &feature.plane),
+            Ok(feature) => sketch_model::render::sketch_to_lines(&feature.sketch, &feature.plane),
             Err(_) => TriMesh::default(),
         };
     }
@@ -1254,10 +1254,10 @@ mod tests {
             .sketch
             .geometry
             .iter()
-            .filter(|g| matches!(g, wb_sketch::sketch::GeometryElement::Circle(_)))
+            .filter(|g| matches!(g, sketch_model::sketch::GeometryElement::Circle(_)))
             .count();
         assert_eq!(circles, 1, "the round edge comes back a circle");
-        let wires = wb_sketch::profile::extract_wires(&feature.sketch).unwrap();
+        let wires = sketch_model::profile::extract_wires(&feature.sketch).unwrap();
         assert_eq!(wires.len(), 2, "the square with the circle a hole in it");
         assert!((feature.plane.origin[2] - 3.0).abs() < 1e-5);
         // Edges out of one plane, or open, fill nothing.
@@ -1310,10 +1310,10 @@ mod tests {
     #[test]
     fn a_placed_sketch_moves_its_plane_and_drops_its_support() {
         let mut feature = SketchFeature::new(
-            wb_sketch::sketch::Sketch::new("s"),
-            wb_sketch::sketch::SketchPlane::xy(),
+            sketch_model::sketch::Sketch::new("s"),
+            sketch_model::sketch::SketchPlane::xy(),
         );
-        feature.support = Some(wb_sketch::DatumSupport {
+        feature.support = Some(sketch_model::DatumSupport {
             datum: FeatureId::new(),
             plane: None,
             offset: 0.0,
@@ -1351,8 +1351,8 @@ mod tests {
         let sketch = doc
             .add_feature_in_body(
                 SketchFeature::new(
-                    wb_sketch::sketch::Sketch::new("s"),
-                    wb_sketch::sketch::SketchPlane::xy(),
+                    sketch_model::sketch::Sketch::new("s"),
+                    sketch_model::sketch::SketchPlane::xy(),
                 ),
                 "Sketch".into(),
                 Some(a),

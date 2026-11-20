@@ -6,8 +6,8 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use super::ToolEffect;
+use crate::geom2d::arc_angles;
 use crate::sketch::{BSpline, GeometryElement, Point, Sketch, Vec2D};
-use crate::snap::arc_angles;
 
 /// How close the joined spline keeps to the curves it replaces, mm, when
 /// nothing else is asked for.

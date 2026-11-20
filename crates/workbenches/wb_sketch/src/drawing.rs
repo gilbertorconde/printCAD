@@ -63,7 +63,7 @@ pub(crate) fn polylines(sketch: &Sketch) -> (Lines, Lines) {
             GeometryElement::Arc(a) => match (point(a.center), point(a.start), point(a.end)) {
                 (Some(o), Some(s), Some(e)) => {
                     let (start, sweep) =
-                        crate::snap::arc_angles((s - o).to_glam(), (e - o).to_glam());
+                        crate::geom2d::arc_angles((s - o).to_glam(), (e - o).to_glam());
                     Some(round(o, a.radius, start, sweep))
                 }
                 _ => None,
@@ -119,7 +119,7 @@ pub(crate) fn sheet(sketch: &Sketch, pictures: &[Picture], trace: &str, inches: 
             GeometryElement::Arc(a) => match (point(a.center), point(a.start), point(a.end)) {
                 (Some(o), Some(s), Some(e)) => {
                     let (start, sweep) =
-                        crate::snap::arc_angles((s - o).to_glam(), (e - o).to_glam());
+                        crate::geom2d::arc_angles((s - o).to_glam(), (e - o).to_glam());
                     Some(DrawingShape::Arc {
                         centre: xy(o),
                         radius: a.radius * k,
@@ -372,7 +372,7 @@ pub(crate) fn csv(sketch: &Sketch, trace: &str) -> (String, usize) {
             GeometryElement::Arc(a) => {
                 let sweep = match (point(a.center), point(a.start), point(a.end)) {
                     (Some(o), Some(s), Some(e)) => {
-                        Some(crate::snap::arc_angles((s - o).to_glam(), (e - o).to_glam()).1)
+                        Some(crate::geom2d::arc_angles((s - o).to_glam(), (e - o).to_glam()).1)
                     }
                     _ => None,
                 };

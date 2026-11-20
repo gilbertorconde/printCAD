@@ -71,16 +71,16 @@ pub fn sketch_points(
     sketch: FeatureId,
     element: uuid::Uuid,
 ) -> Option<Vec<[f32; 3]>> {
-    let feature = document.feature_as::<wb_sketch::SketchFeature>(sketch)?;
+    let feature = document.feature_as::<sketch_model::SketchFeature>(sketch)?;
     sketch_points_of(&feature, element)
 }
 
 /// [`sketch_points`] of a sketch feature at hand.
 pub fn sketch_points_of(
-    feature: &wb_sketch::SketchFeature,
+    feature: &sketch_model::SketchFeature,
     element: uuid::Uuid,
 ) -> Option<Vec<[f32; 3]>> {
-    use wb_sketch::sketch::GeometryElement;
+    use sketch_model::sketch::GeometryElement;
     let plane = feature.plane;
     let world = |id: uuid::Uuid| {
         let p = feature.sketch.point_position(id)?;
@@ -909,7 +909,7 @@ mod tests {
         let other = doc.create_body(None);
         // A sketch with a line and a point to take them from.
         let (sketch, line, point) = {
-            use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
+            use sketch_model::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
             let mut drawing = Sketch::new("refs");
             let a = drawing.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 7.0))));
             let b = drawing.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(9.0, 7.0))));
@@ -919,7 +919,7 @@ mod tests {
             let plane = drawing.plane;
             let id = doc
                 .add_feature_in_body(
-                    wb_sketch::SketchFeature::new(drawing, plane),
+                    sketch_model::SketchFeature::new(drawing, plane),
                     "refs".into(),
                     Some(body),
                 )

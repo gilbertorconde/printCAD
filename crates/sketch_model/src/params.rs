@@ -42,7 +42,7 @@ fn value_field(kind: &ConstraintKind) -> Option<(&'static str, &'static str)> {
 
 /// What a formula setting this dimension must come to: a length, an
 /// angle, or a plain number for a ratio.
-pub(crate) fn formula_dim(kind: &ConstraintKind) -> Dim {
+pub fn formula_dim(kind: &ConstraintKind) -> Dim {
     match crate::sketch::dimension_unit(kind) {
         DimensionUnit::Length => Dim::LENGTH,
         DimensionUnit::Angle => Dim::ANGLE,
@@ -141,7 +141,7 @@ struct NumberedSketch {
 }
 
 /// What the UI calls a text block: its first line, cut short.
-pub(crate) fn text_label(text: &str) -> String {
+pub fn text_label(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
     let mut short: String = line.chars().take(16).collect();
     if line.chars().count() > 16 {

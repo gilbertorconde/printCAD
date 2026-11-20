@@ -1,6 +1,6 @@
 //! The Generators: an involute gear, a chain sprocket, a stepped shaft and
 //! a shaft's keyway, each a sketch made from a few numbers
-//! (`wb_sketch::generator`), ready for a Pad (the gear, the sprocket), a
+//! (`sketch_model::generator`), ready for a Pad (the gear, the sprocket), a
 //! Revolution (the shaft) or a Pocket (the keyway).
 //!
 //! The tool opens the sketcher's plane picker for the selected body, as a
@@ -15,8 +15,8 @@ use core_document::{
     ParamKind, ToolDescriptor, ToolVariant, WorkbenchContext, WorkbenchRuntimeContext,
 };
 use serde_json::{Map, Value, json};
-use wb_sketch::generator::{Generator, new_sketch};
-use wb_sketch::sketch::SketchPlane;
+use sketch_model::generator::{Generator, new_sketch};
+use sketch_model::sketch::SketchPlane;
 
 use crate::DesignWorkbench;
 
@@ -232,7 +232,7 @@ pub(crate) fn command(
 mod tests {
     use super::*;
     use core_document::{Document, WorkbenchFeature};
-    use wb_sketch::SketchFeature;
+    use sketch_model::SketchFeature;
 
     fn run(doc: &mut Document, id: &str, args: Value) -> CommandResult {
         core_document::testing::call_checked(&mut crate::DesignWorkbench::default(), doc, id, args)
@@ -260,7 +260,7 @@ mod tests {
         else {
             panic!("one request to start a sketch: {requests:?}")
         };
-        assert_eq!(workbench.as_str(), wb_sketch::KIND);
+        assert_eq!(workbench.as_str(), sketch_model::KIND);
         assert_eq!(attach.body, body.0);
         assert_eq!(attach.face, Some(face));
         assert_eq!(attach.face_origin, core_document::FaceOrigin::OwnSolid);

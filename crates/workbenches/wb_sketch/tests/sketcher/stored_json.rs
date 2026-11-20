@@ -3,8 +3,8 @@
 //! edits made at random on their sketches.
 
 use core_document::{Document, WorkbenchFeature};
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Vec2D};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Vec2D};
 
 /// Every sketch of every document in the app's corpus, by release.
 fn corpus_sketches() -> Vec<SketchFeature> {

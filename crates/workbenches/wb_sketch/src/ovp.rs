@@ -10,8 +10,9 @@ use core_document::expr::Dim;
 use core_document::{Document, KeyCode};
 
 use crate::geom2d;
+use crate::geom2d::arc_angles;
 use crate::sketch::{AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2D};
-use crate::snap::{SnapTarget, arc_angles};
+use crate::snap::SnapTarget;
 use crate::tools::{PolySegment, ToolParams, ToolState};
 
 /// A dimension field the active tool exposes in its current state.

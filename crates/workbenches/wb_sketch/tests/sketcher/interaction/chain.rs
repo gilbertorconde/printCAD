@@ -7,7 +7,7 @@ use super::Harness;
 use super::recording::{assert_replays, session_on_a_sketch};
 use crate::{all_lines, all_points};
 use core_document::{KeyCode, Workbench, WorkbenchInputEvent};
-use wb_sketch::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
+use sketch_model::sketch::{ConstraintKind, GeometryElement, Point, Vec2D};
 
 const LINE: &str = "sketch.line";
 const POLYLINE: &str = "sketch.polyline";
@@ -116,7 +116,7 @@ fn a_chain_ends_with_its_tool_and_survives_a_tab_switch() {
 fn an_outside_edit_rewinds_or_ends_the_chain() {
     let mut h = sketching();
     clicks(&mut h, LINE, &[(0.0, 0.0), (10.0, 0.0), (10.0, 8.0)]);
-    let lines = |s: &mut wb_sketch::sketch::Sketch, keep: usize| {
+    let lines = |s: &mut sketch_model::sketch::Sketch, keep: usize| {
         let mut seen = 0;
         s.geometry.retain(|g| {
             let line = matches!(g, GeometryElement::Line(_));
@@ -169,7 +169,7 @@ fn closed_chains_profile_and_typed_ends_keep_their_vertex() {
         POLYLINE,
         &[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)],
     );
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).expect("a closed profile");
+    let wires = sketch_model::profile::extract_wires(&h.sketch()).expect("a closed profile");
     assert_eq!(wires.len(), 1);
     assert_eq!(h.counts(), (3, 3, 0, 0));
 

@@ -8,11 +8,12 @@ use uuid::Uuid;
 
 use super::{ToolEffect, ToolState};
 use crate::curves::{Curve, END_SLACK};
+use crate::geom2d::arc_angles;
 use crate::geom2d::{self, Prim, prim_of, raw_hits, within};
 use crate::sketch::{
     Arc, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
 };
-use crate::snap::{self, arc_angles};
+use crate::snap;
 
 /// Relative slack in curve parameter space: intersections this close to a
 /// span end don't count as cut points (shared endpoints intersect exactly
@@ -92,7 +93,7 @@ fn joinable_under_cursor(
             ) && Some(g.id()) != except
                 && !sketch.is_external(g.id())
         })
-        .filter_map(|g| snap::distance_to_element(sketch, g, cursor).map(|d| (g.id(), d)))
+        .filter_map(|g| crate::shape::distance_to_element(sketch, g, cursor).map(|d| (g.id(), d)))
         .filter(|(_, d)| *d <= tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
@@ -672,7 +673,7 @@ fn curve_under_cursor(
             matches!(g, GeometryElement::Line(_) | GeometryElement::Arc(_))
                 || (include_circles && matches!(g, GeometryElement::Circle(_)))
         })
-        .filter_map(|g| snap::distance_to_element(sketch, g, pos).map(|d| (g.id(), d)))
+        .filter_map(|g| crate::shape::distance_to_element(sketch, g, pos).map(|d| (g.id(), d)))
         .filter(|(_, d)| *d <= tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
@@ -1242,7 +1243,7 @@ pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f64) -> ToolEffect 
 /// centre and meeting at a new point on it. `None` when no such arc is the
 /// nearest curve there.
 fn split_conic(sketch: &mut Sketch, cursor: Vec2D, tol: f64) -> Option<ToolEffect> {
-    let distance = |g: &GeometryElement| snap::distance_to_element(sketch, g, cursor);
+    let distance = |g: &GeometryElement| crate::shape::distance_to_element(sketch, g, cursor);
     let (id, d) = sketch
         .geometry
         .iter()
@@ -1286,7 +1287,7 @@ fn nearest_curve(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<Uuid> {
         .geometry
         .iter()
         .filter(|g| !matches!(g, GeometryElement::Point(_)))
-        .filter_map(|g| snap::distance_to_element(sketch, g, pos).map(|d| (g.id(), d)))
+        .filter_map(|g| crate::shape::distance_to_element(sketch, g, pos).map(|d| (g.id(), d)))
         .filter(|(_, d)| *d <= tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
@@ -2063,7 +2064,7 @@ pub(super) fn offset(
             let near = g
                 .elements()
                 .iter()
-                .filter_map(|e| snap::distance_to_element(sketch, e, cursor))
+                .filter_map(|e| crate::shape::distance_to_element(sketch, e, cursor))
                 .min_by(f64::total_cmp)?;
             Some((near, outline.as_ref()?))
         })
@@ -2277,7 +2278,9 @@ fn click_left_of(
     let pos_of = |sketch: &Sketch, pid: Uuid| sketch.point_position(pid).map(|p| p.to_glam());
     let near = links
         .iter()
-        .filter_map(|l| snap::distance_to_element(sketch, elem_of(l.id), cursor).map(|d| (l, d)))
+        .filter_map(|l| {
+            crate::shape::distance_to_element(sketch, elem_of(l.id), cursor).map(|d| (l, d))
+        })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(l, _)| l)?;
     Some(match elem_of(near.id) {

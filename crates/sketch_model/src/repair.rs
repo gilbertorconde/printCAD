@@ -79,7 +79,7 @@ fn rename(value: &mut serde_json::Value, map: &HashMap<Uuid, Uuid>) {
 
 /// The sketch's references renamed through `map`: its curves' points and
 /// its constraints'.
-pub(crate) fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
+pub fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
     if map.is_empty() {
         return;
     }
@@ -110,7 +110,7 @@ pub(crate) fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
 /// Join each point in `joined` into the point it maps to, carrying every
 /// reference over. The kept point is construction only when every point
 /// joined into it was: a drawn end stays drawn.
-pub(crate) fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
+pub fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
     let mut drawn: HashSet<Uuid> = HashSet::new();
     for (alias, kept) in joined {
         for id in [alias, kept] {
@@ -197,7 +197,7 @@ pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
             let center = sketch.point_position(a.center)?.to_glam();
             let start = sketch.point_position(a.start)?.to_glam();
             let end = sketch.point_position(a.end)?.to_glam();
-            let (_, sweep) = crate::snap::arc_angles(start - center, end - center);
+            let (_, sweep) = crate::geom2d::arc_angles(start - center, end - center);
             (a.radius > tolerance
                 && (start - end).length() <= tolerance
                 && sweep > std::f64::consts::PI)

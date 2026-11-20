@@ -9,8 +9,8 @@ use core_document::{BodyId, Document, FeatureId};
 use kernel_api::{
     BooleanOp, ExtrudeTermination, Profile, ProfileSegment, ProfileWire, SolidOp, SweepKind,
 };
-use wb_sketch::sketch::{GeometryElement, Sketch};
-use wb_sketch::{SketchFeature, profile};
+use sketch_model::sketch::{GeometryElement, Sketch};
+use sketch_model::{SketchFeature, profile};
 
 /// A hole's drill diameter where it opens, from its thread when it is
 /// standards-driven: the tap drill, moved out by the class's allowance (a

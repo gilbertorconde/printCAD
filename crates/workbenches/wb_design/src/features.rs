@@ -375,7 +375,7 @@ impl DesignWorkbench {
         };
         let before = datum;
         let at = |sketch: FeatureId, element: uuid::Uuid| {
-            let feature = wb_sketch::SketchFeature::from_json(&values_of(sketch)?).ok()?;
+            let feature = sketch_model::SketchFeature::from_json(&values_of(sketch)?).ok()?;
             datum_refs::sketch_points_of(&feature, element)
         };
         for anchor in datum.sketch_points_mut() {

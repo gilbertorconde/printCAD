@@ -492,7 +492,7 @@ fn generated_loop(g: &GearGeometry, rho: f64) -> Result<Loop, String> {
 /// circle up to the tip: the trochoid its rounded tip traces, then the
 /// involute its straight flank leaves. On a pinion of few teeth the
 /// trochoid cuts into the involute above the base circle (undercut).
-pub(crate) struct GeneratedFlank {
+pub struct GeneratedFlank {
     /// The trochoid from the root circle to where the involute takes
     /// over, densely sampled.
     pub trochoid: Vec<P2>,
@@ -506,7 +506,7 @@ pub(crate) struct GeneratedFlank {
 /// in the rack's own frame, X out from the gear's centre and Y along the
 /// rack, the rolling line at X = the pitch radius.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Rack {
+pub struct Rack {
     pitch_radius: f64,
     pressure_angle: f64,
     rho: f64,
@@ -515,7 +515,7 @@ pub(crate) struct Rack {
 }
 
 impl Rack {
-    pub(crate) fn of(g: &GearGeometry, rho: f64) -> Result<Self, String> {
+    pub fn of(g: &GearGeometry, rho: f64) -> Result<Self, String> {
         let r = g.pitch_radius;
         let alpha = g.pressure_angle;
         let half_width = r * (PI / f64::from(g.teeth) - g.half_thickness);
@@ -575,7 +575,7 @@ fn gap_to_tooth(p: P2, teeth: u32) -> P2 {
 }
 
 /// The flank as a cutter whose tip is rounded `rho` generates it.
-pub(crate) fn generated_flank(g: &GearGeometry, rho: f64) -> Result<GeneratedFlank, String> {
+pub fn generated_flank(g: &GearGeometry, rho: f64) -> Result<GeneratedFlank, String> {
     let rack = Rack::of(g, rho)?;
     let (phi0, phi1) = rack.span();
     let at = |phi: f64| gap_to_tooth(rack.cut_at(phi), g.teeth);

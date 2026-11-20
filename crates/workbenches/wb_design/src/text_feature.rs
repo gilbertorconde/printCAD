@@ -10,9 +10,9 @@ use core_document::{
 };
 use glam::DVec3;
 use kernel_api::FaceSurface;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
-use wb_sketch::text::{self, Align, TextSpec, VAlign};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
+use sketch_model::text::{self, Align, TextSpec, VAlign};
 
 use crate::DesignFeature;
 

@@ -14,8 +14,9 @@ const LAYERS = [
   ["printcad-bench-api", "surface_texture", "kernel_ogeom", "render_wgpu", "settings", "agents"],
   // The document.
   ["core_document"],
-  // The declared panels drawn over the document, for the benches and the app.
-  ["bench_panel"],
+  // What the benches share over the document: the declared panels drawn
+  // for the benches and the app, and the sketch model.
+  ["bench_panel", "sketch_model"],
   // What works on the document: the server, scripting and the benches.
   ["doc_server", "doc_render", "scripting", "wb_sketch", "wb_assembly", "wb_inspect", "wb_mesh", "wb_wasm"],
   // Benches built on the sketcher's.

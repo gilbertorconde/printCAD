@@ -3,7 +3,7 @@
 use glam::DVec3;
 use project_archive::archive::FcstdError;
 use project_archive::document_xml::Placement;
-use wb_sketch::sketch::SketchPlane;
+use sketch_model::sketch::SketchPlane;
 
 fn bad(object: &str, field: &str, reason: impl std::fmt::Display) -> FcstdError {
     FcstdError::Format {

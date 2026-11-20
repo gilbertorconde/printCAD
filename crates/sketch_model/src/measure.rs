@@ -46,7 +46,7 @@ pub fn arc_length(sketch: &Sketch, arc: Uuid) -> Option<f64> {
     let c = sketch.point_position(a.center)?.to_glam();
     let s = sketch.point_position(a.start)?.to_glam();
     let e = sketch.point_position(a.end)?.to_glam();
-    let (_, sweep) = crate::snap::arc_angles(s - c, e - c);
+    let (_, sweep) = crate::geom2d::arc_angles(s - c, e - c);
     Some(a.radius * sweep)
 }
 
@@ -227,7 +227,7 @@ pub fn arc_sweep(sketch: &Sketch, arc: Uuid) -> Option<f64> {
     };
     let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
     let (c, s, e) = (pos(a.center)?, pos(a.start)?, pos(a.end)?);
-    Some(crate::snap::arc_angles(s - c, e - c).1)
+    Some(crate::geom2d::arc_angles(s - c, e - c).1)
 }
 
 /// The angle at `vertex` counter-clockwise from the arm to `point1` to the

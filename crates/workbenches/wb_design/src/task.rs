@@ -687,8 +687,8 @@ mod tests {
     use super::*;
     use crate::test_support::{bare_geometry, pad};
     use core_document::Document;
-    use wb_sketch::SketchFeature;
-    use wb_sketch::sketch::{GeometryElement, Point, Sketch, Vec2D};
+    use sketch_model::SketchFeature;
+    use sketch_model::sketch::{GeometryElement, Point, Sketch, Vec2D};
 
     fn rect_sketch() -> SketchFeature {
         crate::test_support::rect_sketch(10.0, 5.0)
@@ -1215,7 +1215,7 @@ mod tests {
                     height: 0.6,
                     wrap: true,
                     text: "AB".into(),
-                    font: wb_sketch::text::DEFAULT_FONT.into(),
+                    font: sketch_model::text::DEFAULT_FONT.into(),
                     size: 5.0,
                     spacing: 0.0,
                     angle: 0.0,
@@ -1653,14 +1653,14 @@ mod tests {
     #[test]
     fn clicking_regions_in_the_view_chooses_what_the_pad_takes() {
         use core_document::{MouseButton, Workbench, WorkbenchInputEvent as E};
-        use wb_sketch::sketch::Circle;
+        use sketch_model::sketch::Circle;
         let mut sketch = Sketch::new("venn");
         for x in [0.0, 10.0] {
             let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))));
             sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 10.0)));
         }
         let plane = sketch.plane;
-        let regions = wb_sketch::profile::regions(&sketch).unwrap();
+        let regions = sketch_model::profile::regions(&sketch).unwrap();
         let name_at = |x: f64| {
             regions
                 .iter()
@@ -1791,7 +1791,7 @@ mod tests {
     /// it, and says so; Cancel takes the pad away and puts the gap back.
     #[test]
     fn a_tool_made_pad_closes_its_outline_and_cancel_opens_it_again() {
-        use wb_sketch::sketch::{GeometryElement, Line, Point, Vec2D};
+        use sketch_model::sketch::{GeometryElement, Line, Point, Vec2D};
         let mut gapped = rect_sketch();
         let start = gapped
             .sketch
@@ -1810,7 +1810,7 @@ mod tests {
         gapped
             .sketch
             .add_geometry(GeometryElement::Line(Line::new(corners[3], start)));
-        assert!(!wb_sketch::profile::loose_ends(&gapped.sketch).is_empty());
+        assert!(!sketch_model::profile::loose_ends(&gapped.sketch).is_empty());
 
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
@@ -1821,7 +1821,7 @@ mod tests {
         let panel = panel();
         let closed = |doc: &Document| {
             let data = doc.get_feature_data(sketch).unwrap();
-            wb_sketch::profile::loose_ends(&SketchFeature::from_json(data).unwrap().sketch)
+            sketch_model::profile::loose_ends(&SketchFeature::from_json(data).unwrap().sketch)
                 .is_empty()
         };
         core_document::history::assert_cancel_takes_back(&mut doc, |doc| {

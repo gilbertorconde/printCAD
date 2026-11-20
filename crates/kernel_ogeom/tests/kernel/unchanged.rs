@@ -2,9 +2,9 @@
 //! builds, and its row warns that it changed nothing.
 
 use core_document::{BodyId, Document, FeatureId};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Point, Sketch, SketchPlane, Vec2D};
 use wb_design::DesignFeature;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Point, Sketch, SketchPlane, Vec2D};
 
 use super::common::{
     Features, body_volume, extrude, pad, pocket, rect_at, registry, settle_as_host,

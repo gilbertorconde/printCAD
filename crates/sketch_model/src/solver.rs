@@ -18,7 +18,7 @@ mod application_tests;
 mod migration;
 pub mod report;
 
-pub(crate) fn solve_checked(
+pub fn solve_checked(
     sketch: &mut Sketch,
 ) -> Result<SolveOutcome, sketch_solver::input::InputError> {
     if sketch.solver.max_iterations == 0 {
@@ -236,12 +236,12 @@ pub struct Diagnosis {
 /// no freedom measured. It answers the same for every sketch equal to
 /// `sketch` but in where its labels sit.
 #[derive(Debug, Clone)]
-pub(crate) struct Settled {
+pub struct Settled {
     pub sketch: Sketch,
     pub outcome: SolveOutcome,
 }
 
-pub(crate) fn settle(sketch: &Sketch) -> Settled {
+pub fn settle(sketch: &Sketch) -> Settled {
     let mut solved = sketch.clone();
     crate::text::strip(&mut solved);
     let sys = build_system(&solved);
@@ -261,11 +261,7 @@ pub fn diagnose(sketch: &Sketch) -> Diagnosis {
 
 /// [`diagnose`], given [`settle`] of `sketch` and its [`dof_estimate`]
 /// where the caller keeps them.
-pub(crate) fn diagnose_with(
-    sketch: &Sketch,
-    settled: Option<&Settled>,
-    dof: Option<i32>,
-) -> Diagnosis {
+pub fn diagnose_with(sketch: &Sketch, settled: Option<&Settled>, dof: Option<i32>) -> Diagnosis {
     let problem = adapter::prepare(sketch, &[]);
     let dof = dof.unwrap_or_else(|| sketch_solver::freedom::estimate(&problem).degrees);
     if problem.constraints.len() > problem.settings.diagnosis_limit {
@@ -564,7 +560,7 @@ fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<U
 /// solves, in one pass over the constraints' Jacobian. Empty for a sketch
 /// too large to analyse, as its diagnosis is. `settled` is [`settle`] of
 /// `sketch` where the caller keeps it.
-pub(crate) fn locked_elements(
+pub fn locked_elements(
     sketch: &Sketch,
     settled: Option<&Settled>,
 ) -> std::collections::HashSet<Uuid> {

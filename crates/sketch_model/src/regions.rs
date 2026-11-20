@@ -1304,13 +1304,13 @@ fn arrange(segments: &[(ProfileSegment, TopoName)]) -> Arrangement {
 }
 
 /// What [`crate::profile`] asks of the arrangement of a sketch's curves.
-pub(crate) struct Arranged {
+pub struct Arranged {
     arrangement: Arrangement,
     regions: std::cell::OnceCell<Vec<Region>>,
 }
 
 impl Arranged {
-    pub(crate) fn of(segments: &[(ProfileSegment, TopoName)]) -> Arranged {
+    pub fn of(segments: &[(ProfileSegment, TopoName)]) -> Arranged {
         Arranged {
             arrangement: arrange(segments),
             regions: std::cell::OnceCell::new(),
@@ -1319,22 +1319,22 @@ impl Arranged {
 
     /// Whether a vertex joins more than two pieces once loose ends are
     /// gone: curves crossing, touching or branching.
-    pub(crate) fn branches(&self) -> bool {
+    pub fn branches(&self) -> bool {
         self.arrangement.branches
     }
 
-    pub(crate) fn regions(&self) -> &[Region] {
+    pub fn regions(&self) -> &[Region] {
         self.regions.get_or_init(|| self.arrangement.regions())
     }
 
     /// Whether the curves close any region at all.
-    pub(crate) fn closes_any(&self) -> bool {
+    pub fn closes_any(&self) -> bool {
         !self.arrangement.faces.is_empty()
     }
 
     /// The outline of the regions named, or of the default ones when
     /// `chosen` is empty. `Err` names a region that is not there.
-    pub(crate) fn wires(&self, chosen: &[String]) -> Result<Vec<ProfileWire>, String> {
+    pub fn wires(&self, chosen: &[String]) -> Result<Vec<ProfileWire>, String> {
         let names = self.arrangement.names();
         let picked: Vec<bool> = if chosen.is_empty() {
             self.arrangement

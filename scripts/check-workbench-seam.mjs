@@ -10,7 +10,9 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const concreteFeatures = /\b(?:Design|Sketch|Surface|Mesh|Joint|Coupling)Feature\b/;
 const crates = readdirSync(resolve(root, "crates/workbenches"))
   .filter(name => name.startsWith("wb_"));
-const cratePattern = new RegExp(`\\b(?:${crates.join("|")})\\b`);
+// Crates of a bench's model outside crates/workbenches belong to the bench.
+const modelCrates = ["sketch_model"];
+const cratePattern = new RegExp(`\\b(?:${[...crates, ...modelCrates].join("|")})\\b`);
 const kindPattern = new RegExp(`["']wb\\.(?:${["part", ...crates.map(n => n.slice(3))].join("|")})(?:\\.[a-z0-9_]+)*["']`);
 const types = crates.flatMap(name => [...sources(resolve(root, "crates/workbenches", name, "src"))]
   .flatMap(path => [...readFileSync(path, "utf8").matchAll(/pub struct (\w+Workbench)\b/g)].map(m => m[1])));
@@ -31,6 +33,7 @@ function* sources(dir) {
 
 function fixtures() {
   // Directory discovery holds every built-in crate to the same rule.
+  for (const name of modelCrates) assert(bypass(`use ${name}::Something;`), name);
   for (const name of crates) {
     assert(bypass(`use ${name}::Something;`), name);
     assert(bypass(`"${name.replace("wb_", "wb.")}"`), name);

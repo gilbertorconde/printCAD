@@ -159,7 +159,7 @@ pub(crate) fn split_body(
         && !ctx
             .document
             .get_feature_meta(sketch)
-            .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND)
+            .is_some_and(|n| n.workbench_id.as_str() == sketch_model::KIND)
     {
         return Err("the sketch to cut by is not a sketch".into());
     }

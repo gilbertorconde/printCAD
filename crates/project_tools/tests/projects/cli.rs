@@ -163,11 +163,11 @@ fn precise_sketch_numbers_survive_cli_conversion_and_check() {
         let id: core_document::FeatureId =
             serde_json::from_value(report["objects"]["Profile"]["Sketch"].clone()).unwrap();
         let loaded = core_document::Document::load_from_file(&destination).unwrap();
-        let feature: wb_sketch::SketchFeature =
+        let feature: sketch_model::SketchFeature =
             serde_json::from_value(loaded.get_feature_data(id).unwrap().clone()).unwrap();
         assert_eq!(feature.sketch.plane.origin, [value, -value, value]);
         assert!(feature.sketch.geometry.iter().any(
-            |g| matches!(g, wb_sketch::sketch::GeometryElement::Point(p) if p.position.x == value)
+            |g| matches!(g, sketch_model::sketch::GeometryElement::Point(p) if p.position.x == value)
         ));
         let checked = Command::new(env!("CARGO_BIN_EXE_project-tool"))
             .arg("check")

@@ -13,7 +13,7 @@ heavy-tests = []
 
 [dependencies]
 core_document = { path = "../core_document" }
-wb_sketch = { path = "../workbenches/wb_sketch" }
+sketch_model = { path = "../sketch_model" }
 wb_design = { path = "../workbenches/wb_design" }
 kernel_api.workspace = true
 kernel_ogeom = { path = "../kernel_ogeom" }

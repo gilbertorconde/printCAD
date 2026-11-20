@@ -6,7 +6,7 @@ use core_document::{BodyId, Document};
 use ogeom::topo::ShapeType;
 use scripting::ScriptEngine;
 
-use wb_sketch::sketch::SketchPlane;
+use sketch_model::sketch::SketchPlane;
 
 use super::common::{
     Benches, Features, chain, count_shapes, edge_names, pad, rect_at, settle_as_host, with_benches,
@@ -67,7 +67,7 @@ fn an_open_sketch_extrudes_into_a_surface_body() {
         .document
         .feature_tree()
         .all_nodes()
-        .find(|(_, n)| n.workbench_id.as_str() == wb_sketch::KIND)
+        .find(|(_, n)| n.workbench_id.as_str() == sketch_model::KIND)
         .and_then(|(_, n)| n.body);
     assert_eq!(
         sketch_body,
@@ -174,7 +174,7 @@ fn a_step_that_cannot_be_planned_leaves_the_history_before_it() {
     let mut steps = named("wb.surface");
     steps.sort_by_key(|(_, seq, _)| *seq);
     let body = steps[0].2.unwrap();
-    let mut sketches = named(wb_sketch::KIND);
+    let mut sketches = named(sketch_model::KIND);
     sketches.sort_by_key(|(_, seq, _)| *seq);
     host.document.remove_feature(sketches[1].0).unwrap();
 

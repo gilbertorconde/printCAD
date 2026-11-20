@@ -1,7 +1,7 @@
 # RFC 0003: Standalone 2D sketch solver
 
 - Status: built (`crates/sketch_solver`, with the adapter in
-  `wb_sketch/src/solver.rs`)
+  `sketch_model/src/solver.rs`)
 - Date: 2026-10-09
 - Scope: a new `crates/sketch_solver` crate, the `wb_sketch` solver adapter,
   numerical fixtures, a replay example and CI checks
@@ -351,11 +351,11 @@ architecture.
 
 ## Code map
 
-- [Current solver and diagnostics](../../crates/workbenches/wb_sketch/src/solver.rs)
-- [Sketch geometry and constraint records](../../crates/workbenches/wb_sketch/src/sketch.rs)
-- [Spline basis and fit-point updates](../../crates/workbenches/wb_sketch/src/spline.rs)
-- [Geometry helpers](../../crates/workbenches/wb_sketch/src/geom2d.rs)
-- [Gap and dimension measurements](../../crates/workbenches/wb_sketch/src/measure.rs)
-- [Text outline updates](../../crates/workbenches/wb_sketch/src/text.rs)
+- [Current solver and diagnostics](../../crates/sketch_model/src/solver.rs)
+- [Sketch geometry and constraint records](../../crates/sketch_model/src/sketch.rs)
+- [Spline basis and fit-point updates](../../crates/sketch_model/src/spline.rs)
+- [Geometry helpers](../../crates/sketch_model/src/geom2d.rs)
+- [Gap and dimension measurements](../../crates/sketch_model/src/measure.rs)
+- [Text outline updates](../../crates/sketch_model/src/text.rs)
 - [Interaction tests](../../crates/workbenches/wb_sketch/tests/sketcher/interaction.rs)
 - [Recording tests](../../crates/workbenches/wb_sketch/tests/sketcher/recording.rs)

@@ -3,14 +3,16 @@
 //! with the numbers they hold.
 
 use core_document::{Compression, Document, WorkbenchFeature};
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{ConstraintKind, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{
+    ConstraintKind, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
+};
 
 /// No model-space field of the sketch is single precision.
 #[test]
 fn the_sketch_model_holds_no_single_precision() {
     let single = concat!("f", "32");
-    let source = include_str!("../../src/sketch.rs");
+    let source = include_str!("../../../../sketch_model/src/sketch.rs");
     let found: Vec<(usize, &str)> = source
         .lines()
         .enumerate()

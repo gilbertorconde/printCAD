@@ -6,7 +6,7 @@
   and datums), and Design sends its features off a surface body to a new
   one. `build.rs` turns the body's history into `SolidOp::Surface`
   steps (`kernel_api::SurfaceOp`, `CurveSource`: a sketch's chains from
-  `wb_sketch::profile::extract_chains`, open or closed, in the body's
+  `sketch_model::profile::extract_chains`, open or closed, in the body's
   frame, or a picked `EdgeProbe`); `kernel_ogeom/src/ops/surface.rs`
   builds them, a constructive step adding its sheet beside the body's
   pieces in a compound, Sew joining every face (a closed shell made a

@@ -3,8 +3,8 @@
 
 use core_document::{BodyId, Document, WorkbenchFeature};
 use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidBuildResult, SolidOp};
+use sketch_model::sketch::SketchPlane;
 use wb_design::DesignFeature;
-use wb_sketch::sketch::SketchPlane;
 
 use super::common::{Features, chain, count_shapes, pad, rect_at, volume};
 

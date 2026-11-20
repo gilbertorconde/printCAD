@@ -7,8 +7,8 @@
 
 use super::Harness;
 use core_document::KeyCode;
+use sketch_model::sketch::{GeometryElement, Sketch, Vec2D};
 use wb_sketch::nodes::{self, NodeKind};
-use wb_sketch::sketch::{GeometryElement, Sketch, Vec2D};
 
 fn at(sketch: &Sketch, id: uuid::Uuid) -> Vec2D {
     sketch.point_position(id).expect("a point")
@@ -221,6 +221,6 @@ fn the_path_tool_closes_on_its_first_node() {
     let path = nodes::nodes_of(&sketch, spline_id(&sketch)).expect("a path");
     assert!(path.closed);
     assert_eq!(path.nodes.len(), 3);
-    let wires = wb_sketch::profile::extract_wires(&sketch).expect("a profile");
+    let wires = sketch_model::profile::extract_wires(&sketch).expect("a profile");
     assert_eq!(wires.len(), 1, "one closed loop");
 }

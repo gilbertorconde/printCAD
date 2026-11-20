@@ -408,7 +408,12 @@ pub(crate) fn drag_target(sketch: &Sketch, point: Uuid, cursor: Vec2D, tol: f64)
                 && !own.contains(&g.id())
                 && !sketch.derived.contains(&g.id())
         })
-        .filter_map(|g| Some((g.id(), crate::snap::distance_to_element(sketch, g, cursor)?)))
+        .filter_map(|g| {
+            Some((
+                g.id(),
+                crate::shape::distance_to_element(sketch, g, cursor)?,
+            ))
+        })
         .filter(|(_, d)| *d <= tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)

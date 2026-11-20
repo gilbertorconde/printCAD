@@ -653,7 +653,7 @@ fn another_sketch_and_a_datum_come_in_as_external_geometry_that_follows_them() {
     let second_id = feature_id(&second);
     let mut feature = SketchFeature::from_json(doc.get_feature_data(second_id).unwrap()).unwrap();
     let placed = crate::placed_plane(&feature.plane, &crate::sketch_placement(&doc, second_id));
-    for (source, group) in crate::external::groups(&feature.sketch) {
+    for (source, group) in crate::sketch::external_groups(&feature.sketch) {
         let projected =
             crate::external_ref::project(&doc, &placed, source.reference.unwrap()).unwrap();
         crate::external::refresh_group(&mut feature.sketch, source, &group, &projected);
@@ -1325,4 +1325,65 @@ fn every_section_of_the_sketcher_prose_names_a_command() {
     ] {
         core_document::testing::assert_prose_names_commands(bench, prose);
     }
+}
+
+#[test]
+fn a_projected_edge_closes_a_profile_once_it_counts() {
+    use crate::sketch::{ExternalSource, GeometryElement, Line, Point, Vec2D};
+    let mut sketch = Sketch::new("t");
+    let mut p =
+        |x: f64, y: f64| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+    let (a, b, c) = (p(0.0, 0.0), p(10.0, 0.0), p(5.0, 8.0));
+    sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+    sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+    let edge = sketch.add_geometry(GeometryElement::Line(Line::new(c, a)));
+    sketch.external.insert(
+        edge,
+        ExternalSource {
+            body: uuid::Uuid::new_v4(),
+            point: [0.0; 3],
+            direction: [1.0, 0.0, 0.0],
+            section: false,
+            defining: false,
+            reference: None,
+            faces: [0; 2],
+        },
+    );
+    assert!(
+        crate::profile::extract_wires(&sketch).is_err(),
+        "a guide leaves the outline open"
+    );
+    set_external_defining(&mut sketch, &[edge], true);
+    let wires = crate::profile::extract_wires(&sketch).expect("closed by the edge");
+    assert_eq!(wires[0].segments.len(), 3);
+}
+
+/// Copied and pasted, a text stays text: a second block on its own
+/// point and outlines.
+#[test]
+fn a_pasted_text_is_text_of_its_own() {
+    let mut sketch = Sketch::new("t");
+    let spec = crate::text::TextSpec {
+        text: "L".to_string(),
+        ..crate::text::TextSpec::default()
+    };
+    crate::text::add(&mut sketch, Vec2D::new(0.0, 0.0), &spec).unwrap();
+    let first = sketch.texts[0].clone();
+    let mut clip = Sketch::new("clipboard");
+    crate::tools::copy_from(
+        &sketch,
+        &mut clip,
+        &first.elements[1..2].iter().copied().collect(),
+        &crate::tools::Similarity::translation(glam::DVec2::ZERO),
+    );
+    assert_eq!(clip.texts.len(), 1, "the clipboard holds the text");
+    assert_eq!(clip.geometry.len(), 1 + first.elements.len());
+    paste(&mut sketch, &clip, Vec2D::new(30.0, 0.0));
+
+    assert_eq!(sketch.texts.len(), 2);
+    let pasted = sketch.texts[1].clone();
+    assert_ne!(pasted.anchor, first.anchor);
+    assert!(pasted.elements.iter().all(|e| !first.elements.contains(e)));
+    let at = sketch.point_position(pasted.anchor).unwrap();
+    assert!((at.x - 30.0).abs() < 1e-4 && at.y.abs() < 1e-4, "{at:?}");
 }

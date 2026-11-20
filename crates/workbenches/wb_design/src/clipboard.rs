@@ -36,7 +36,7 @@ impl Clipboard {
             for dep in document.feature_tree().dependencies(ids[i]) {
                 let takes = document.get_feature_meta(dep).is_some_and(|n| {
                     n.body == Some(body)
-                        && matches!(n.workbench_id.as_str(), wb_sketch::KIND | "core.datum")
+                        && matches!(n.workbench_id.as_str(), sketch_model::KIND | "core.datum")
                 });
                 if takes && !ids.contains(&dep) {
                     ids.push(dep);

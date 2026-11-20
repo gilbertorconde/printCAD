@@ -1,8 +1,8 @@
 use crate::sketch_import::ImportedSketch;
 use glam::DVec2;
 use serde::Serialize;
-use wb_sketch::operations::{SolveOutcome, solve};
-use wb_sketch::sketch::{GeometryElement, Sketch};
+use sketch_model::operations::{SolveOutcome, solve};
+use sketch_model::sketch::{GeometryElement, Sketch};
 
 pub const STATIONARY_TOLERANCE_MM: f64 = 1e-6;
 

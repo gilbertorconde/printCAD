@@ -8,7 +8,7 @@ use super::{
 };
 use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature};
 use kernel_api::{BooleanOp, ExtrudeTermination, SolidOp, SweepKind};
-use wb_sketch::profile;
+use sketch_model::profile;
 
 use crate::feature::{DesignFeature, ExtrudeDirection, ExtrudeMode, FacePick};
 

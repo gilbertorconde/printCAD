@@ -165,8 +165,10 @@ pub(crate) fn element_samples(
         }
         GeometryElement::Arc(a) => {
             let c = pos(a.center)?;
-            let (start, sweep) =
-                crate::snap::arc_angles((pos(a.start)? - c).to_glam(), (pos(a.end)? - c).to_glam());
+            let (start, sweep) = crate::geom2d::arc_angles(
+                (pos(a.start)? - c).to_glam(),
+                (pos(a.end)? - c).to_glam(),
+            );
             let r = a.radius;
             around(
                 c,

@@ -8,9 +8,9 @@ use core_document::{ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, Sketc
 use uuid::Uuid;
 
 use crate::appearance::Appearance;
+use crate::geom2d::arc_angles;
 use crate::overlay::SketchProjector;
 use crate::sketch::{self, ConstraintKind, GeometryElement, Sketch, Vec2D};
-use crate::snap::arc_angles;
 use crate::style::constraint_icon;
 
 mod layout;

@@ -832,7 +832,7 @@ pub fn knot_at_click(sketch: &mut Sketch, cursor: Vec2D, tol: f64) -> ToolEffect
         .geometry
         .iter()
         .filter(|g| matches!(g, GeometryElement::BSpline(_)))
-        .filter_map(|g| crate::snap::distance_to_element(sketch, g, cursor).map(|d| (g.id(), d)))
+        .filter_map(|g| crate::shape::distance_to_element(sketch, g, cursor).map(|d| (g.id(), d)))
         .filter(|(_, d)| *d <= tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id);

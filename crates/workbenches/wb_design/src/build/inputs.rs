@@ -52,14 +52,14 @@ fn read_sketches_projecting(
         .feature_tree()
         .all_nodes()
         .filter(|(_, n)| {
-            n.body == Some(body) && !n.suppressed && n.workbench_id.as_str() == wb_sketch::KIND
+            n.body == Some(body) && !n.suppressed && n.workbench_id.as_str() == sketch_model::KIND
         })
         .filter_map(|(id, n)| {
             let data = document.feature_values(*id).unwrap_or(&n.data);
-            if !wb_sketch::SketchFeature::stores_external(data) {
+            if !sketch_model::SketchFeature::stores_external(data) {
                 return None;
             }
-            let asked = wb_sketch::SketchFeature::from_json(data)
+            let asked = sketch_model::SketchFeature::from_json(data)
                 .ok()?
                 .own_projections(body);
             (!asked.is_empty()).then_some((*id, n.seq, asked))
@@ -99,12 +99,12 @@ pub fn sketch_projections(
 /// face is now, as the borrow finds it on its source, the way a build
 /// answers a sketch on the body's own solid.
 pub(super) fn answer_lent_faces(document: &mut Document, body: BodyId) {
-    let lent: Vec<(FeatureId, wb_sketch::FaceSupport)> = document
+    let lent: Vec<(FeatureId, sketch_model::FaceSupport)> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, n)| n.body == Some(body) && n.workbench_id.as_str() == wb_sketch::KIND)
+        .filter(|(_, n)| n.body == Some(body) && n.workbench_id.as_str() == sketch_model::KIND)
         .filter_map(|(id, n)| {
-            let face = wb_sketch::SketchFeature::from_json(&n.data).ok()?.face?;
+            let face = sketch_model::SketchFeature::from_json(&n.data).ok()?.face?;
             face.lent_by.is_some().then_some((*id, face))
         })
         .collect();
@@ -172,8 +172,8 @@ fn read_datums_asking(
                         .map(|face| face.probe())
                         .collect(),
                 },
-                wb_sketch::KIND => {
-                    let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
+                sketch_model::KIND => {
+                    let sketch = sketch_model::SketchFeature::from_json(&n.data).ok()?;
                     // Attached by a mode, it asks what the attachment asks.
                     match sketch.attached {
                         Some(attached) => attached.probes(),

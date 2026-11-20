@@ -445,21 +445,21 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
         surface: None,
         name: 0,
     };
-    let plane = wb_sketch::sketch::SketchPlane::from_face(
-        wb_sketch::boundary::widen3(point),
-        wb_sketch::boundary::widen3(face.normal),
+    let plane = sketch_model::sketch::SketchPlane::from_face(
+        sketch_model::boundary::widen3(point),
+        sketch_model::boundary::widen3(face.normal),
     );
-    let mut sketch = wb_sketch::sketch::Sketch::new("side");
+    let mut sketch = sketch_model::sketch::Sketch::new("side");
     sketch.plane = plane;
-    let mut sketch = wb_sketch::SketchFeature::new(sketch, plane);
+    let mut sketch = sketch_model::SketchFeature::new(sketch, plane);
     sketch.face =
-        wb_sketch::FaceSupport::from_origin(&face, core_document::FaceOrigin::OwnSolid, plane);
+        sketch_model::FaceSupport::from_origin(&face, core_document::FaceOrigin::OwnSolid, plane);
     let id = host.document.add_in(body, "side", sketch);
     for _ in 0..3 {
         host.registry.evaluate(&mut host.document);
         let _ = host.registry.rebuild_jobs(&mut host.document);
     }
-    let placed = wb_sketch::SketchFeature::from_json(host.document.feature_values(id).unwrap())
+    let placed = sketch_model::SketchFeature::from_json(host.document.feature_values(id).unwrap())
         .unwrap()
         .plane;
     assert!(
@@ -637,14 +637,14 @@ fn a_face_s_edges_come_in_around_it() {
         .document
         .feature_tree()
         .all_nodes()
-        .find(|(_, n)| n.workbench_id.as_str() == wb_sketch::KIND)
+        .find(|(_, n)| n.workbench_id.as_str() == sketch_model::KIND)
         .map(|(id, _)| *id)
         .unwrap();
     let feature =
-        wb_sketch::SketchFeature::from_json(host.document.get_feature_data(sketch).unwrap())
+        sketch_model::SketchFeature::from_json(host.document.get_feature_data(sketch).unwrap())
             .unwrap();
     let wires =
-        wb_sketch::profile::extract_wires(&feature.sketch).expect("the top's outline closes");
+        sketch_model::profile::extract_wires(&feature.sketch).expect("the top's outline closes");
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 4);
 

@@ -570,7 +570,7 @@ fn holds_at(sketch: &Sketch, pos: Vec2D, snap_tol: f64) -> Vec<Hold> {
         })
     };
     for geom in curves() {
-        if !snap::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps) {
+        if !crate::shape::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps) {
             continue;
         }
         on.push(match geom {

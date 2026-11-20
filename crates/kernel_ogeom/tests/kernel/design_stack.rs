@@ -5,9 +5,9 @@
 use core_document::{BodyId, Document, FeatureId};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 use wb_design::DesignFeature;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 
 use super::common::{
     Features, add_variables, body_volume, chain, extrude, is_sound, pad, pocket, primitive,
@@ -16,7 +16,7 @@ use super::common::{
 };
 
 fn circle_sketch_on(
-    plane: wb_sketch::sketch::SketchPlane,
+    plane: sketch_model::sketch::SketchPlane,
     cx: f64,
     cy: f64,
     r: f64,
@@ -94,7 +94,7 @@ fn padded(sketch: Sketch, length: f32) -> Built {
 /// world Z, and the normal -Y.
 #[test]
 fn a_pad_extrudes_along_its_sketchs_normal() {
-    use wb_sketch::sketch::SketchPlane;
+    use sketch_model::sketch::SketchPlane;
     let cases = [
         (SketchPlane::xy(), false, [0.0, 0.0, 0.0], [10.0, 4.0, 6.0]),
         (SketchPlane::xy(), true, [0.0, 0.0, -3.0], [10.0, 4.0, 3.0]),
@@ -135,7 +135,7 @@ fn a_gap_in_a_corner_is_open_or_closed_alike_in_the_regions_and_the_pad() {
         for pair in corners.windows(2) {
             sketch.add_geometry(GeometryElement::Line(Line::new(pair[0], pair[1])));
         }
-        let shaded = !wb_sketch::profile::region_wires(&sketch)
+        let shaded = !sketch_model::profile::region_wires(&sketch)
             .expect("the sketch reads")
             .is_empty();
         let mut doc = Document::new("t");
@@ -147,7 +147,7 @@ fn a_gap_in_a_corner_is_open_or_closed_alike_in_the_regions_and_the_pad() {
         );
         doc.add_in(body, "Pad", pad(id, 2.0));
         let padded = build(&doc, body).is_ok();
-        // The sketch's join, `wb_sketch`'s `curves::END_SLACK`.
+        // The sketch's join, `sketch_model`'s `curves::END_SLACK`.
         let closed = gap < 1e-4;
         assert_eq!((shaded, padded), (closed, closed), "gap {gap}");
     }
@@ -192,7 +192,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
 
 /// The rectangle x ∈ [5, 8], y ∈ [0, 2] on the XY plane.
 fn ring_section() -> SketchFeature {
-    rect_at(wb_sketch::sketch::SketchPlane::xy(), 5.0, 0.0, 8.0, 2.0)
+    rect_at(sketch_model::sketch::SketchPlane::xy(), 5.0, 0.0, 8.0, 2.0)
 }
 
 /// The bounds of a revolution of [`ring_section`] about the sketch's Y
@@ -270,7 +270,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
 
     // Two hole positions on the pad's top face, either side of its middle
     // (the plane's frame starts at the document origin).
-    let top_face = wb_sketch::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
+    let top_face = sketch_model::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let mut holes = Sketch::new("holes");
     holes.plane = top_face;
     for x in [7.0f64, 23.0] {
@@ -301,7 +301,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
 fn plate_with_nut_trap(depth: Option<f32>, trap: wb_design::NutTrap) -> Result<f64, String> {
     let (mut doc, body, rect_id) = setup(30.0, 20.0);
     doc.add_in(body, "Pad", pad(rect_id, 6.0));
-    let top_face = wb_sketch::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
+    let top_face = sketch_model::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let mut holes = Sketch::new("holes");
     holes.plane = top_face;
     holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(15.0, 10.0))));
@@ -458,9 +458,9 @@ fn a_refined_pad_stacked_on_a_pad_leaves_six_faces() {
     let faces_with = |refine: bool| {
         let (mut doc, body, sketch_id) = setup(20.0, 20.0);
         doc.add_in(body, "Pad", pad(sketch_id, 10.0));
-        let raised = wb_sketch::sketch::SketchPlane {
+        let raised = sketch_model::sketch::SketchPlane {
             origin: [0.0, 0.0, 10.0],
-            ..wb_sketch::sketch::SketchPlane::xy()
+            ..sketch_model::sketch::SketchPlane::xy()
         };
         let upper = doc.add_in(body, "upper", rect_at(raised, 0.0, 0.0, 20.0, 20.0));
         let mut second = pad(upper, 10.0);
@@ -480,7 +480,7 @@ fn a_refined_pad_stacked_on_a_pad_leaves_six_faces() {
 /// prism: the arc's endpoints and the line's meet exactly in the profile.
 #[test]
 fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
-    use wb_sketch::sketch::Ellipse;
+    use sketch_model::sketch::Ellipse;
     let (a, b, height) = (10.0f64, 5.0f64, 4.0f32);
     let mut sketch = Sketch::new("half ellipse");
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
@@ -526,7 +526,7 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
 /// to the cylinder the circle would.
 #[test]
 fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
-    use wb_sketch::sketch::Circle;
+    use sketch_model::sketch::Circle;
     let (r, height) = (6.0f64, 3.0f32);
     let mut sketch = Sketch::new("disc");
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
@@ -546,12 +546,12 @@ fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
 #[test]
 fn text_pads_to_raised_letters() {
     let mut sketch = Sketch::new("label");
-    let spec = wb_sketch::text::TextSpec {
+    let spec = sketch_model::text::TextSpec {
         text: "Oi".into(),
         size: 10.0,
         ..Default::default()
     };
-    wb_sketch::text::add(&mut sketch, Vec2D::new(0.0, 0.0), &spec).unwrap();
+    sketch_model::text::add(&mut sketch, Vec2D::new(0.0, 0.0), &spec).unwrap();
     let letters = padded(sketch, 1.0);
     let (lo, hi) = letters.bounds();
     assert!((hi[2] - lo[2] - 1.0).abs() < 1e-3);
@@ -572,7 +572,7 @@ fn text_pads_to_raised_letters() {
 fn bore_rim_fillets() {
     let (mut doc, body, rect_id) = setup(40.0, 30.0);
     doc.add_in(body, "Pad", pad(rect_id, 12.0));
-    let top = wb_sketch::sketch::SketchPlane {
+    let top = sketch_model::sketch::SketchPlane {
         origin: [0.0, 0.0, 12.0],
         ..Default::default()
     };
@@ -723,7 +723,7 @@ fn a_variable_tilts_a_pad_s_custom_direction() {
 
 #[test]
 fn a_variable_drives_a_named_sketch_dimension_and_the_pad_on_it() {
-    use wb_sketch::sketch::{Constraint, ConstraintKind};
+    use sketch_model::sketch::{Constraint, ConstraintKind};
     let registry = registry();
 
     // A 10 x 5 rectangle, fixed at the origin, square, its bottom named
@@ -926,7 +926,7 @@ fn a_pad_on_a_datum_sketch_follows_the_datum() {
     let datum = doc.add_in(body, "Datum", datum_at(10.0, 0.0, false));
     // A 4 x 2 rectangle drawn on the datum, as `sketch.new{on = datum}` makes it.
     let mut sketch = rect_at(SketchPlane::xy(), 0.0, 0.0, 4.0, 2.0);
-    sketch.support = Some(wb_sketch::DatumSupport {
+    sketch.support = Some(sketch_model::DatumSupport {
         datum,
         plane: None,
         offset: 0.0,
@@ -988,7 +988,7 @@ fn a_pad_starting_on_a_face_follows_the_face() {
     let (mut doc, body, base) = setup(40.0, 40.0);
     let first = doc.add_in(body, "Pad", pad(base, 10.0));
     // A 4 x 4 square drawn on the ground, started on the top face.
-    let ground = wb_sketch::sketch::SketchPlane {
+    let ground = sketch_model::sketch::SketchPlane {
         origin: [18.0, 18.0, 0.0],
         ..Default::default()
     };
@@ -1148,7 +1148,7 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
     let removed = |symmetric: bool| {
         let (mut doc, body, rect_id) = setup(20.0, 20.0);
         doc.add_in(body, "Pad", pad(rect_id, 10.0));
-        let top = wb_sketch::sketch::SketchPlane {
+        let top = sketch_model::sketch::SketchPlane {
             origin: [5.0, 5.0, 10.0],
             ..Default::default()
         };
@@ -1212,7 +1212,12 @@ fn a_boolean_follows_its_tool_body() {
     let circle = doc.add_in(
         tool,
         "circle",
-        circle_sketch_on(wb_sketch::sketch::SketchPlane::default(), 10.0, 10.0, 5.0),
+        circle_sketch_on(
+            sketch_model::sketch::SketchPlane::default(),
+            10.0,
+            10.0,
+            5.0,
+        ),
     );
     let cylinder = doc.add_in(tool, "Cylinder", pad(circle, 10.0));
 
@@ -1307,7 +1312,12 @@ fn bodies_that_take_each_other_as_tools_fail_once() {
     let circle = doc.add_in(
         b,
         "circle",
-        circle_sketch_on(wb_sketch::sketch::SketchPlane::default(), 10.0, 10.0, 5.0),
+        circle_sketch_on(
+            sketch_model::sketch::SketchPlane::default(),
+            10.0,
+            10.0,
+            5.0,
+        ),
     );
     doc.add_in(b, "Cylinder", pad(circle, 10.0));
     for (body, tool) in [(a, b), (b, a)] {
@@ -1337,7 +1347,7 @@ fn bodies_that_take_each_other_as_tools_fail_once() {
 /// reaches every point the curve was drawn through, and no further along x.
 #[test]
 fn a_spline_through_points_closed_by_a_line_pads() {
-    use wb_sketch::sketch::BSpline;
+    use sketch_model::sketch::BSpline;
     let clicks = [[0.0, 0.0], [4.0, 6.0], [9.0, 7.0], [14.0, 3.0], [18.0, 0.0]];
     let fit = sketch_solver::spline::interpolate(&clicks, 4, false).expect("a fit");
     let mut sketch = Sketch::new("spline");
@@ -1378,7 +1388,7 @@ fn a_spline_through_points_closed_by_a_line_pads() {
 /// A sketch of one conic arc from `start` to `end`, closed by a line, padded
 /// `height`: the solid's volume.
 fn padded_conic_volume(
-    kind: wb_sketch::sketch::ConicKind,
+    kind: sketch_model::sketch::ConicKind,
     center: Vec2D,
     axis: Vec2D,
     minor: f64,
@@ -1386,7 +1396,7 @@ fn padded_conic_volume(
     end: Vec2D,
     height: f32,
 ) -> f64 {
-    use wb_sketch::sketch::Conic;
+    use sketch_model::sketch::Conic;
     let mut sketch = Sketch::new("conic");
     let c = sketch.add_geometry(GeometryElement::Point(Point::new(center)));
     let s = sketch.add_geometry(GeometryElement::Point(Point::new(start)));
@@ -1402,7 +1412,7 @@ fn padded_conic_volume(
 /// hyperbolic one what its integral says: the arcs pad exactly.
 #[test]
 fn arcs_of_parabola_and_hyperbola_closed_by_a_line_pad_to_their_areas() {
-    use wb_sketch::sketch::ConicKind;
+    use sketch_model::sketch::ConicKind;
     // y = x² / 8 from x = -4 to 4, cut off at y = 2.
     let volume = padded_conic_volume(
         ConicKind::Parabola,
@@ -1462,7 +1472,7 @@ fn drilled_block_solid(
 ) -> Result<Built, String> {
     let (mut doc, body, rect_id) = setup(size, size);
     doc.add_in(body, "Pad", pad(rect_id, height));
-    let top_face = wb_sketch::sketch::SketchPlane::from_face(
+    let top_face = sketch_model::sketch::SketchPlane::from_face(
         [size * 0.5, size * 0.5, f64::from(height)],
         [0.0, 0.0, 1.0],
     );
@@ -1782,8 +1792,8 @@ fn a_metric_index_hole_loads_as_its_iso_metric_size() {
 }
 
 /// The plane z = `z`, sketched as the XY plane is.
-fn plane_at_z(z: f64) -> wb_sketch::sketch::SketchPlane {
-    wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
+fn plane_at_z(z: f64) -> sketch_model::sketch::SketchPlane {
+    sketch_model::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
 }
 
 /// The volume the body's features build, or why they do not.
@@ -1936,13 +1946,25 @@ fn wall_and_profile() -> (Document, BodyId, FeatureId) {
     let wall = doc.add_in(
         body,
         "wall",
-        rect_at(wb_sketch::sketch::SketchPlane::xy(), -20.0, 0.0, 0.0, 20.0),
+        rect_at(
+            sketch_model::sketch::SketchPlane::xy(),
+            -20.0,
+            0.0,
+            0.0,
+            20.0,
+        ),
     );
     doc.add_in(body, "Wall", pad(wall, 10.0));
     let profile = doc.add_in(
         body,
         "profile",
-        rect_at(wb_sketch::sketch::SketchPlane::xz(), 5.0, 0.0, 10.0, 10.0),
+        rect_at(
+            sketch_model::sketch::SketchPlane::xz(),
+            5.0,
+            0.0,
+            10.0,
+            10.0,
+        ),
     );
     (doc, body, profile)
 }
@@ -2009,7 +2031,7 @@ fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
     use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
-    let mut ring = rect_at(wb_sketch::sketch::SketchPlane::xy(), 5.0, 0.0, 8.0, 2.0);
+    let mut ring = rect_at(sketch_model::sketch::SketchPlane::xy(), 5.0, 0.0, 8.0, 2.0);
     let a = ring
         .sketch
         .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, -1.0))));
@@ -2583,7 +2605,7 @@ fn assert_near(got: f64, want: f64, rel: f64, what: &str) {
 }
 
 /// A sketch of one open chain of lines through `points`, on `plane`.
-fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f64; 2]]) -> SketchFeature {
+fn polyline_sketch(plane: sketch_model::sketch::SketchPlane, points: &[[f64; 2]]) -> SketchFeature {
     let mut sketch = Sketch::new("path");
     sketch.plane = plane;
     let ids: Vec<_> = points
@@ -2599,8 +2621,8 @@ fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f64; 2]]) -
 /// A quarter arc on the XY plane about (20, 0), radius 20, from the origin
 /// (heading along -Y) to (20, -20): a path 10π long.
 fn quarter_arc_sketch() -> SketchFeature {
-    use wb_sketch::sketch::Arc;
-    let plane = wb_sketch::sketch::SketchPlane::xy();
+    use sketch_model::sketch::Arc;
+    let plane = sketch_model::sketch::SketchPlane::xy();
     let mut sketch = Sketch::new("arc");
     sketch.plane = plane;
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(20.0, 0.0))));
@@ -2656,11 +2678,11 @@ fn pipe_of(
 
 /// A 2 × 2 square on the XZ plane, the section a pipe carries.
 fn square_section() -> SketchFeature {
-    rect_at(wb_sketch::sketch::SketchPlane::xz(), 0.0, 0.0, 2.0, 2.0)
+    rect_at(sketch_model::sketch::SketchPlane::xz(), 0.0, 0.0, 2.0, 2.0)
 }
 
 fn unit_circle_section() -> SketchFeature {
-    circle_sketch_on(wb_sketch::sketch::SketchPlane::xz(), 0.0, 0.0, 1.0)
+    circle_sketch_on(sketch_model::sketch::SketchPlane::xz(), 0.0, 0.0, 1.0)
 }
 
 /// A binormal square to the plane of a bending path holds the section the
@@ -2696,7 +2718,7 @@ fn a_pipe_holding_the_binormal_of_its_paths_plane_builds() {
     }
     // Along a straight path any binormal off it holds.
     let straight = polyline_sketch(
-        wb_sketch::sketch::SketchPlane::xy(),
+        sketch_model::sketch::SketchPlane::xy(),
         &[[0.0, 0.0], [0.0, 20.0]],
     );
     let (doc, body) = pipe_body(unit_circle_section(), straight, &[], |p, s, _| {
@@ -2742,7 +2764,7 @@ fn a_pipe_oriented_by_an_auxiliary_path_turns_toward_it() {
     use wb_design::{PipeCorner, PipeOrientation};
     // The auxiliary line from (5, 0, 0) to (0, 20, 5), on the plane through
     // it square to (1, 0, 1).
-    let plane = wb_sketch::sketch::SketchPlane::from_face([5.0, 0.0, 0.0], [1.0, 0.0, 1.0]);
+    let plane = sketch_model::sketch::SketchPlane::from_face([5.0, 0.0, 0.0], [1.0, 0.0, 1.0]);
     let at = |p: [f64; 3]| {
         let d = [
             p[0] - plane.origin[0],
@@ -2754,7 +2776,7 @@ fn a_pipe_oriented_by_an_auxiliary_path_turns_toward_it() {
     };
     let guide = polyline_sketch(plane, &[at([5.0, 0.0, 0.0]), at([0.0, 20.0, 5.0])]);
     let straight = polyline_sketch(
-        wb_sketch::sketch::SketchPlane::xy(),
+        sketch_model::sketch::SketchPlane::xy(),
         &[[0.0, 0.0], [0.0, 20.0]],
     );
     let (doc, body) = pipe_body(square_section(), straight, &[guide], |p, s, extra| {
@@ -2773,7 +2795,7 @@ fn a_pipe_oriented_by_an_auxiliary_path_turns_toward_it() {
 /// The path of the corner tests: an L of two 10 mm legs.
 fn l_path() -> SketchFeature {
     polyline_sketch(
-        wb_sketch::sketch::SketchPlane::xy(),
+        sketch_model::sketch::SketchPlane::xy(),
         &[[0.0, 0.0], [0.0, 10.0], [10.0, 10.0]],
     )
 }
@@ -2790,7 +2812,7 @@ fn l_path() -> SketchFeature {
 fn a_pipe_round_an_l_turns_its_corner_as_its_mode_says() {
     use wb_design::{PipeCorner, PipeOrientation};
     let far = circle_sketch_on(
-        wb_sketch::sketch::SketchPlane::from_face([10.0, 10.0, 0.0], [0.0, -1.0, 0.0]),
+        sketch_model::sketch::SketchPlane::from_face([10.0, 10.0, 0.0], [0.0, -1.0, 0.0]),
         10.0,
         0.0,
         1.0,
@@ -2852,16 +2874,16 @@ fn corner_modes_leave_a_smooth_path_alone() {
 fn a_pipe_through_two_sections_changes_its_shape_down_the_path() {
     use wb_design::{PipeCorner, PipeOrientation};
     let straight = polyline_sketch(
-        wb_sketch::sketch::SketchPlane::xy(),
+        sketch_model::sketch::SketchPlane::xy(),
         &[[0.0, 0.0], [0.0, 20.0]],
     );
     let end = circle_sketch_on(
-        wb_sketch::sketch::SketchPlane::from_face([0.0, 20.0, 0.0], [0.0, 1.0, 0.0]),
+        sketch_model::sketch::SketchPlane::from_face([0.0, 20.0, 0.0], [0.0, 1.0, 0.0]),
         0.0,
         0.0,
         3.0,
     );
-    let start = circle_sketch_on(wb_sketch::sketch::SketchPlane::xz(), 0.0, 0.0, 2.0);
+    let start = circle_sketch_on(sketch_model::sketch::SketchPlane::xz(), 0.0, 0.0, 2.0);
     let (doc, body) = pipe_body(start, straight, &[end], |p, s, extra| {
         let standard = PipeOrientation::Standard;
         pipe_of(p, s, standard, PipeCorner::Transformed, extra.to_vec())
@@ -2948,7 +2970,7 @@ fn block_and_coil(x0: f64, keep_inside: bool) -> (Document, BodyId) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let mut block = polyline_sketch(
-        wb_sketch::sketch::SketchPlane::xy(),
+        sketch_model::sketch::SketchPlane::xy(),
         &[[x0, -5.0], [20.0, -5.0], [20.0, 25.0], [x0, 25.0]],
     );
     let corners: Vec<_> = block
@@ -3058,7 +3080,7 @@ fn an_intersection_reference_is_where_a_face_crosses_the_sketch_plane() {
     let body = doc.create_body(None);
     doc.set_imported_brep_data(body, cube(10.0), Vec::new());
     // Upright through the box's middle: x across, z up.
-    let plane = wb_sketch::sketch::SketchPlane::from_frame(
+    let plane = sketch_model::sketch::SketchPlane::from_frame(
         [0.0, 5.0, 0.0],
         [0.0, -1.0, 0.0],
         [1.0, 0.0, 0.0],
@@ -3106,7 +3128,7 @@ fn an_intersection_reference_is_where_a_face_crosses_the_sketch_plane() {
         high.x.abs() < 1e-4 && (high.y - 10.0).abs() < 1e-4,
         "{high:?}"
     );
-    assert!(wb_sketch::profile::extract_wires(&sketch_now).is_err());
+    assert!(sketch_model::profile::extract_wires(&sketch_now).is_err());
 
     // The box grows: opening the sketch again brings the line up to it.
     doc.set_imported_brep_data(body, cube(16.0), Vec::new());
@@ -3126,7 +3148,7 @@ fn an_intersection_reference_is_where_a_face_crosses_the_sketch_plane() {
 fn a_feature_made_at_an_earlier_point_builds_there() {
     let (mut doc, body, rect_id) = setup(20.0, 20.0);
     let pad_id = doc.add_in(body, "Pad", pad(rect_id, 6.0));
-    let top = wb_sketch::sketch::SketchPlane::from_face([10.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
+    let top = sketch_model::sketch::SketchPlane::from_face([10.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let boss_sketch = doc.add_in(body, "boss", circle_sketch_on(top, 10.0, 10.0, 3.0));
     let boss = doc.add_in(body, "Boss", pad(boss_sketch, 4.0));
 
@@ -3323,7 +3345,7 @@ fn a_pad_stops_on_a_datum_plane_or_a_base_plane() {
     // A sketch 10 above the XY plane, padded down to it.
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
-    let raised = wb_sketch::sketch::SketchPlane::from_frame(
+    let raised = sketch_model::sketch::SketchPlane::from_frame(
         [0.0, 0.0, 10.0],
         [0.0, 0.0, 1.0],
         [1.0, 0.0, 0.0],
@@ -3495,7 +3517,7 @@ fn a_revolution_turns_about_the_bodys_axis() {
 
 #[test]
 fn a_helix_climbs_about_its_sketchs_normal_with_the_profile_level() {
-    let disc = circle_sketch_on(wb_sketch::sketch::SketchPlane::xy(), 10.0, 0.0, 1.0);
+    let disc = circle_sketch_on(sketch_model::sketch::SketchPlane::xy(), 10.0, 0.0, 1.0);
     let ((lo, hi), volume) = build_one(disc, |sketch| {
         serde_json::json!({"Helix": {
             "sketch": sketch.0.to_string(),
@@ -3553,8 +3575,8 @@ fn loft_of(sections: Vec<wb_design::LoftSection>) -> DesignFeature {
     }
 }
 
-fn raised(z: f64) -> wb_sketch::sketch::SketchPlane {
-    wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
+fn raised(z: f64) -> sketch_model::sketch::SketchPlane {
+    sketch_model::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
 }
 
 /// A rectangle lofted to a datum point is a pyramid; so is one lofted from
@@ -3662,7 +3684,7 @@ fn a_pipe_runs_along_an_edge_of_the_solid() {
     let ring = doc.add_in(
         body,
         "ring",
-        circle_sketch_on(wb_sketch::sketch::SketchPlane::yz(), 0.0, 0.0, 1.0),
+        circle_sketch_on(sketch_model::sketch::SketchPlane::yz(), 0.0, 0.0, 1.0),
     );
     let spare = doc.add_in(
         body,
@@ -3705,7 +3727,7 @@ fn a_pipe_sweeps_a_face_of_the_solid() {
         body,
         "rise",
         polyline_sketch(
-            wb_sketch::sketch::SketchPlane::from_frame(
+            sketch_model::sketch::SketchPlane::from_frame(
                 [0.0, 10.0, 0.0],
                 [0.0, -1.0, 0.0],
                 [1.0, 0.0, 0.0],
@@ -3747,13 +3769,13 @@ fn a_pipe_closes_to_a_point() {
     let square = doc.add_in(
         body,
         "square",
-        rect_at(wb_sketch::sketch::SketchPlane::xy(), 0.0, 0.0, 2.0, 2.0),
+        rect_at(sketch_model::sketch::SketchPlane::xy(), 0.0, 0.0, 2.0, 2.0),
     );
     let path = doc.add_in(
         body,
         "path",
         polyline_sketch(
-            wb_sketch::sketch::SketchPlane::xz(),
+            sketch_model::sketch::SketchPlane::xz(),
             &[[1.0, 0.0], [1.0, 10.0]],
         ),
     );
@@ -3834,7 +3856,7 @@ fn a_boolean_takes_several_tool_bodies() {
             body,
             "tool",
             rect_at(
-                wb_sketch::sketch::SketchPlane::from_frame(
+                sketch_model::sketch::SketchPlane::from_frame(
                     [x, 0.0, 0.0],
                     [0.0, 0.0, 1.0],
                     [1.0, 0.0, 0.0],
@@ -3872,14 +3894,14 @@ fn a_boolean_takes_several_tool_bodies() {
 /// regions `pick` chooses of the three they close: the solid's volume and
 /// bounds.
 fn padded_circle_regions(
-    pick: impl Fn(&[wb_sketch::regions::Region]) -> Vec<String>,
+    pick: impl Fn(&[sketch_model::regions::Region]) -> Vec<String>,
 ) -> (f64, ([f32; 3], [f32; 3])) {
     let mut sketch = Sketch::new("venn");
     for x in [0.0, 10.0] {
         let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))));
         sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 10.0)));
     }
-    let regions = wb_sketch::profile::regions(&sketch).expect("regions");
+    let regions = sketch_model::profile::regions(&sketch).expect("regions");
     assert_eq!(regions.len(), 3, "a lens and two crescents");
     let chosen = pick(&regions);
     let plane = sketch.plane;
@@ -3996,7 +4018,7 @@ fn a_pad_takes_the_regions_picked_in_the_view() {
     for r in [10.0, 4.0] {
         sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, r)));
     }
-    let regions = wb_sketch::profile::regions(&sketch).expect("regions");
+    let regions = sketch_model::profile::regions(&sketch).expect("regions");
     let named = |default: bool| {
         let region = regions.iter().find(|r| r.default == default).unwrap();
         FeaturePart::Region(region.name.clone())
@@ -4075,7 +4097,7 @@ fn a_pipe_runs_along_the_curves_picked_in_the_view() {
 fn a_pocket_kept_inside_keeps_the_disc_it_digs_through() {
     let (mut doc, body, rect_id) = setup(40.0, 30.0);
     doc.add_in(body, "Pad", pad(rect_id, 12.0));
-    let top = wb_sketch::sketch::SketchPlane {
+    let top = sketch_model::sketch::SketchPlane {
         origin: [0.0, 0.0, 12.0],
         ..Default::default()
     };
@@ -4168,7 +4190,7 @@ fn sketch_projected_onto_a_cylinder(
 /// "P", 8 mm tall, sketched in front of the Ø20 cylinder's side, left of
 /// its middle: a letter of lines and curves, with a counter.
 fn text_label() -> SketchFeature {
-    let plane = wb_sketch::sketch::SketchPlane {
+    let plane = sketch_model::sketch::SketchPlane {
         origin: [0.0, -15.0, 10.0],
         normal: [0.0, -1.0, 0.0],
         x_axis: [1.0, 0.0, 0.0],
@@ -4176,12 +4198,12 @@ fn text_label() -> SketchFeature {
     };
     let mut sketch = Sketch::new("s");
     sketch.plane = plane;
-    let spec = wb_sketch::text::TextSpec {
+    let spec = sketch_model::text::TextSpec {
         text: "P".into(),
         size: 8.0,
         ..Default::default()
     };
-    wb_sketch::text::add(&mut sketch, Vec2D::new(-4.0, -3.0), &spec).unwrap();
+    sketch_model::text::add(&mut sketch, Vec2D::new(-4.0, -3.0), &spec).unwrap();
     SketchFeature::new(sketch, plane)
 }
 
@@ -4415,7 +4437,7 @@ fn a_counting_projected_edge_follows_its_pad_without_the_sketch_opened() {
     doc.mark_feature_stale(pad_id);
     settle_as_host(&registry, &mut doc);
     let other = doc.create_body(Some("Other".into()));
-    let plane = wb_sketch::sketch::SketchPlane::from_frame(
+    let plane = sketch_model::sketch::SketchPlane::from_frame(
         [0.0, -5.0, 0.0],
         [0.0, -1.0, 0.0],
         [1.0, 0.0, 0.0],
@@ -4504,7 +4526,7 @@ fn plate_with_hole_and_paths() -> (Document, BodyId, FeatureId, FeatureId, Featu
     let centre = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 40.0))));
     let start = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(70.0, 40.0))));
     let end = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 70.0))));
-    arc.add_geometry(GeometryElement::Arc(wb_sketch::sketch::Arc::new(
+    arc.add_geometry(GeometryElement::Arc(sketch_model::sketch::Arc::new(
         centre, start, end, 30.0,
     )));
     let arc = doc.add_in(body, "arc", SketchFeature::new(arc, plane_at_z(4.0)));
@@ -4719,13 +4741,13 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
     settle_as_host(&registry, &mut doc);
 
     // A sketch on the top face, following it.
-    let plane = wb_sketch::sketch::SketchPlane::from_frame(
+    let plane = sketch_model::sketch::SketchPlane::from_frame(
         [0.0, 0.0, 10.0],
         [0.0, 0.0, 1.0],
         [1.0, 0.0, 0.0],
     );
     let mut on_top = SketchFeature::new(Sketch::new("top"), plane);
-    on_top.face = Some(wb_sketch::FaceSupport {
+    on_top.face = Some(sketch_model::FaceSupport {
         point: [20.0, 20.0, 10.0],
         normal: [0.0, 0.0, 1.0],
         name: 0,
@@ -4837,9 +4859,9 @@ fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
     use core_document::history::OpJournal;
     use core_document::{MenuScope, Workbench, WorkbenchFeature};
     let (mut doc, body) = block();
-    let raised = wb_sketch::sketch::SketchPlane {
+    let raised = sketch_model::sketch::SketchPlane {
         origin: [0.0, 0.0, 10.0],
-        ..wb_sketch::sketch::SketchPlane::xy()
+        ..sketch_model::sketch::SketchPlane::xy()
     };
     let step = doc.add_in(body, "step", rect_at(raised, 0.0, 0.0, 20.0, 5.0));
     doc.add_in(body, "Step", pad(step, 1.0));

@@ -433,7 +433,7 @@ fn feature_of(made: &Value) -> core_document::FeatureId {
 /// A square sketch, `side` across from its corner at the origin, on a body
 /// placed at `at`.
 fn square_sketch(document: &mut Document, side: f64, at: [f32; 3]) -> core_document::FeatureId {
-    use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
+    use sketch_model::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
     let body = document.create_body(Some("Stock".into()));
     document.set_body_placement(
         body,
@@ -453,7 +453,7 @@ fn square_sketch(document: &mut Document, side: f64, at: [f32; 3]) -> core_docum
     let plane = sketch.plane;
     document
         .add_feature_in_body(
-            wb_sketch::SketchFeature::new(sketch, plane),
+            sketch_model::SketchFeature::new(sketch, plane),
             "Outline".into(),
             Some(body),
         )
@@ -464,7 +464,7 @@ fn square_sketch(document: &mut Document, side: f64, at: [f32; 3]) -> core_docum
 /// square drawn from the origin of a body standing at (100, 0, 10).
 #[test]
 fn a_package_reads_a_sketch_s_profile_in_world_space() {
-    wb_wasm::set_profile_source(wb_sketch::profile::closed_profile);
+    wb_wasm::set_profile_source(sketch_model::profile::closed_profile);
     let package = installed("tests/probe", "probe.wasm", "probe-profile");
     let mut registry = registry_with(&package, Capabilities::default());
     let mut document = Document::new("probe");

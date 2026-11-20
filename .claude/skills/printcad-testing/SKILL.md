@@ -65,7 +65,7 @@ The before-committing checks and the comment rule are in `CLAUDE.md`. Pictures f
 - Sketcher end-to-end tests drive `on_input` with real viewport-pixel clicks:
   `wb_sketch/tests/sketcher/interaction.rs` (reuse its `Harness`).
 - Full-stack sketch→feature→solid pipelines:
-  `kernel_ogeom/tests/kernel/design_stack.rs` (dev-deps on wb_design/wb_sketch).
+  `kernel_ogeom/tests/kernel/design_stack.rs` (dev-deps on wb_design, wb_sketch and sketch_model).
 - Solver/geometry math is unit-tested next to the code. Assert geometric
   properties (bounds, tangency, closure), not implementation details.
 - A change people can see (a panel, the view, a solid's shape) shows it in

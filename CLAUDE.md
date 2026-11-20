@@ -78,11 +78,13 @@ are in the skill the index below names.
   `FrameSubmission` in, pixels out), `settings`, `agents` (agent client, MCP).
 - `core_document`: `Document` (feature tree DAG, bodies with `tip`, tar
   `.prtcad`), ops and undo, the `Workbench` trait and registry, datums, the
-  command contract; above it `bench_panel` (declared panels in egui).
+  command contract; above it `bench_panel` (declared panels in egui) and
+  `sketch_model` (the f64 sketch, `SketchFeature`, solving, profiles and
+  regions, text layout, generated profiles; no egui).
 - On the document: `doc_server` (`printcad-serverd`), `doc_render` (CPU
   thumbnails, PDF, print layout), `scripting` (Lua), benches `wb_sketch`,
   `wb_assembly`, `wb_inspect`, `wb_mesh`, `wb_wasm` (packages); then
-  `wb_design`, `wb_surface` on the sketcher's; then `bench_fixtures`,
+  `wb_design`, `wb_surface` on `sketch_model`; then `bench_fixtures`,
   `project_tools`; the `workbenches` facade; `app_shell` (`printcad`).
 
 The host never names a bench: everything crosses the `Workbench` trait
@@ -271,7 +273,7 @@ Project skills under `.claude/skills/` hold everything else this file used to ca
 
 - `printcad-document-model`: Document, ops, persistence, doc_server, doc_render, linked copies, notes, placement, formulas, tasks and undo.
 - `printcad-kernel`: kernel_api / kernel_ogeom, rebuilds (recompute loop, preview), imports, progress, shape health, face naming, known approximations.
-- `printcad-sketcher`: sketch_solver, wb_sketch, image_edges.
+- `printcad-sketcher`: sketch_solver, sketch_model, wb_sketch, image_edges.
 - `printcad-benches`: wb_design, wb_surface, wb_assembly, wb_mesh (+ surface_texture), wb_inspect (+ metrology), project import.
 - `printcad-workbench-api`: the `Workbench` trait, bench_api, wb_wasm packages and sdk/, the facade and fixtures.
 - `printcad-app-shell`: app_shell tabs/state/module map, export, slicer, print layout, clipping plane, measure, placeholders.

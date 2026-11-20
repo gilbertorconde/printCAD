@@ -100,7 +100,7 @@ fn element_polylines(
                 // CCW sweep, matching every other consumer of arcs
                 // (overlay, profile extraction, hit-testing).
                 let (start_angle, sweep) =
-                    crate::snap::arc_angles((start - center).to_glam(), (end - center).to_glam());
+                    crate::geom2d::arc_angles((start - center).to_glam(), (end - center).to_glam());
                 let segments = 16;
                 out.push(
                     (0..=segments)

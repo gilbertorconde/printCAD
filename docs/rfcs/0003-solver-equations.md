@@ -2,7 +2,7 @@
 
 This inventory covers all **44** `ConstraintKind` variants at the captured
 application baseline. The compiler and evaluator are in
-[solver.rs](../../crates/workbenches/wb_sketch/src/solver.rs); geometric
+[solver.rs](../../crates/sketch_model/src/solver.rs); geometric
 solver tests are in that file, with internal geometry tests in
 [internal.rs](../../crates/workbenches/wb_sketch/src/internal.rs) and linked
 array/offset tests in

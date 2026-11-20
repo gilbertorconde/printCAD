@@ -7,9 +7,9 @@ use core_document::{
     EdgeAnchor, FaceAnchor, FeatureId, WorkbenchFeature,
 };
 use kernel_api::{Placement, PrimitiveKind};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Point, Sketch, SketchPlane, Vec2D};
 use wb_design::DesignFeature;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Point, Sketch, SketchPlane, Vec2D};
 
 use super::common::{Features, body_volume, pad, pocket, rect_at, registry, settle_as_host};
 
@@ -85,7 +85,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
     // A 4 x 2 rectangle on the plane: along its x (the cylinder's axis)
     // and its y (across it), padded 3 out along its normal.
     let mut sketch = rect_at(SketchPlane::xy(), 0.0, 0.0, 4.0, 2.0);
-    sketch.support = Some(wb_sketch::DatumSupport {
+    sketch.support = Some(sketch_model::DatumSupport {
         datum: tangent,
         plane: None,
         offset: 0.0,
@@ -252,7 +252,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
     );
     // A 3 x 2 rectangle on XZ, 5 to 8 out along x, turned about the axis.
     let mut ring = rect_at(SketchPlane::xy(), 0.0, 0.0, 3.0, 2.0);
-    let plane = wb_sketch::sketch::SketchPlane::xz();
+    let plane = sketch_model::sketch::SketchPlane::xz();
     ring.sketch.plane = plane;
     ring.plane = plane;
     for element in ring.sketch.geometry.iter_mut() {
@@ -381,18 +381,18 @@ fn a_sketch_on_a_face_follows_the_face_when_the_pad_grows() {
     // The top face, as a click picks it.
     let top = picked_face(&doc, body, [10.0, 10.0, 10.0], [0.0, 0.0, 1.0]);
     assert_ne!(top.name, 0, "the top is named");
-    let plane = wb_sketch::sketch::SketchPlane::from_face(
-        wb_sketch::boundary::widen3(top.point),
-        wb_sketch::boundary::widen3(top.normal),
+    let plane = sketch_model::sketch::SketchPlane::from_face(
+        sketch_model::boundary::widen3(top.point),
+        sketch_model::boundary::widen3(top.normal),
     );
     let mut hole = Sketch::new("hole");
     hole.plane = plane;
     let centre = hole.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
-    hole.add_geometry(GeometryElement::Circle(wb_sketch::sketch::Circle::new(
+    hole.add_geometry(GeometryElement::Circle(sketch_model::sketch::Circle::new(
         centre, 3.0,
     )));
     let mut hole = SketchFeature::new(hole, plane);
-    hole.face = Some(wb_sketch::FaceSupport::on(&top, plane));
+    hole.face = Some(sketch_model::FaceSupport::on(&top, plane));
     let hole = doc.add_in(body, "hole", hole);
     let pocket_id = doc.add_in(body, "Pocket", pocket(hole, 3.0));
     doc.mark_feature_dirty(pocket_id);
@@ -432,14 +432,14 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
     settle(&registry, &mut doc, body);
 
     let side = picked_face(&doc, body, [20.0, 10.0, 5.0], [1.0, 0.0, 0.0]);
-    let plane = wb_sketch::sketch::SketchPlane::from_face(
-        wb_sketch::boundary::widen3(side.point),
-        wb_sketch::boundary::widen3(side.normal),
+    let plane = sketch_model::sketch::SketchPlane::from_face(
+        sketch_model::boundary::widen3(side.point),
+        sketch_model::boundary::widen3(side.normal),
     );
     let mut sketch = Sketch::new("side");
     sketch.plane = plane;
     let mut sketch = SketchFeature::new(sketch, plane);
-    sketch.face = Some(wb_sketch::FaceSupport::on(&side, plane));
+    sketch.face = Some(sketch_model::FaceSupport::on(&side, plane));
     let id = doc.add_in(body, "side", sketch.clone());
     settle(&registry, &mut doc, body);
     let warning = |doc: &Document| {
@@ -465,7 +465,7 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
     );
 
     let lost = core_document::FaceRef { name: 9, ..side };
-    sketch.face = Some(wb_sketch::FaceSupport::on(&lost, plane));
+    sketch.face = Some(sketch_model::FaceSupport::on(&lost, plane));
     doc.set_feature(id, sketch);
     settle(&registry, &mut doc, body);
     let said = warning(&doc).expect("warned");
@@ -504,18 +504,18 @@ fn a_sketch_on_a_lent_face_follows_the_lender() {
             frozen: None,
         },
     );
-    let plane = wb_sketch::sketch::SketchPlane::from_face(
-        wb_sketch::boundary::widen3(top.point),
-        wb_sketch::boundary::widen3(top.normal),
+    let plane = sketch_model::sketch::SketchPlane::from_face(
+        sketch_model::boundary::widen3(top.point),
+        sketch_model::boundary::widen3(top.normal),
     );
     let mut post = Sketch::new("post");
     post.plane = plane;
     let centre = post.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
-    post.add_geometry(GeometryElement::Circle(wb_sketch::sketch::Circle::new(
+    post.add_geometry(GeometryElement::Circle(sketch_model::sketch::Circle::new(
         centre, 3.0,
     )));
     let mut post = SketchFeature::new(post, plane);
-    post.face = wb_sketch::FaceSupport::from_origin(
+    post.face = sketch_model::FaceSupport::from_origin(
         &top,
         core_document::FaceOrigin::Lent {
             borrow: lent,
@@ -560,7 +560,7 @@ fn a_sketch_attached_by_a_mode_follows_what_it_stands_on() {
     settle(&registry, &mut doc, body);
 
     let top = picked_face(&doc, body, [10.0, 10.0, 10.0], [0.0, 0.0, 1.0]);
-    let attached = wb_sketch::AttachedSupport {
+    let attached = sketch_model::AttachedSupport {
         attachment: core_document::DatumAttachment::Face {
             face: core_document::attach::face_anchor(&top, true),
         },
@@ -571,7 +571,7 @@ fn a_sketch_attached_by_a_mode_follows_what_it_stands_on() {
     hole.plane = plane;
     // The attachment's frame: the circle is placed about its origin.
     let centre = hole.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-    hole.add_geometry(GeometryElement::Circle(wb_sketch::sketch::Circle::new(
+    hole.add_geometry(GeometryElement::Circle(sketch_model::sketch::Circle::new(
         centre, 3.0,
     )));
     let mut hole = SketchFeature::new(hole, plane);

@@ -2,21 +2,15 @@
 // the kernel bench use; the panel-only state and helpers go unused there.
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
-/// The feature kind sketches are stored under.
-pub const KIND: &str = "wb.sketch";
-
 mod actions;
 mod appearance;
-pub mod boundary;
 mod candidates;
 mod chain;
 mod closed_parts;
 mod commands;
-pub mod conic;
 mod constrain;
 mod constraint_tools;
 mod corner_task;
-mod curves;
 mod dim_edit;
 mod dimension_task;
 mod drawing;
@@ -29,50 +23,42 @@ use external_follow::{
     Projection, follow_references, project_source_in, projection_key, solid_built_from,
 };
 pub(crate) use external_follow::{project_source, with_edge_names};
-mod feature;
 mod frame_memo;
-pub mod generator;
-mod geom2d;
+mod generator;
 mod glyphs;
 mod images;
 mod input;
 pub mod internal;
-mod measure;
 mod model_picks;
 pub mod nodes;
-pub mod operations;
 mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
 mod panel;
-mod params;
 mod picture_edges;
 mod placement;
-pub mod profile;
 mod rect;
-pub mod regions;
 mod registration;
 mod relations;
-pub mod render;
-pub mod repair;
 mod reuse;
 mod scan;
 mod selection;
 #[cfg(feature = "egui")]
 mod settings;
-pub mod sketch;
 pub mod snap;
-mod solver;
-pub use solver::report as solver_report;
-pub mod spline;
 pub mod spline_edit;
 mod step;
-pub mod style;
-pub mod text;
 mod tools;
 mod verdict;
 mod viewport_out;
 mod walls;
+
+// The sketch model's modules, named at the root so the sketcher reaches
+// them as `crate::sketch`, `crate::profile` and the rest.
+use sketch_model::{
+    KIND, boundary, conic, curves, feature, geom2d, measure, operations, params, profile, regions,
+    render, repair, shape, sketch, solver, spline, style, text,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -84,7 +70,7 @@ use core_document::{
     WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use dim_edit::{DimEdit, SaveAs};
-pub use feature::{AttachedSupport, DatumSupport, FaceSupport, LentFace, SketchFeature};
+use feature::SketchFeature;
 use operations::SolveOutcome;
 use ovp::DimCapture;
 use placement::local_plane;
@@ -1605,7 +1591,7 @@ impl Workbench for SketchWorkbench {
             return false;
         };
         let built = document.projected_references(node.id);
-        let groups: Vec<_> = external::groups(&feature.sketch)
+        let groups: Vec<_> = crate::sketch::external_groups(&feature.sketch)
             .into_iter()
             .filter(|(source, _)| source.reference.is_none())
             .filter_map(|(source, group)| {

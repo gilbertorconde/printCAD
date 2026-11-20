@@ -139,7 +139,7 @@ impl DesignWorkbench {
         let Some(from) = node.body else {
             return Vec::new();
         };
-        if node.workbench_id.as_str() == wb_sketch::KIND {
+        if node.workbench_id.as_str() == sketch_model::KIND {
             return borrow::flat_faces_of_body(document, from)
                 .into_iter()
                 .enumerate()

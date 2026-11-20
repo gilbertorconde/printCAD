@@ -6,8 +6,8 @@ use core_document::{
     BodyId, BodyPlacement, BuildError, BuildPlan, Document, FeatureId, RebuildJob, WorkbenchFeature,
 };
 use kernel_api::{CurveSource, EdgeProbe, FaceProbe, ProfilePlane, SolidOp, SurfaceOp};
-use wb_sketch::SketchFeature;
-use wb_sketch::profile;
+use sketch_model::SketchFeature;
+use sketch_model::profile;
 
 use crate::feature::{
     Axis, CurveRef, Direction, EdgePick, FacePick, FitSheet, KIND, PlaneRef, SurfaceFeature,
@@ -619,8 +619,8 @@ fn sketch_plane(document: &Document, body: BodyId, id: FeatureId) -> Result<Prof
     let sketch = load_sketch(document, id)?;
     let moved = into_body(document, body, id);
     let p = &sketch.plane;
-    use wb_sketch::boundary::{place_direction, place_point};
-    Ok(profile::plane_of(&wb_sketch::sketch::SketchPlane {
+    use sketch_model::boundary::{place_direction, place_point};
+    Ok(profile::plane_of(&sketch_model::sketch::SketchPlane {
         origin: place_point(&moved, p.origin),
         normal: place_direction(&moved, p.normal),
         x_axis: place_direction(&moved, p.x_axis),

@@ -109,7 +109,7 @@ pub struct Sketch {
 /// Ids hashed by their own bytes: ids are random, so they spread as well
 /// as a keyed hash would spread them, for a fraction of the cost.
 #[derive(Default)]
-pub(crate) struct IdHasher(u64);
+pub struct IdHasher(u64);
 
 impl std::hash::Hasher for IdHasher {
     fn finish(&self) -> u64 {
@@ -125,8 +125,7 @@ impl std::hash::Hasher for IdHasher {
     }
 }
 
-pub(crate) type IdMap<T> =
-    std::collections::HashMap<Uuid, T, std::hash::BuildHasherDefault<IdHasher>>;
+pub type IdMap<T> = std::collections::HashMap<Uuid, T, std::hash::BuildHasherDefault<IdHasher>>;
 
 /// Where each element of a sketch's `geometry` stood when last looked up,
 /// by id: a hint every lookup checks against the list before trusting it,
@@ -442,7 +441,7 @@ impl ExternalSource {
 impl Sketch {
     /// Whether `self` and `other` differ at most in where their
     /// dimensions' labels sit, which nothing the solver works out reads.
-    pub(crate) fn eq_but_labels(&self, other: &Sketch) -> bool {
+    pub fn eq_but_labels(&self, other: &Sketch) -> bool {
         let Sketch {
             id,
             name,
@@ -2209,6 +2208,42 @@ impl ConstraintKind {
                 | ConstraintKind::Refraction { .. }
         )
     }
+}
+
+/// The external elements grouped by the edge they came from, each group
+/// in the order its elements were made.
+pub fn external_groups(sketch: &Sketch) -> Vec<(ExternalSource, Vec<Uuid>)> {
+    let key = |s: &ExternalSource| {
+        let mut k = s.body.as_u128().to_le_bytes().to_vec();
+        for c in s.point.iter().chain(&s.direction) {
+            k.extend(c.to_bits().to_le_bytes());
+        }
+        k.push(u8::from(s.section));
+        k.push(u8::from(s.defining));
+        match s.reference {
+            Some(ExternalReference::SketchElement { sketch, element }) => {
+                k.extend(sketch.as_u128().to_le_bytes());
+                k.extend(element.as_u128().to_le_bytes());
+            }
+            Some(ExternalReference::Datum { datum }) => {
+                k.extend(datum.as_u128().to_le_bytes());
+            }
+            None => {}
+        }
+        k
+    };
+    let mut by_source: std::collections::BTreeMap<Vec<u8>, (ExternalSource, Vec<Uuid>)> =
+        std::collections::BTreeMap::new();
+    for element in &sketch.geometry {
+        if let Some(source) = sketch.external.get(&element.id()) {
+            by_source
+                .entry(key(source))
+                .or_insert_with(|| (*source, Vec::new()))
+                .1
+                .push(element.id());
+        }
+    }
+    by_source.into_values().collect()
 }
 
 #[cfg(test)]

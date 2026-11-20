@@ -231,7 +231,7 @@ pub(super) fn lost_external_elements(
     let plane = placed_plane(&feature.plane, &sketch_placement(document, id));
     let own_body = document.get_feature_meta(id).and_then(|n| n.body);
     let built = document.projected_references(id);
-    external::groups(&feature.sketch)
+    crate::sketch::external_groups(&feature.sketch)
         .into_iter()
         .filter(|(source, _)| {
             // From its own body: what the build projected where the sketch
@@ -262,7 +262,7 @@ pub(super) fn follow_references(
     values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
     document: &core_document::Document,
 ) -> bool {
-    let groups: Vec<_> = external::groups(&feature.sketch)
+    let groups: Vec<_> = crate::sketch::external_groups(&feature.sketch)
         .into_iter()
         .filter(|(source, _)| source.reference.is_some())
         .collect();

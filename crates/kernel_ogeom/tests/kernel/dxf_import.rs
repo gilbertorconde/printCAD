@@ -6,8 +6,8 @@ use scripting::ScriptEngine;
 
 use super::common::{Benches, with_benches};
 use serde_json::json;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Sketch};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Sketch};
 
 impl Benches {
     fn new() -> Self {
@@ -81,7 +81,7 @@ fn square_line_and_hidden() -> String {
     dxf(&e)
 }
 
-fn lines(sketch: &Sketch) -> Vec<&wb_sketch::sketch::Line> {
+fn lines(sketch: &Sketch) -> Vec<&sketch_model::sketch::Line> {
     sketch
         .geometry
         .iter()
@@ -147,7 +147,7 @@ fn a_drawing_imports_as_a_sketch_whose_outline_shares_its_corners() {
             only_square.set_construction(l.id, true);
         }
     }
-    let wires = wb_sketch::profile::extract_wires(&only_square).expect("a closed square");
+    let wires = sketch_model::profile::extract_wires(&only_square).expect("a closed square");
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 4);
 }
@@ -270,7 +270,7 @@ fn arcs_and_circles_import_as_sketch_arcs_and_circles() {
         }
     }
     assert_eq!(
-        wb_sketch::profile::extract_wires(&closed_only)
+        sketch_model::profile::extract_wires(&closed_only)
             .unwrap()
             .len(),
         2
@@ -352,7 +352,7 @@ fn a_sketch_exports_as_layered_dxf_that_imports_back_to_scale() {
     let mut sketch = SketchFeature::from_json(data).unwrap();
     let axis = lines(&sketch.sketch)[0].id;
     sketch.sketch.set_construction(axis, true);
-    sketch.sketch.images[0].scale = wb_sketch::sketch::ImageScale::Calibrated {
+    sketch.sketch.images[0].scale = sketch_model::sketch::ImageScale::Calibrated {
         by: "a distance".into(),
     };
     host.document

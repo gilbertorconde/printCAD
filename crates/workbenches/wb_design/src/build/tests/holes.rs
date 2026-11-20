@@ -650,7 +650,7 @@ fn lying_hole(shape: crate::feature::HoleShape) -> Result<Vec<SolidOp>, String> 
     let (mut doc, body, base_sketch) = doc_with_body_sketch();
     add(&mut doc, body, pad(base_sketch, 10.0), "Pad");
     let mut sketch = Sketch::new("front");
-    sketch.plane = wb_sketch::sketch::SketchPlane::xz();
+    sketch.plane = sketch_model::sketch::SketchPlane::xz();
     sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 4.0))));
     let at = add_sketch(&mut doc, body, sketch);
     let lying = hole(at, |h| {

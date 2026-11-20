@@ -376,7 +376,7 @@ fn arc3_stores_ccw_arc_through_rim_point() {
         e,
         glam::DVec2::new(3.5355, 3.5355)
     ));
-    let (_, sweep) = crate::snap::arc_angles(s - c, e - c);
+    let (_, sweep) = crate::geom2d::arc_angles(s - c, e - c);
     assert!(
         sweep < std::f64::consts::PI,
         "short side chosen, sweep {sweep}"
@@ -569,7 +569,7 @@ fn fillet_rounds_rectangle_corner_tangentially() {
     // The arc bridges on the corner side: its midpoint bulges toward
     // the removed corner (12,8), i.e. beyond the chord.
     let (start_angle, sweep) =
-        crate::snap::arc_angles((start - center).to_glam(), (end - center).to_glam());
+        crate::geom2d::arc_angles((start - center).to_glam(), (end - center).to_glam());
     assert!(
         (sweep - std::f64::consts::FRAC_PI_2).abs() < 1e-3,
         "quarter-circle sweep, got {sweep}"
@@ -899,7 +899,7 @@ fn split_arc_produces_two_ccw_arcs() {
     for a in &arcs_v {
         let sp = sketch.point_position(a.start).unwrap().to_glam();
         let ep = sketch.point_position(a.end).unwrap().to_glam();
-        let (_, sweep) = crate::snap::arc_angles(sp, ep);
+        let (_, sweep) = crate::geom2d::arc_angles(sp, ep);
         assert!(
             (sweep - std::f64::consts::FRAC_PI_2).abs() < 1e-3,
             "quarter sweep each, got {sweep}"
@@ -1195,7 +1195,7 @@ fn mirror_arc_copy_stays_ccw() {
         ce,
         glam::DVec2::new(0.0, -5.0)
     ));
-    let (_, sweep) = crate::snap::arc_angles(cs - cc, ce - cc);
+    let (_, sweep) = crate::geom2d::arc_angles(cs - cc, ce - cc);
     assert!((sweep - std::f64::consts::PI).abs() < 1e-3);
 }
 

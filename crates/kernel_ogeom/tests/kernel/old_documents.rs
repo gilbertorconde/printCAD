@@ -4,8 +4,8 @@
 //! numbers it was saved with and builds through the real benches.
 
 use core_document::{Document, WorkbenchFeature};
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{ConstraintKind, GeometryElement};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{ConstraintKind, GeometryElement};
 
 use super::common::{chain, registry, volume};
 

@@ -6,11 +6,12 @@ use uuid::Uuid;
 use super::ToolParams;
 use super::{ToolEffect, ToolState, held_point, materialize, materialize_on_curve, short};
 use crate::geom2d;
+use crate::geom2d::arc_angles;
 use crate::sketch::{
     Arc, BSpline, Circle, Conic, ConicKind, ConstraintKind, Ellipse, GeometryElement, Line, Point,
     Sketch, Vec2D,
 };
-use crate::snap::{self, SnapTarget, arc_angles};
+use crate::snap::{self, SnapTarget};
 use crate::spline;
 
 /// Point snap first (its id reused, never a coincident duplicate); otherwise a

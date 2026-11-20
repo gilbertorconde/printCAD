@@ -1,6 +1,6 @@
 ---
 name: printcad-sketcher
-description: "The sketcher and its maths: sketch_solver (problem, compile, LM solve, freedom and diagnosis), wb_sketch (the f64 model and the f32 boundary, constraints, tools, profiles and regions, external geometry, DXF and image tracing), and image_edges (subpixel edges and objects in images). Use when working in crates/sketch_solver, crates/workbenches/wb_sketch or crates/image_edges, on constraints, snapping, dimensions, profiles, sketch tools or sketch commands. Not for the Design features built on a sketch (use printcad-benches) or the snapping-reuses-ids invariant, which is in CLAUDE.md."
+description: "The sketcher and its maths: sketch_solver (problem, compile, LM solve, freedom and diagnosis), sketch_model (the f64 model and the f32 boundary, constraints and solving, profiles and regions, text layout, generated profiles), wb_sketch (tools, input, panels, overlays, external geometry, DXF and image tracing), and image_edges (subpixel edges and objects in images). Use when working in crates/sketch_solver, crates/sketch_model, crates/workbenches/wb_sketch or crates/image_edges, on constraints, snapping, dimensions, profiles, sketch tools or sketch commands. Not for the Design features built on a sketch (use printcad-benches) or the snapping-reuses-ids invariant, which is in CLAUDE.md."
 ---
 
 # printCAD: sketcher
@@ -18,27 +18,46 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   rank/DoF `freedom` and `diagnosis`, `soft` (measured points settling
   what the constraints leave free); optional serde. Its complete directory
   can be copied to another consumer without workspace inheritance.
-- `workbenches/wb_sketch`: sketcher. Its model (`sketch.rs`: points,
-  radii, constraint values, `SketchPlane`) is `f64`, stored as the solver
-  answers it; `boundary.rs` is the one place values cross to and from the
-  `f32` of screens, GPU meshes, picks and the package contract (incoming
-  singles widened through their shortest decimal). `tools.rs` + `tools/{draw,modify,
-  transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
-  `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
-  looked up into a `Scene`, kept for the sketches the frame shares
-  through `snap::share` and built per query for any other, the kinds in a fixed order,
-  ties settled by `Rank` from what the candidates are, never by ids,
-  which a replay draws anew; `snap::Lookup` the one lookup a click's
-  or a preview's point and curve snaps share; `examples/snap_bench.rs` times it, an edit and a label drag on a large
-  sketch), `solver.rs` (sketch_solver adapter, storage write-back and
-  application diagnostics; `locked_elements`, through
+- `sketch_model`: the sketch as data, no egui, in the layer beside
+  `bench_panel`; Design, Surface, project import and the fixtures depend
+  on it rather than on `wb_sketch`, and `check-workbench-seam.mjs` keeps
+  it out of the host as part of the sketcher. Its model (`sketch.rs`:
+  points, radii, constraint values, `SketchPlane`) is `f64`, stored as the
+  solver answers it; `boundary.rs` is the one place values cross to and
+  from the `f32` of screens, GPU meshes, picks and the package contract
+  (incoming singles widened through their shortest decimal). `feature.rs`
+  (`SketchFeature`, its supports, `KIND`), `geom2d.rs`
+  (intersection/sampling math), `shape.rs` (an element as a shape:
+  `distance_to_element`, `distance_within`), `curves.rs`, `conic.rs`,
+  `spline.rs`, `measure.rs`, `solver.rs` (sketch_solver adapter, storage
+  write-back and application diagnostics; `locked_elements`, through
   `sketch_solver::freedom::locked`, the elements nothing left free can
   move, drawn in `SketchPalette::locked` until the whole sketch is fully
   constrained, cached by the sketch it was worked out on; a text's
   letters, a derived focus and a refitted spline's controls follow what
   they are laid out from; `free_points`, Select degrees of freedom, is
-  every point it leaves out, at any size),
-  the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
+  every point it leaves out, at any size), `profile.rs` (closed-wire
+  extraction; ends tied by a Coincident constraint join as a shared point
+  does), `regions.rs` (the planar arrangement: curves split where they
+  cross, touch or branch, every bounded face a `Region` named by the
+  elements round it and the side of each it lies on;
+  `profile::extract_regions` outlines the ones named, which Design's Pad,
+  Pocket, Revolution and Groove keep in `regions`, chosen by clicks in the
+  view while their task is open, `wb_design/src/region_pick.rs`, or the
+  task's checks; `sketch.regions` lists them), `text.rs` (text layout and
+  fonts), `generator/` (the generated profiles' numbers and outlines; the
+  `sketch.generator` command and panel are `wb_sketch`'s), `params.rs`
+  (dimensions as formulas set them), `render.rs`, `repair.rs`,
+  `operations.rs`, `style.rs` (icons and names per element/constraint
+  kind).
+- `workbenches/wb_sketch`: the sketcher bench over `sketch_model`:
+  `tools.rs` + `tools/{draw,modify,transform}.rs` (state machine), `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
+  looked up into a `Scene`, kept for the sketches the frame shares
+  through `snap::share` and built per query for any other, the kinds in a fixed order,
+  ties settled by `Rank` from what the candidates are, never by ids,
+  which a replay draws anew; `snap::Lookup` the one lookup a click's
+  or a preview's point and curve snaps share; `examples/snap_bench.rs` times it, an edit and a label drag on a large
+  sketch), the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
   the line and polyline runtime (`chain.rs`: a click resolved once,
   `chain::resolve` after `step::land`, into the edit it proposes,
@@ -96,14 +115,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   benches as `ctx.selected_parts`; Design's Pad, Pocket, Revolution and
   Groove start with the picked regions, a revolution or groove about a
   picked straight curve, `region_pick::picked_regions`/`picked_axis`),
-  `profile.rs` (closed-wire extraction; ends tied by a Coincident constraint join as a shared point does), `regions.rs` (the planar arrangement:
-  curves split where they cross, touch or branch, every bounded face a
-  `Region` named by the elements round it and the side of each it lies on;
-  `profile::extract_regions` outlines the ones named, which Design's Pad,
-  Pocket, Revolution and Groove keep in `regions`, chosen by clicks in the
-  view while their task is open, `wb_design/src/region_pick.rs`, or the
-  task's checks; `sketch.regions` lists them), `overlay.rs` (screen-space rendering
-  while editing), `glyphs.rs` (constraint icons and dimension layouts),
+  `overlay.rs` (screen-space rendering while editing), `glyphs.rs` (constraint icons and dimension layouts),
   `constrain.rs` (which constraint a toolbar action creates for the
   selection's shape; a tool the selection does not fit yet arms in
   `model_picks.rs`, taking sketch clicks and the host's edge picks as
@@ -130,9 +142,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   `displayed_sketch` and never stored until accepted; only its Cancel
   drops it, while OK, Enter, Escape, a click in the view, another tool
   or finishing the sketch record it as the `sketch.draw` or
-  `sketch.text` call, one undo step),
-  `style.rs` (icons and
-  names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
+  `sketch.text` call, one undo step). `docs/SKETCHER.md` is the user guide.
 - `image_edges`: standalone std-only subpixel edge chains in grey images
   (Gaussian, Sobel, ridges across the edge, thresholds from the image's
   noise with hysteresis, a parabola across the gradient, chains that know

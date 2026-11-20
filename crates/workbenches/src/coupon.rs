@@ -3,9 +3,9 @@
 //! and the Design bench's features so the host never names them.
 
 use core_document::{BodyId, Document, FeatureId};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 use wb_design::{DesignFeature, ExtrudeMode};
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 
 /// The calibration coupon's sizes, mm.
 #[derive(Debug, Clone, PartialEq)]

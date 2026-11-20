@@ -31,7 +31,7 @@ impl DesignWorkbench {
     pub(crate) fn selected_sketch(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
         let id = ctx.active_document_object?;
         let node = ctx.document.get_feature_meta(id)?;
-        (node.workbench_id.as_str() == wb_sketch::KIND || borrow::lends_sketch(ctx.document, id))
+        (node.workbench_id.as_str() == sketch_model::KIND || borrow::lends_sketch(ctx.document, id))
             .then_some(id)
     }
 
@@ -70,7 +70,7 @@ impl DesignWorkbench {
             ),
         };
         ctx.request(HostRequest::StartOn {
-            workbench: WorkbenchId::from(wb_sketch::KIND),
+            workbench: WorkbenchId::from(sketch_model::KIND),
             attach: core_document::SketchAttachRequest {
                 body: body.0,
                 face,
@@ -332,7 +332,7 @@ impl DesignWorkbench {
             .document
             .feature_tree()
             .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == wb_sketch::KIND && n.body != Some(body))
+            .filter(|(_, n)| n.workbench_id.as_str() == sketch_model::KIND && n.body != Some(body))
             .max_by_key(|(id, n)| (n.seq, **id))
             .map(|(id, _)| *id)
             .ok_or(
@@ -568,7 +568,7 @@ fn hole_sketch(
     body: BodyId,
     face: &FacePick,
 ) -> Result<FeatureId, String> {
-    use wb_sketch::sketch::{GeometryElement, Point, Sketch, SketchPlane, Vec2D};
+    use sketch_model::sketch::{GeometryElement, Point, Sketch, SketchPlane, Vec2D};
     let picked = face.point.map(f64::from);
     let plane = SketchPlane::from_face(picked, face.normal.map(f64::from));
     let along = |axis: [f64; 3]| {
@@ -584,7 +584,7 @@ fn hole_sketch(
     let id = ctx
         .document
         .add_feature_in_body(
-            wb_sketch::SketchFeature::new(sketch, plane),
+            sketch_model::SketchFeature::new(sketch, plane),
             name,
             Some(body),
         )

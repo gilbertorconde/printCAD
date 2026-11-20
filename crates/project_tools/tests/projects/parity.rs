@@ -3,7 +3,7 @@ use project_archive::coordinates::Point2;
 use project_archive::sketch_decode::{FcGeometry, FcShape, FcSketch};
 use project_tools::parity::check_stationary;
 use project_tools::sketch_import::import_sketch;
-use wb_sketch::sketch::{ConstraintKind, GeometryElement};
+use sketch_model::sketch::{ConstraintKind, GeometryElement};
 
 fn source(shape: FcShape) -> FcSketch {
     FcSketch {
@@ -208,9 +208,9 @@ fn imported_aliases_preserve_construction_and_only_drawn_closed_profiles() {
             .iter()
             .all(|&id| imported.sketch.get_geometry(id).is_some())
     );
-    let restored: wb_sketch::sketch::Sketch =
+    let restored: sketch_model::sketch::Sketch =
         serde_json::from_value(serde_json::to_value(&imported.sketch).unwrap()).unwrap();
-    let wires = wb_sketch::profile::extract_wires(&restored).unwrap();
+    let wires = sketch_model::profile::extract_wires(&restored).unwrap();
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 3);
     for segment in &wires[0].segments {
@@ -295,7 +295,7 @@ fn projected_and_spline_curves_close_a_profile_and_guides_keep_their_points() {
     let blocked = sketch.constraints.iter();
     let blocked = blocked.filter(|c| matches!(c.kind, ConstraintKind::Block { .. }));
     assert_eq!(blocked.count(), 3, "projected curves stay where they were");
-    let wires = wb_sketch::profile::extract_wires(sketch).unwrap();
+    let wires = sketch_model::profile::extract_wires(sketch).unwrap();
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 4);
     // The point on the guide's centre stays a point of its own.
@@ -646,7 +646,7 @@ fn a_periodic_spline_comes_in_closed_on_its_own_control_points() {
         (0.75, 105.5078125, -3.684895833333334),
         (1.0, 110.83333333333334, 11.666666666666668),
     ];
-    let basis = wb_sketch::spline::basis_of(&spline).unwrap();
+    let basis = sketch_model::spline::basis_of(&spline).unwrap();
     let control = spline.control_positions(&imported.sketch).unwrap();
     let (a, b) = basis.domain();
     for (t, x, y) in expected {

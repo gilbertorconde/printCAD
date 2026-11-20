@@ -1,0 +1,24 @@
+[package]
+name = "sketch_model"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sketch_solver = { path = "../sketch_solver" }
+core_document = { path = "../core_document" }
+kernel_api.workspace = true
+glam.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ttf-parser = "0.25"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+fontdb = "0.24"
+
+[dev-dependencies]
+core_document = { path = "../core_document", features = ["test-support"] }
+sketch_solver = { path = "../sketch_solver", features = ["serde"] }
+ui_kit = { path = "../ui_kit" }

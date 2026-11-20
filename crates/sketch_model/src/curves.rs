@@ -113,7 +113,7 @@ impl Curve {
     }
 
     /// The line, circle or arc `prim`.
-    pub(crate) fn of_prim(prim: &crate::geom2d::Prim) -> Self {
+    pub fn of_prim(prim: &crate::geom2d::Prim) -> Self {
         use crate::geom2d::Prim;
         match *prim {
             Prim::Seg { a, b } => Self::segment(a, b),
@@ -363,7 +363,7 @@ const _: () = assert!(END_SLACK <= kernel_api::JOIN_MM);
 /// Where the segments `p0 → p1` and `q0 → q1` cross, as fractions along
 /// each, counting a crossing up to `reach` (sketch units) past either
 /// segment's ends. Segments parallel to within rounding cross nowhere.
-pub(crate) fn segments_cross(
+pub fn segments_cross(
     p0: DVec2,
     p1: DVec2,
     q0: DVec2,
@@ -385,7 +385,7 @@ pub(crate) fn segments_cross(
 }
 
 /// A curve by its parameter, as the crossing search walks it.
-pub(crate) trait Path {
+pub trait Path {
     /// The point at `t`.
     fn at(&self, t: f64) -> DVec2;
     /// The step a derivative is taken over, by central difference.
@@ -409,7 +409,7 @@ impl Path for Curve {
 /// Newton's steps from a sampled crossing of `a` and `b` to the exact
 /// one: the parameters on each, when they meet within a millionth of a
 /// millimetre.
-pub(crate) fn refine(a: &impl Path, b: &impl Path, mut ta: f64, mut tb: f64) -> Option<(f64, f64)> {
+pub fn refine(a: &impl Path, b: &impl Path, mut ta: f64, mut tb: f64) -> Option<(f64, f64)> {
     let (ha, hb) = (a.step(), b.step());
     for _ in 0..40 {
         let f = a.at(ta) - b.at(tb);

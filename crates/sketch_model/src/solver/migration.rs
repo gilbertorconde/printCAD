@@ -392,7 +392,7 @@ fn semantic_replay_corpus_matches_ported_solver() {
         })
         .collect();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../sketch_solver/fixtures/migration.json");
+        .join("../sketch_solver/fixtures/migration.json");
     if std::env::var_os("PRINTCAD_CAPTURE_SOLVER_REPLAY_CORPUS").is_some() {
         assert!(
             !path.exists(),
@@ -845,7 +845,7 @@ fn every_relation_has_an_equation_inventory_entry() {
             2,
         ),
     ];
-    let inventory = include_str!("../../../../../docs/rfcs/0003-solver-equations.md");
+    let inventory = include_str!("../../../../docs/rfcs/0003-solver-equations.md");
     let mut names = std::collections::HashSet::new();
     for (kind, rows) in relations {
         let name = relation_name(&kind);

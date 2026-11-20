@@ -15,8 +15,8 @@ use std::sync::OnceLock;
 use core_document::describe::{self, Describe, Shape};
 use core_document::{Document, FaceRef, FeatureId, WorkbenchRuntimeContext};
 use serde_json::Value;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+use sketch_model::SketchFeature;
+use sketch_model::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 
 use super::features::FEATURES;
 use crate::DesignWorkbench;
