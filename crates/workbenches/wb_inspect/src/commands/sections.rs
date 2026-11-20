@@ -135,6 +135,7 @@ fn section_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Com
         .ok_or_else(|| CommandError::failed("no kernel to cut with"))?;
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let cuts = section::cut(kernel, &mesh, &s).map_err(CommandError::failed)?;
@@ -157,6 +158,7 @@ fn shadow_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comm
     )?;
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let (origin, x_axis) = shadow::foot(&mesh, normal)

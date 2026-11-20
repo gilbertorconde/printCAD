@@ -610,7 +610,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
     /// flags would name other points.
     pub fn current_marking(&self) -> Option<&MarkedSurface> {
         let marking = self.marking.as_ref()?;
-        let geometry = self.document.imported_geometry(marking.body)?;
+        let geometry = self.document.derived().imported_geometry(marking.body)?;
         (geometry.revision == marking.revision
             && geometry.mesh.positions.len() == marking.vertices.len())
         .then_some(marking)

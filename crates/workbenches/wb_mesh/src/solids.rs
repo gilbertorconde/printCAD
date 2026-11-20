@@ -26,14 +26,14 @@ pub(super) fn operand(
         .or_else(|| {
             ctx.selected_features
                 .iter()
-                .find(|id| document.feature_solid(**id).is_some())
+                .find(|id| document.derived().feature_solid(**id).is_some())
                 .map(|id| id.0)
         })
         .or_else(|| {
             document
                 .bodies()
                 .iter()
-                .find(|b| b.id != scan && document.imported_brep_blob_arc(b.id).is_some())
+                .find(|b| b.id != scan && document.derived().imported_brep_blob_arc(b.id).is_some())
                 .map(|b| b.id.0)
         })
         .ok_or_else(|| {
@@ -43,13 +43,14 @@ pub(super) fn operand(
     if id == scan.0 {
         return Err(CommandError::bad("operand", "is the scan itself"));
     }
-    if let Some(blob) = document.imported_brep_blob_arc(BodyId(id)) {
+    if let Some(blob) = document.derived().imported_brep_blob_arc(BodyId(id)) {
         let brep = String::from_utf8(blob.to_vec())
             .map_err(|_| CommandError::failed("the operand's solid is not in the native format"))?;
         let transform = into.after(&document.body_placement(BodyId(id))).rows();
         return Ok(MeshOperand::Shape { brep, transform });
     }
     let mut shape = document
+        .derived()
         .feature_solid(FeatureId(id))
         .cloned()
         .ok_or_else(|| {
@@ -219,7 +220,7 @@ pub(super) fn trim(a: &Args, ctx: &mut WorkbenchRuntimeContext, scan: BodyId) ->
         None => document
             .bodies()
             .iter()
-            .find(|b| b.id != scan && document.imported_brep_blob_arc(b.id).is_some())
+            .find(|b| b.id != scan && document.derived().imported_brep_blob_arc(b.id).is_some())
             .map(|b| b.id)
             .ok_or_else(|| CommandError::bad("body", "names no solid body, and there is none"))?,
     };
@@ -227,6 +228,7 @@ pub(super) fn trim(a: &Args, ctx: &mut WorkbenchRuntimeContext, scan: BodyId) ->
         return Err(CommandError::bad("body", "is the scan itself"));
     }
     let solid = document
+        .derived()
         .imported_brep_blob_arc(body)
         .ok_or_else(|| CommandError::bad("body", "has no solid; rebuild first"))?;
     let mesh = drawn(ctx, scan)?;
@@ -285,6 +287,7 @@ fn drawn(
     scan: BodyId,
 ) -> Result<std::sync::Arc<TriMesh>, CommandError> {
     ctx.document
+        .derived()
         .local_geometry(scan)
         .map(|(mesh, _)| mesh)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))

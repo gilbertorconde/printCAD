@@ -63,10 +63,12 @@ fn imported_geometry_roundtrips_through_prtcad() {
     let raw_bytes = b"ISO-10303-21;\nSTEP;\nfake-content".to_vec();
     let asset_id = doc.add_asset_with_data(asset, raw_bytes.clone());
 
-    doc.set_imported_geometry(body_id, imported(Some(asset_id)));
+    doc.derived_mut()
+        .set_imported_geometry(body_id, imported(Some(asset_id)));
 
     let loaded = through_file(&mut doc, "step_persistence");
     let geometry = loaded
+        .derived()
         .imported_geometry(body_id)
         .expect("imported geometry survives save/load");
     assert_eq!(geometry.mesh.positions.len(), 3);
@@ -95,26 +97,34 @@ fn brep_sidecars_roundtrip_through_prtcad() {
     // anything without the magic prefix as a pre-migration leftover.
     let brep = b"ogeom 1\nunits 1.0\n".to_vec();
     let colors: Vec<[f32; 3]> = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-    doc.set_imported_brep_data(body_id, brep.clone(), colors.clone());
+    doc.derived_mut()
+        .set_imported_brep_data(body_id, brep.clone(), colors.clone());
 
     let bounded = ImportedGeometry {
         bounds_mm: Some(([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])),
         ..geometry(point_mesh())
     };
-    doc.set_imported_geometry(body_id, bounded);
+    doc.derived_mut().set_imported_geometry(body_id, bounded);
 
     let loaded = through_file(&mut doc, "brep_persistence");
     assert_eq!(
-        loaded.imported_brep_blob(body_id).expect("brep restored"),
+        loaded
+            .derived()
+            .imported_brep_blob(body_id)
+            .expect("brep restored"),
         brep.as_slice()
     );
     assert_eq!(
         loaded
+            .derived()
             .imported_brep_face_colors(body_id)
             .expect("colors restored"),
         colors.as_slice()
     );
-    let geom = loaded.imported_geometry(body_id).expect("geometry");
+    let geom = loaded
+        .derived()
+        .imported_geometry(body_id)
+        .expect("geometry");
     assert_eq!(geom.brep_blob_path, Some(format!("brep/{}.bin", body_id.0)));
     assert_eq!(
         geom.face_colors_path,
@@ -127,7 +137,8 @@ fn brep_sidecars_roundtrip_through_prtcad() {
 fn imported_object_graph_and_visibility_roundtrip() {
     let mut doc = Document::new("TreePersistenceTest");
     let body_id = doc.create_body(Some("Imported Root Body".into()));
-    doc.set_imported_geometry(body_id, imported(None));
+    doc.derived_mut()
+        .set_imported_geometry(body_id, imported(None));
 
     let root_id = Uuid::new_v4();
     let child_id = Uuid::new_v4();
@@ -266,12 +277,13 @@ fn a_cloned_document_saves_independently_from_another_thread() {
     let mut doc = Document::new("async save");
     let body_id = doc.create_body(Some("Body".into()));
     let brep = b"ogeom 1\nunits 1.0\n".to_vec();
-    doc.set_imported_brep_data(body_id, brep.clone(), vec![[1.0, 0.0, 0.0]]);
+    doc.derived_mut()
+        .set_imported_brep_data(body_id, brep.clone(), vec![[1.0, 0.0, 0.0]]);
     let bounded = ImportedGeometry {
         bounds_mm: Some(([0.0; 3], [1.0, 2.0, 3.0])),
         ..geometry(point_mesh())
     };
-    doc.set_imported_geometry(body_id, bounded);
+    doc.derived_mut().set_imported_geometry(body_id, bounded);
 
     let mut snapshot = doc.clone();
     let tmp =
@@ -295,7 +307,10 @@ fn a_cloned_document_saves_independently_from_another_thread() {
         "the file must hold the document as it was when the save was queued"
     );
     assert_eq!(
-        loaded.imported_brep_blob(body_id).expect("blob restored"),
+        loaded
+            .derived()
+            .imported_brep_blob(body_id)
+            .expect("blob restored"),
         brep.as_slice()
     );
 }
@@ -314,7 +329,8 @@ fn packing_an_archive_reports_what_it_has_packed() {
         json!({"source_path": "/tmp/big.step"}),
     );
     let asset_id = doc.add_asset_with_data(asset, raw_bytes.clone());
-    doc.set_imported_geometry(body_id, imported(Some(asset_id)));
+    doc.derived_mut()
+        .set_imported_geometry(body_id, imported(Some(asset_id)));
 
     assert!(doc.archive_payload_bytes() >= raw_bytes.len() as u64);
 
@@ -364,8 +380,10 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
         health: Some(health),
         ..self::imported(Some(asset_id))
     };
-    doc.set_imported_geometry(imported, with_health(broken.clone()));
-    doc.set_imported_geometry(modelled, self::imported(None));
+    doc.derived_mut()
+        .set_imported_geometry(imported, with_health(broken.clone()));
+    doc.derived_mut()
+        .set_imported_geometry(modelled, self::imported(None));
     let mut journal = OpJournal::new(16);
     doc.rename_body(modelled, "Renamed");
     journal.note(&mut doc);
@@ -389,7 +407,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
     assert!(peer.body(imported).is_some_and(|b| b.repair_requested));
 
     // The repaired geometry lands: nothing waits any more.
-    doc.set_imported_geometry(
+    doc.derived_mut().set_imported_geometry(
         imported,
         with_health(ShapeHealth {
             repaired: true,
@@ -401,6 +419,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
     let loaded = through_file(&mut doc, "repair_request");
     assert!(loaded.body(imported).is_some_and(|b| b.repair_requested));
     let health = loaded
+        .derived()
         .imported_geometry(imported)
         .and_then(|g| g.health.clone())
         .expect("the checker's verdict survives a save");
@@ -429,8 +448,10 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
         }),
         ..imported(Some(asset_id))
     };
-    doc.set_imported_geometry(converted, geometry(true));
-    doc.set_imported_geometry(smooth, geometry(false));
+    doc.derived_mut()
+        .set_imported_geometry(converted, geometry(true));
+    doc.derived_mut()
+        .set_imported_geometry(smooth, geometry(false));
     let mut journal = OpJournal::new(16);
     doc.rename_body(smooth, "Renamed");
     journal.note(&mut doc);
@@ -459,7 +480,8 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
     );
 
     // The refined shape lands: nothing waits, and nothing is offered.
-    doc.set_imported_geometry(converted, geometry(false));
+    doc.derived_mut()
+        .set_imported_geometry(converted, geometry(false));
     assert!(doc.bodies_awaiting_refine().is_empty());
     assert!(!doc.can_refine(converted));
 }
@@ -483,9 +505,11 @@ fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
             AssetReference::new(path.to_string(), kind, json!({})),
             b"bytes".to_vec(),
         );
-        doc.set_imported_geometry(body, imported(Some(asset)));
+        doc.derived_mut()
+            .set_imported_geometry(body, imported(Some(asset)));
     }
-    doc.set_imported_brep_data(step_body, b"ogeom".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(step_body, b"ogeom".to_vec(), Vec::new());
 
     assert!(doc.is_mesh_body(mesh_body));
     assert!(!doc.is_mesh_body(step_body));
@@ -520,7 +544,8 @@ fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
     assert_eq!(doc.bodies_awaiting_solid(), vec![mesh_body]);
 
     // The solid lands: a snapshot, and the body is a solid now.
-    doc.set_imported_brep_data(mesh_body, b"ogeom".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(mesh_body, b"ogeom".to_vec(), Vec::new());
     assert!(!doc.is_mesh_body(mesh_body));
     assert!(doc.bodies_awaiting_solid().is_empty());
 }
@@ -539,7 +564,8 @@ fn a_mesh_start_is_kept_apart_from_the_edited_mesh() {
         AssetReference::new("assets/scan.stl".to_string(), AssetType::Stl, json!({})),
         b"bytes".to_vec(),
     );
-    doc.set_imported_geometry(body, imported(Some(asset)));
+    doc.derived_mut()
+        .set_imported_geometry(body, imported(Some(asset)));
     let mut journal = OpJournal::new(16);
     journal.note(&mut doc);
     let _ = doc.take_pending_ops();
@@ -547,25 +573,35 @@ fn a_mesh_start_is_kept_apart_from_the_edited_mesh() {
     assert!(!doc.set_mesh_start(body, true), "kept once");
     journal.note(&mut doc);
     // The history's result is derived: the body draws an edited mesh.
-    doc.set_imported_geometry(body, geometry(point_mesh()));
+    doc.derived_mut()
+        .set_imported_geometry(body, geometry(point_mesh()));
     let back = through_file(&mut doc, "mesh_start");
     assert_eq!(
         back.mesh_start(body).unwrap().mesh.positions,
         fake_mesh().positions
     );
     assert_eq!(
-        back.imported_geometry(body).unwrap().mesh.positions,
+        back.derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions,
         point_mesh().positions
     );
     assert!(journal.undo(&mut doc).is_some());
     assert!(doc.mesh_start(body).is_none());
     assert_eq!(
-        doc.imported_geometry(body).unwrap().mesh.positions,
+        doc.derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions,
         fake_mesh().positions,
         "the start is its mesh again"
     );
     let step = doc.create_body(Some("Bracket".into()));
-    doc.set_imported_geometry(step, imported(None));
+    doc.derived_mut()
+        .set_imported_geometry(step, imported(None));
     assert!(!doc.set_mesh_start(step, true));
 }
 
@@ -679,11 +715,12 @@ fn a_clone_keeps_the_sidecar_bytes() {
     let body = doc.create_body(Some("Body1".to_string()));
     let asset = AssetReference::new("assets/x.step", AssetType::Step, json!({}));
     let asset_id = doc.add_asset_with_data(asset, vec![1, 2, 3]);
-    doc.set_imported_brep_data(body, vec![9, 9], vec![[1.0, 0.0, 0.0]]);
+    doc.derived_mut()
+        .set_imported_brep_data(body, vec![9, 9], vec![[1.0, 0.0, 0.0]]);
 
     let copy = doc.clone();
     assert_eq!(copy.asset_bytes(asset_id), Some(&[1u8, 2, 3][..]));
-    assert_eq!(copy.imported_brep_blob(body), Some(&[9u8, 9][..]));
+    assert_eq!(copy.derived().imported_brep_blob(body), Some(&[9u8, 9][..]));
 }
 
 /// An archive keeps each mesh as an entry of its own, the document's JSON
@@ -694,7 +731,8 @@ fn a_clone_keeps_the_sidecar_bytes() {
 fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
     let mut doc = Document::new("MeshesApart");
     let body_id = doc.create_body(Some("Body".into()));
-    doc.set_imported_geometry(body_id, imported(None));
+    doc.derived_mut()
+        .set_imported_geometry(body_id, imported(None));
 
     let bytes = doc.save_to_bytes(Compression::None).expect("save");
     let mut archive = tar::Archive::new(bytes.as_slice());
@@ -717,7 +755,7 @@ fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
     assert!(kept["mesh_path"].is_string());
 
     let loaded = Document::load_from_bytes(bytes).expect("load");
-    let mesh = &loaded.imported_geometry(body_id).unwrap().mesh;
+    let mesh = &loaded.derived().imported_geometry(body_id).unwrap().mesh;
     assert_eq!(mesh.positions, fake_mesh().positions);
     assert_eq!(mesh.colors, fake_mesh().colors);
 
@@ -725,7 +763,7 @@ fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
     let inline = serde_json::to_vec(&doc).unwrap();
     let old = pack(&[("document.json".to_string(), inline)]);
     let loaded = Document::load_from_bytes(old).expect("load an inline save");
-    let mesh = &loaded.imported_geometry(body_id).unwrap().mesh;
+    let mesh = &loaded.derived().imported_geometry(body_id).unwrap().mesh;
     assert_eq!(mesh.indices, vec![0, 1, 2]);
 }
 
@@ -735,14 +773,20 @@ fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
 fn a_zstd_packed_prtcad_opens_by_its_first_bytes() {
     let mut doc = Document::new("Packed");
     let body_id = doc.create_body(Some("Body".into()));
-    doc.set_imported_geometry(body_id, imported(None));
+    doc.derived_mut()
+        .set_imported_geometry(body_id, imported(None));
     doc.set_thumbnail(Some(b"\x89PNG-ish".to_vec()));
     let bytes = doc.save_to_bytes(Compression::Zstd).expect("save");
     let tmp = std::env::temp_dir().join(format!("printcad_zstd_{}.prtcad", std::process::id()));
     std::fs::write(&tmp, &bytes).unwrap();
     let loaded = Document::load_from_file(&tmp).expect("opens");
     assert_eq!(
-        loaded.imported_geometry(body_id).unwrap().mesh.indices,
+        loaded
+            .derived()
+            .imported_geometry(body_id)
+            .unwrap()
+            .mesh
+            .indices,
         vec![0, 1, 2]
     );
     assert_eq!(

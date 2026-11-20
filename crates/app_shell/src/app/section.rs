@@ -258,6 +258,7 @@ impl PrintCadApp {
         let mesh = self.session.hover.body.and_then(|body| {
             self.session
                 .document
+                .derived()
                 .imported_geometry(core_document::BodyId(body))
         });
         let surface = || {

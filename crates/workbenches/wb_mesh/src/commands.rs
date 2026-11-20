@@ -64,6 +64,7 @@ pub(super) fn made(
         .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(body)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let op = steps::make(id, a, ctx, body, &mesh)?;
@@ -197,6 +198,7 @@ fn cut(
 ) -> CommandResult {
     let (now, _) = ctx
         .document
+        .derived()
         .local_geometry(body)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let op = solids::cut(a, &now)?;
@@ -222,6 +224,7 @@ fn intersections(
 ) -> CommandResult {
     let (drawn, _) = ctx
         .document
+        .derived()
         .local_geometry(body)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let kernel = ctx
@@ -246,6 +249,7 @@ fn deviation_of_edit(
         .clone();
     let (now, _) = ctx
         .document
+        .derived()
         .local_geometry(body)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let kernel = ctx
@@ -265,6 +269,7 @@ fn topology(
 ) -> CommandResult {
     let (drawn, _) = ctx
         .document
+        .derived()
         .local_geometry(body)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     Ok(inspect(&drawn))

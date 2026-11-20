@@ -232,10 +232,10 @@ impl MeshPlan {
         answer: Result<kernel_api::MeshChainAnswer, String>,
     ) {
         match answer {
-            Ok(answer) => document.store_mesh_build(self, answer),
+            Ok(answer) => document.derived_mut().store_mesh_build(self, answer),
             Err(why) => {
                 if let Some(id) = self.features.first() {
-                    document.set_feature_error(*id, Some(why));
+                    document.derived_mut().set_feature_error(*id, Some(why));
                 }
             }
         }

@@ -179,7 +179,7 @@ pub fn deviation_reading(values: &[f32]) -> Value {
 /// What a body's deviation is measured from: its mesh now and its start.
 fn deviation_key(document: &Document, body: BodyId) -> Option<u64> {
     let start = document.mesh_start(body)?;
-    let now = document.imported_geometry(body)?;
+    let now = document.derived().imported_geometry(body)?;
     Some(now.revision ^ start.revision.rotate_left(32))
 }
 
@@ -204,7 +204,7 @@ fn start_mesh(document: &Document, body: BodyId) -> Option<std::sync::Arc<TriMes
     document
         .mesh_start(body)
         .map(|g| g.mesh.clone())
-        .or_else(|| document.local_geometry(body).map(|(m, _)| m))
+        .or_else(|| document.derived().local_geometry(body).map(|(m, _)| m))
 }
 
 /// The length of the mesh's box diagonal; zero for a mesh with no points.
@@ -279,14 +279,16 @@ fn region(
             .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
         let (drawn, _) = ctx
             .document
+            .derived()
             .local_geometry(body)
             .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
         let plan = MeshWorkbench::default()
             .mesh_plans(ctx.document)
             .into_iter()
             .find(|p| p.body == body);
-        let vertices = if let Some(sources) =
-            plan.as_ref().and_then(|p| ctx.document.mesh_sources(p))
+        let vertices = if let Some(sources) = plan
+            .as_ref()
+            .and_then(|p| ctx.document.derived().mesh_sources(p))
         {
             if sources
                 .iter()
@@ -712,7 +714,7 @@ impl MeshWorkbench {
             let (Some(key), Some(start), Some((now, _))) = (
                 deviation_key(document, body),
                 document.mesh_start(body),
-                document.local_geometry(body),
+                document.derived().local_geometry(body),
             ) else {
                 continue;
             };
@@ -853,7 +855,7 @@ mod tests {
                 core_document::AssetType::Stl,
                 json!({}),
             ));
-            doc.set_imported_geometry(
+            doc.derived_mut().set_imported_geometry(
                 body,
                 ImportedGeometry {
                     mesh: Arc::new(mesh.clone()),
@@ -923,7 +925,7 @@ mod tests {
             }
             let plan = wb.mesh_plans(ctx.document).remove(0);
             ctx.document.take_pending_ops();
-            ctx.document.store_mesh_build(
+            ctx.document.derived_mut().store_mesh_build(
                 plan.clone(),
                 kernel_api::MeshChainAnswer {
                     mesh: mesh.clone(),
@@ -1079,7 +1081,7 @@ mod tests {
             core_document::AssetType::Stl,
             json!({}),
         ));
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: Arc::new(mesh),
@@ -1249,7 +1251,7 @@ mod tests {
                     assert_eq!(entry.placement, placement);
                     assert_eq!(entry.shading, core_document::Shading::Sharp);
                     assert!(entry.scan.is_some());
-                    let (mesh, _) = doc.local_geometry(*b).expect("the piece's mesh");
+                    let (mesh, _) = doc.derived().local_geometry(*b).expect("the piece's mesh");
                     let read = inspect(&mesh);
                     assert_eq!(
                         (read["pieces"].clone(), read["open_edges"].clone()),
@@ -1318,7 +1320,7 @@ mod tests {
             core_document::AssetType::Stl,
             json!({}),
         ));
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: Arc::new(TriMesh {
@@ -1335,7 +1337,7 @@ mod tests {
                 health: None,
             },
         );
-        let revision = doc.imported_geometry(body).unwrap().revision;
+        let revision = doc.derived().imported_geometry(body).unwrap().revision;
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
         ctx.selected_body_id = Some(body.0);
         let mut wb = MeshWorkbench::default();

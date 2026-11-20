@@ -243,7 +243,7 @@ fn a_rib_feature_fills_a_channel_from_its_sketch() {
     );
     doc.mark_feature_dirty(rib);
     settle_as_host(&registry, &mut doc);
-    let error = &doc.get_feature_meta(rib).unwrap().error;
+    let error = doc.derived().error(rib);
     assert!(error.is_none(), "it builds: {error:?}");
     let got = body_volume(&doc, body);
     let web = 16.0 * 10.0 * 2.0;

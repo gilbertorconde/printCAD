@@ -94,10 +94,10 @@ impl DesignWorkbench {
                 .unwrap_or(("datum-plane", String::new())),
         };
         use core_document::{StatusTone, TaskStatus};
-        let status = match (&node.error, node.dirty) {
+        let status = match (ctx.document.derived().error(id), node.dirty) {
             (Some(error), _) => TaskStatus {
                 text: "Rebuild failed".into(),
-                detail: error.clone(),
+                detail: error.to_string(),
                 tone: StatusTone::Bad,
             },
             (None, true) => TaskStatus {
@@ -429,6 +429,12 @@ impl DesignWorkbench {
         feature_id: FeatureId,
         node: &core_document::FeatureNode,
     ) {
+        let built = ctx
+            .document
+            .derived()
+            .status(feature_id)
+            .cloned()
+            .unwrap_or_default();
         let Some(mut feature) = DesignFeature::from_json(&node.data).ok() else {
             f.note(
                 NoteKind::Error,
@@ -471,13 +477,13 @@ impl DesignWorkbench {
 
         // The header's pill says it is rebuilding or previewing; a failure
         // also gets its whole message here.
-        let Some(error) = &node.error else {
+        let Some(error) = &built.error else {
             self.tab.hovered_failing = None;
             return;
         };
         f.gap(GapSize::Small);
         f.note(NoteKind::Error, Some("Recompute failed"), error);
-        if node.refused_edges.failing.is_empty() {
+        if built.refused_edges.failing.is_empty() {
             self.tab.hovered_failing = None;
         } else {
             f.gap(GapSize::Small);
@@ -485,7 +491,7 @@ impl DesignWorkbench {
             let largest = crate::failing::largest_size(ctx.document, feature_id);
             let rows = crate::failing::rows(
                 f,
-                &node.refused_edges.failing,
+                &built.refused_edges.failing,
                 crate::failing::asked_size(&feature),
                 largest,
                 sharp,
@@ -992,7 +998,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        doc.store_size_limit(&[id], &built);
+        doc.derived_mut().store_size_limit(&[id], &built);
         let mut wb = DesignWorkbench::default();
         let panel = panel();
         open(&mut wb, &panel, &mut doc, id);
@@ -1114,7 +1120,7 @@ mod tests {
                 }),
                 ..Default::default()
             };
-            doc.store_size_limit(&[id], &built);
+            doc.derived_mut().store_size_limit(&[id], &built);
             let moved = made(2.5, 6.0);
             assert_eq!(key(&moved), key(&first), "the limits hold for any sizes");
             doc.update_feature_data(id, moved.to_json()).unwrap();
@@ -1147,7 +1153,8 @@ mod tests {
         for accept in [false, true] {
             let mut doc = Document::new("t");
             let body = doc.create_body(Some("Plate".into()));
-            doc.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
+            doc.derived_mut()
+                .set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
             let hidden =
                 |doc: &Document| doc.bodies().iter().find(|b| b.id == body).unwrap().hidden;
             let split = |doc: &mut Document| {
@@ -1582,7 +1589,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             other,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(top),
@@ -1926,10 +1933,12 @@ mod tests {
             .add_feature_in_body(pad(sketch, 10.0), "Pad".into(), Some(body))
             .unwrap();
 
-        doc.set_imported_geometry(body, geometry(false));
+        doc.derived_mut()
+            .set_imported_geometry(body, geometry(false));
         assert_eq!(faceted_hint(&doc, body, first), None);
 
-        doc.set_imported_geometry(body, geometry(true));
+        doc.derived_mut()
+            .set_imported_geometry(body, geometry(true));
         let hint = faceted_hint(&doc, body, first).expect("a hint");
         assert!(hint.contains("Cancel"), "{hint}");
 

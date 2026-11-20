@@ -31,7 +31,7 @@ fn duplicate_recorded(ctx: &mut WorkbenchRuntimeContext, feature: FeatureId, bod
 /// What Design offers on a body's menu, for a body with a solid: Split,
 /// and Separate pieces when the solid is drawn in several pieces.
 fn body_menu_items(document: &Document, body: BodyId) -> Vec<MenuItem> {
-    if document.is_mesh_body(body) || document.imported_brep_blob(body).is_none() {
+    if document.is_mesh_body(body) || document.derived().imported_brep_blob(body).is_none() {
         return Vec::new();
     }
     let mut items = vec![

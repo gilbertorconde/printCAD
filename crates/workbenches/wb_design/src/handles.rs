@@ -873,7 +873,7 @@ fn side_handles(
         return None;
     }
     let key = crate::build::edge_op(part).ok()??.size_limit_key()?;
-    let limit = maker.document.size_limit(maker.feature)?;
+    let limit = maker.document.derived().size_limit(maker.feature)?;
     let sides = (limit.key == key).then_some(limit.sides?)?;
     let origin = maker.world64(sides.at);
     let handles = pointers
@@ -909,6 +909,7 @@ pub(crate) fn drag_stop(document: &Document, handle: &Handle) -> f32 {
 fn outline<'a>(maker: &Maker<'a>) -> impl Iterator<Item = (Vec3, Vec3)> + 'a {
     let mesh = maker
         .document
+        .derived()
         .local_geometry(maker.body)
         .map(|(mesh, _)| mesh);
     let segments: Vec<(Vec3, Vec3)> = mesh
@@ -1305,7 +1306,7 @@ mod tests {
             edges: vec![0, 1, 2, 3],
             ..Default::default()
         };
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(mesh),

@@ -40,7 +40,7 @@ impl Baseline {
 pub fn checkpoints(document: &Document, moves: &[(BodyId, BodyPlacement)]) -> Vec<f32> {
     let mut steps = 1usize;
     for (body, to) in moves {
-        let Some((mesh, bounds)) = document.local_geometry(*body) else {
+        let Some((mesh, bounds)) = document.derived().local_geometry(*body) else {
             continue;
         };
         let Some((lo, hi)) = bounds.or_else(|| mesh.bounds()) else {
@@ -66,7 +66,7 @@ fn placed_bounds(
     body: BodyId,
     placement: &BodyPlacement,
 ) -> Option<([f32; 3], [f32; 3])> {
-    let (mesh, bounds) = document.local_geometry(body)?;
+    let (mesh, bounds) = document.derived().local_geometry(body)?;
     Some(placement.bounds(bounds.or_else(|| mesh.bounds())?))
 }
 
@@ -78,8 +78,8 @@ fn shared(
     (b, at_b): (BodyId, &BodyPlacement),
 ) -> Result<f64, String> {
     let (Some(blob_a), Some(blob_b)) = (
-        document.imported_brep_blob(a),
-        document.imported_brep_blob(b),
+        document.derived().imported_brep_blob(a),
+        document.derived().imported_brep_blob(b),
     ) else {
         return Ok(0.0);
     };
@@ -110,7 +110,7 @@ pub fn collides(
         .map(|b| b.id)
         .filter(|b| {
             document.imported_body_effective_visible(*b)
-                && document.imported_brep_blob(*b).is_some()
+                && document.derived().imported_brep_blob(*b).is_some()
         })
         .collect();
     // The pairs near enough to share material, the one that last

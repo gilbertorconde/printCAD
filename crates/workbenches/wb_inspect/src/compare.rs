@@ -168,12 +168,14 @@ pub fn inputs(document: &Document, c: &Comparison) -> Result<Inputs, String> {
 /// against the other.
 pub fn inputs_for(document: &Document, scan: BodyId, reference: BodyId) -> Result<Inputs, String> {
     let (scan_mesh, _) = document
+        .derived()
         .local_geometry(scan)
         .ok_or("the scan has no mesh")?;
-    let target = match document.imported_brep_blob_arc(reference) {
+    let target = match document.derived().imported_brep_blob_arc(reference) {
         Some(blob) => Reference::Shape(blob),
         None => Reference::Mesh(
             document
+                .derived()
                 .local_geometry(reference)
                 .ok_or("the reference has no geometry")?
                 .0,
@@ -186,7 +188,7 @@ pub fn inputs_for(document: &Document, scan: BodyId, reference: BodyId) -> Resul
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        let revision = |b| document.imported_geometry(b).map(|g| g.revision);
+        let revision = |b| document.derived().imported_geometry(b).map(|g| g.revision);
         (revision(scan), revision(reference)).hash(&mut h);
         format!("{:?}", scan_to_reference.rows()).hash(&mut h);
         h.finish()

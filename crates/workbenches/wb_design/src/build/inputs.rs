@@ -122,7 +122,7 @@ pub(super) fn answer_lent_faces(document: &mut Document, body: BodyId) {
                 },
             })
             .ok_or_else(|| "the borrow no longer lends a flat face there".to_string());
-        document.set_probed_references(
+        document.derived_mut().set_probed_references(
             sketch,
             core_document::ProbedReferences {
                 probes: vec![face.probe()],
@@ -346,6 +346,7 @@ fn tool_inputs(document: &Document, body: BodyId, tool: BodyId) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     document
+        .derived()
         .imported_geometry(tool)
         .map(|g| g.revision)
         .hash(&mut hasher);

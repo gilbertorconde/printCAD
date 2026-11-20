@@ -121,7 +121,7 @@ impl DesignWorkbench {
             return (!mesh.positions.is_empty()).then(|| core_document::PassiveGeometry {
                 revision: core_document::data_revision(&feature.to_json())
                     ^ body
-                        .and_then(|b| document.imported_geometry(b))
+                        .and_then(|b| document.derived().imported_geometry(b))
                         .map_or(0, |g| g.revision),
                 mesh,
                 tint: core_document::PassiveTint::External,
@@ -135,7 +135,10 @@ impl DesignWorkbench {
             let mesh = build::thread_lines(document, body, &feature);
             return (!mesh.positions.is_empty()).then(|| core_document::PassiveGeometry {
                 revision: core_document::data_revision(&feature.to_json())
-                    ^ document.imported_geometry(body).map_or(0, |g| g.revision),
+                    ^ document
+                        .derived()
+                        .imported_geometry(body)
+                        .map_or(0, |g| g.revision),
                 mesh,
                 tint: core_document::PassiveTint::External,
                 regions: Vec::new(),
@@ -177,7 +180,10 @@ impl DesignWorkbench {
                     core_document::data_revision(&feature.to_json()),
                     |r, data| r.rotate_left(7) ^ core_document::data_revision(data),
                 )
-                ^ document.imported_geometry(body).map_or(0, |g| g.revision);
+                ^ document
+                    .derived()
+                    .imported_geometry(body)
+                    .map_or(0, |g| g.revision);
             return (!mesh.positions.is_empty()).then_some(core_document::PassiveGeometry {
                 revision,
                 mesh,

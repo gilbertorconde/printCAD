@@ -9,6 +9,7 @@ impl Document {
     /// op is ABOUT to change, so per-user undo can restore it later without
     /// ever snapshotting the document.
     pub(crate) fn record_and_apply(&mut self, operation: op::DocumentOp) {
+        debug_assert!(!self.deriving, "derived state recorded an op");
         let inverse = self.invert_op(&operation);
         if !self.history_suppressed {
             self.journal_pending.record(&operation, inverse.clone());
@@ -22,6 +23,7 @@ impl Document {
     /// hear an undo as ordinary ops), but never the journal, which is being
     /// walked, not written.
     pub(crate) fn apply_history_op(&mut self, operation: &op::DocumentOp) {
+        debug_assert!(!self.deriving, "derived state recorded an op");
         let inverse = self.invert_op(operation);
         self.apply_remote_op(operation);
         self.pending_ops.record(operation.clone(), inverse);
@@ -479,10 +481,10 @@ impl Document {
                     entry.link = Some(link.clone());
                 }
                 // Read again from the file as it stands now.
-                self.imported_meshes.remove(id);
-                self.local_meshes.remove(id);
-                self.imported_brep_blobs.remove(id);
-                self.imported_brep_face_colors.remove(id);
+                self.derived.imported_meshes.remove(id);
+                self.derived.local_meshes.remove(id);
+                self.derived.imported_brep_blobs.remove(id);
+                self.derived.imported_brep_face_colors.remove(id);
                 self.link_stale.remove(id);
                 self.refresh_copies_of(*id);
             }
@@ -654,6 +656,7 @@ impl Document {
                 suppressed,
             } => {
                 let seq = self.feature_tree.unclaimed_seq(*id, *seq);
+                self.derived.clear_status(*id);
                 self.feature_tree.add_node(FeatureNode {
                     id: *id,
                     workbench_id: workbench_id.clone(),
@@ -664,10 +667,6 @@ impl Document {
                     dirty: false,
                     created_at: *created_at,
                     seq,
-                    error: None,
-                    refused_edges: Default::default(),
-                    warning: None,
-                    unchanged: None,
                     data: data.clone().into(),
                     data_revision: Default::default(),
                     formulas: formulas.clone(),
@@ -770,6 +769,7 @@ impl Document {
                     self.feature_tree.mark_dirty(dep);
                 }
                 self.feature_tree.remove_node(*id);
+                self.derived.clear_status(*id);
             }
             Op::AddAsset { asset, bytes } => {
                 self.assets.insert(asset.id, asset.clone());
@@ -848,10 +848,11 @@ impl Document {
     }
 
     /// The state that must converge across replicas: the serialized document
-    /// minus per-replica derivations: dirty flags, recompute errors,
-    /// revision history, and the imported-geometry sidecars, whose meshes
-    /// are re-derived from asset bytes on each replica. Determinism tests
-    /// compare projections, not raw serializations.
+    /// minus per-replica derivations: dirty flags, revision history, and
+    /// the derived build state as a whole (written under
+    /// `imported_meshes`: the bodies' meshes, re-derived from asset bytes
+    /// and builds on each replica). Determinism tests compare projections,
+    /// not raw serializations.
     pub fn replicated_projection(&self) -> serde_json::Value {
         let mut value = serde_json::to_value(self).expect("document serializes");
         fn strip_key_recursively(value: &mut serde_json::Value, key: &str) {

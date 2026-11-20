@@ -248,7 +248,12 @@ fn a_held_edge_whose_name_is_lost_is_warned_of_on_its_step() {
     settle_as_host(&host.registry, &mut host.document);
     let wall = built(&host).0;
     let pick = |body, point, direction, on: &dyn Fn([f32; 3]) -> bool| {
-        let mesh = &host.document.imported_geometry(body).expect("built").mesh;
+        let mesh = &host
+            .document
+            .derived()
+            .imported_geometry(body)
+            .expect("built")
+            .mesh;
         let faces = edge_names(mesh, on);
         assert!(!faces.contains(&0), "{faces:?}");
         EdgePick {
@@ -296,10 +301,14 @@ fn a_held_edge_whose_name_is_lost_is_warned_of_on_its_step() {
         host.document.mark_feature_dirty(own);
         host.document.mark_feature_dirty(beside);
         settle_as_host(&host.registry, &mut host.document);
-        assert!(host.document.imported_geometry(other).is_some(), "built");
+        assert!(
+            host.document.derived().imported_geometry(other).is_some(),
+            "built"
+        );
         let warning = |id| {
             let node = host.document.get_feature_meta(id).unwrap();
-            assert!(node.error.is_none(), "{:?}", node.error);
+            let error = host.document.derived().error(id);
+            assert!(error.is_none(), "{error:?}");
             host.registry
                 .feature_warning(&host.document, None, id, node)
         };

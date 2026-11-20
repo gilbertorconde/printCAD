@@ -116,7 +116,7 @@ fn a_fit_of_the_marked_surface_becomes_an_element() {
         indices: vec![0, 1, 2],
         ..Default::default()
     };
-    document.set_imported_geometry(
+    document.derived_mut().set_imported_geometry(
         scan,
         core_document::ImportedGeometry {
             mesh: Arc::new(mesh),
@@ -212,9 +212,16 @@ fn a_fit_of_the_marked_surface_becomes_an_element() {
         core_document::AssetType::Stl,
         json!({}),
     ));
-    let mut geometry = ctx.document.imported_geometry(scan).unwrap().clone();
+    let mut geometry = ctx
+        .document
+        .derived()
+        .imported_geometry(scan)
+        .unwrap()
+        .clone();
     geometry.source_asset = Some(asset);
-    ctx.document.set_imported_geometry(scan, geometry);
+    ctx.document
+        .derived_mut()
+        .set_imported_geometry(scan, geometry);
     assert!(ctx.document.set_body_scan(scan, Some(Default::default())));
     let before = align::by_numbers([5.0, 8.0, 3.0], [10.0, 20.0, 30.0]);
     ctx.document.set_body_placement(scan, before);
@@ -289,8 +296,15 @@ fn a_fit_of_the_marked_surface_becomes_an_element() {
 
     // Another scan's alignment is named apart from the first scan's.
     let other = ctx.document.create_body(Some("Other".into()));
-    let geometry = ctx.document.imported_geometry(scan).unwrap().clone();
-    ctx.document.set_imported_geometry(other, geometry);
+    let geometry = ctx
+        .document
+        .derived()
+        .imported_geometry(scan)
+        .unwrap()
+        .clone();
+    ctx.document
+        .derived_mut()
+        .set_imported_geometry(other, geometry);
     assert!(ctx.document.set_body_scan(other, Some(Default::default())));
     let mut args = CommandArgs::new();
     args.insert("scan".into(), json!(other.0.to_string()));
@@ -309,7 +323,7 @@ fn a_fit_of_the_marked_surface_becomes_an_element() {
 fn sections_and_shadows_read_and_draw_the_scan() {
     let mut document = Document::new("Scan");
     let scan = document.create_body(Some("Scan".into()));
-    document.set_imported_geometry(
+    document.derived_mut().set_imported_geometry(
         scan,
         core_document::ImportedGeometry {
             mesh: Arc::new(kernel_api::TriMesh {
@@ -489,7 +503,7 @@ fn clicks_in_progress_are_pinned_and_numbered_until_made() {
     };
     let mut body = |name: &str, dx: f32| {
         let id = document.create_body(Some(name.into()));
-        document.set_imported_geometry(
+        document.derived_mut().set_imported_geometry(
             id,
             core_document::ImportedGeometry {
                 mesh: Arc::new(mesh(dx)),
@@ -510,9 +524,9 @@ fn clicks_in_progress_are_pinned_and_numbered_until_made() {
         core_document::AssetType::Stl,
         json!({}),
     ));
-    let mut geometry = document.imported_geometry(scan).unwrap().clone();
+    let mut geometry = document.derived().imported_geometry(scan).unwrap().clone();
     geometry.source_asset = Some(asset);
-    document.set_imported_geometry(scan, geometry);
+    document.derived_mut().set_imported_geometry(scan, geometry);
     assert!(document.set_body_scan(scan, Some(Default::default())));
     let mut bench = InspectionWorkbench::default();
     let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 400, 400));

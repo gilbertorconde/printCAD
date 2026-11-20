@@ -104,8 +104,11 @@ fn plan_with(document: &Document, among: Option<&[BodyId]>, clearance: Option<f6
         {
             continue;
         }
-        let placed = document.imported_geometry(body.id).and_then(|g| g.bounds());
-        match (document.imported_brep_blob_arc(body.id), placed) {
+        let placed = document
+            .derived()
+            .imported_geometry(body.id)
+            .and_then(|g| g.bounds());
+        match (document.derived().imported_brep_blob_arc(body.id), placed) {
             (Some(blob), Some(placed)) => {
                 solids.push(Solid {
                     body: body.id,
@@ -366,7 +369,7 @@ mod tests {
     fn cube(document: &mut Document, at: [f32; 3], solid: bool) -> BodyId {
         let body = document.create_body(None);
         let corners = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 10.0]];
-        document.set_imported_geometry(
+        document.derived_mut().set_imported_geometry(
             body,
             imported(
                 TriMesh {
@@ -379,7 +382,9 @@ mod tests {
             ),
         );
         if solid {
-            document.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
+            document
+                .derived_mut()
+                .set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
         }
         document.set_body_placement(
             body,

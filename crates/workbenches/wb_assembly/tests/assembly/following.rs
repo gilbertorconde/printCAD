@@ -44,7 +44,7 @@ fn a_part_follows_the_face_it_is_mated_to() {
     let mut doc = Document::new("t");
     let base = doc.create_body(Some("Base".into()));
     let part = doc.create_body(Some("Part".into()));
-    doc.set_imported_geometry(base, slab(10.0));
+    doc.derived_mut().set_imported_geometry(base, slab(10.0));
     let args = serde_json::json!({
         "body": part.0.to_string(),
         "face": {"point": [0, 0, 0], "normal": [0, 0, -1]},
@@ -63,7 +63,7 @@ fn a_part_follows_the_face_it_is_mated_to() {
     assert!((height(&doc, part) - 10.0).abs() < 1e-3);
 
     // The base rebuilt taller: its top, still face 77, is 4 higher.
-    doc.set_imported_geometry(base, slab(14.0));
+    doc.derived_mut().set_imported_geometry(base, slab(14.0));
     settle(&mut registry, &mut doc);
     assert!(
         (height(&doc, part) - 14.0).abs() < 1e-3,

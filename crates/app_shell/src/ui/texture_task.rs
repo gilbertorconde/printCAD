@@ -91,7 +91,7 @@ impl TextureTask {
         if let Some(face) = self.opened_on.take()
             && textures.is_empty()
         {
-            let faces = match (face, document.imported_geometry(body)) {
+            let faces = match (face, document.derived().imported_geometry(body)) {
                 (Some(face), Some(geometry)) => vec![FaceKey::of(&geometry.mesh, face)],
                 _ => Vec::new(),
             };
@@ -136,7 +136,7 @@ impl TextureTask {
         if picks.is_empty() || picks == self.last_picks {
             return;
         }
-        if let Some(geometry) = document.imported_geometry(self.body) {
+        if let Some(geometry) = document.derived().imported_geometry(self.body) {
             let mesh = &geometry.mesh;
             for &index in picks.iter().filter(|i| !self.last_picks.contains(i)) {
                 if !edited.faces.iter().any(|k| k.is_face(mesh, index)) {

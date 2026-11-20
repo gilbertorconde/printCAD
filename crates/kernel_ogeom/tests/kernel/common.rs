@@ -110,7 +110,7 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
             return pass;
         }
         for job in jobs {
-            doc.clear_body_feature_errors(job.body);
+            doc.derived_mut().clear_body_feature_errors(job.body);
             let Ok(mut plan) = job.plan else { continue };
             let result = loop {
                 if plan.ops.is_empty() {
@@ -134,15 +134,26 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
                     Ok(result) => break Some(result),
                     Err(e) => {
                         let feature = *plan.op_features.get(e.op_index).expect("an op's feature");
-                        doc.set_feature_failure(feature, e.message.clone(), e.edges.clone());
+                        doc.derived_mut().set_feature_failure(
+                            feature,
+                            e.message.clone(),
+                            e.edges.clone(),
+                        );
                         plan.keep_before_failure(e.op_index);
                     }
                 }
             };
             let Some(result) = result else { continue };
-            doc.store_build_warnings(&plan.op_features, &plan.probes, &plan.projections, &result);
-            doc.store_probe_answers(&plan.probes, &result.probes);
-            doc.store_projections(&plan.projections, &result.projections);
+            doc.derived_mut().store_build_warnings(
+                &plan.op_features,
+                &plan.probes,
+                &plan.projections,
+                &result,
+            );
+            doc.derived_mut()
+                .store_probe_answers(&plan.probes, &result.probes);
+            doc.derived_mut()
+                .store_projections(&plan.projections, &result.projections);
             store_solid(doc, job.body, result);
         }
     }
@@ -173,7 +184,8 @@ pub fn edge_names(
 /// The volume of the solid `body` holds.
 pub fn body_volume(doc: &Document, body: BodyId) -> f64 {
     volume(
-        &doc.imported_brep_blob_arc(body)
+        &doc.derived()
+            .imported_brep_blob_arc(body)
             .expect("the body has a solid"),
     )
 }
@@ -212,8 +224,9 @@ pub fn registry() -> DocumentService {
 
 /// Store a built solid on `body` as the host does.
 pub fn store_solid(doc: &mut Document, body: BodyId, result: SolidBuildResult) {
-    doc.set_imported_brep_data(body, result.brep_blob, Vec::new());
-    doc.set_imported_geometry(
+    doc.derived_mut()
+        .set_imported_brep_data(body, result.brep_blob, Vec::new());
+    doc.derived_mut().set_imported_geometry(
         body,
         ImportedGeometry {
             mesh: std::sync::Arc::new(result.mesh),

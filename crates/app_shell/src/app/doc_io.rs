@@ -1033,6 +1033,7 @@ impl PrintCadApp {
     pub(crate) fn thumbnail_shapes(&self) -> Vec<doc_render::thumbnail::Shape> {
         let document = &self.session.document;
         document
+            .derived()
             .imported_geometries()
             .filter(|(id, _)| document.imported_body_saved_visible(**id))
             .map(|(id, geometry)| {

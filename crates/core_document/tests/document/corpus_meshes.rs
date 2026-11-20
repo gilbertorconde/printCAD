@@ -22,9 +22,12 @@ fn every_corpus_mesh_entry_reads() {
             let bytes = std::fs::read(&path).expect("read");
             let doc = Document::load_from_bytes(bytes).expect("load");
             for body in doc.bodies() {
-                for geom in [doc.imported_geometry(body.id), doc.mesh_start(body.id)]
-                    .into_iter()
-                    .flatten()
+                for geom in [
+                    doc.derived().imported_geometry(body.id),
+                    doc.mesh_start(body.id),
+                ]
+                .into_iter()
+                .flatten()
                 {
                     let Some(entry) = &geom.mesh_path else {
                         continue;

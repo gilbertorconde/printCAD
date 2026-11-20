@@ -326,9 +326,11 @@ impl Checker<'_> {
         let project = self.project;
         let document = &project.document;
         let geometry = document
+            .derived()
             .imported_geometry(body.body)
             .ok_or("the body has no solid")?;
         let blob = document
+            .derived()
             .imported_brep_blob(body.body)
             .ok_or("the body has no solid")?;
         Measures::of_blob(

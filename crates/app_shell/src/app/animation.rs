@@ -53,10 +53,10 @@ impl PrintCadApp {
                     .filter_map(|body| {
                         let mesh = match placements.iter().find(|(b, _)| b == body) {
                             Some((_, placement)) => {
-                                let (local, _) = document.local_geometry(*body)?;
+                                let (local, _) = document.derived().local_geometry(*body)?;
                                 Arc::new(placement.mesh(&local))
                             }
-                            None => Arc::clone(&document.imported_geometry(*body)?.mesh),
+                            None => Arc::clone(&document.derived().imported_geometry(*body)?.mesh),
                         };
                         Some(doc_render::thumbnail::preview_shape(document, *body, mesh))
                     })

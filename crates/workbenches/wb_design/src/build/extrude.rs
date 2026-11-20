@@ -386,6 +386,7 @@ pub(super) fn extrude_op(
 /// a start is a plane.
 pub(super) fn start_face_is_flat(document: &Document, feature: FeatureId) -> Result<(), String> {
     let answer = document
+        .derived()
         .probed_references(feature)
         .and_then(|probed| probed.answers.first());
     match answer {

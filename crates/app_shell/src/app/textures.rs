@@ -65,7 +65,7 @@ impl Pressing {
     /// source's textures find them there.
     pub(crate) fn of(document: &Document, body: BodyId, pictures: &mut Pictures) -> Option<Self> {
         let (textures, mirror) = textures_of(document, body)?;
-        let mesh = &document.imported_geometry(body)?.mesh;
+        let mesh = &document.derived().imported_geometry(body)?.mesh;
         let textures: Vec<Pressed> = textures
             .iter()
             .map(|t| Pressed {
@@ -168,16 +168,17 @@ pub(crate) struct PressedMeshes {
 /// document never gives twice.
 fn preview_key(document: &Document, body: BodyId, pressing: &Pressing) -> Option<u64> {
     use std::hash::{Hash, Hasher};
-    let (local, _) = document.local_geometry(body)?;
+    let (local, _) = document.derived().local_geometry(body)?;
     let owner = document
         .copy_source(body)
         .filter(|source| {
             document
+                .derived()
                 .local_geometry(*source)
                 .is_some_and(|(theirs, _)| Arc::ptr_eq(&local, &theirs))
         })
         .unwrap_or(body);
-    let revision = document.imported_geometry(owner)?.revision;
+    let revision = document.derived().imported_geometry(owner)?.revision;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (pressing.key, owner, revision).hash(&mut hasher);
     Some(hasher.finish())
@@ -223,7 +224,7 @@ impl crate::PrintCadApp {
             if pressed.making.contains_key(&key) || pressed.failed.contains(&key) {
                 continue;
             }
-            let Some((local, _)) = document.local_geometry(body) else {
+            let Some((local, _)) = document.derived().local_geometry(body) else {
                 continue;
             };
             let (tx, rx) = std::sync::mpsc::channel();
@@ -298,7 +299,8 @@ mod tests {
             faces: vec![0],
             ..TriMesh::default()
         };
-        doc.set_imported_geometry(body, crate::test_support::geometry(mesh));
+        doc.derived_mut()
+            .set_imported_geometry(body, crate::test_support::geometry(mesh));
         doc.set_body_textures(
             body,
             vec![FaceTexture {

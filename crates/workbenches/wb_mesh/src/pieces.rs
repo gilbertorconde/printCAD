@@ -71,6 +71,7 @@ pub(crate) fn split(
 ) -> Result<Vec<BodyId>, CommandError> {
     let (drawn, _) = ctx
         .document
+        .derived()
         .local_geometry(body)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let pieces = pieces(&drawn);

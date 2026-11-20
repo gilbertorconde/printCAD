@@ -281,7 +281,7 @@ impl SketchWorkbench {
             let now = self
                 .tab
                 .active_sketch_id
-                .and_then(|id| ctx.document.probed_references(id))
+                .and_then(|id| ctx.document.derived().probed_references(id))
                 .and_then(|probed| probed.answers.first())
                 .and_then(|answer| match answer {
                     Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }) => {

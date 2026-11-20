@@ -43,7 +43,7 @@ pub enum Snap {
 /// The surface of `body`'s face at `point` (in the body's frame): the
 /// face of the mesh triangle nearest it.
 pub fn face_surface(document: &Document, body: BodyId, point: V) -> Option<FaceSurface> {
-    let (mesh, _) = document.local_geometry(body)?;
+    let (mesh, _) = document.derived().local_geometry(body)?;
     let mut best = (f64::INFINITY, None);
     for (t, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         let c: V = std::array::from_fn(|k| {
@@ -74,6 +74,7 @@ pub fn fit_on_scan(
         return Err("that body is not a scan".into());
     }
     let (mesh, _) = document
+        .derived()
         .local_geometry(scan)
         .ok_or("the scan has no mesh")?;
     let scan_at = document.body_placement(scan);

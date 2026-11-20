@@ -37,7 +37,7 @@ pub(crate) fn picked_face(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option
 
 /// The surface of `body`'s face nearest `point`, in the body's frame.
 fn surface_at(document: &Document, body: BodyId, point: [f32; 3]) -> Option<FaceSurface> {
-    let (mesh, _) = document.local_geometry(body)?;
+    let (mesh, _) = document.derived().local_geometry(body)?;
     let p = glam::Vec3::from_array(point);
     let nearest = mesh
         .indices

@@ -200,7 +200,7 @@ pub(crate) fn thread_seat(
     else {
         return None;
     };
-    let (mesh, _) = document.local_geometry(body)?;
+    let (mesh, _) = document.derived().local_geometry(body)?;
     let cylinder = |t: usize| -> Option<([f64; 3], [f64; 3], f64)> {
         let index = *mesh.faces.get(t)? as usize;
         match mesh.face_surfaces.get(index)? {
@@ -355,7 +355,7 @@ pub(crate) fn copied_thread_seats(
     let features = super::design_features_of_body(document, body);
     let mut seen = Vec::new();
     let seats = seats_of(document, body, &features, id, &mut seen);
-    let Some((mesh, _)) = document.local_geometry(body) else {
+    let Some((mesh, _)) = document.derived().local_geometry(body) else {
         return seats;
     };
     seats

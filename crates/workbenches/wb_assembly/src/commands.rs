@@ -40,6 +40,7 @@ const FACING: &str = r#"
 /// a tenth more, in the world.
 pub(crate) fn copy_step(document: &core_document::Document, body: BodyId) -> Vec3 {
     let width = document
+        .derived()
         .imported_geometry(body)
         .and_then(|g| g.bounds())
         .map_or(20.0, |(lo, hi)| hi[0] - lo[0]);

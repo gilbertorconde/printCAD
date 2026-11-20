@@ -386,7 +386,7 @@ fn check_file(path: &Path) -> Result<(Value, usize), Failure> {
             .object(&body.shape_of)
             .and_then(|object| object.shape_file("Shape").ok())
             .and_then(|file| archive.shape(file).ok());
-        let geometry = project.document.imported_geometry(body.body);
+        let geometry = project.document.derived().imported_geometry(body.body);
         if let (Some(geometry), Some(saved)) = (geometry, saved) {
             let frame = parents
                 .placement(&source, &body.shape_of)
@@ -423,7 +423,7 @@ fn check_file(path: &Path) -> Result<(Value, usize), Failure> {
                     .ok()
                     .and_then(|p| p.volume_mm3)
             };
-            if let Some(blob) = project.document.imported_brep_blob(body.body) {
+            if let Some(blob) = project.document.derived().imported_brep_blob(body.body) {
                 entry["volume_mm3"] = json!(volume(blob, &mut kernel));
             }
             let read = project_archive::restate::restate(saved, frame)

@@ -363,9 +363,9 @@ impl DocumentService {
     pub fn evaluate(&self, document: &mut Document) {
         if !document.needs_evaluation() {
             // A build landed: the threads look at the solid it made.
-            if document.cosmetic_threads_stale() {
+            if document.derived().cosmetic_threads_stale() {
                 let threads = self.cosmetic_threads(document);
-                document.set_cosmetic_threads(threads);
+                document.derived_mut().set_cosmetic_threads(threads);
             }
             return;
         }
@@ -397,7 +397,7 @@ impl DocumentService {
             };
             let mut moved = owner.derive(node, &mut values, &values_of, document);
             if node.workbench_id.as_str() != crate::datum::DATUM_KIND
-                && let Some(probed) = document.probed_references(node.id)
+                && let Some(probed) = document.derived().probed_references(node.id)
             {
                 moved |= owner.derive_on_solid(node, &mut values, probed);
             }
@@ -407,7 +407,7 @@ impl DocumentService {
                 let own = node.body;
                 moved |= crate::datum::derive(
                     &mut values,
-                    document.probed_references(node.id),
+                    document.derived().probed_references(node.id),
                     &values_of,
                     &|other, plane| crate::datum::body_plane_in(document, own?, other, plane),
                 );
@@ -436,8 +436,8 @@ impl DocumentService {
         }
         document.apply_evaluation(evaluation);
         let threads = self.cosmetic_threads(document);
-        document.set_cosmetic_threads(threads);
-        document.feature_solids = document
+        document.derived_mut().set_cosmetic_threads(threads);
+        let solids = document
             .feature_tree()
             .all_nodes()
             .filter(|(_, node)| !node.suppressed)
@@ -449,6 +449,7 @@ impl DocumentService {
                 ))
             })
             .collect();
+        document.derived_mut().set_feature_solids(solids);
     }
 
     /// The cosmetic threads of every feature in its body's build, in
@@ -595,7 +596,9 @@ impl DocumentService {
                         .collect();
                     for feature in dirty {
                         document.clear_feature_dirty(feature);
-                        document.set_feature_error(feature, Some(message.clone()));
+                        document
+                            .derived_mut()
+                            .set_feature_error(feature, Some(message.clone()));
                     }
                 }
             }
@@ -702,7 +705,8 @@ impl DocumentService {
     ) -> Option<String> {
         let bench = self.owner_of(&node.workbench_id);
         let said = bench.and_then(|bench| bench.feature_warning(document, kernel, id));
-        let unchanged = node.unchanged.as_ref().map(|what| {
+        let built = document.derived();
+        let unchanged = built.unchanged(id).map(|what| {
             let kind = bench.map(|bench| bench.feature_info(node).kind_label);
             // A kind's label may carry a detail after a dot ("Hole · M6
             // thread"); the kind is what comes before it.
@@ -714,7 +718,7 @@ impl DocumentService {
                 .to_lowercase();
             format!("this {kind} {what}")
         });
-        let parts: Vec<String> = [said, unchanged, node.warning.clone()]
+        let parts: Vec<String> = [said, unchanged, built.warning(id).map(str::to_string)]
             .into_iter()
             .flatten()
             .collect();

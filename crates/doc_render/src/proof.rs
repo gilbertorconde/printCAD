@@ -532,7 +532,7 @@ pub fn picture_with_maps(
             }
             ids.into_iter()
                 .map(|id| {
-                    let geometry = document.imported_geometry(id).ok_or_else(|| {
+                    let geometry = document.derived().imported_geometry(id).ok_or_else(|| {
                         format!(
                             "body `{}` has no shape yet; run doc.rebuild first",
                             name_of(document, id)
@@ -543,6 +543,7 @@ pub fn picture_with_maps(
                 .collect::<Result<_, String>>()?
         }
         None => document
+            .derived()
             .imported_geometries()
             .filter(|(id, _)| document.imported_body_effective_visible(**id))
             .map(|(id, geometry)| (*id, shape_of(document, *id, &geometry.mesh)))
@@ -677,7 +678,7 @@ fn find_body(document: &Document, key: &str) -> Result<BodyId, String> {
     let bodies = document.bodies();
     if let Ok(uuid) = uuid::Uuid::parse_str(key) {
         let id = BodyId(uuid);
-        if bodies.iter().any(|b| b.id == id) || document.imported_geometry(id).is_some() {
+        if bodies.iter().any(|b| b.id == id) || document.derived().imported_geometry(id).is_some() {
             return Ok(id);
         }
     }
@@ -990,7 +991,9 @@ mod tests {
         for p in &mut mesh.positions {
             *p = p.map(|c| c * 10.0);
         }
-        document.set_imported_geometry(body, crate::test_support::geometry(mesh));
+        document
+            .derived_mut()
+            .set_imported_geometry(body, crate::test_support::geometry(mesh));
         (document, body)
     }
 

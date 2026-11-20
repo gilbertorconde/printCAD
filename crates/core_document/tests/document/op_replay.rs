@@ -305,12 +305,16 @@ fn removing_a_body_takes_its_features_and_its_geometry() {
     let kept = doc
         .add_feature_in_body(datum(BasePlane::XY), "Kept".into(), Some(keep))
         .expect("add");
-    doc.set_imported_geometry(body, geometry(Default::default()));
+    doc.derived_mut()
+        .set_imported_geometry(body, geometry(Default::default()));
 
     assert!(doc.remove_body(body));
     assert!(doc.bodies().iter().all(|b| b.id != body), "body gone");
     assert!(doc.get_feature_meta(feature).is_none(), "its features too");
-    assert!(doc.imported_geometry(body).is_none(), "and its geometry");
+    assert!(
+        doc.derived().imported_geometry(body).is_none(),
+        "and its geometry"
+    );
     assert!(
         doc.get_feature_meta(kept).is_some(),
         "other bodies untouched"

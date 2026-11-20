@@ -1359,8 +1359,8 @@ endsolid t
         let unbuilt = |registry: &DocumentService| {
             let mut document = made.clone();
             for body in document.bodies().iter().map(|b| b.id).collect::<Vec<_>>() {
-                document.remove_imported_geometry(body);
-                document.clear_body_feature_errors(body);
+                document.derived_mut().remove_imported_geometry(body);
+                document.derived_mut().clear_body_feature_errors(body);
             }
             registry.invalidate_all(&mut document);
             document
@@ -1433,7 +1433,10 @@ endsolid t
                 .bodies()
                 .iter()
                 .map(|b| {
-                    let mesh = document.imported_geometry(b.id).map(|g| g.mesh.clone());
+                    let mesh = document
+                        .derived()
+                        .imported_geometry(b.id)
+                        .map(|g| g.mesh.clone());
                     let mesh = mesh.map(|m| (m.positions.clone(), m.indices.clone()));
                     (b.name.clone(), mesh)
                 })
@@ -1441,7 +1444,15 @@ endsolid t
             let mut errors: Vec<_> = document
                 .feature_tree()
                 .all_nodes()
-                .map(|(_, n)| (n.name.clone(), n.error.clone(), n.warning.clone()))
+                .map(|(id, n)| {
+                    let built = document.derived();
+                    let said = |s: Option<&str>| s.map(str::to_string);
+                    (
+                        n.name.clone(),
+                        said(built.error(*id)),
+                        said(built.warning(*id)),
+                    )
+                })
                 .collect();
             errors.sort();
             (bodies, errors)

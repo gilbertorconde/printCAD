@@ -43,8 +43,8 @@ fn shared_mesh(
 ) -> Option<Arc<kernel_api::TriMesh>> {
     let entry = document.body(body)?;
     let source = entry.copy_of.filter(|_| entry.mirror.is_none())?;
-    let (own, _) = document.local_geometry(body)?;
-    let (theirs, _) = document.local_geometry(source)?;
+    let (own, _) = document.derived().local_geometry(body)?;
+    let (theirs, _) = document.derived().local_geometry(source)?;
     Arc::ptr_eq(&own, &theirs).then_some(own)
 }
 
@@ -1085,6 +1085,7 @@ impl PrintCadApp {
         self.session.selection.earlier_bodies.retain(|body| {
             Some(*body) != selected
                 && document
+                    .derived()
                     .imported_geometry(core_document::BodyId(*body))
                     .is_some()
                 && document.imported_body_effective_visible(core_document::BodyId(*body))
@@ -1205,7 +1206,7 @@ impl PrintCadApp {
             let Some(body) = imported_meshes.iter_mut().find(|b| b.id == map.body.0) else {
                 return false;
             };
-            let Some(geometry) = self.session.document.imported_geometry(map.body) else {
+            let Some(geometry) = self.session.document.derived().imported_geometry(map.body) else {
                 return false;
             };
             if map.values.len() != geometry.mesh.positions.len()
@@ -1548,6 +1549,7 @@ impl PrintCadApp {
         let resolved = self
             .session
             .document
+            .derived()
             .imported_geometry(core_document::BodyId(body))
             .and_then(|geometry| {
                 let face = crate::app::input::face_id_at_pick(
@@ -1664,7 +1666,7 @@ impl PrintCadApp {
 
     /// `body`'s bounds where it sits, millimetres in document axes.
     fn body_bounds(&mut self, body: core_document::BodyId) -> Option<([f32; 3], [f32; 3])> {
-        let geometry = self.session.document.imported_geometry(body)?;
+        let geometry = self.session.document.derived().imported_geometry(body)?;
         if let Some(bounds) = geometry.bounds_mm {
             return Some(bounds);
         }
@@ -1736,8 +1738,10 @@ mod tests {
             indices: vec![0, 1, 2],
             ..Default::default()
         });
-        doc.set_imported_geometry(body, crate::test_support::geometry(mesh));
-        doc.set_imported_brep_data(body, b"ogeom peg".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_geometry(body, crate::test_support::geometry(mesh));
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"ogeom peg".to_vec(), Vec::new());
         body
     }
 

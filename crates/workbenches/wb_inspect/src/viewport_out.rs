@@ -76,7 +76,7 @@ impl InspectionWorkbench {
         let scan = ctx.hovered_body_id.map(BodyId)?;
         let face = ctx.hovered_face?;
         let (_, values) = self.shown_map(ctx.document, scan)?;
-        let (mesh, _) = ctx.document.local_geometry(scan)?;
+        let (mesh, _) = ctx.document.derived().local_geometry(scan)?;
         let at = ctx
             .document
             .body_placement(scan)
@@ -385,7 +385,7 @@ impl InspectionWorkbench {
             if map != pin.map {
                 continue;
             }
-            let Some((mesh, _)) = document.local_geometry(pin.scan) else {
+            let Some((mesh, _)) = document.derived().local_geometry(pin.scan) else {
                 continue;
             };
             let text = pins::read(&mesh, &values, pin.at, READING_REACH).map_or_else(

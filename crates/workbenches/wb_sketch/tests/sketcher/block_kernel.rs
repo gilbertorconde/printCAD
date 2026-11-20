@@ -85,7 +85,8 @@ pub static BLOCK: BlockKernel = BlockKernel;
 /// A body standing for the block in `doc`, with a shape to project from.
 pub fn add_block(doc: &mut Document) -> BodyId {
     let body = doc.create_body(None);
-    doc.set_imported_brep_data(body, b"ogeom block".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(body, b"ogeom block".to_vec(), Vec::new());
     body
 }
 

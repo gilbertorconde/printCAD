@@ -826,7 +826,9 @@ impl DesignWorkbench {
                     .document
                     .bodies()
                     .iter()
-                    .find(|b| b.id != body && ctx.document.imported_brep_blob(b.id).is_some())
+                    .find(|b| {
+                        b.id != body && ctx.document.derived().imported_brep_blob(b.id).is_some()
+                    })
                     .map(|b| b.id)
                     .ok_or_else(|| {
                         given.say(

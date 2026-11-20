@@ -268,7 +268,10 @@ fn mixed_document_converts_and_checks_healthy_solids_with_explicit_dependency_lo
                 let body: core_document::BodyId =
                     serde_json::from_value(report["objects"][name]["Solid"]["body"].clone())
                         .unwrap();
-                assert!(loaded.imported_brep_blob(body).is_some(), "{name}");
+                assert!(
+                    loaded.derived().imported_brep_blob(body).is_some(),
+                    "{name}"
+                );
             }
         }
         let file = if command == "check" {

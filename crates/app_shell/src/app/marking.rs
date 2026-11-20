@@ -101,6 +101,7 @@ impl Marking {
     /// Whether `document` still gives the scan the mesh the flags number.
     pub fn holds(&self, document: &core_document::Document) -> bool {
         document
+            .derived()
             .local_geometry(self.body)
             .is_some_and(|(mesh, _)| Arc::ptr_eq(&mesh, &self.local))
     }
@@ -245,7 +246,7 @@ impl PrintCadApp {
     fn marking_for(&mut self, body: BodyId) -> Option<(&mut Marking, Arc<TriMesh>)> {
         self.settle_marking();
         let document = &self.session.document;
-        let mesh = Arc::clone(&document.imported_geometry(body)?.mesh);
+        let mesh = Arc::clone(&document.derived().imported_geometry(body)?.mesh);
         if self
             .session
             .tools
@@ -253,8 +254,8 @@ impl PrintCadApp {
             .as_ref()
             .is_none_or(|m| m.body != body)
         {
-            let (local, _) = document.local_geometry(body)?;
-            let revision = document.imported_geometry(body)?.revision;
+            let (local, _) = document.derived().local_geometry(body)?;
+            let revision = document.derived().imported_geometry(body)?.revision;
             self.session.tools.marking = Some(Marking::new(body, local, revision));
         }
         Some((self.session.tools.marking.as_mut()?, mesh))
@@ -267,7 +268,7 @@ impl PrintCadApp {
             return;
         };
         let document = &self.session.document;
-        let geometry = document.imported_geometry(marking.body);
+        let geometry = document.derived().imported_geometry(marking.body);
         match geometry {
             Some(geometry) if marking.holds(document) => {
                 if marking.revision != geometry.revision {
@@ -318,7 +319,7 @@ impl PrintCadApp {
             settings::ProjectionMode::Perspective
         )
         .then_some(view.eye);
-        let Some(geometry) = self.session.document.imported_geometry(arm.body) else {
+        let Some(geometry) = self.session.document.derived().imported_geometry(arm.body) else {
             return;
         };
         let triangles = covered(
@@ -350,6 +351,7 @@ impl PrintCadApp {
                 let (lo, hi) = self
                     .session
                     .document
+                    .derived()
                     .imported_geometry(arm.body)?
                     .mesh
                     .bounds()?;
@@ -383,6 +385,7 @@ impl PrintCadApp {
         (marking.any && marking.holds(document)).then(|| core_document::MarkedSurface {
             body: marking.body,
             revision: document
+                .derived()
                 .imported_geometry(marking.body)
                 .map_or(marking.revision, |g| g.revision),
             vertices: Arc::clone(&marking.marked),
@@ -398,7 +401,12 @@ impl PrintCadApp {
             .marking
             .as_ref()
             .filter(|m| m.body == arm.body && m.holds(&self.session.document))?;
-        let mesh = &self.session.document.imported_geometry(arm.body)?.mesh;
+        let mesh = &self
+            .session
+            .document
+            .derived()
+            .imported_geometry(arm.body)?
+            .mesh;
         Some(marking.counts(mesh))
     }
 
@@ -644,14 +652,16 @@ mod tests {
             face_colors_path: None,
             health: None,
         };
-        document.set_imported_geometry(scan, geometry.clone());
+        document
+            .derived_mut()
+            .set_imported_geometry(scan, geometry.clone());
         let mut journal = core_document::history::OpJournal::new(8);
         journal.note(&mut document);
-        let (local, _) = document.local_geometry(scan).unwrap();
+        let (local, _) = document.derived().local_geometry(scan).unwrap();
         let marking = Marking::new(
             scan,
             local,
-            document.imported_geometry(scan).unwrap().revision,
+            document.derived().imported_geometry(scan).unwrap().revision,
         );
         let moved = core_document::BodyPlacement::new(glam::Quat::IDENTITY, Vec3::X);
         document.set_body_placement(scan, moved);
@@ -660,7 +670,9 @@ mod tests {
         journal.undo(&mut document);
         assert!(marking.holds(&document), "moved back");
         let mesh = Arc::new((*geometry.mesh).clone());
-        document.set_imported_geometry(scan, core_document::ImportedGeometry { mesh, ..geometry });
+        document
+            .derived_mut()
+            .set_imported_geometry(scan, core_document::ImportedGeometry { mesh, ..geometry });
         assert!(!marking.holds(&document), "a new mesh");
     }
 }

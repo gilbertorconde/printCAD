@@ -1988,7 +1988,7 @@ impl BenchBuild for SketchWorkbench {
         let Ok(mut feature) = SketchFeature::from_json(values) else {
             return false;
         };
-        let built = document.projected_references(node.id);
+        let built = document.derived().projected_references(node.id);
         let groups: Vec<_> = crate::sketch::external_groups(&feature.sketch)
             .into_iter()
             .filter(|(source, _)| source.reference.is_none())
@@ -2775,7 +2775,7 @@ mod scan_section {
             core_document::AssetType::Stl,
             serde_json::Value::Null,
         ));
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             scan,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(kernel_api::TriMesh {

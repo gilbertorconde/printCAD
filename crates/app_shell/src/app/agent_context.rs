@@ -515,7 +515,7 @@ impl PrintCadApp {
                     // Whether the body has a shape built, solid or surfaces
                     // (doc.measure gives a volume for solids only), and
                     // whether it is a mesh taking no features.
-                    "built": document.imported_geometry(b.id).is_some(),
+                    "built": document.derived().imported_geometry(b.id).is_some(),
                     "mesh": document.is_mesh_body(b.id),
                 })
             })
@@ -524,8 +524,9 @@ impl PrintCadApp {
             .feature_tree()
             .all_nodes()
             .filter_map(|(id, n)| {
-                n.error
-                    .as_ref()
+                document
+                    .derived()
+                    .error(*id)
                     .map(|e| json!({"feature": id.0.to_string(), "name": n.name, "error": e}))
             })
             .collect();

@@ -268,6 +268,7 @@ fn fit_free_args(
     let turn = a.opt_number("turn_deg")?.unwrap_or(8.0);
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let scan_at = ctx.document.body_placement(scan);
@@ -374,6 +375,7 @@ fn fit_scan_args(
     };
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let kernel = ctx

@@ -55,6 +55,7 @@ pub(crate) fn key(document: &Document, plane: &SketchPlane) -> Option<u64> {
     for b in bodies {
         b.0.hash(&mut h);
         document
+            .derived()
             .imported_geometry(b)
             .map(|g| g.revision)
             .hash(&mut h);
@@ -72,7 +73,7 @@ pub(crate) fn chains(
 ) -> Vec<Chain2> {
     let mut out = Vec::new();
     for body in scans(document) {
-        let Some((mesh, _)) = document.local_geometry(body) else {
+        let Some((mesh, _)) = document.derived().local_geometry(body) else {
             continue;
         };
         let local = crate::placed_plane(plane, &document.body_placement(body).inverse());

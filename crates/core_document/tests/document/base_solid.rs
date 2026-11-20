@@ -15,8 +15,9 @@ fn imported_body(doc: &mut Document) -> BodyId {
         source_asset: Some(uuid::Uuid::new_v4()),
         ..geometry(triangle())
     };
-    doc.set_imported_geometry(body, from_a_file);
-    doc.set_imported_brep_data(body, BLOB.to_vec(), vec![[0.5, 0.5, 0.5]]);
+    doc.derived_mut().set_imported_geometry(body, from_a_file);
+    doc.derived_mut()
+        .set_imported_brep_data(body, BLOB.to_vec(), vec![[0.5, 0.5, 0.5]]);
     body
 }
 
@@ -36,13 +37,14 @@ fn a_kept_base_is_the_body_s_start_and_dropping_it_puts_it_back() {
     assert!(!doc.set_body_base(body, true), "kept once");
 
     // What the history builds replaces what is drawn, not the base.
-    doc.set_imported_brep_data(body, b"ogeom built".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(body, b"ogeom built".to_vec(), Vec::new());
     assert_eq!(doc.base_brep_blob(body), Some(BLOB));
 
     assert!(doc.set_body_base(body, false));
     assert!(!doc.has_base_solid(body));
     assert_eq!(
-        doc.imported_brep_blob(body),
+        doc.derived().imported_brep_blob(body),
         Some(BLOB),
         "the base is its shape again"
     );
@@ -73,7 +75,7 @@ fn keeping_a_base_is_one_undo_step_and_replays_on_a_peer() {
 
     assert!(journal.undo(&mut doc).is_some());
     assert!(!doc.has_base_solid(body));
-    assert_eq!(doc.imported_brep_blob(body), Some(BLOB));
+    assert_eq!(doc.derived().imported_brep_blob(body), Some(BLOB));
     assert!(journal.redo(&mut doc).is_some());
     assert!(doc.has_base_solid(body));
 }
@@ -83,12 +85,16 @@ fn a_base_is_saved_and_read_back() {
     let mut doc = Document::new("t");
     let body = imported_body(&mut doc);
     doc.set_body_base(body, true);
-    doc.set_imported_brep_data(body, b"ogeom built".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(body, b"ogeom built".to_vec(), Vec::new());
     let back = reloaded(&mut doc);
     assert!(back.has_base_solid(body));
     assert_eq!(back.base_brep_blob(body), Some(BLOB));
     assert_eq!(back.base_face_colors(body), Some(&[[0.5, 0.5, 0.5]][..]));
-    assert_eq!(back.imported_brep_blob(body), Some(&b"ogeom built"[..]));
+    assert_eq!(
+        back.derived().imported_brep_blob(body),
+        Some(&b"ogeom built"[..])
+    );
 }
 
 #[test]
@@ -113,9 +119,9 @@ fn a_replaced_shape_waits_on_its_asset_until_derived_on_every_replica() {
     assert_eq!(peer.bodies_awaiting_shape(), [(body, asset)]);
 
     // Once derived from that asset, nothing waits.
-    let mut read = doc.imported_geometry(body).unwrap().clone();
+    let mut read = doc.derived().imported_geometry(body).unwrap().clone();
     read.source_asset = Some(asset);
-    doc.set_imported_geometry(body, read);
+    doc.derived_mut().set_imported_geometry(body, read);
     assert!(doc.bodies_awaiting_shape().is_empty());
 
     // A based body takes the new shape as its base.
@@ -124,7 +130,8 @@ fn a_replaced_shape_waits_on_its_asset_until_derived_on_every_replica() {
     let (_, newer) = doc.bodies_awaiting_shape()[0];
     let mut read = doc.base_geometry(body).unwrap().clone();
     read.source_asset = Some(newer);
-    doc.set_base_solid(body, read, b"ogeom newer".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_base_solid(body, read, b"ogeom newer".to_vec(), Vec::new());
     assert!(doc.bodies_awaiting_shape().is_empty());
     assert_eq!(doc.base_brep_blob(body), Some(&b"ogeom newer"[..]));
 }

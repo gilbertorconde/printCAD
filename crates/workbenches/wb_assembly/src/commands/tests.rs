@@ -330,8 +330,10 @@ fn perpendicular_faces_start_parallel_and_end_square() {
 fn a_part_is_marked_bought_and_given_a_column() {
     let mut doc = Document::new("t");
     let (a, b) = (doc.create_body(Some("Screw".into())), doc.create_body(None));
-    doc.set_imported_brep_data(a, b"screw".to_vec(), Vec::new());
-    doc.set_imported_brep_data(b, b"screw".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(a, b"screw".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(b, b"screw".to_vec(), Vec::new());
     call(
         &mut doc,
         "asm.part",
@@ -408,8 +410,10 @@ fn a_replacement_takes_the_joints_on_its_own_faces() {
             None,
         )
     };
-    doc.set_imported_geometry(old, with_bottom(0.0));
-    doc.set_imported_geometry(new, with_bottom(2.0));
+    doc.derived_mut()
+        .set_imported_geometry(old, with_bottom(0.0));
+    doc.derived_mut()
+        .set_imported_geometry(new, with_bottom(2.0));
     doc.set_body_placement(old, at(0.0, 0.0, 30.0));
     join(
         &mut doc,
@@ -594,7 +598,8 @@ fn a_path_and_a_cam_hold_to_the_other_body_s_edge_and_face() {
         edge_ids: vec![4, 4],
         ..kernel_api::TriMesh::default()
     };
-    doc.set_imported_geometry(b, imported(mesh, None));
+    doc.derived_mut()
+        .set_imported_geometry(b, imported(mesh, None));
     doc.set_body_placement(a, at(18.0, 6.0, 15.0));
     join(
         &mut doc,

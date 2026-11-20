@@ -139,6 +139,7 @@ pub fn layout_key(document: &Document, parts: &[PrintPart], settings: &LayoutSet
             body.hash(&mut hasher);
             document.body_print_rest(*body).hash(&mut hasher);
             document
+                .derived()
                 .imported_geometry(*body)
                 .map(|g| g.revision)
                 .hash(&mut hasher);
@@ -177,6 +178,7 @@ pub fn lay_out(document: &Document, parts: &[PrintPart], settings: &LayoutSettin
         };
         let rest = document.body_print_rest(*body);
         let Some((lying, found)) = document
+            .derived()
             .local_geometry(*body)
             .filter(|(mesh, _)| !mesh.indices.is_empty())
             .map(|(mesh, _)| lying_of(&mesh, rest))
@@ -531,7 +533,7 @@ fn convex_hull(points: &[DVec2]) -> Vec<DVec2> {
 
 /// A piece's mesh where the layout puts it, from its body's own mesh.
 pub fn piece_mesh(document: &Document, piece: &Piece) -> Option<Arc<TriMesh>> {
-    let (local, _) = document.local_geometry(piece.body)?;
+    let (local, _) = document.derived().local_geometry(piece.body)?;
     Some(Arc::new(piece.placement.mesh(&local)))
 }
 
@@ -610,7 +612,9 @@ mod tests {
         let mut bodies = Vec::new();
         for (name, mesh) in meshes {
             let body = document.create_body(Some((*name).into()));
-            document.set_imported_geometry(body, crate::test_support::geometry(mesh.clone()));
+            document
+                .derived_mut()
+                .set_imported_geometry(body, crate::test_support::geometry(mesh.clone()));
             bodies.push(body);
         }
         (document, bodies)

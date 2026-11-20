@@ -150,7 +150,7 @@ fn a_cosmetic_thread_draws_a_helix_down_the_bore() {
         .register_workbench(Box::new(crate::DesignWorkbench::default()))
         .unwrap();
     registry.evaluate(&mut doc);
-    let threads = doc.cosmetic_threads();
+    let threads = doc.derived().cosmetic_threads();
     assert_eq!(threads.len(), 1, "{threads:?}");
     let thread = &threads[0];
     assert_eq!((thread.feature, thread.body), (id, body));
@@ -160,7 +160,10 @@ fn a_cosmetic_thread_draws_a_helix_down_the_bore() {
     assert!((thread.radius - f64::from(hole_diameter(&hole)) * 0.5).abs() < 1e-9);
     doc.set_feature_suppressed(id, true);
     registry.evaluate(&mut doc);
-    assert!(doc.cosmetic_threads().is_empty(), "a suppressed hole");
+    assert!(
+        doc.derived().cosmetic_threads().is_empty(),
+        "a suppressed hole"
+    );
 }
 
 /// A mirror or a pattern threads its copies of a threaded hole, across
@@ -289,7 +292,7 @@ fn a_cosmetic_thread_through_all_stops_where_the_hole_leaves_the_solid() {
         }
     };
     for bored in [true, false] {
-        doc.set_imported_geometry(body, plate(bored));
+        doc.derived_mut().set_imported_geometry(body, plate(bored));
         for thread_depth in [0.0, 30.0] {
             let lines = cosmetic_thread_lines(&doc, Some(body), &hole(thread_depth));
             assert!(!lines.positions.is_empty());

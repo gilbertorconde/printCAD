@@ -39,6 +39,7 @@ impl Cuts {
     pub(crate) fn middle(document: &Document, body: BodyId, axis: usize) -> Cuts {
         let plane = [MirrorPlane::YZ, MirrorPlane::XZ, MirrorPlane::XY][axis];
         let offset = document
+            .derived()
             .local_geometry(body)
             .and_then(|(mesh, bounds)| bounds.or_else(|| mesh.bounds()))
             .map(|(lo, hi)| (lo[axis] + hi[axis]) / 2.0)
@@ -241,6 +242,7 @@ pub(crate) fn section_body(
     }
     let blob = ctx
         .document
+        .derived()
         .imported_brep_blob(source)
         .ok_or("the body has no solid to cut yet; build it first")?
         .to_vec();

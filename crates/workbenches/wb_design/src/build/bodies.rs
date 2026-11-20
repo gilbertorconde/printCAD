@@ -36,6 +36,7 @@ pub(super) fn plan_body(
                 return Err(fail("a clone can only be a body's first feature".into()));
             }
             let brep = document
+                .derived()
                 .imported_brep_blob(*source)
                 .ok_or_else(|| {
                     fail("the source body has no built solid yet (build it first)".into())
@@ -111,6 +112,7 @@ pub(super) fn plan_body(
                     ));
                 }
                 let tool_brep = document
+                    .derived()
                     .imported_brep_blob(*tool_body)
                     .ok_or_else(|| {
                         fail("the tool body has no built solid yet (build it first)".into())

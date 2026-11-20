@@ -42,7 +42,8 @@ fn datum(shape: DatumShape, attachment: DatumAttachment) -> DatumFeature {
 /// of `body`'s solid.
 fn settle(registry: &DocumentService, doc: &mut Document, body: BodyId) -> ([f32; 3], [f32; 3]) {
     settle_as_host(registry, doc);
-    doc.imported_geometry(body)
+    doc.derived()
+        .imported_geometry(body)
         .and_then(|g| g.bounds_mm)
         .expect("the body has a solid")
 }
@@ -137,10 +138,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
         (max[1] - 11.0).abs() < 1e-3,
         "the pad followed the plane: {max:?}"
     );
-    assert!(
-        doc.get_feature_meta(tangent).unwrap().error.is_none(),
-        "the face was found"
-    );
+    assert!(doc.derived().error(tangent).is_none(), "the face was found");
 }
 
 /// A point at a rim's centre and a coordinate system on the centre of mass
@@ -200,7 +198,7 @@ fn centres_follow_the_solid_they_are_found_on() {
         "{:?}",
         frame_of(&doc, rim)
     );
-    assert!(doc.get_feature_meta(rim).unwrap().error.is_none());
+    assert!(doc.derived().error(rim).is_none());
 
     // Flatter: the centre of mass drops, and the axis of the least moment
     // turns from the cylinder's own to a diameter.
@@ -301,8 +299,8 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
     assert!(
         near(frame.origin, [1.0, 0.0, 10.0]),
         "followed: {frame:?} {:?} {:?}",
-        doc.get_feature_meta(axis).unwrap().error,
-        doc.probed_references(axis)
+        doc.derived().error(axis),
+        doc.derived().probed_references(axis)
     );
     let want = cylinder_volume + PI * (49.0 - 16.0) * 2.0;
     let got = body_volume(&doc, body);
@@ -325,7 +323,7 @@ fn picked_face(
     point: [f32; 3],
     normal: [f32; 3],
 ) -> core_document::FaceRef {
-    let mesh = &doc.imported_geometry(body).expect("a solid").mesh;
+    let mesh = &doc.derived().imported_geometry(body).expect("a solid").mesh;
     let dot = |a: [f32; 3], b: [f32; 3]| (0..3).map(|i| a[i] * b[i]).sum::<f32>();
     let id = mesh
         .face_surfaces
@@ -346,7 +344,7 @@ fn picked_face(
 
 /// The heights of the flat faces of `body`'s mesh that face up.
 fn upward_floors(doc: &Document, body: BodyId) -> Vec<f32> {
-    let mesh = &doc.imported_geometry(body).unwrap().mesh;
+    let mesh = &doc.derived().imported_geometry(body).unwrap().mesh;
     let mut heights: Vec<f32> = mesh
         .face_surfaces
         .iter()
@@ -444,7 +442,8 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
     settle(&registry, &mut doc, body);
     let warning = |doc: &Document| {
         let node = doc.get_feature_meta(id).unwrap();
-        assert!(node.error.is_none(), "{:?}", node.error);
+        let error = doc.derived().error(id);
+        assert!(error.is_none(), "{error:?}");
         registry.feature_warning(doc, None, id, node)
     };
     assert_eq!(warning(&doc), None);
@@ -689,7 +688,7 @@ fn a_midplane_stays_halfway_between_the_faces_it_was_made_from() {
     );
     assert!(near(frame.normal, [0.0, 0.0, 1.0]), "{frame:?}");
     assert!(
-        doc.get_feature_meta(middle).unwrap().error.is_none(),
+        doc.derived().error(middle).is_none(),
         "both faces were found"
     );
 }

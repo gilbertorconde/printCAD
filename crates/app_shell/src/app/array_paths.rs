@@ -109,6 +109,7 @@ fn frames_of(
         }
         PathSource::Edge { body, point } => {
             let blob = document
+                .derived()
                 .imported_brep_blob(body)
                 .ok_or("the body has no solid to take an edge from")?;
             let frames = kernel

@@ -406,6 +406,7 @@ pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<Kernel
         .get(r.index)
         .ok_or("the borrow has no such face; pick it again")?;
     let shape = document
+        .derived()
         .imported_brep_blob(source)
         .ok_or("the body it borrows from has no solid yet")?
         .to_vec();
@@ -461,6 +462,7 @@ pub(crate) fn kernel_edges(
     }
     let source = live_solid_source(document, &borrow)?;
     let shape = document
+        .derived()
         .imported_brep_blob(source)
         .ok_or("the body it borrows from has no solid yet")?
         .to_vec();
@@ -504,6 +506,7 @@ pub(crate) fn edge(document: &Document, r: &BorrowedRef) -> Result<EdgePick, Str
         .get(r.index)
         .ok_or("the borrow has no such edge; pick it again")?;
     let (mesh, _) = document
+        .derived()
         .local_geometry(source)
         .ok_or("the body it borrows from has no solid yet")?;
     let found =
@@ -558,7 +561,7 @@ pub(crate) fn seen(document: &Document, borrow: &Borrow) -> (Vec<SeenFace>, Vec<
     else {
         return (Vec::new(), Vec::new());
     };
-    let Some((mesh, _)) = document.local_geometry(*source) else {
+    let Some((mesh, _)) = document.derived().local_geometry(*source) else {
         return (Vec::new(), Vec::new());
     };
     let placement = borrow
@@ -665,6 +668,7 @@ pub fn freeze(
         }
         BorrowSource::Solid { body, faces, edges } => {
             let (mesh, _) = document
+                .derived()
                 .local_geometry(*body)
                 .ok_or("the body it borrows from has no solid yet")?;
             let placement = relative(document, using, Some(*body));
@@ -672,6 +676,7 @@ pub fn freeze(
             if !faces.is_empty() {
                 let kernel = kernel.ok_or("freezing faces needs the geometry kernel")?;
                 let brep = document
+                    .derived()
                     .imported_brep_blob(*body)
                     .ok_or("the body it borrows from has no solid yet")?;
                 for pick in faces {
@@ -733,6 +738,7 @@ pub(crate) fn inputs(document: &Document, using: BodyId, source: &BorrowSource) 
             .map(core_document::data_revision)
             .hash(&mut hasher),
         BorrowSource::Solid { body, .. } => document
+            .derived()
             .imported_geometry(*body)
             .map(|g| g.revision)
             .hash(&mut hasher),
@@ -1027,7 +1033,7 @@ pub(crate) fn face_name_at(
     body: BodyId,
     point: [f32; 3],
 ) -> kernel_api::TopoName {
-    let Some((mesh, _)) = document.local_geometry(body) else {
+    let Some((mesh, _)) = document.derived().local_geometry(body) else {
         return 0;
     };
     let count = mesh.indices.len() / 3;

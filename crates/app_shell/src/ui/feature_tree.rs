@@ -1222,7 +1222,12 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
 
 /// A feature row's tooltip: what the feature is ("Hole · M6 thread") when
 /// its bench says more than the family, the family, then its state.
-fn feature_tooltip(node: &FeatureNode, info: &FeatureInfo, after_tip: bool) -> String {
+fn feature_tooltip(
+    node: &FeatureNode,
+    error: Option<&str>,
+    info: &FeatureInfo,
+    after_tip: bool,
+) -> String {
     let mut parts = Vec::new();
     if info.kind_label != info.family_label {
         parts.push(info.kind_label.clone());
@@ -1236,7 +1241,7 @@ fn feature_tooltip(node: &FeatureNode, info: &FeatureInfo, after_tip: bool) -> S
     if after_tip {
         parts.push("After the tip: excluded from the build".into());
     }
-    if let Some(error) = &node.error {
+    if let Some(error) = error {
         parts.push(format!("Error: {error}"));
     }
     parts.join("\n")
@@ -1245,7 +1250,7 @@ fn feature_tooltip(node: &FeatureNode, info: &FeatureInfo, after_tip: bool) -> S
 /// A scan row's tip: what it is and how dense, from its mesh.
 fn scan_tip(document: &Document, body: BodyId) -> String {
     let mut tip = "A scan: the measured part inspection and mesh editing work on".to_string();
-    if let Some(mesh) = document.imported_geometry(body).map(|g| &g.mesh) {
+    if let Some(mesh) = document.derived().imported_geometry(body).map(|g| &g.mesh) {
         let facts = crate::app::scans::mesh_facts(mesh);
         tip.push_str(&format!(
             "\n{} triangles, {} points, {:.3} mm between points (median)",
@@ -1641,8 +1646,10 @@ mod tests {
         let failed = add(&mut doc, "Failed", Vec::new());
         let reader = add(&mut doc, "Reader", vec![failed]);
         let later = add(&mut doc, "Later", Vec::new());
-        doc.set_feature_error(failed, Some("the cut misses the solid".into()));
-        doc.set_feature_error(later, Some("not built: `Failed` before it fails".into()));
+        doc.derived_mut()
+            .set_feature_error(failed, Some("the cut misses the solid".into()));
+        doc.derived_mut()
+            .set_feature_error(later, Some("not built: `Failed` before it fails".into()));
         let mut registry = DocumentService::default();
         registry.register_workbench(Box::new(Bench)).unwrap();
         let tree = DocumentTree::build(&doc, &registry);
@@ -1729,7 +1736,8 @@ mod tests {
                 broken: broken_count,
                 ..Default::default()
             };
-            doc.set_imported_geometry(body, imported(asset, Some(health)));
+            doc.derived_mut()
+                .set_imported_geometry(body, imported(asset, Some(health)));
         }
         let root = Uuid::new_v4();
         let (broken_leaf, sound_leaf) = (Uuid::new_v4(), Uuid::new_v4());
@@ -1798,7 +1806,8 @@ mod tests {
             ),
             b"solid".to_vec(),
         );
-        doc.set_imported_geometry(mesh, imported(asset, None));
+        doc.derived_mut()
+            .set_imported_geometry(mesh, imported(asset, None));
         let row = |doc: &Document| {
             let tree = self::tree(doc);
             let node = body_row(&tree, mesh);
@@ -1822,12 +1831,14 @@ mod tests {
 
         // The solid lands with its curved areas as facets: the row says so
         // and offers the refine, once.
-        doc.set_imported_brep_data(mesh, b"ogeom".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(mesh, b"ogeom".to_vec(), Vec::new());
         let health = kernel_api::ShapeHealth {
             faceted: true,
             ..Default::default()
         };
-        doc.set_imported_geometry(mesh, imported(asset, Some(health)));
+        doc.derived_mut()
+            .set_imported_geometry(mesh, imported(asset, Some(health)));
         let faceted = |doc: &Document| {
             let tree = self::tree(doc);
             let node = body_row(&tree, mesh);

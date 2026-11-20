@@ -81,13 +81,14 @@ fn body_colors(document: &core_document::Document, body: core_document::BodyId) 
     let entry = document.body(body);
     let own = entry.and_then(|b| b.display).unwrap_or_default().color;
     let mut faces: Vec<(u32, [f32; 3])> = document
+        .derived()
         .imported_brep_face_colors(body)
         .unwrap_or_default()
         .iter()
         .enumerate()
         .map(|(i, c)| (i as u32, *c))
         .collect();
-    if let (Some(entry), Some((mesh, _))) = (entry, document.local_geometry(body)) {
+    if let (Some(entry), Some((mesh, _))) = (entry, document.derived().local_geometry(body)) {
         let count = mesh.faces.iter().max().map_or(0, |m| m + 1);
         for index in 0..count {
             if let Some(c) = entry.face_colors.iter().find(|c| c.is_face(&mesh, index)) {
@@ -105,7 +106,7 @@ fn body_colors(document: &core_document::Document, body: core_document::BodyId) 
 /// naming that face, then a callout of each cosmetic thread, its
 /// designation at its bore's mouth, naming the bore.
 fn body_notes(document: &core_document::Document, body: core_document::BodyId) -> Vec<ExportNote> {
-    let local = document.local_geometry(body);
+    let local = document.derived().local_geometry(body);
     let mesh = local.as_ref().map(|(mesh, _)| mesh.as_ref());
     let notes = document
         .body_notes(body)
@@ -122,7 +123,7 @@ fn body_notes(document: &core_document::Document, body: core_document::BodyId) -
                 faces: note.face.map(|_| at.map(f64::from)).into_iter().collect(),
             }
         });
-    let threads = document.body_threads(body).map(|thread| {
+    let threads = document.derived().body_threads(body).map(|thread| {
         let (at, label) = thread.leader();
         ExportNote {
             body: 0,
@@ -843,8 +844,8 @@ fn layout_bodies(
             let pressing = textured
                 .then(|| crate::app::textures::Pressing::of(document, piece.body, &mut pictures))
                 .flatten();
-            let brep = document.imported_brep_blob_arc(piece.body);
-            let (local, _) = document.local_geometry(piece.body)?;
+            let brep = document.derived().imported_brep_blob_arc(piece.body);
+            let (local, _) = document.derived().local_geometry(piece.body)?;
             if local.indices.is_empty() {
                 return None;
             }
@@ -1158,6 +1159,7 @@ fn bodies_to_export(
 ) -> Vec<OwnedBody> {
     let mut pictures = crate::app::textures::Pictures::new();
     let mut out: Vec<(usize, OwnedBody)> = document
+        .derived()
         .imported_geometries()
         .filter(|(id, geometry)| !geometry.mesh.indices.is_empty() && take(**id))
         .map(|(id, geometry)| {
@@ -1176,7 +1178,7 @@ fn bodies_to_export(
                 OwnedBody {
                     body: *id,
                     name,
-                    brep: document.imported_brep_blob_arc(*id),
+                    brep: document.derived().imported_brep_blob_arc(*id),
                     transform: {
                         let placement = document.body_placement(*id);
                         (!placement.is_identity()).then(|| placement.rows())
@@ -1268,8 +1270,10 @@ mod tests {
             })
             .map(|(_, f)| *f)
             .unwrap();
-        doc.set_imported_geometry(body, crate::test_support::geometry(Arc::clone(&mesh)));
-        doc.set_imported_brep_data(body, built.brep_blob, Vec::new());
+        doc.derived_mut()
+            .set_imported_geometry(body, crate::test_support::geometry(Arc::clone(&mesh)));
+        doc.derived_mut()
+            .set_imported_brep_data(body, built.brep_blob, Vec::new());
         if textured {
             doc.set_body_textures(
                 body,
@@ -1512,9 +1516,9 @@ mod tests {
                     local.normal.map(f64::from),
                 )
                 .unwrap();
-            assert!(doc.set_mirrored_shape(id, &from, blob));
+            assert!(doc.derived_mut().set_mirrored_shape(id, &from, blob));
         }
-        assert!(doc.imported_brep_blob_arc(copy).is_some());
+        assert!(doc.derived().imported_brep_blob_arc(copy).is_some());
 
         let exported = export(&doc, ExportFormat::Stl, None);
         assert_eq!(exported.written, 2);
@@ -1540,14 +1544,15 @@ mod tests {
                 glam::Vec3::new(100.0, 0.0, 0.0),
             ),
         );
-        doc.set_cosmetic_threads(vec![core_document::ThreadCallout {
-            feature: core_document::FeatureId::new(),
-            body,
-            designation: "M6".into(),
-            mouth: [5.0, 5.0, 10.0],
-            axis: [0.0, 0.0, -1.0],
-            radius: 2.5,
-        }]);
+        doc.derived_mut()
+            .set_cosmetic_threads(vec![core_document::ThreadCallout {
+                feature: core_document::FeatureId::new(),
+                body,
+                designation: "M6".into(),
+                mouth: [5.0, 5.0, 10.0],
+                axis: [0.0, 0.0, -1.0],
+                radius: 2.5,
+            }]);
         struct Bench;
         impl core_document::Workbench for Bench {
             fn descriptor(&self) -> core_document::WorkbenchDescriptor {
@@ -1605,7 +1610,7 @@ mod tests {
         let text = String::from_utf8(exported.bytes).unwrap();
         assert!(text.contains("FLATNESS_TOLERANCE("));
         assert!(text.contains("DRAUGHTING_CALLOUT('M6 thread'"), "{text}");
-        let (at, _) = doc.cosmetic_threads()[0].leader();
+        let (at, _) = doc.derived().cosmetic_threads()[0].leader();
         let rim = format!("({:?},", f64::from(at[0]) + 100.0);
         let list = text
             .lines()
@@ -1774,7 +1779,8 @@ mod tests {
         };
         for (name, x) in [("Left", 0.0), ("Right", 50.0)] {
             let body = doc.create_body(Some(name.into()));
-            doc.set_imported_geometry(body, crate::test_support::geometry(tetra(x)));
+            doc.derived_mut()
+                .set_imported_geometry(body, crate::test_support::geometry(tetra(x)));
         }
         let folder = std::env::temp_dir().join(format!("export-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&folder).unwrap();

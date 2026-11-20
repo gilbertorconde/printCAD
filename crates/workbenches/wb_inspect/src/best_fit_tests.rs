@@ -13,7 +13,7 @@ fn scene() -> (Document, BodyId, BodyId) {
             indices: vec![0, 1, 2],
             ..Default::default()
         };
-        document.set_imported_geometry(
+        document.derived_mut().set_imported_geometry(
             id,
             core_document::ImportedGeometry {
                 mesh: Arc::new(mesh),
@@ -34,9 +34,9 @@ fn scene() -> (Document, BodyId, BodyId) {
         core_document::AssetType::Stl,
         serde_json::json!({}),
     ));
-    let mut geometry = document.imported_geometry(scan).unwrap().clone();
+    let mut geometry = document.derived().imported_geometry(scan).unwrap().clone();
     geometry.source_asset = Some(asset);
-    document.set_imported_geometry(scan, geometry);
+    document.derived_mut().set_imported_geometry(scan, geometry);
     assert!(document.set_body_scan(scan, Some(Default::default())));
     (document, scan, reference)
 }
@@ -89,9 +89,9 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
         match edit {
             1 => document.set_body_placement(scan, moved),
             2 => {
-                let mut geometry = document.imported_geometry(scan).unwrap().clone();
+                let mut geometry = document.derived().imported_geometry(scan).unwrap().clone();
                 geometry.mesh = Arc::new((*geometry.mesh).clone());
-                document.set_imported_geometry(scan, geometry);
+                document.derived_mut().set_imported_geometry(scan, geometry);
             }
             _ => {}
         }

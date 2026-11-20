@@ -225,8 +225,11 @@ impl SurfaceWorkbench {
             return Vec::new();
         };
         let (Some(brep), Some(revision)) = (
-            ctx.document.imported_brep_blob(on),
-            ctx.document.imported_geometry(on).map(|g| g.revision),
+            ctx.document.derived().imported_brep_blob(on),
+            ctx.document
+                .derived()
+                .imported_geometry(on)
+                .map(|g| g.revision),
         ) else {
             return Vec::new();
         };
@@ -322,6 +325,7 @@ impl SurfaceWorkbench {
     ) -> Result<(), String> {
         let brep = ctx
             .document
+            .derived()
             .imported_brep_blob(body)
             .ok_or("The body has no shape to check yet")?;
         let kernel = ctx.kernel.ok_or("No geometry kernel to measure with")?;
@@ -351,7 +355,7 @@ impl SurfaceWorkbench {
         body: BodyId,
         display: analysis::Display,
     ) -> Result<(), String> {
-        if ctx.document.imported_geometry(body).is_none() {
+        if ctx.document.derived().imported_geometry(body).is_none() {
             return Err("The body has no shape to paint yet".into());
         }
         if matches!(display, analysis::Display::Curvature { .. }) && ctx.kernel.is_none() {
@@ -441,8 +445,9 @@ impl SurfaceWorkbench {
                 });
             let error = ctx
                 .document
-                .get_feature_meta(task.feature)
-                .and_then(|n| n.error.clone());
+                .derived()
+                .error(task.feature)
+                .map(str::to_string);
             panel::editor(
                 form,
                 ctx.document,
@@ -838,7 +843,7 @@ impl BenchTools for SurfaceWorkbench {
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
-        let shaped = |body: BodyId| ctx.document.imported_brep_blob(body).is_some();
+        let shaped = |body: BodyId| ctx.document.derived().imported_brep_blob(body).is_some();
         match tool_id {
             SKETCH_TOOL => true,
             CHECK_TOOL | CURVATURE_TOOL | ZEBRA_TOOL => {
@@ -1147,7 +1152,9 @@ mod tests {
         static KERNEL: TwoJoins = TwoJoins;
         let mut document = Document::new("t");
         let body = document.create_body(Some("Shell".into()));
-        document.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
         let mut bench = SurfaceWorkbench::default();
         let mut ctx = core_document::testing::ctx(&mut document);
         ctx.kernel = Some(&KERNEL);
@@ -1183,7 +1190,7 @@ mod tests {
     }
 
     fn shaped(document: &mut Document, body: BodyId) {
-        document.set_imported_geometry(
+        document.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
@@ -1196,7 +1203,9 @@ mod tests {
                 health: None,
             },
         );
-        document.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
     }
 
     /// A step built on an edge of another body takes that body's shape and
@@ -1486,7 +1495,7 @@ mod tests {
             faces: vec![0],
             ..kernel_api::TriMesh::default()
         };
-        document.set_imported_geometry(
+        document.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(mesh),
@@ -1499,7 +1508,9 @@ mod tests {
                 health: None,
             },
         );
-        document.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
+        document
+            .derived_mut()
+            .set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
         let mut bench = SurfaceWorkbench::default();
         let mut ctx = core_document::testing::ctx(&mut document);
         ctx.kernel = Some(&KERNEL);
@@ -1555,8 +1566,15 @@ mod tests {
         );
         let [stripes] = bench.overlay_meshes(&ctx, None).try_into().unwrap();
         assert_ne!(stripes.revision, painted[0].revision, "a new paint");
-        let geometry = ctx.document.imported_geometry(body).unwrap().clone();
-        ctx.document.set_imported_geometry(body, geometry);
+        let geometry = ctx
+            .document
+            .derived()
+            .imported_geometry(body)
+            .unwrap()
+            .clone();
+        ctx.document
+            .derived_mut()
+            .set_imported_geometry(body, geometry);
         let [moved] = bench.overlay_meshes(&ctx, None).try_into().unwrap();
         assert_ne!(
             moved.revision, stripes.revision,

@@ -70,6 +70,7 @@ fn pin_command(
         .ok_or_else(|| CommandError::failed("no map is shown on that scan"))?;
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
     let value = pins::read(&mesh, &values, at, READING_REACH);

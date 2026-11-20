@@ -439,13 +439,10 @@ fn a_bench_that_panics_planning_a_rebuild_marks_its_features_and_spares_the_app(
     assert!(jobs.is_empty());
     let node = doc.get_feature_meta(thing).unwrap();
     assert!(!node.dirty, "settled, so it does not panic every frame");
+    let error = doc.derived().error(thing);
     assert!(
-        node.error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Panicky failed planning"),
-        "{:?}",
-        node.error
+        error.unwrap_or("").contains("Panicky failed planning"),
+        "{error:?}"
     );
 }
 

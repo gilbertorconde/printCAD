@@ -157,6 +157,7 @@ impl crate::maps::Mapped for Overhang {
 
     fn inputs(&self, document: &core_document::Document) -> Result<Self::Inputs, String> {
         let g = document
+            .derived()
             .imported_geometry(self.body)
             .ok_or("the body has no geometry to read")?;
         Ok((g.mesh.clone(), g.revision ^ self.limit_deg.to_bits()))

@@ -397,7 +397,10 @@ impl PrintCadApp {
         self.session.builds.preview_feature = editing;
         if let Some(feature) = editing {
             // Built again, this time with its preview.
-            self.session.document.mark_feature_stale(feature);
+            self.session
+                .document
+                .derived_mut()
+                .mark_feature_stale(feature);
         }
     }
 
@@ -459,7 +462,7 @@ impl PrintCadApp {
         let document = &mut self.session.document;
         match preview.shown {
             Some(shown) => build_driver::store_solid(document, body, *shown),
-            None => document.remove_imported_geometry(body),
+            None => document.derived_mut().remove_imported_geometry(body),
         }
         let placement = document.body_placement(body);
         let tool = if placement.is_identity() {
@@ -503,8 +506,11 @@ impl PrintCadApp {
                 )
             } else {
                 (
-                    document.imported_brep_blob_arc(body),
-                    document.imported_brep_face_colors(body).map(<[_]>::to_vec),
+                    document.derived().imported_brep_blob_arc(body),
+                    document
+                        .derived()
+                        .imported_brep_face_colors(body)
+                        .map(<[_]>::to_vec),
                 )
             };
             let Some(blob) = blob else {
@@ -621,7 +627,7 @@ impl PrintCadApp {
         self.session.jobs.repairs.remove(&body.0);
         if let Some(previous) = self.session.document.base_geometry(body).cloned() {
             let broken = result.health.broken;
-            self.session.document.set_base_solid(
+            self.session.document.derived_mut().set_base_solid(
                 body,
                 core_document::ImportedGeometry {
                     mesh: std::sync::Arc::new(result.mesh),
@@ -647,14 +653,22 @@ impl PrintCadApp {
             ));
             return;
         }
-        let Some(previous) = self.session.document.imported_geometry(body).cloned() else {
+        let Some(previous) = self
+            .session
+            .document
+            .derived()
+            .imported_geometry(body)
+            .cloned()
+        else {
             // The body left the document while the repair ran.
             return;
         };
         let name = self.body_name(body);
-        self.session
-            .document
-            .set_imported_brep_data(body, result.brep_blob, result.face_colors);
+        self.session.document.derived_mut().set_imported_brep_data(
+            body,
+            result.brep_blob,
+            result.face_colors,
+        );
         // A repair mends the facets; whether they are refined is its own.
         let health = kernel_api::ShapeHealth {
             faceted: previous.health.as_ref().is_some_and(|h| h.faceted),
@@ -673,7 +687,7 @@ impl PrintCadApp {
         } else {
             result.mended.join(", ")
         };
-        self.session.document.set_imported_geometry(
+        self.session.document.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(result.mesh),
@@ -700,10 +714,11 @@ impl PrintCadApp {
                 continue;
             }
             let document = &self.session.document;
-            let Some(blob) = document.imported_brep_blob_arc(body) else {
+            let Some(blob) = document.derived().imported_brep_blob_arc(body) else {
                 continue;
             };
             let face_colors = document
+                .derived()
                 .imported_brep_face_colors(body)
                 .map(<[_]>::to_vec)
                 .unwrap_or_default();
@@ -738,14 +753,22 @@ impl PrintCadApp {
                 return;
             }
         };
-        let Some(previous) = self.session.document.imported_geometry(body).cloned() else {
+        let Some(previous) = self
+            .session
+            .document
+            .derived()
+            .imported_geometry(body)
+            .cloned()
+        else {
             // The body left the document while the refine ran.
             return;
         };
-        self.session
-            .document
-            .set_imported_brep_data(body, refined.brep_blob, refined.face_colors);
-        self.session.document.set_imported_geometry(
+        self.session.document.derived_mut().set_imported_brep_data(
+            body,
+            refined.brep_blob,
+            refined.face_colors,
+        );
+        self.session.document.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(refined.mesh),
@@ -794,6 +817,7 @@ impl PrintCadApp {
         let Some(revision) = self
             .session
             .document
+            .derived()
             .imported_geometry(body)
             .map(|g| g.revision)
         else {
@@ -814,7 +838,7 @@ impl PrintCadApp {
     /// Ask the kernel worker for `body`'s measure at `revision`, when it
     /// has a solid to measure.
     fn measure_body(&mut self, body: core_document::BodyId, revision: u64) {
-        let Some(blob) = self.session.document.imported_brep_blob_arc(body) else {
+        let Some(blob) = self.session.document.derived().imported_brep_blob_arc(body) else {
             return;
         };
         self.session
@@ -863,12 +887,19 @@ impl PrintCadApp {
             let Some(revision) = self
                 .session
                 .document
+                .derived()
                 .imported_geometry(body)
                 .map(|g| g.revision)
             else {
                 continue;
             };
-            if self.session.document.imported_brep_blob_arc(body).is_none() {
+            if self
+                .session
+                .document
+                .derived()
+                .imported_brep_blob_arc(body)
+                .is_none()
+            {
                 continue;
             }
             match self.session.drawn.physical.get(&body.0) {
@@ -900,7 +931,12 @@ impl PrintCadApp {
     /// The panel body's measure, when it is of the geometry on screen.
     pub(crate) fn panel_physical(&self) -> Option<crate::ui::Physical> {
         let body = self.panel_body()?;
-        let revision = self.session.document.imported_geometry(body)?.revision;
+        let revision = self
+            .session
+            .document
+            .derived()
+            .imported_geometry(body)?
+            .revision;
         let (measured, reading) = self.session.drawn.physical.get(&body.0)?;
         if *measured != revision {
             return None;
@@ -1021,7 +1057,7 @@ impl PrintCadApp {
             }
             // The solid is built in the body's own frame, as every kernel
             // shape is; the scene's copy is placed.
-            let Some((mesh, _)) = self.session.document.local_geometry(body) else {
+            let Some((mesh, _)) = self.session.document.derived().local_geometry(body) else {
                 continue;
             };
             self.session.jobs.solids.insert(body.0);
@@ -1060,15 +1096,23 @@ impl PrintCadApp {
         elapsed: std::time::Duration,
     ) {
         self.session.jobs.solids.remove(&body.0);
-        let Some(previous) = self.session.document.imported_geometry(body).cloned() else {
+        let Some(previous) = self
+            .session
+            .document
+            .derived()
+            .imported_geometry(body)
+            .cloned()
+        else {
             return;
         };
         let name = self.body_name(body);
         let faceted = result.health.faceted;
-        self.session
-            .document
-            .set_imported_brep_data(body, result.brep_blob, result.face_colors);
-        self.session.document.set_imported_geometry(
+        self.session.document.derived_mut().set_imported_brep_data(
+            body,
+            result.brep_blob,
+            result.face_colors,
+        );
+        self.session.document.derived_mut().set_imported_geometry(
             body,
             core_document::ImportedGeometry {
                 mesh: std::sync::Arc::new(result.mesh),
@@ -1149,7 +1193,8 @@ mod tests {
             revision: 0,
         };
         let previews = std::collections::HashMap::from([(body, preview)]);
-        let top = |d: &core_document::Document| d.imported_geometry(body).unwrap().bounds_mm;
+        let top =
+            |d: &core_document::Document| d.derived().imported_geometry(body).unwrap().bounds_mm;
         assert_eq!(
             top(&with_whole_solids(&document, &previews)).unwrap().1,
             [2.0; 3]

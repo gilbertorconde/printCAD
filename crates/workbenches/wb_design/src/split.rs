@@ -47,6 +47,7 @@ impl Cut {
     /// what a part too big for the bed is cut along first.
     pub(crate) fn across_middle(document: &Document, body: BodyId) -> Cut {
         let bounds = document
+            .derived()
             .local_geometry(body)
             .and_then(|(mesh, bounds)| bounds.or_else(|| mesh.bounds()));
         let Some((lo, hi)) = bounds else {
@@ -152,7 +153,7 @@ pub(crate) fn split_body(
     if ctx.document.is_mesh_body(source) {
         return Err("a mesh body has no solid to split; convert it to a solid first".into());
     }
-    if ctx.document.imported_brep_blob(source).is_none() {
+    if ctx.document.derived().imported_brep_blob(source).is_none() {
         return Err("the body has no solid to split yet; build it first".into());
     }
     if let Some(sketch) = cut.sketch

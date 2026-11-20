@@ -125,7 +125,7 @@ pub fn plan(document: &Document, among: Option<&[BodyId]>, bought: &[BodyId]) ->
         {
             continue;
         }
-        match document.imported_brep_blob_arc(body.id) {
+        match document.derived().imported_brep_blob_arc(body.id) {
             Some(blob) => solids.push((
                 body.id,
                 blob,

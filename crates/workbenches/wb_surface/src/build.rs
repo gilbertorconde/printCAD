@@ -53,6 +53,7 @@ fn edge_inputs(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
             for other in others {
                 other.hash(&mut hasher);
                 document
+                    .derived()
                     .imported_geometry(other)
                     .map(|g| g.revision)
                     .hash(&mut hasher);
@@ -105,8 +106,8 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
     let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
     for body in bodies {
         for (feature, inputs) in edge_inputs(document, body) {
-            if document.built_against(feature) != Some(inputs) {
-                document.mark_feature_stale(feature);
+            if document.derived().built_against(feature) != Some(inputs) {
+                document.derived_mut().mark_feature_stale(feature);
             }
         }
     }
@@ -126,7 +127,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
                 document.clear_feature_dirty(*id);
             }
             for (feature, seen) in edge_inputs(document, body) {
-                document.note_built_against(feature, seen);
+                document.derived_mut().note_built_against(feature, seen);
             }
             RebuildJob {
                 body,
@@ -408,6 +409,7 @@ pub fn op_of(
         } => {
             let scan = scan.ok_or("name the scan to keep faces on")?;
             let (mesh, _) = document
+                .derived()
                 .local_geometry(scan)
                 .ok_or("the scan has no mesh")?;
             let to = into_frame(document, body, scan);
@@ -441,6 +443,7 @@ pub fn op_of(
         } => {
             let scan = scan.ok_or("name the scan to fit")?;
             let (mesh, _) = document
+                .derived()
                 .local_geometry(scan)
                 .ok_or("the scan has no mesh")?;
             let to = into_frame(document, body, scan);
@@ -664,6 +667,7 @@ pub fn sources(
                     );
                 }
                 let brep = document
+                    .derived()
                     .imported_brep_blob(*other)
                     .ok_or("the body its edge is on has no shape yet")?
                     .to_vec();

@@ -406,7 +406,10 @@ impl Reach {
                     }
                     flat
                 },
-                bounds: document.imported_geometry(b.id).and_then(|g| g.bounds_mm),
+                bounds: document
+                    .derived()
+                    .imported_geometry(b.id)
+                    .and_then(|g| g.bounds_mm),
             })
             .collect();
         serde_json::to_string(&bodies).unwrap_or_else(|_| "[]".into())
@@ -415,7 +418,7 @@ impl Reach {
     /// Positions as x, y, z triples, and the triangles' indices.
     pub(crate) fn body_mesh(&mut self, body: String) -> Option<(Vec<f32>, Vec<u32>)> {
         let document = self.document()?;
-        let geometry = document.imported_geometry(body_id(&body).ok()?)?;
+        let geometry = document.derived().imported_geometry(body_id(&body).ok()?)?;
         Some((
             geometry.mesh.positions.iter().flatten().copied().collect(),
             geometry.mesh.indices.clone(),
@@ -425,6 +428,7 @@ impl Reach {
     pub(crate) fn body_shape(&mut self, body: String) -> Option<Vec<u8>> {
         let document = self.document()?;
         document
+            .derived()
             .imported_brep_blob(body_id(&body).ok()?)
             .map(<[u8]>::to_vec)
     }

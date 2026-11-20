@@ -570,9 +570,10 @@ impl SketchWorkbench {
         {
             return Vec::new();
         }
-        let (Some(kernel), Some(brep)) =
-            (ctx.kernel, ctx.document.imported_brep_blob(BodyId(body)))
-        else {
+        let (Some(kernel), Some(brep)) = (
+            ctx.kernel,
+            ctx.document.derived().imported_brep_blob(BodyId(body)),
+        ) else {
             return Vec::new();
         };
         let local = face.moved(&ctx.document.body_placement(BodyId(body)).inverse());
@@ -1048,7 +1049,8 @@ mod external_geometry {
     fn a_picked_face_brings_in_where_it_crosses_the_plane_once_and_records_it() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        doc.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
         let sketch = add_sketch(
             &mut doc,
             Sketch::new("s"),
@@ -1107,7 +1109,8 @@ mod external_geometry {
     fn a_picked_edge_comes_in_fixed_and_out_of_profiles() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        doc.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
         // The body sits 3 up: the pick is in the scene, the edge in its body.
         doc.set_body_placement(
             body,

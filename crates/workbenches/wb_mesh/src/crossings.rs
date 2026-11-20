@@ -43,7 +43,7 @@ pub(crate) fn find(
 
 /// What a body's crossings are found from: its mesh as drawn now.
 pub(crate) fn key(document: &Document, body: BodyId) -> Option<u64> {
-    Some(document.imported_geometry(body)?.revision)
+    Some(document.derived().imported_geometry(body)?.revision)
 }
 
 impl MeshWorkbench {
@@ -60,7 +60,8 @@ impl MeshWorkbench {
             return Vec::new();
         };
         let document = &*ctx.document;
-        let (Some(key), Some((mesh, _))) = (key(document, body), document.local_geometry(body))
+        let (Some(key), Some((mesh, _))) =
+            (key(document, body), document.derived().local_geometry(body))
         else {
             return Vec::new();
         };

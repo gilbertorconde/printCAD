@@ -22,6 +22,7 @@ pub(crate) fn drawn_body_bounds(
     document: &Document,
 ) -> impl Iterator<Item = ([f32; 3], [f32; 3])> + '_ {
     document
+        .derived()
         .imported_geometries()
         .filter(|(body, _)| document.imported_body_effective_visible(**body))
         .filter_map(|(_, geometry)| geometry.bounds())
@@ -43,6 +44,7 @@ impl PrintCadApp {
         let Some(frame) = self
             .session
             .document
+            .derived()
             .imported_geometry(body)
             .and_then(|g| crate::app::input::face_frame(&g.mesh, face))
         else {
@@ -78,7 +80,7 @@ impl PrintCadApp {
             .map(core_document::BodyId)
             .or(self.session.active_body_id);
         let aabb = body.and_then(|body| {
-            let geometry = self.session.document.imported_geometry(body)?;
+            let geometry = self.session.document.derived().imported_geometry(body)?;
             geometry.bounds()
         });
         let Some((mn, mx)) = aabb else {
@@ -198,8 +200,12 @@ mod tests {
         let cube = |at: f32| crate::test_support::block([1.0; 3], [at; 3]);
         let near = document.create_body(Some("Near".into()));
         let far = document.create_body(Some("Far".into()));
-        document.set_imported_geometry(near, crate::test_support::geometry(cube(0.0)));
-        document.set_imported_geometry(far, crate::test_support::geometry(cube(100.0)));
+        document
+            .derived_mut()
+            .set_imported_geometry(near, crate::test_support::geometry(cube(0.0)));
+        document
+            .derived_mut()
+            .set_imported_geometry(far, crate::test_support::geometry(cube(100.0)));
         assert_eq!(
             document_imported_aabb(&document),
             Some((Vec3::ZERO, Vec3::splat(101.0)))

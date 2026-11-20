@@ -163,7 +163,7 @@ pub fn selected_args(id: &str, ctx: &WorkbenchRuntimeContext) -> Option<CommandA
                 let scan = scans.next()?.id;
                 scans.next().is_none().then_some(scan)
             })?;
-        ctx.document.local_geometry(scan)?;
+        ctx.document.derived().local_geometry(scan)?;
         ctx.kernel?;
         args.insert("scan".into(), json!(scan.0.to_string()));
     }
@@ -196,6 +196,7 @@ fn prepare_datums(
     let zero_at = a.opt_vec3("zero_at")?.unwrap_or([0.0; 3]);
     let mesh = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("scan has no mesh"))?;
     let after = align::datums(
@@ -262,6 +263,7 @@ fn scan_to_align(
     }
     let mesh = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or_else(|| CommandError::failed("scan has no mesh"))?;
     let kernel = ctx

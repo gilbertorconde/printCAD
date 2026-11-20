@@ -216,7 +216,7 @@ fn read_shapes(
 /// Build every mesh body's history that changed.
 fn build_meshes(document: &mut Document, registry: &DocumentService) {
     for plan in registry.mesh_build_plans(document) {
-        if document.mesh_steps(&plan).is_some() {
+        if document.derived().mesh_steps(&plan).is_some() {
             continue;
         }
         let Some(start) = document.mesh_start(plan.body) else {
@@ -242,7 +242,7 @@ fn mirror_copies(document: &mut Document, notes: &mut Vec<String>) {
             plane.normal.map(f64::from),
         ) {
             Ok(blob) => {
-                document.set_mirrored_shape(body, &from, blob);
+                document.derived_mut().set_mirrored_shape(body, &from, blob);
             }
             Err(error) => {
                 let name = document

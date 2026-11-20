@@ -31,7 +31,8 @@ impl Document {
     pub fn set_body_base(&mut self, body: BodyId, on: bool) -> bool {
         let has = self.base_solids.contains_key(&body);
         let possible = if on {
-            !has && self.imported_brep_blobs.contains_key(&body) && self.copy_source(body).is_none()
+            !has && self.derived.imported_brep_blobs.contains_key(&body)
+                && self.copy_source(body).is_none()
         } else {
             has
         };
@@ -80,74 +81,18 @@ impl Document {
         Some(id)
     }
 
-    /// The bounded solid a feature offers a mesh boolean, in the
-    /// document's frame.
-    pub fn feature_solid(&self, id: FeatureId) -> Option<&kernel_api::MeshOperand> {
-        self.feature_solids.get(&id)
-    }
-
     /// The mesh a mesh body's history builds from, in its own frame.
     pub fn mesh_start(&self, body: BodyId) -> Option<&ImportedGeometry> {
         self.mesh_starts.get(&body)
     }
 
-    /// Measurements only while the complete history prefix still agrees.
-    pub fn mesh_steps(&self, plan: &MeshPlan) -> Option<&[kernel_api::MeshStep]> {
-        let built = self.mesh_results.get(&plan.body)?;
-        (&built.plan == plan).then_some(&built.steps)
-    }
-
-    /// Start vertices behind the displayed mesh of this exact plan.
-    pub fn mesh_sources(&self, plan: &MeshPlan) -> Option<&[Option<u32>]> {
-        let built = self.mesh_results.get(&plan.body)?;
-        (&built.plan == plan).then_some(&built.sources)
-    }
-
-    /// Land a mesh history's derived shape, measurements and feature errors.
-    pub fn store_mesh_build(&mut self, plan: MeshPlan, answer: kernel_api::MeshChainAnswer) {
-        let Some(start) = self.mesh_start(plan.body).cloned() else {
-            return;
-        };
-        for (k, id) in plan.features.iter().enumerate() {
-            let error = answer.failed.as_ref().and_then(|(failed, why)| {
-                if k == *failed {
-                    Some(why.clone())
-                } else if k > *failed {
-                    Some("not built: an earlier mesh step failed".into())
-                } else {
-                    None
-                }
-            });
-            self.set_feature_error(*id, error);
-        }
-        let bounds_mm = answer.mesh.bounds();
-        let body = plan.body;
-        self.mesh_results.insert(
-            body,
-            rebuild::MeshResult {
-                plan,
-                steps: answer.steps,
-                sources: answer.sources,
-            },
-        );
-        self.set_imported_geometry(
-            body,
-            ImportedGeometry {
-                mesh: std::sync::Arc::new(answer.mesh),
-                bounds_mm,
-                mesh_path: None,
-                ..start
-            },
-        );
-    }
-
     pub(crate) fn apply_set_mesh_start(&mut self, body: BodyId, on: bool) {
-        self.mesh_results.remove(&body);
+        self.derived.mesh_results.remove(&body);
         if on {
-            let Some(mut kept) = self.imported_meshes.get(&body).cloned() else {
+            let Some(mut kept) = self.derived.imported_meshes.get(&body).cloned() else {
                 return;
             };
-            if let Some((mesh, bounds)) = self.local_geometry(body) {
+            if let Some((mesh, bounds)) = self.derived().local_geometry(body) {
                 kept.mesh = mesh;
                 kept.bounds_mm = bounds;
             }
@@ -163,7 +108,7 @@ impl Document {
     pub fn body_health(&self, body: BodyId) -> Option<&kernel_api::ShapeHealth> {
         self.base_solids
             .get(&body)
-            .or_else(|| self.imported_geometry(body))?
+            .or_else(|| self.derived().imported_geometry(body))?
             .health
             .as_ref()
     }
@@ -171,7 +116,7 @@ impl Document {
     /// Replace the body's base solid with what a repair (or another
     /// derivation of the same op) made of it: derived state, no op. The
     /// geometry is in the body's own frame.
-    pub fn set_base_solid(
+    pub(crate) fn set_base_solid(
         &mut self,
         body: BodyId,
         geometry: ImportedGeometry,
@@ -212,12 +157,13 @@ impl Document {
     pub(crate) fn apply_set_body_base(&mut self, body: BodyId, on: bool) {
         if on {
             let (Some(geometry), Some(blob)) = (
-                self.imported_meshes.get(&body).cloned(),
-                self.imported_brep_blobs.get(&body).cloned(),
+                self.derived.imported_meshes.get(&body).cloned(),
+                self.derived.imported_brep_blobs.get(&body).cloned(),
             ) else {
                 return;
             };
             let colors = self
+                .derived
                 .imported_brep_face_colors
                 .get(&body)
                 .cloned()
@@ -225,7 +171,7 @@ impl Document {
             // The base keeps the body's own frame: its mesh as the body
             // sees it, not as it is placed.
             let mut kept = geometry;
-            if let Some((mesh, bounds)) = self.local_geometry(body) {
+            if let Some((mesh, bounds)) = self.derived().local_geometry(body) {
                 kept.mesh = mesh;
                 kept.bounds_mm = bounds;
             }
@@ -243,8 +189,8 @@ impl Document {
             // The base is the body's shape again, as it was kept.
             self.set_imported_geometry(body, geometry);
             if let Some(blob) = blob {
-                self.imported_brep_blobs.insert(body, blob);
-                self.imported_brep_face_colors.insert(body, colors);
+                self.derived.imported_brep_blobs.insert(body, blob);
+                self.derived.imported_brep_face_colors.insert(body, colors);
             }
         }
         self.mark_dirty();
@@ -296,7 +242,7 @@ impl Document {
         let empty = self.bodies.iter().any(|b| {
             b.id == body && b.link.is_none() && b.copy_of.is_none() && b.shape_asset.is_none()
         }) && !self.has_base_solid(body)
-            && self.imported_geometry(body).is_none()
+            && self.derived().imported_geometry(body).is_none()
             && !self
                 .feature_tree
                 .all_nodes()
@@ -346,11 +292,9 @@ impl Document {
     pub fn stand_in_due(&self, body: BodyId) -> Option<Uuid> {
         let stand_in = self.body(body)?.stand_in?;
         let tip = self.body_tip(body)?;
-        let failed = self
-            .feature_tree
-            .get_node(stand_in.feature)
-            .is_some_and(|n| n.error.is_some());
+        let failed = self.derived.error(stand_in.feature).is_some();
         let shown = self
+            .derived()
             .imported_geometry(body)
             .is_some_and(|g| g.source_asset == Some(stand_in.asset));
         (tip == stand_in.feature && failed && !shown).then_some(stand_in.asset)
@@ -370,6 +314,7 @@ impl Document {
             || (self.copy_source(body).is_none()
                 && self.body(body).is_some_and(|b| b.link.is_none())
                 && self
+                    .derived()
                     .imported_geometry(body)
                     .is_some_and(|g| g.source_asset.is_some()))
     }
@@ -384,7 +329,7 @@ impl Document {
                 let shape = self
                     .base_solids
                     .get(&b.id)
-                    .or_else(|| self.imported_geometry(b.id));
+                    .or_else(|| self.derived().imported_geometry(b.id));
                 (shape.and_then(|g| g.source_asset) != Some(asset)).then_some((b.id, asset))
             })
             .chain(
@@ -398,11 +343,12 @@ impl Document {
     /// Whether a body is a mesh from a mesh file, not yet a solid: it has
     /// triangles and no shape snapshot.
     pub fn is_mesh_body(&self, body: BodyId) -> bool {
-        self.imported_geometry(body)
+        self.derived()
+            .imported_geometry(body)
             .and_then(|g| g.source_asset)
             .and_then(|asset| self.get_asset(asset))
             .is_some_and(|asset| asset.asset_type.is_mesh())
-            && self.imported_brep_blob(body).is_none()
+            && self.derived().imported_brep_blob(body).is_none()
     }
 
     /// Whether "Convert to solid" applies: a mesh body whose conversion
@@ -440,7 +386,7 @@ impl Document {
             .is_some_and(|b| !b.refine_requested && b.link.is_none())
             && !self.has_base_solid(body)
             && self.copy_source(body).is_none()
-            && self.imported_geometry(body).is_some_and(|g| {
+            && self.derived().imported_geometry(body).is_some_and(|g| {
                 g.source_asset.is_some() && g.health.as_ref().is_some_and(|h| h.faceted)
             })
     }
@@ -464,7 +410,8 @@ impl Document {
             .iter()
             .filter(|b| b.refine_requested)
             .filter(|b| {
-                self.imported_geometry(b.id)
+                self.derived()
+                    .imported_geometry(b.id)
                     .and_then(|g| g.health.as_ref())
                     .is_some_and(|h| h.faceted)
             })
@@ -484,7 +431,7 @@ impl Document {
                 let shape = self
                     .base_solids
                     .get(&b.id)
-                    .or_else(|| self.imported_geometry(b.id));
+                    .or_else(|| self.derived().imported_geometry(b.id));
                 shape.is_some_and(|g| {
                     g.source_asset.is_some() && !g.health.as_ref().is_some_and(|h| h.repaired)
                 })

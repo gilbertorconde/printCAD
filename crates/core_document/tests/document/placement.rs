@@ -24,27 +24,37 @@ fn shifted_and_turned() -> BodyPlacement {
 fn a_placed_body_draws_moved_and_keeps_its_own_mesh() {
     let mut doc = Document::new("t");
     let body = doc.create_body(None);
-    doc.set_imported_geometry(body, geometry(triangle()));
+    doc.derived_mut()
+        .set_imported_geometry(body, geometry(triangle()));
     doc.set_body_placement(body, shifted_and_turned());
 
-    let placed = doc.imported_geometry(body).unwrap();
+    let placed = doc.derived().imported_geometry(body).unwrap();
     assert!(close(placed.mesh.positions[1], [10.0, 1.0, 0.0]));
     let (lo, hi) = placed.bounds_mm.unwrap();
     assert!(close(lo, [9.0, 0.0, 0.0]) && close(hi, [10.0, 1.0, 0.0]));
-    let (local, _) = doc.local_geometry(body).unwrap();
+    let (local, _) = doc.derived().local_geometry(body).unwrap();
     assert!(close(local.positions[1], [1.0, 0.0, 0.0]));
 
     // New geometry from the kernel is in the body's frame, and is placed.
-    doc.set_imported_geometry(body, geometry(triangle()));
+    doc.derived_mut()
+        .set_imported_geometry(body, geometry(triangle()));
     assert!(close(
-        doc.imported_geometry(body).unwrap().mesh.positions[1],
+        doc.derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions[1],
         [10.0, 1.0, 0.0]
     ));
 
     // Back to where it started: the drawn mesh is the body's own again.
     doc.set_body_placement(body, BodyPlacement::IDENTITY);
     assert!(close(
-        doc.imported_geometry(body).unwrap().mesh.positions[1],
+        doc.derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions[1],
         [1.0, 0.0, 0.0]
     ));
 }
@@ -54,14 +64,19 @@ fn moving_a_body_undoes_like_any_edit() {
     let mut doc = Document::new("t");
     let mut journal = OpJournal::new(16);
     let body = doc.create_body(None);
-    doc.set_imported_geometry(body, geometry(triangle()));
+    doc.derived_mut()
+        .set_imported_geometry(body, geometry(triangle()));
     journal.note(&mut doc);
     doc.set_body_placement(body, shifted_and_turned());
     journal.note(&mut doc);
     journal.undo(&mut doc).expect("the move undoes");
     assert!(doc.body_placement(body).is_identity());
     assert!(close(
-        doc.imported_geometry(body).unwrap().mesh.positions[1],
+        doc.derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions[1],
         [1.0, 0.0, 0.0]
     ));
     journal.redo(&mut doc).expect("and redoes");
@@ -72,15 +87,21 @@ fn moving_a_body_undoes_like_any_edit() {
 fn a_placement_survives_a_save_with_the_body_s_own_mesh() {
     let mut doc = Document::new("t");
     let body = doc.create_body(None);
-    doc.set_imported_geometry(body, geometry(triangle()));
+    doc.derived_mut()
+        .set_imported_geometry(body, geometry(triangle()));
     doc.set_body_placement(body, shifted_and_turned());
     let loaded = reloaded(&mut doc);
     assert_eq!(loaded.body_placement(body), shifted_and_turned());
     assert!(close(
-        loaded.imported_geometry(body).unwrap().mesh.positions[1],
+        loaded
+            .derived()
+            .imported_geometry(body)
+            .unwrap()
+            .mesh
+            .positions[1],
         [10.0, 1.0, 0.0]
     ));
-    let (local, _) = loaded.local_geometry(body).unwrap();
+    let (local, _) = loaded.derived().local_geometry(body).unwrap();
     assert!(close(local.positions[1], [1.0, 0.0, 0.0]));
 }
 
@@ -100,8 +121,9 @@ fn a_linked_copy_follows_its_source() {
     let mut doc = Document::new("t");
     let mut journal = OpJournal::new(10);
     let source = doc.create_body(Some("Bracket".into()));
-    doc.set_imported_geometry(source, sized(1.0));
-    doc.set_imported_brep_data(source, b"ogeom bracket".to_vec(), Vec::new());
+    doc.derived_mut().set_imported_geometry(source, sized(1.0));
+    doc.derived_mut()
+        .set_imported_brep_data(source, b"ogeom bracket".to_vec(), Vec::new());
     journal.note(&mut doc);
     let copy = doc.create_linked_copy(source, None).expect("a copy");
     journal.note(&mut doc);
@@ -111,14 +133,17 @@ fn a_linked_copy_follows_its_source() {
         "{:?}",
         doc.bodies().iter().map(|b| &b.name).collect::<Vec<_>>()
     );
-    assert_eq!(doc.imported_brep_blob(copy), Some(&b"ogeom bracket"[..]));
+    assert_eq!(
+        doc.derived().imported_brep_blob(copy),
+        Some(&b"ogeom bracket"[..])
+    );
     doc.set_body_placement(
         copy,
         BodyPlacement::new(Quat::IDENTITY, Vec3::new(50.0, 0.0, 0.0)),
     );
-    let x = |doc: &Document, b| doc.imported_geometry(b).unwrap().mesh.positions[1][0];
+    let x = |doc: &Document, b| doc.derived().imported_geometry(b).unwrap().mesh.positions[1][0];
     assert!((x(&doc, copy) - 51.0).abs() < 1e-5, "placed on its own");
-    doc.set_imported_geometry(source, sized(3.0));
+    doc.derived_mut().set_imported_geometry(source, sized(3.0));
     assert!(
         (x(&doc, copy) - 53.0).abs() < 1e-5,
         "follows the source's shape"
@@ -129,7 +154,10 @@ fn a_linked_copy_follows_its_source() {
     );
     let loaded = reloaded(&mut doc);
     assert_eq!(loaded.copy_source(copy), Some(source));
-    assert_eq!(loaded.imported_brep_blob(copy), Some(&b"ogeom bracket"[..]));
+    assert_eq!(
+        loaded.derived().imported_brep_blob(copy),
+        Some(&b"ogeom bracket"[..])
+    );
     assert!(
         (x(&loaded, copy) - 53.0).abs() < 1e-5,
         "derived again on load"
@@ -147,35 +175,47 @@ fn a_mirrored_copy_waits_for_its_snapshot() {
     use core_document::MirrorPlane;
     let mut doc = Document::new("t");
     let source = doc.create_body(Some("Left".into()));
-    doc.set_imported_geometry(source, geometry(triangle()));
-    doc.set_imported_brep_data(source, b"ogeom left".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_geometry(source, geometry(triangle()));
+    doc.derived_mut()
+        .set_imported_brep_data(source, b"ogeom left".to_vec(), Vec::new());
     let plane = MirrorPlane {
         point: [5.0, 0.0, 0.0],
         normal: [1.0, 0.0, 0.0],
     };
     let copy = doc.create_mirrored_copy(source, plane, None).unwrap();
-    let mesh = &doc.imported_geometry(copy).unwrap().mesh;
+    let mesh = &doc.derived().imported_geometry(copy).unwrap().mesh;
     assert!(
         close(mesh.positions[1], [9.0, 0.0, 0.0]),
         "{:?}",
         mesh.positions
     );
     assert_eq!(mesh.indices, [0, 2, 1], "wound the other way");
-    assert!(doc.imported_brep_blob(copy).is_none());
+    assert!(doc.derived().imported_brep_blob(copy).is_none());
     let waiting = doc.copies_awaiting_shape();
     assert_eq!(waiting.len(), 1);
     let (body, from, local) = &waiting[0];
     assert_eq!(*body, copy);
     assert_eq!(*local, plane);
-    assert!(doc.set_mirrored_shape(copy, from, b"ogeom right".to_vec()));
-    assert_eq!(doc.imported_brep_blob(copy), Some(&b"ogeom right"[..]));
+    assert!(
+        doc.derived_mut()
+            .set_mirrored_shape(copy, from, b"ogeom right".to_vec())
+    );
+    assert_eq!(
+        doc.derived().imported_brep_blob(copy),
+        Some(&b"ogeom right"[..])
+    );
     assert!(doc.copies_awaiting_shape().is_empty());
     // The source changes: the mirror is made again, and an answer from the
     // old snapshot is not kept.
     let stale = from.clone();
-    doc.set_imported_brep_data(source, b"ogeom left 2".to_vec(), Vec::new());
-    assert!(doc.imported_brep_blob(copy).is_none());
-    assert!(!doc.set_mirrored_shape(copy, &stale, b"ogeom old".to_vec()));
+    doc.derived_mut()
+        .set_imported_brep_data(source, b"ogeom left 2".to_vec(), Vec::new());
+    assert!(doc.derived().imported_brep_blob(copy).is_none());
+    assert!(
+        !doc.derived_mut()
+            .set_mirrored_shape(copy, &stale, b"ogeom old".to_vec())
+    );
     assert!(
         doc.create_mirrored_copy(copy, plane, None).is_none(),
         "no mirror of a mirror"
@@ -198,7 +238,7 @@ fn a_linked_part_is_read_from_its_file() {
     let part = doc.create_linked_body("Bracket".into(), link.clone());
     assert_eq!(doc.links_awaiting_geometry(), [(part, link.clone())]);
     doc.mark_clean();
-    doc.set_linked_geometry(
+    doc.derived_mut().set_linked_geometry(
         part,
         geometry(triangle()),
         Some(Arc::new(b"ogeom part".to_vec())),
@@ -210,7 +250,7 @@ fn a_linked_part_is_read_from_its_file() {
 
     let loaded = reloaded(&mut doc);
     assert!(
-        loaded.imported_brep_blob(part).is_none(),
+        loaded.derived().imported_brep_blob(part).is_none(),
         "its shape is its file's, read again"
     );
     assert_eq!(loaded.body(part).unwrap().link, Some(link));
@@ -292,7 +332,8 @@ fn relinking_a_part_is_one_undoable_edit() {
     let body = core_document::BodyId::new();
     let before = FileLink::new(std::path::Path::new("/gone/bolt.prtcad"), body, 3, None);
     let part = doc.create_linked_body("Bolt".into(), before.clone());
-    doc.set_linked_geometry(part, geometry(triangle()), None, None);
+    doc.derived_mut()
+        .set_linked_geometry(part, geometry(triangle()), None, None);
     let mut journal = OpJournal::new(10);
     journal.note(&mut doc);
 

@@ -46,6 +46,7 @@ pub(super) fn fit_marked(
     let scan = marking.body;
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or("the marked scan has no mesh")?;
     let region = element::runs(&marking.vertices);
@@ -106,10 +107,12 @@ pub(super) fn grow_at(
     }
     let (mesh, _) = ctx
         .document
+        .derived()
         .local_geometry(scan)
         .ok_or("the scan has no mesh")?;
     let revision = ctx
         .document
+        .derived()
         .imported_geometry(scan)
         .map_or(0, |g| g.revision);
     let kernel = ctx.kernel.ok_or("no kernel to fit with")?;

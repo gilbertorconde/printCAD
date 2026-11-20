@@ -16,7 +16,8 @@ pub(crate) fn scene() -> (Document, BodyId, BodyId) {
             indices: vec![0, 1, 2],
             ..TriMesh::default()
         };
-        doc.set_imported_geometry(body, imported(square, None));
+        doc.derived_mut()
+            .set_imported_geometry(body, imported(square, None));
     }
     doc.set_body_placement(
         part,
@@ -345,7 +346,8 @@ fn the_couple_tool_ties_two_hinges_records_as_the_command_and_follows_a_ratio() 
 #[test]
 fn copies_go_in_a_row_and_a_free_one_is_dragged() {
     let (mut doc, base, _) = scene();
-    doc.set_imported_brep_data(base, b"ogeom base".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(base, b"ogeom base".to_vec(), Vec::new());
     let made = {
         let mut ctx = context(&mut doc);
         let args = serde_json::json!({"body": base.0.to_string(), "count": 2});
@@ -485,8 +487,10 @@ fn doc_with_bought_part(ctx: &mut WorkbenchRuntimeContext, part: BodyId) {
 fn the_mass_tool_weighs_the_bodies_where_they_sit() {
     let (mut doc, base, part) = scene();
     // Two shapes, so the parts list counts two parts.
-    doc.set_imported_brep_data(base, b"base".to_vec(), Vec::new());
-    doc.set_imported_brep_data(part, b"part".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(base, b"base".to_vec(), Vec::new());
+    doc.derived_mut()
+        .set_imported_brep_data(part, b"part".to_vec(), Vec::new());
     let mut ctx = context(&mut doc);
     ctx.kernel = Some(&LITRE);
     let args = serde_json::json!({"density": 2.0});
@@ -534,7 +538,8 @@ fn the_mass_tool_weighs_the_bodies_where_they_sit() {
 fn an_interference_check_runs_away_from_the_window_and_draws_what_is_shared() {
     let (mut doc, base, part) = scene();
     for body in [base, part] {
-        doc.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
     }
     doc.set_body_placement(part, BodyPlacement::default());
     let mut wb = AssemblyWorkbench::default();
@@ -565,10 +570,11 @@ fn an_interference_check_runs_away_from_the_window_and_draws_what_is_shared() {
 fn a_selected_body_is_checked_against_the_others() {
     let (mut doc, base, part) = scene();
     let third = doc.create_body(Some("Third".into()));
-    let geometry = doc.imported_geometry(base).cloned().unwrap();
-    doc.set_imported_geometry(third, geometry);
+    let geometry = doc.derived().imported_geometry(base).cloned().unwrap();
+    doc.derived_mut().set_imported_geometry(third, geometry);
     for body in [base, part, third] {
-        doc.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
     }
     doc.set_body_placement(part, BodyPlacement::default());
     assert_eq!(interference::plan(&doc, None).pairs(), 3);
@@ -629,8 +635,10 @@ fn cubes_on_a_slider() -> (Document, BodyId, FeatureId) {
             indices: vec![0, 1, 2],
             ..TriMesh::default()
         };
-        doc.set_imported_geometry(body, imported(cube, Some(([0.0; 3], [10.0; 3]))));
-        doc.set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_geometry(body, imported(cube, Some(([0.0; 3], [10.0; 3]))));
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
     }
     doc.set_body_placement(
         part,
@@ -784,11 +792,12 @@ fn a_collision_asks_the_pair_that_last_collided_first() {
     let at = |x: f32, y: f32| BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(x, y, 0.0));
     let [_touching, _wall, moved] = [(12.0, 10.0), (20.0, 0.0), (10.0, 0.0)].map(|(x, y)| {
         let body = doc.create_body(None);
-        doc.set_imported_geometry(
+        doc.derived_mut().set_imported_geometry(
             body,
             imported(TriMesh::default(), Some(([0.0; 3], [10.0; 3]))),
         );
-        doc.set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
+        doc.derived_mut()
+            .set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
         doc.set_body_placement(body, at(x, y));
         body
     });

@@ -161,7 +161,7 @@ impl PrintCadApp {
         };
         let ink = ui_kit::tokens::ANNOTATION.to_normalized_gamma_f32();
         let ink = [ink[0], ink[1], ink[2]];
-        for thread in document.cosmetic_threads() {
+        for thread in document.derived().cosmetic_threads() {
             let shown = document.imported_body_effective_visible(thread.body)
                 && document
                     .get_feature_meta(thread.feature)
