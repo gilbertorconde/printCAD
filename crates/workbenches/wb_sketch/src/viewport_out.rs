@@ -1088,4 +1088,119 @@ mod tests {
         let again = next(&mut doc, &mut wb, 30.0);
         assert_eq!(kept(&edited, &again), (true, true), "nothing changed");
     }
+
+    /// The read after the sketcher's own write is the sketch it wrote, as
+    /// the data read afresh answers it, while the document holds that
+    /// write; once a formula sets its values, an undo or a peer's op
+    /// replaces it or the body moves, it is read afresh.
+    #[test]
+    fn the_read_after_a_write_is_the_sketch_written() {
+        use core_document::BodyPlacement;
+        use core_document::history::OpJournal;
+        let mut sketch = Sketch::new("s");
+        let [a, b] = [0.0, 5.0]
+            .map(|x| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 1.0)))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let length = sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        let mut registry = core_document::DocumentService::default();
+        registry
+            .register_workbench(Box::new(SketchWorkbench::default()))
+            .unwrap();
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let feature = SketchFeature::new(sketch, SketchPlane::xy());
+        let id = doc
+            .add_feature_in_body(feature, "s".into(), Some(body))
+            .unwrap();
+        let moved = |x: f32| BodyPlacement {
+            translation: [x, 2.0, 3.0],
+            ..BodyPlacement::IDENTITY
+        };
+        doc.set_body_placement(body, moved(1.0));
+        let mut history = OpJournal::new(100);
+        history.note(&mut doc);
+        let mut wb = SketchWorkbench::default();
+        let read = |doc: &mut Document, wb: &mut SketchWorkbench| {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(id);
+            wb.on_frame(0.016, &mut ctx);
+            wb.frame_sketch(&ctx).unwrap()
+        };
+        let write = |doc: &mut Document, wb: &mut SketchWorkbench, x: f64| {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(id);
+            let mut feature = wb.get_active_sketch(&ctx).unwrap();
+            let point = Point::new(Vec2D::new(x, 3.0));
+            feature.sketch.add_geometry(GeometryElement::Point(point));
+            assert!(wb.store_sketch(&mut ctx, feature));
+            Arc::clone(&wb.tab.written.borrow().as_ref().unwrap().feature)
+        };
+        // What a read of the stored data afresh answers.
+        let afresh = |doc: &Document| {
+            let mut feature = stored_sketch(doc, id).unwrap();
+            let placement = crate::placement::sketch_placement(doc, id);
+            feature.plane = crate::placement::placed_plane(&feature.plane, &placement);
+            feature.sketch.plane =
+                crate::placement::placed_plane(&feature.sketch.plane, &placement);
+            feature
+        };
+        let same = |a: &SketchFeature, b: &SketchFeature| {
+            assert_eq!(a.sketch, b.sketch);
+            assert_eq!(a.plane, b.plane);
+            assert_eq!(a.to_json(), b.to_json());
+        };
+        let side = |feature: &SketchFeature| match feature.sketch.constraints[0].kind {
+            ConstraintKind::Length { length, .. } => length,
+            _ => unreachable!(),
+        };
+
+        read(&mut doc, &mut wb);
+        let written = write(&mut doc, &mut wb, 2.0);
+        let shown = read(&mut doc, &mut wb);
+        assert!(Arc::ptr_eq(&shown, &written), "taken as written");
+        same(&shown, &afresh(&doc));
+
+        doc.set_feature_formula(id, length.to_string(), Some("6 mm".into()))
+            .unwrap();
+        registry.evaluate(&mut doc);
+        let shown = read(&mut doc, &mut wb);
+        assert_eq!(side(&shown), 6.0, "a formula sets its values");
+        same(&shown, &afresh(&doc));
+        doc.set_feature_formula(id, length.to_string(), None)
+            .unwrap();
+        registry.evaluate(&mut doc);
+        history.note(&mut doc);
+
+        let written = write(&mut doc, &mut wb, 3.0);
+        history.note(&mut doc);
+        assert!(Arc::ptr_eq(&read(&mut doc, &mut wb), &written));
+        history.undo(&mut doc).unwrap();
+        let shown = read(&mut doc, &mut wb);
+        assert_eq!(
+            shown.sketch.geometry.len(),
+            written.sketch.geometry.len() - 1
+        );
+        same(&shown, &afresh(&doc));
+
+        let written = write(&mut doc, &mut wb, 4.0);
+        assert!(Arc::ptr_eq(&read(&mut doc, &mut wb), &written));
+        let mut peer = stored_sketch(&doc, id).unwrap();
+        peer.sketch.constraints.clear();
+        doc.apply_remote_op(&core_document::op::DocumentOp::UpdateFeatureData {
+            id,
+            data: peer.to_json().into(),
+        });
+        let shown = read(&mut doc, &mut wb);
+        assert!(shown.sketch.constraints.is_empty(), "a peer's op");
+        same(&shown, &afresh(&doc));
+
+        let written = write(&mut doc, &mut wb, 5.0);
+        assert!(Arc::ptr_eq(&read(&mut doc, &mut wb), &written));
+        doc.set_body_placement(body, moved(4.0));
+        let shown = read(&mut doc, &mut wb);
+        assert_ne!(shown.plane, written.plane, "the body moved");
+        same(&shown, &afresh(&doc));
+    }
 }
