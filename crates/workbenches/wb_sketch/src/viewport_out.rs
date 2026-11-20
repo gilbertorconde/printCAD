@@ -1243,13 +1243,14 @@ mod tests {
         let third = write(&mut doc, &mut wb, 3.0);
         assert_eq!(node(&third), free, "written over the spare");
 
-        // Each write an undo step of its own: from the second, the data
-        // written before is held by one, and every undo puts it back as
-        // written.
+        // Each write an undo step of its own, and every data written kept
+        // alive here as something else would hold it: a spare still held is
+        // never written over, and every undo puts the data back as written.
         let mut history = OpJournal::new(100);
         history.note(&mut doc);
         let mut texts = vec![doc.get_feature_meta(id).unwrap().data.to_string()];
-        texts.push(write(&mut doc, &mut wb, 4.0).to_string());
+        let mut kept = vec![write(&mut doc, &mut wb, 4.0)];
+        texts.push(kept[0].to_string());
         history.note(&mut doc);
         for x in [5.0, 6.0, 7.0] {
             let held = spare(&wb);
@@ -1257,6 +1258,7 @@ mod tests {
             assert_ne!(Some(node(&stored)), held, "a held spare is left alone");
             history.note(&mut doc);
             texts.push(stored.to_string());
+            kept.push(stored);
         }
         for text in texts.iter().rev().skip(1) {
             history.undo(&mut doc).unwrap();
