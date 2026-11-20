@@ -1263,6 +1263,11 @@ pub fn workbenches_dir() -> Option<PathBuf> {
     dirs().map(|dirs| dirs.data_dir().join("workbenches"))
 }
 
+/// Where workbench packages' compiled components are kept between runs.
+pub fn compiled_packages_dir() -> Option<PathBuf> {
+    dirs().map(|dirs| dirs.cache_dir().join("compiled-packages"))
+}
+
 /// The index of the workbench store at `url` as last fetched, for
 /// browsing offline: one file per store, named after its address.
 pub fn store_cache(url: &str) -> Option<PathBuf> {

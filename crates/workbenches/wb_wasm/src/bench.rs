@@ -95,11 +95,8 @@ struct Threads {
 /// Load `package`, allowing it `granted` of what it asks for.
 pub fn load(package: &Package, granted: &bench_api::Capabilities) -> Result<WasmWorkbench, String> {
     let manifest = &package.manifest;
-    let component = crate::engine::component(
-        &package.component()?,
-        Some(package.compiled_dir().as_path()),
-        &manifest.id,
-    )?;
+    let (component, _) =
+        crate::compiled::CACHE.component(&crate::engine::ENGINE, &package.component()?)?;
     let info = Arc::new(package_info(package, granted));
     let loaded = Arc::new(crate::guest::Loaded::new(
         component,

@@ -187,6 +187,9 @@ pub(crate) fn register(
     registry: &mut core_document::DocumentService,
     settings: &PackageSettings,
 ) -> Vec<PackageStatus> {
+    if let Some(compiled) = settings::compiled_packages_dir() {
+        workbenches::set_compiled_cache(compiled);
+    }
     let Some(root) = settings::workbenches_dir() else {
         return Vec::new();
     };

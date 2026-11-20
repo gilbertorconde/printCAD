@@ -60,6 +60,12 @@ off, and what it may reach, take effect when you apply Preferences.
 Packages live in
 `~/.local/share/printcad/workbenches/<id>/`, each with a `data/` folder that
 is the only part of the disk it sees (as `/data`).
+The app compiles a package's component to native code the first time it
+loads it and keeps the result in `~/.cache/printcad/compiled-packages/`,
+named by a hash of the component and of the runtime that compiled it, so
+later starts skip compiling; a changed component or a new runtime is
+compiled afresh. The folder is the app's own and is safe to delete; it
+keeps the 64 most recently used components, 512 MB at most.
 
 A document made with a package keeps its features when opened without it:
 a notice says which package it needs, the tree marks them "Needs <package>
@@ -711,6 +717,9 @@ assert!(h.undo().is_some());
 
 The Peg example's tests in `crates/workbenches/wb_wasm/tests/packages.rs`
 use it.
+A harness keeps compiled components for the test run; to keep them
+between runs too, name a folder of the build's, as those tests do:
+`wb_wasm::set_compiled_cache(Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-packages"))`.
 
 ## Limits
 

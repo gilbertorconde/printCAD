@@ -13,10 +13,15 @@ use core_document::{
 use serde_json::{Value, json};
 use wb_wasm::{Capabilities, Package};
 
-/// The SDK workspace's release build for wasm32-wasip2, built once.
+/// The SDK workspace's release build for wasm32-wasip2, built once. The
+/// packages' compiled components are kept under the build's own folder,
+/// shared by every test and the next run.
 fn guests() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
+        wb_wasm::set_compiled_cache(
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join("compiled-packages"),
+        );
         let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk");
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         // Its own target folder, whatever CARGO_TARGET_DIR the tests run

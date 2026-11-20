@@ -50,7 +50,7 @@ fn network() -> wb_wasm::remote::Http {
 
 pub use wb_wasm::remote::Source;
 pub use wb_wasm::store::{Index as StoreIndex, Listing};
-pub use wb_wasm::{Capabilities, Package, package::ARCHIVE_EXTENSION};
+pub use wb_wasm::{Capabilities, Package, package::ARCHIVE_EXTENSION, set_compiled_cache};
 
 /// How an installed workbench package stands: loaded, turned off, or
 /// failed and why.
@@ -106,6 +106,9 @@ pub fn register_packages(
     enabled: impl Fn(&str) -> bool,
     granted: impl Fn(&str) -> Capabilities,
 ) -> Vec<PackageStatus> {
+    // Compiled components live in the folder `set_compiled_cache` names;
+    // a `.compiled` folder among the packages is an older release's.
+    let _ = std::fs::remove_dir_all(root.join(".compiled"));
     let mut statuses = Vec::new();
     for found in wb_wasm::discover(root) {
         let package = match found {

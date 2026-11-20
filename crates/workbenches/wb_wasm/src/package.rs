@@ -44,12 +44,6 @@ impl Package {
         fs::read(self.wasm()).map_err(|e| format!("cannot read {}: {e}", self.wasm().display()))
     }
 
-    /// Where the app keeps the package's compiled component: beside the
-    /// installed packages rather than in one, where no archive reaches.
-    pub fn compiled_dir(&self) -> PathBuf {
-        self.dir.parent().unwrap_or(&self.dir).join(".compiled")
-    }
-
     /// Where the package keeps its own files; the only folder it reaches.
     pub fn data_dir(&self) -> PathBuf {
         self.dir.join("data")
@@ -269,14 +263,6 @@ pub fn uninstall(root: &Path, id: &str) -> Result<(), String> {
         return Err(format!("{id} is not installed"));
     }
     fs::remove_dir_all(&dir).map_err(|e| format!("cannot remove {id}: {e}"))?;
-    if let Ok(entries) = fs::read_dir(root.join(".compiled")) {
-        let prefix = format!("{id}@");
-        for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
     Ok(())
 }
 
