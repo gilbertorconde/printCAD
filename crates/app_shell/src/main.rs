@@ -4,7 +4,6 @@
 
 mod app;
 mod array_paths;
-mod camera;
 mod console;
 mod contract;
 mod headless;

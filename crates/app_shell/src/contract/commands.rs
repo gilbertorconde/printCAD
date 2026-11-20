@@ -361,7 +361,7 @@ pub enum UiCommand {
     },
     SetProjection(ProjectionMode),
     /// Turn the clipping plane on, move it, or (`None`) put it away.
-    SetSection(Option<crate::camera::section::SectionToggle>),
+    SetSection(Option<view_camera::section::SectionToggle>),
     /// Keep the view's plane in the document by name, show a saved one, or
     /// drop one.
     SavedSection(SavedSectionAction),

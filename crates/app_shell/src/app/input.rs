@@ -14,7 +14,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::PrintCadApp;
-use crate::camera::CameraPointerResult;
+use view_camera::CameraPointerResult;
 
 pub(crate) use super::face_pick::*;
 
@@ -1130,7 +1130,7 @@ impl PrintCadApp {
                     continue;
                 };
                 if clip.is_some_and(|plane| {
-                    !crate::camera::section::keeps(plane, origin + direction * t)
+                    !view_camera::section::keeps(plane, origin + direction * t)
                 }) {
                     continue;
                 }

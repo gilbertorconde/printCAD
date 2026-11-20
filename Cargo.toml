@@ -40,6 +40,7 @@ members = [
   "crates/assistant",
   "crates/local_ipc",
   "crates/viewport_camera",
+  "crates/view_camera",
   "crates/transform_gizmo",
 ]
 resolver = "2"

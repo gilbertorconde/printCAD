@@ -208,6 +208,7 @@ dependencies = [
  "tracing-subscriber",
  "ui_kit",
  "uuid",
+ "view_camera",
  "viewport_camera",
  "winit",
  "winresource",
@@ -5649,6 +5650,23 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "view_camera"
+version = "0.1.0"
+dependencies = [
+ "axes",
+ "core_document",
+ "glam 0.33.7",
+ "orientation_cube",
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+ "settings",
+ "tracing",
+ "viewport_camera",
+ "winit",
+]
 
 [[package]]
 name = "viewport_camera"

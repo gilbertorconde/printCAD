@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::PrintCadApp;
 use crate::app::session_state::ViewState;
-use crate::camera::KeptView;
 use crate::contract::PanelLayout;
+use view_camera::KeptView;
 
 /// How many documents' views are kept: the latest looked at.
 pub(crate) const VIEWS_KEPT: usize = 50;

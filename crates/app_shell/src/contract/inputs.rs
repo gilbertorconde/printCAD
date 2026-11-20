@@ -103,7 +103,7 @@ pub struct UiFrameInputs<'a> {
     /// The projection the tab's view draws with.
     pub projection: settings::ProjectionMode,
     /// The clipping plane, when on, and the scene box it moves across.
-    pub section: Option<crate::camera::section::SectionPlane>,
+    pub section: Option<view_camera::section::SectionPlane>,
     /// What the clipping plane waits for a pick in the view to aim it.
     pub section_prompt: Option<String>,
     /// What a click in the view picks.

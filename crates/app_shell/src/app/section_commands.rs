@@ -10,7 +10,7 @@ use glam::Vec3;
 use serde_json::{Value, json};
 
 use crate::PrintCadApp;
-use crate::camera::section::{SectionAim, SectionAxis, SectionPlane, SectionToggle, Wedge};
+use view_camera::section::{SectionAim, SectionAxis, SectionPlane, SectionToggle, Wedge};
 
 pub(crate) fn doc_section_commands() -> Vec<CommandSpec> {
     vec![

@@ -6,7 +6,7 @@
 //! helpers that project and unproject through it live in
 //! `core_document::runtime`, and every caller goes through them.
 
-pub(crate) mod section;
+pub mod section;
 
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Quat, Vec2, Vec3};
@@ -68,7 +68,7 @@ fn device_axes(readings: [f32; 6], device: &SixDofSettings) -> Option<[f32; 6]> 
 pub const FOV_RANGE_DEG: (f32, f32) = (10.0, 120.0);
 
 pub struct CameraController {
-    pub(crate) state: ViewState,
+    pub state: ViewState,
     frame: AxisFrame,
     axis_preset: AxisPreset,
     tween: ViewTween,
@@ -143,7 +143,7 @@ impl CameraController {
         self.tween.is_active()
     }
 
-    pub(crate) fn cancel_animation(&mut self) {
+    pub fn cancel_animation(&mut self) {
         self.tween.cancel();
     }
 
@@ -1101,7 +1101,7 @@ impl CameraController {
         AxisSystem::from(self.axis_preset)
     }
 
-    pub(crate) fn position_vec(&self) -> Vec3 {
+    pub fn position_vec(&self) -> Vec3 {
         self.state.eye_vec3()
     }
 
@@ -1228,12 +1228,21 @@ pub enum CameraPointerResult {
 }
 
 impl CameraPointerResult {
-    pub(crate) fn wants_redraw(&self) -> bool {
+    pub fn wants_redraw(&self) -> bool {
         matches!(
             self,
             CameraPointerResult::Redraw | CameraPointerResult::LmbReleasedMaybeSelect
         )
     }
+}
+
+/// The sphere a fit frames for a box: its middle, and half its diagonal
+/// (at least 1 mm).
+pub fn aabb_fit_center_radius(aabb_min: Vec3, aabb_max: Vec3) -> (Vec3, f32) {
+    let center = (aabb_min + aabb_max) * 0.5;
+    let extents = aabb_max - aabb_min;
+    let radius = extents.length() * 0.5;
+    (center, radius.max(1.0))
 }
 
 #[cfg(test)]

@@ -903,7 +903,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
             settings::ProjectionMode::Perspective,
         )),
         ClippingPlane => C(UiCommand::SetSection(
-            (!section_on).then_some(crate::camera::section::SectionToggle::On),
+            (!section_on).then_some(view_camera::section::SectionToggle::On),
         )),
         Measure => C(UiCommand::ToggleMeasure),
         NoteTool => C(UiCommand::ToggleNoteTool),

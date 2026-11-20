@@ -27,8 +27,8 @@ const LAYERS = [
   ["bench_fixtures", "project_tools"],
   // The bench facade.
   ["workbenches"],
-  // What the application keeps beside its documents and window.
-  ["assistant", "doc_export", "file_session", "kernel_worker", "package_store"],
+  // The application's parts beneath the binary: its services and the view camera.
+  ["assistant", "doc_export", "file_session", "kernel_worker", "package_store", "view_camera"],
   // The application.
   ["app_shell"],
 ];

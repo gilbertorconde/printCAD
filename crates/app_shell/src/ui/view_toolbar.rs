@@ -14,12 +14,12 @@ use ui_kit::widgets::{QtyField, ToolButtonState, tool_button, vseparator};
 
 use super::UiCommand;
 use super::keymap::Keymap;
-use crate::camera::FOV_RANGE_DEG;
-use crate::camera::section::{
-    SectionAim, SectionAxis, SectionPick, SectionPlane, SectionToggle, Wedge,
-};
 use crate::contract::{MeasureBar, PickFilter};
 use orientation_cube::CameraSnapView;
+use view_camera::FOV_RANGE_DEG;
+use view_camera::section::{
+    SectionAim, SectionAxis, SectionPick, SectionPlane, SectionToggle, Wedge,
+};
 
 const BUTTON: f32 = 28.0;
 

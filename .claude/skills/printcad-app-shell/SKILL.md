@@ -19,8 +19,8 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   `ActiveTool` with `activate`, `ActiveWorkbench`, `PanelLayout`,
   `UiFrameOutput`). `app/` names `UiLayer` from `ui/` and nothing else;
   `UiLayer::new` takes the bench hooks the UI plays (`UiHooks`) once.
-  Modules beside both (`keymap.rs`, `scans.rs`, `array_paths.rs`,
-  `camera/`, `orientation_cube/`) may be used by either.
+  Modules beside both (`keymap.rs`, `scans.rs`, `array_paths.rs`) and
+  the crates below may be used by either.
   `scripts/check-ui-boundary.mjs` (a lint gate) fails on `crate::app` in
   `ui/`, on `crate::ui` in `app/` beyond `UiLayer`, and on either in
   `contract/`. A value the UI shows reaches it through `UiFrameInputs` or
@@ -77,7 +77,7 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Fie
   path from `FileState::links_from`, the folder the document was opened
   from; a link found nowhere is `link_missing` and Relink… records a
   `SetBodyLink`), `workbench_host.rs` (ctx
-  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive; runs each
+  plumbing), the `kernel_worker` crate (kernel thread, keeps the UI responsive; runs each
   body's chain through `build_driver::build_until_failure` and lands
   answers through the driver's store steps in `step_import.rs`; keeps
   the last few solids per body by what they were built from, so moving a
@@ -238,7 +238,7 @@ container's first entry, `thumbnail.png`, which
 cards show it. What's new reads `crates/app_shell/RELEASE_NOTES.md`, and
 a test fails when the running version has no entry there. The Edit menu's Cut/Copy/Paste go to the
 active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
-geometry clipboard); the view toolbar's clipping plane (`camera/section.rs`, per tab, a
+geometry clipboard); the view toolbar's clipping plane (`view_camera::section`, per tab, a
 plane square to X, Y, Z or the view, on a flat face or a datum plane, or
 through three points, with an offset along its normal that a formula may
 set and a drag handle, `app/section.rs`, and bodies it leaves uncut,

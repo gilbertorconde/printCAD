@@ -10,17 +10,17 @@ use uuid::Uuid;
 
 use crate::app::doc_io::{OpenJob, SaveJob, SaveProgress};
 use crate::app::session::BodyPreview;
-use crate::camera::CameraController;
 use crate::contract::TreeItemId;
 use crate::{DimensionCache, RemoteImportRoute};
+use view_camera::CameraController;
 
 /// Where the tab looks from and how the view is laid out.
 pub(crate) struct ViewState {
     pub camera: CameraController,
     /// The view toolbar's clipping plane, when on.
-    pub section: Option<crate::camera::section::SectionPlane>,
+    pub section: Option<view_camera::section::SectionPlane>,
     /// The pick in the view the clipping plane waits for, while aiming.
-    pub section_pick: Option<crate::camera::section::SectionPick>,
+    pub section_pick: Option<view_camera::section::SectionPick>,
     /// View › Split view is on for this tab.
     pub split: bool,
     /// The side pane's own camera, while View › Link split cameras is off;
@@ -39,7 +39,7 @@ pub(crate) struct ViewState {
     pub pick_filter: crate::contract::PickFilter,
     /// Where the view stood when an edit session began, to go back to
     /// when it ends.
-    pub before_edit: Option<crate::camera::KeptView>,
+    pub before_edit: Option<view_camera::KeptView>,
 }
 
 /// What lies under the pointer, in the view and in the tree.

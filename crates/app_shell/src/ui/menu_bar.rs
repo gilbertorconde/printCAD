@@ -755,7 +755,7 @@ pub fn draw_menu_bar(
                             ) {
                                 commands.push(UiCommand::SetSection(
                                     (!inputs.section_on)
-                                        .then_some(crate::camera::section::SectionToggle::On),
+                                        .then_some(view_camera::section::SectionToggle::On),
                                 ));
                             }
                             let benches = REGISTERED_WORKBENCHES.lock().unwrap().clone();

@@ -13,8 +13,8 @@ pub(crate) use crate::app::session_state::{
     Builds, Connection, Drawn, FileState, Heard, HostTools, Hover, KeptSelection, KernelJobs,
     Selection, ViewState,
 };
-use crate::camera::CameraController;
 use crate::contract::{ActiveTool, ActiveWorkbench, Screen, TreeItemId};
+use view_camera::CameraController;
 
 /// How many steps a tab's undo history keeps, and a window-less run's.
 pub(crate) const JOURNAL_LIMIT: usize = 64;

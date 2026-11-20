@@ -3,7 +3,7 @@
 How the viewport camera works. The camera maths lives in the shared
 `crates/viewport_camera` crate: its `focal_view` module holds the view's
 state, its matrices, gestures, zoom, fits, near and far planes and
-transitions. The app's `crates/app_shell/src/camera/` routes window and
+transitions. The `crates/view_camera` crate routes window and
 device input to it, hands it the settings and keeps views between runs.
 
 ## State

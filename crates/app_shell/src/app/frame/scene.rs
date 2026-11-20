@@ -385,7 +385,7 @@ impl PrintCadApp {
                 // as the shell it is; a closed one is capped. A body the
                 // toolbar's section leaves whole is neither.
                 let uncut = scene_clip.is_some()
-                    && crate::camera::section::clip_for(scene_clip, section.as_ref(), *body_id)
+                    && view_camera::section::clip_for(scene_clip, section.as_ref(), *body_id)
                         .is_none();
                 let open = !uncut && {
                     let closed = match self.session.drawn.closed.get(body_id) {

@@ -14,7 +14,7 @@ use settings::ProjectionMode;
 use ui_kit::tokens;
 use uuid::Uuid;
 
-use crate::camera::CameraController;
+use view_camera::CameraController;
 
 /// The world's axes, each in its colour.
 const WORLD_AXES: [(Vec3, egui::Color32); 3] = [

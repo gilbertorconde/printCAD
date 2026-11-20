@@ -144,7 +144,7 @@ impl PrintCadApp {
             // body the section cuts.
             let clip = self.clip_of(*body_id);
             let project_kept = |p: [f32; 3]| {
-                clip.is_none_or(|plane| crate::camera::section::keeps(plane, Vec3::from_array(p)))
+                clip.is_none_or(|plane| view_camera::section::keeps(plane, Vec3::from_array(p)))
                     .then(|| project(p))
                     .flatten()
             };

@@ -12,7 +12,7 @@ use glam::Vec3;
 
 /// The document axis a section plane stands square to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SectionAxis {
+pub enum SectionAxis {
     X,
     Y,
     Z,
@@ -40,7 +40,7 @@ impl SectionAxis {
 
 /// How a section plane was aimed, which the clip pill names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SectionAim {
+pub enum SectionAim {
     /// Square to a document axis, its offset the coordinate along it.
     Axis(SectionAxis),
     /// Square to the view as it was when aimed.
@@ -55,7 +55,7 @@ pub(crate) enum SectionAim {
 
 /// What the clipping plane controls ask for.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SectionToggle {
+pub enum SectionToggle {
     /// Across the middle of the scene, facing the viewer.
     On,
     /// This plane exactly.
@@ -73,7 +73,7 @@ pub(crate) enum SectionToggle {
 
 /// A pick in the view the clipping plane waits for.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SectionPick {
+pub enum SectionPick {
     /// A flat face or a datum plane.
     Plane,
     /// Three points; the ones picked so far.
@@ -98,7 +98,7 @@ impl SectionPick {
 /// The bodies in `uncut` it leaves whole (a shaft through a housing).
 /// With a `wedge`, only what both planes would cut away is cut.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SectionPlane {
+pub struct SectionPlane {
     pub normal: Vec3,
     pub base: f32,
     pub offset: f32,
@@ -112,7 +112,7 @@ pub(crate) struct SectionPlane {
 /// A wedge's second plane: square to unit `normal`, `base + offset` mm
 /// along it, keeping the side the normal points to unless `flipped`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Wedge {
+pub struct Wedge {
     pub normal: Vec3,
     pub base: f32,
     pub offset: f32,
@@ -369,7 +369,7 @@ impl SectionPlane {
 /// What the scene is cut with: a plane in the renderer's form, and a
 /// wedge's second plane, with which only what both cut away is cut.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Clip {
+pub struct Clip {
     pub plane: [f32; 4],
     pub wedge: Option<[f32; 4]>,
 }
@@ -382,7 +382,7 @@ impl From<[f32; 4]> for Clip {
 
 /// The clip for one body: none when the toolbar's section `plane` is what
 /// cuts the scene at `clip` and leaves `body` whole.
-pub(crate) fn clip_for(
+pub fn clip_for(
     clip: Option<Clip>,
     plane: Option<&SectionPlane>,
     body: core_document::BodyId,
@@ -395,7 +395,7 @@ pub(crate) fn clip_for(
 /// Whether `clip` keeps the point: the renderer draws what has
 /// `a·x + b·y + c·z + d >= 0` for the plane `[a, b, c, d]`, or for the
 /// wedge's second plane.
-pub(crate) fn keeps(clip: impl Into<Clip>, p: Vec3) -> bool {
+pub fn keeps(clip: impl Into<Clip>, p: Vec3) -> bool {
     let clip = clip.into();
     let side = |[a, b, c, d]: [f32; 4]| a * p.x + b * p.y + c * p.z + d >= 0.0;
     side(clip.plane) || clip.wedge.is_some_and(side)

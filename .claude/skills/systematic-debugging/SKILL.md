@@ -97,7 +97,7 @@ You MUST complete each phase before proceeding to the next.
 
    **printCAD boundaries.** Name the suspected boundary before you
    instrument:
-   - the UI thread and the kernel worker (`kernel_worker.rs`,
+   - the UI thread and the kernel worker (the `kernel_worker` crate,
      `app/recompute.rs`): plans in, `SolidBuildResult` out, routed by body
      id or `import_owner`, a build dropped or replaced by a newer plan;
    - the document and its server (`core_document/src/server.rs`,

@@ -81,7 +81,8 @@ are in the skill the index below names.
   `kernel_ogeom` (the only crate on ogeom), `render_wgpu` (data-only:
   `FrameSubmission` in, pixels out), `settings`, `agents` (agent client, MCP),
   `app_platform` (threads beside the window, atomic writes, private
-  folders, termination signals).
+  folders, termination signals), `orientation_cube` (the view's cube,
+  egui).
 - `core_document`: `Document` (feature tree DAG, bodies with `tip`, tar
   `.prtcad`), ops and undo, the `Workbench` trait and registry, datums, the
   command contract; above it `bench_panel` (declared panels in egui) and
@@ -93,12 +94,14 @@ are in the skill the index below names.
   (pressing the body's `core_document::texture` into a mesh), benches `wb_sketch`,
   `wb_assembly`, `wb_inspect`, `wb_mesh`, `wb_wasm` (packages); then
   `wb_design`, `wb_surface` on `sketch_model`; then `bench_fixtures`,
-  `project_tools`; the `workbenches` facade; what the app keeps beside its
-  window, each without egui or winit: `assistant` (the chat model, chats
-  kept per file, mentions, agents' tool calls), `doc_export` (export,
+  `project_tools`; the `workbenches` facade; the app's parts beneath the
+  binary: `assistant` (the chat model, chats kept per file, mentions,
+  agents' tool calls), `doc_export` (export,
   the slicer, pressed textures), `file_session` (recovery copies, file
   safety, the unsaved and save-over questions), `package_store`
-  (workbench packages, stores, the release check); `app_shell`
+  (workbench packages, stores, the release check), `kernel_worker` (the
+  kernel thread over `build_driver`), `view_camera` (window input steering
+  `viewport_camera`, the clipping plane, kept views); `app_shell`
   (`printcad`), whose `ui/` and `app/` meet only through `contract/`
   (`scripts/check-ui-boundary.mjs`).
 

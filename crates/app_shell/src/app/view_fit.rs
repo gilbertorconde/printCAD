@@ -7,6 +7,7 @@ use glam::Vec3;
 
 use crate::PrintCadApp;
 use orientation_cube::CameraSnapView;
+pub(crate) use view_camera::aabb_fit_center_radius;
 
 /// The box `(min, max)` of every body the view draws, in world space:
 /// hidden bodies are left out. `None` when nothing is drawn.
@@ -25,15 +26,6 @@ pub(crate) fn drawn_body_bounds(
         .imported_geometries()
         .filter(|(body, _)| document.imported_body_effective_visible(**body))
         .filter_map(|(_, geometry)| geometry.bounds())
-}
-
-/// The sphere a fit frames for a box: its middle, and half its diagonal
-/// (at least 1 mm).
-pub(crate) fn aabb_fit_center_radius(aabb_min: Vec3, aabb_max: Vec3) -> (Vec3, f32) {
-    let center = (aabb_min + aabb_max) * 0.5;
-    let extents = aabb_max - aabb_min;
-    let radius = extents.length() * 0.5;
-    (center, radius.max(1.0))
 }
 
 impl PrintCadApp {
