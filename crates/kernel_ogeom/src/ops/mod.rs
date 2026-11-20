@@ -8,6 +8,7 @@ pub mod primitive;
 pub mod project;
 pub mod surface;
 pub mod sweep;
+pub mod thread;
 mod wrap;
 
 use ogeom::core::Tolerances;

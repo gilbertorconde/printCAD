@@ -98,6 +98,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::OffsetSolid { .. } => "Offsetting the solid",
         SolidOp::Scale { .. } => "Scale",
         SolidOp::KeepPiece { .. } => "Piece",
+        SolidOp::Thread { .. } => "Thread",
         SolidOp::Transform { .. } | SolidOp::TransformCopies { .. } | SolidOp::Pattern { .. } => {
             "Pattern"
         }

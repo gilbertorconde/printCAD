@@ -23,10 +23,11 @@ const STANDOFF: f64 = 2.0;
 /// What the text says when the tool puts it down.
 const FIRST_TEXT: &str = "Text";
 
-/// The face to write on, in `body`'s frame, with the surface it lies on:
-/// the face picked in the view, its surface read from the body's mesh when
-/// the pick did not carry one (a face given to a command).
-fn picked_face(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FaceRef> {
+/// The face picked in the view (text's to write on, a thread's to cut
+/// into), in `body`'s frame, with the surface it lies on, read from the
+/// body's mesh when the pick did not carry one (a face given to a
+/// command).
+pub(crate) fn picked_face(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FaceRef> {
     let mut face = ctx.selected_face_in(body)?;
     if face.surface.is_none() {
         face.surface = surface_at(ctx.document, body, face.point);
@@ -45,12 +46,11 @@ fn surface_at(document: &Document, body: BodyId, point: [f32; 3]) -> Option<Face
         .iter()
         .enumerate()
         .map(|(t, tri)| {
-            let c = tri
-                .iter()
-                .map(|i| glam::Vec3::from_array(mesh.positions[*i as usize]))
-                .sum::<glam::Vec3>()
-                / 3.0;
-            (t, c.distance_squared(p))
+            let [a, b, c] = tri.map(|i| glam::Vec3::from_array(mesh.positions[i as usize]));
+            (
+                t,
+                core_document::mesh_query::triangle_distance_sq(p, a, b, c),
+            )
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))?
         .0;

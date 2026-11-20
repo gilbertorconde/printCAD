@@ -976,6 +976,40 @@ pub enum SolidOp {
     /// Keep one piece of the running shape: of its solids, the one
     /// nearest `near`, the others left out.
     KeepPiece { near: [f64; 3] },
+    /// A thread cut into the cylindrical face of the running solid `face`
+    /// finds: an external one into a shaft, an internal one into a bore,
+    /// as the face's outward normal says.
+    Thread { face: FaceProbe, form: FaceThread },
+}
+
+/// The thread a [`SolidOp::Thread`] cuts. The groove is the tooth space
+/// of `flank_deg` between its flanks, `depth` deep from the face, flat a
+/// pitch's eighth wide at its root, swept along a helix about the face's
+/// axis from the end of the face nearer the probe's point (the other end
+/// with `from_far_end`) and kept within the face's length.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct FaceThread {
+    pub pitch: f64,
+    /// How far the groove reaches into the material from the face, mm.
+    pub depth: f64,
+    /// The included angle between the flanks, degrees.
+    pub flank_deg: f64,
+    /// How far along the face it runs from its starting end; `None` for
+    /// the face's whole length.
+    #[serde(default)]
+    pub length: Option<f64>,
+    #[serde(default)]
+    pub from_far_end: bool,
+    #[serde(default)]
+    pub left_handed: bool,
+    /// A 45° chamfer at the starting end, down to the groove's root on a
+    /// shaft and out to it on a bore.
+    #[serde(default)]
+    pub chamfer: bool,
+    /// Over this much of its length at the far end the groove grows
+    /// shallower until it meets the face; zero ends it square.
+    #[serde(default)]
+    pub run_out: f64,
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.

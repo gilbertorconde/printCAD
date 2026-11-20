@@ -220,3 +220,47 @@ of a body's solid, imported ones included, into Hole features: their
 faces go in one Delete faces feature, and each set of alike holes on one
 plane is drilled again from a hidden sketch of their centres. Bores it
 cannot describe (counterbores, countersinks, slots) stay as they are.
+
+## Threads on a face
+
+**Thread** (Design's subtractive group) cuts a thread into a round face
+the solid already has: a bolt's shank, the outside of a jar's neck, the
+inside of a cap, or a bore no Hole made. Click the face and choose
+Thread; which way the face faces tells an external thread from an
+internal one. The task panel shows what it found (a shaft or a bore, its
+diameter and length) and sets:
+
+- **Standard** and **Size**, as a hole's (the taper standards are a
+  Hole's, since only a Hole tapers its bore): the thread's pitch, and its
+  depth from the major to the minor diameter. The tool starts with the
+  ISO metric coarse size nearest the face, by its major diameter on a
+  shaft and its minor in a bore. **Custom** cuts a **Pitch** and a
+  **Depth** of your own, 60° between the flanks. The face is not resized:
+  model a shaft at the major diameter and a bore at the minor.
+- **Whole face**, or a **Length** from the end the thread starts at. It
+  starts at the end of the face nearer where you clicked; **From the
+  other end** starts it at the far one. While the task is open the
+  length has a drag arrow along the face.
+- **Left-hand thread**.
+- **Chamfer the start**: a 45° chamfer at the starting end, down to the
+  thread's root on a shaft and out to it in a bore, so the first turn
+  starts cleanly and prints without a ragged edge.
+- **Run out at the end**: the groove grows shallower over its last two
+  pitches instead of ending square, as a die leaves it.
+- **Cosmetic thread**: nothing is cut. The face shows a helix of the
+  thread's pitch, and the designation goes where a hole's cosmetic
+  thread's does: the tree row's tooltip, View › Annotations, the parts
+  list and a STEP export's callouts.
+
+The groove is the same as a modeled hole thread's: the standard's flank
+angle, flat a pitch's eighth wide at its root, swept along a helix about
+the face's axis and kept within the face's length, so a thread running
+the whole of a shank stops square at the head's face rather than cutting
+into it. A face that is not a cylinder fails on the feature.
+
+```lua
+pc.design.thread{body = body, face_point = {5, 0, 8}, face_normal = {1, 0, 0},
+  thread = "M10", full_length = false, length = 12, chamfer = true}
+```
+
+`thread = "Custom"` with `pitch` and `depth` cuts a thread of your own.

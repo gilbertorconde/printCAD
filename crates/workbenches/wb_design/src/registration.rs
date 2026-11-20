@@ -173,6 +173,10 @@ impl DesignWorkbench {
         );
         register(
             context,
+            action("design.thread", "Thread", "thread", "subtractive"),
+        );
+        register(
+            context,
             action("design.groove", "Groove", "groove", "subtractive"),
         );
         register(
@@ -448,7 +452,7 @@ impl DesignWorkbench {
             | "design.subtractive_loft"
             | "design.subtractive_pipe"
             | "design.subtractive_helix" => has_sketch && has_solid,
-            "design.subtractive_primitive" | "design.text" => has_solid,
+            "design.subtractive_primitive" | "design.text" | "design.thread" => has_solid,
             "design.fillet"
             | "design.chamfer"
             | "design.draft"

@@ -402,3 +402,20 @@ pub fn is_sound(blob: &[u8]) -> bool {
         .unwrap()
         .is_usable()
 }
+
+/// A Design body: a primitive of `kind` at `origin`, fused onto what is
+/// there (or the first solid).
+pub fn primitive_feature(kind: PrimitiveKind, origin: [f64; 3]) -> DesignFeature {
+    DesignFeature::Primitive {
+        keep_inside: false,
+        attached: None,
+        refine: false,
+        boolean_tolerance: None,
+        kind,
+        placement: Placement {
+            origin,
+            ..Placement::default()
+        },
+        subtractive: false,
+    }
+}

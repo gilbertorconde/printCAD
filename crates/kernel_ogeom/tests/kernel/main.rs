@@ -35,6 +35,7 @@ mod solid_ops;
 mod step_import;
 mod surface_ops;
 mod surface_stack;
+mod threads;
 mod unchanged;
 
 /// The bundled real part (`tests/data/drive_frame_upper.step`) at the

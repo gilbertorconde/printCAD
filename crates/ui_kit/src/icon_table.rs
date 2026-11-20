@@ -644,6 +644,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/text-wrap-turn.svg"),
     ),
     ("thickness", include_str!("../icons/thickness.svg")),
+    ("thread", include_str!("../icons/thread.svg")),
     ("toggle-active", include_str!("../icons/toggle-active.svg")),
     (
         "toggle-axis-cross",

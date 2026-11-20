@@ -540,6 +540,46 @@ local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (1000 - section * 10)) < 1e-3, volume)
 ```
 
+## design.thread
+
+`face_point` and `face_normal` name the round face and are required: a
+shaft's, a boss's or a bore's, which way it faces telling an external thread
+from an internal one. The thread starts at the end of the face nearer the
+point (`from_far_end = true` for the other) and runs its whole length, or
+`length` mm with `full_length = false`.
+
+`thread` is the standard size, the ISO metric coarse one nearest the face
+when left out (by its major diameter on a shaft, its minor in a bore), as a
+designation (`"M10"`, `"1/4-20"`) or `{standard, size}`; its pitch and its
+depth from major to minor diameter are the size's. `thread = "Custom"` cuts
+the feature's own `pitch` and `depth` at 60°. A taper standard is a Hole's and
+is refused here.
+
+`left_handed`, `chamfer` (45° down to the root at the start) and `run_out`
+(the groove grows shallower over its last two pitches) are fields too.
+`cosmetic = true` cuts nothing: the face shows a helix and the parts list,
+the annotations and a STEP export call the thread out.
+
+See also: `design.hole`, `design.subtractive_helix`
+
+### An M6 thread cut down a 6 mm shaft
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body, variant = "cylinder",
+  kind = {Cylinder = {radius = 3, height = 4, angle_deg = 360}}}
+assert(#pc.doc.rebuild() == 0)
+local plain = pc.doc.measure{body = body}.volume
+-- Picked near the top: the thread starts at the top end.
+pc.design.thread{body = body, face_point = {3, 0, 3.8}, face_normal = {1, 0, 0}, thread = "M6"}
+assert(#pc.doc.rebuild() == 0, "the thread builds")
+-- The groove takes about half the ring between the major and minor diameters.
+local minor = 3 - 1.082532 / 2
+local ring = math.pi * (9 - minor * minor) * 4
+local cut = plain - pc.doc.measure{body = body}.volume
+assert(cut > ring * 0.3 and cut < ring * 0.7, cut)
+```
+
 ## design.fillet, design.chamfer
 
 `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks

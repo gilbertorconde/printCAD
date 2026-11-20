@@ -40,6 +40,10 @@ pub(super) const FEATURES: &[(&str, &str)] = &[
         "design.hole",
         "Drill holes at a sketch's circles and points",
     ),
+    (
+        "design.thread",
+        "Cut a thread into a shaft's or a bore's round face",
+    ),
     ("design.fillet", "Round edges"),
     ("design.chamfer", "Bevel edges"),
     ("design.draft", "Tilt faces"),
@@ -395,7 +399,8 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
                 ParamKind::List,
                 "A face it takes as the viewport's picked face (a thickness's \
                  opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a \
-                 pocket, or a hole's place, given no sketch): a point of it, {x, y, z}, in the body's own frame",
+                 pocket, a thread's round face, or a hole's place, given no sketch): a point of \
+                 it, {x, y, z}, in the body's own frame",
             )
             .optional(
                 "face_normal",

@@ -25,6 +25,7 @@ mod patterns;
 mod primitive;
 mod project;
 mod sweeps;
+mod threads;
 mod transforms;
 
 /// The label column's width, left-aligned labels before every control.
@@ -929,6 +930,9 @@ pub fn feature_editor(
         }
         DesignFeature::Hole { .. } => {
             changed |= hole::hole_editor(f, ctx, fx, body, feature_id, feature);
+        }
+        DesignFeature::Thread { .. } => {
+            changed |= threads::thread_editor(f, ctx, fx, body, feature);
         }
         DesignFeature::Fillet { .. }
         | DesignFeature::Chamfer { .. }
