@@ -312,6 +312,10 @@ impl PrintCadApp {
                 // A save still packing names the old file: it goes to the
                 // server that owns that file, not the new one.
                 self.send_every_save_packing();
+                self.session
+                    .connection
+                    .server
+                    .send(core_document::server::ClientMessage::Leave);
                 self.session.connection.server.flush();
                 self.session.connection.server = server;
                 self.session.connection.socket = socket;
@@ -607,9 +611,13 @@ impl PrintCadApp {
                     bytes,
                     seq,
                     unsaved_lost,
+                    recoverable,
                 } => {
                     if token != self.session.connection.load_epoch {
                         continue;
+                    }
+                    if recoverable > 0 && !self.session.connection.rejoining {
+                        self.offer_unsaved_in_log(recoverable);
                     }
                     let connection = &mut self.session.connection;
                     connection.awaiting_open = false;
@@ -769,6 +777,41 @@ impl PrintCadApp {
         // Per-user undo survives foreign edits: the journal holds only this
         // user's gestures, and their inverses touch only what those touched.
         app_log::info(format!("{} remote edit(s) applied", ops.len()));
+    }
+
+    /// The document's log holds `batches` of edits a session left unsaved:
+    /// offered back in a card, or brought back at once when the start
+    /// page's Recover opened the file.
+    fn offer_unsaved_in_log(&mut self, batches: u32) {
+        let file = &mut self.session.file;
+        if std::mem::take(&mut file.restore_unsaved_on_open) {
+            self.answer_unsaved_in_log(true);
+            return;
+        }
+        file.unsaved_in_log = Some(batches);
+        app_log::info(format!(
+            "This document's log holds {batches} unsaved edit(s) from a session that ended \
+             without saving them"
+        ));
+    }
+
+    /// The user's answer to the unsaved edits the document's log offered:
+    /// back into the document through the server, which sends them to
+    /// every copy, or let go.
+    pub(crate) fn answer_unsaved_in_log(&mut self, restore: bool) {
+        use core_document::server::ClientMessage;
+        self.session.file.unsaved_in_log = None;
+        self.session.connection.server.send(if restore {
+            ClientMessage::RestoreUnsaved
+        } else {
+            ClientMessage::DiscardUnsaved
+        });
+    }
+
+    /// Tell every tab's server the tab is done with its document, on the
+    /// way out once every tab's edits were saved or let go.
+    pub(crate) fn leave_servers(&mut self) {
+        self.for_each_tab(|app| app.session.leave_server());
     }
 
     /// The server placed this client's oldest unanswered batch at `seq`.
@@ -1142,7 +1185,8 @@ impl PrintCadApp {
     }
 
     /// Bring back a copy a crash left, as an untitled document in a tab
-    /// of its own: saving it says where it goes.
+    /// of its own: saving it says where it goes. Edits a document's log
+    /// holds come back by opening the document and restoring them.
     pub(crate) fn recover_document(&mut self, copy: PathBuf) {
         let Some(entry) = self
             .autosave
@@ -1153,6 +1197,12 @@ impl PrintCadApp {
         else {
             return;
         };
+        if entry.from_log {
+            self.autosave.recoverable.retain(|r| r.copy != copy);
+            self.open_document_at(copy);
+            self.session.file.restore_unsaved_on_open = true;
+            return;
+        }
         let document = crate::platform::read(&copy)
             .map_err(anyhow::Error::from)
             .and_then(|bytes| Self::parse_document_bytes(&copy, bytes));
@@ -1196,9 +1246,18 @@ impl PrintCadApp {
         }
     }
 
-    /// Let a copy a crash left go.
+    /// Let a copy a crash left go, or the edits a document's log holds.
     pub(crate) fn discard_recovery(&mut self, copy: PathBuf) {
-        crate::app::recovery::remove(&copy);
+        if self
+            .autosave
+            .recoverable
+            .iter()
+            .any(|r| r.copy == copy && r.from_log)
+        {
+            doc_server::daemon::discard_unsaved_log(&copy);
+        } else {
+            crate::app::recovery::remove(&copy);
+        }
         self.autosave.recoverable.retain(|r| r.copy != copy);
     }
 

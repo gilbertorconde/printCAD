@@ -303,8 +303,9 @@ fn nav_item(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
     response
 }
 
-/// The copies a crash left: each with when it was written and where its
-/// document was, to bring back or let go.
+/// The copies a crash left, and the documents whose logs hold edits a
+/// session left unsaved: each with when it was written and where its
+/// document is, to bring back or let go.
 fn recover_section(
     ui: &mut Ui,
     copies: &[crate::app::recovery::Recoverable],
@@ -323,6 +324,11 @@ fn recover_section(
                             .color(TEXT1),
                     );
                     let whence = match &copy.file {
+                        Some(file) if copy.from_log => format!(
+                            "Unsaved edits, {} · {}",
+                            humanize_age(copy.saved_ms, now).to_lowercase(),
+                            file.display()
+                        ),
                         Some(file) => format!(
                             "Autosaved {} · {}",
                             humanize_age(copy.saved_ms, now).to_lowercase(),

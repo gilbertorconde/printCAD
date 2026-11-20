@@ -31,7 +31,10 @@ pub struct DaemonClient {
     /// Messages queued for the writer thread. A save carries the whole
     /// document, so encoding and writing it must not happen on the caller's
     /// thread: that thread is the one drawing the window.
-    tx_out: Sender<ClientMessage>,
+    tx_out: Option<Sender<ClientMessage>>,
+    /// The writer thread, which ends once `tx_out` is gone and everything
+    /// queued is written.
+    writer: Option<std::thread::JoinHandle<()>>,
     /// Keeps the child handle so a daemon we spawned is reaped on drop.
     child: Option<std::process::Child>,
     opens_in_flight: u32,
@@ -89,7 +92,7 @@ impl DaemonClient {
 
         let (tx_out, out_rx): (Sender<ClientMessage>, Receiver<ClientMessage>) = channel();
         let mut writer = stream.try_clone()?;
-        std::thread::Builder::new()
+        let writer = std::thread::Builder::new()
             .name("printcad-server-writer".into())
             .spawn(move || {
                 for message in out_rx {
@@ -122,7 +125,8 @@ impl DaemonClient {
             stream,
             rx,
             held: Vec::new(),
-            tx_out,
+            tx_out: Some(tx_out),
+            writer: Some(writer),
             child,
             opens_in_flight: 0,
             saves_in_flight: 0,
@@ -149,7 +153,11 @@ impl DocumentServer for DaemonClient {
         if is_save {
             self.saves_in_flight = self.saves_in_flight.saturating_add(1);
         }
-        if let Err(err) = self.tx_out.send(msg) {
+        let sent = match &self.tx_out {
+            Some(tx) => tx.send(msg).map_err(|err| err.to_string()),
+            None => Err("the connection is closing".to_string()),
+        };
+        if let Err(err) = sent {
             self.connected = false;
             self.last_error = Some(format!("send failed: {err}"));
             // The request will never be answered; undo the count so the
@@ -247,6 +255,15 @@ impl Drop for DaemonClient {
         // alive, and blocking here would deadlock the spawner on its own
         // daemon. An unreaped child that exits later is a zombie until our
         // process ends; with one daemon per document that stays a handful.
+        // What was queued goes out first (a last batch, a `Leave`), for as
+        // long as the daemon takes it.
+        drop(self.tx_out.take());
+        if let Some(writer) = self.writer.take() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !writer.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
         if let Some(child) = &mut self.child {
             for _ in 0..20 {

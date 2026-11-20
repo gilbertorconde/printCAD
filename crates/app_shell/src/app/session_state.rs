@@ -169,6 +169,13 @@ pub(crate) struct FileState {
     /// An export or a send to the slicer asked for while the tab's solids
     /// were rebuilding, written once they settle.
     pub export_waiting: Option<crate::app::export::WaitingExport>,
+    /// Batches of unsaved edits the document's log holds from a session
+    /// that ended without saving them, offered back in a card until the
+    /// user answers.
+    pub unsaved_in_log: Option<u32>,
+    /// Those edits come back as soon as the file opens: the start page's
+    /// Recover opened it.
+    pub restore_unsaved_on_open: bool,
 }
 
 /// A tab's saves being packed, the oldest first. Each goes to the server

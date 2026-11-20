@@ -99,10 +99,24 @@ impl DocumentSession {
         }
     }
 
+    /// Tell the server this tab is done with its document: what it holds
+    /// unsaved was saved or let go. Its outbox goes first. A tab that ends
+    /// without this (the application crashed) leaves its unsaved edits in
+    /// the document's log, which the next open offers back.
+    pub(crate) fn leave_server(&mut self) {
+        self.send_outbox();
+        self.connection
+            .server
+            .send(core_document::server::ClientMessage::Leave);
+    }
+
     /// The connection went and `server` takes its place: the same daemon,
-    /// or one started where it stopped. The batches the old connection
-    /// never answered go again under their ids (the server answers those
-    /// it already ordered without ordering them twice), then the outbox;
+    /// or one started where it stopped. The unsaved edits a restarted
+    /// daemon read back from the log are this session's and come back
+    /// first (an offer of older ones still open in the tab goes with them);
+    /// the batches the old connection never answered go again under their
+    /// ids (the server answers those it already ordered without ordering
+    /// them twice), then the outbox;
     /// a tab with a file of its own on this server then opens it again,
     /// and the file and tail take the document's place with the edits sent
     /// meanwhile carried over (`PrintCadApp::apply_rejoined_document`).
@@ -129,6 +143,10 @@ impl DocumentSession {
             self.connection.awaiting_open = false;
             return false;
         }
+        self.file.unsaved_in_log = None;
+        self.connection
+            .server
+            .send(core_document::server::ClientMessage::RestoreUnsaved);
         for (batch, ops) in self.document.sent_batches() {
             self.connection
                 .server

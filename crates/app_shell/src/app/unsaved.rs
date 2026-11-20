@@ -127,6 +127,7 @@ impl PrintCadApp {
                 // Every tab saved or let go: no copy to come back from.
                 self.questions.stop_waiting();
                 self.forget_recovery_copies(|_| true);
+                self.leave_servers();
                 self.keep_session_for_next_run();
                 self.remove_private_folders();
                 event_loop.exit();

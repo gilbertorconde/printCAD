@@ -417,6 +417,8 @@ impl PrintCadApp {
                 }
             }
             UiCommand::DismissFileNotice => self.session.file.safety.newer_notice = false,
+            UiCommand::RestoreUnsaved => self.answer_unsaved_in_log(true),
+            UiCommand::DiscardUnsaved => self.answer_unsaved_in_log(false),
         }
     }
 

@@ -81,12 +81,25 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   `Replica` harness in `tests/daemon.rs` drives clients the way the app
   does (`settle` waits for acks, `catch_up` for a sequence number,
   `rejoin` as `DocumentSession::rejoin` does).
+  The log is `oplog_path_for(document)` in `oplog_dir()` (the data
+  folder's `oplogs/`, `PRINTCAD_OPLOG_DIR` in tests), beside a
+  `<key>.oplog.document` note naming the document; homing moves a log
+  still beside the document there once (`adopt_legacy_log`).
   Each log line carries its batch's id; every save, homing and last
-  leave appends a mark (`{"unsaved": [ids], "file": stamp}`), and a
-  daemon started on a socket whose `<socket>.home` names a document reads
-  the tail back from the log (`restore_tail`: the last mark's ids plus
-  what follows; a line without an id there, or a changed file, means no
-  tail). The log rotates past `--log-bytes` (default 64 MB) into numbered
+  leave appends a mark (`{"unsaved": [ids], "file": stamp}`). The tail a
+  log holds when a daemon takes up its document (`resume` from
+  `<socket>.home` after a daemon died, `take_up_unsaved` on the first
+  open; `restore_tail_from`: the last mark's ids plus what follows; a line
+  without an id there, or a changed file, means no tail) is not put back
+  by itself: it is `State::recoverable`, still named by marks, reported
+  as `Opened::recoverable`, brought into the order by `RestoreUnsaved`
+  (which a rejoining client sends first), dropped by `DiscardUnsaved` or a
+  save. The last leave names nothing unsaved only when that client sent
+  `Leave`; the app sends it on close, quit and server switch
+  (`DocumentSession::leave_server`), and `DaemonClient`'s drop lets its
+  writer finish first. `unsaved_logs` (last line only) feeds the start
+  page's Recover list; `discard_unsaved_log` marks a log let go there.
+  The log rotates past `--log-bytes` (default 64 MB) into numbered
   generations (`<log>.1`, `<log>.2`, ..., read oldest first), all kept
   until a mark names nothing unsaved, at most `MAX_GENERATIONS`; homing
   the unhomed log takes the log's write lock. A client with more than

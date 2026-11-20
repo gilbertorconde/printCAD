@@ -417,9 +417,59 @@ pub fn draw_file_notice(
     lift: f32,
     text: &str,
 ) -> (bool, bool) {
+    draw_notice(
+        ctx,
+        viewport,
+        lift,
+        "file_notice",
+        text,
+        (
+            "Save As…",
+            "Keep the file as it is and save under another name",
+        ),
+        "Put away",
+    )
+}
+
+/// The card offering back the unsaved edits the document's log holds from
+/// a session that ended without saving them, `lift` above the view's
+/// bottom right corner. Whether Restore or Discard was pressed.
+pub fn draw_unsaved_log_notice(
+    ctx: &Context,
+    viewport: egui::Rect,
+    lift: f32,
+    batches: u32,
+) -> (bool, bool) {
+    let text = format!(
+        "This document has {batches} unsaved edit{} from a session that ended without saving",
+        if batches == 1 { "" } else { "s" }
+    );
+    draw_notice(
+        ctx,
+        viewport,
+        lift,
+        "unsaved_log_notice",
+        &text,
+        ("Restore", "Bring the edits back into the document"),
+        "Discard",
+    )
+}
+
+/// A warning card at the view's bottom right, `lift` above its corner,
+/// with `text`, an action button and a quiet dismissal. Whether each was
+/// pressed.
+fn draw_notice(
+    ctx: &Context,
+    viewport: egui::Rect,
+    lift: f32,
+    id: &str,
+    text: &str,
+    (action, action_hover): (&str, &str),
+    dismissal: &str,
+) -> (bool, bool) {
     let mut save_as = false;
     let mut dismiss = false;
-    Area::new(egui::Id::new("file_notice"))
+    Area::new(egui::Id::new(id))
         .order(VIEW_LAYER)
         .pivot(Align2::RIGHT_BOTTOM)
         .fixed_pos(viewport.right_bottom() - Vec2::new(SPACE_4, SPACE_4 + lift))
@@ -441,12 +491,12 @@ pub fn draw_file_notice(
                     });
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = SPACE_2;
-                        save_as = ui_kit::widgets::small_secondary_button(ui, "Save As…")
-                            .on_hover_text("Keep the file as it is and save under another name")
+                        save_as = ui_kit::widgets::small_secondary_button(ui, action)
+                            .on_hover_text(action_hover)
                             .clicked();
                         dismiss = ui
                             .add(
-                                egui::Button::new(RichText::new("Put away").color(TEXT3))
+                                egui::Button::new(RichText::new(dismissal).color(TEXT3))
                                     .frame(false),
                             )
                             .clicked();

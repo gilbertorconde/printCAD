@@ -997,6 +997,16 @@ impl UiLayer {
         if let Some(text) = &inputs.file.newer_notice {
             Self::file_notice(ui.ctx(), viewport, text, release_up, &mut out.commands);
         }
+        if let Some(batches) = inputs.file.unsaved_in_log {
+            let mut below = Vec::new();
+            if release_up {
+                below.push("release_notice");
+            }
+            if inputs.file.newer_notice.is_some() {
+                below.push("file_notice");
+            }
+            Self::unsaved_log_notice(ui.ctx(), viewport, batches, &below, &mut out.commands);
+        }
         let document = &*inputs.document;
         if let Some(kept) = document.isolation() {
             let names: Vec<&str> = kept

@@ -1285,6 +1285,12 @@ pub fn recovery_dir() -> Option<PathBuf> {
     dirs().map(|dirs| dirs.data_dir().join("recovery"))
 }
 
+/// Where the document servers keep each document's op log, keyed by the
+/// document's path.
+pub fn oplog_dir() -> Option<PathBuf> {
+    dirs().map(|dirs| dirs.data_dir().join("oplogs"))
+}
+
 /// Where a crash leaves its reports, a folder each.
 pub fn crash_reports_dir() -> Option<PathBuf> {
     dirs().map(|dirs| dirs.data_dir().join("crash-reports"))

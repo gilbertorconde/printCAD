@@ -64,7 +64,12 @@ impl DocumentServer for DirectFiles {
         self.workers.retain(|handle| !handle.is_finished());
         match msg {
             // No peers without a daemon; presence has no audience.
-            ClientMessage::Hello { .. } | ClientMessage::Rebase | ClientMessage::Presence(_) => {}
+            ClientMessage::Hello { .. }
+            | ClientMessage::Rebase
+            | ClientMessage::Presence(_)
+            | ClientMessage::RestoreUnsaved
+            | ClientMessage::DiscardUnsaved
+            | ClientMessage::Leave => {}
             ClientMessage::Ops { ops, .. } => {
                 self.ops_dropped += ops.len() as u64;
                 self.seq += 1;
@@ -105,6 +110,7 @@ impl DocumentServer for DirectFiles {
                             bytes,
                             seq: 0,
                             unsaved_lost: false,
+                            recoverable: 0,
                         },
                         Err(err) => ServerMessage::OpenFailed {
                             token,

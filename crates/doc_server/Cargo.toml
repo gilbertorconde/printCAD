@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 local_ipc = { path = "../local_ipc" }
+settings = { path = "../settings" }
 core_document = { path = "../core_document" }
 serde.workspace = true
 uuid.workspace = true

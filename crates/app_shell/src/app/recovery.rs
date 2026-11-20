@@ -3,7 +3,9 @@
 //! is. A tab saved or closed, and the application quitting, take their
 //! copies away, so what the folder holds at start is what a crash left,
 //! or an exit forced by a window that cannot draw: the start page offers
-//! it back.
+//! it back. Beside them it offers the documents whose op logs end with
+//! edits a session left unsaved (`doc_server::daemon::unsaved_logs`):
+//! Recover opens the document and brings them back through its server.
 
 use std::path::{Path, PathBuf};
 
@@ -25,10 +27,13 @@ struct Note {
 /// A copy a crash left, which the start page offers back.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Recoverable {
+    /// The copy, or for edits in a log, the document itself.
     pub copy: PathBuf,
     pub name: String,
     pub file: Option<PathBuf>,
     pub saved_ms: u64,
+    /// Unsaved edits the document's op log holds, not a copy.
+    pub from_log: bool,
 }
 
 /// Where copies go: the app's data folder, else the temp folder.
@@ -99,9 +104,35 @@ fn running(pid: u32) -> bool {
     }
 }
 
-/// The copies left by processes no longer running, the latest first.
+/// The copies left by processes no longer running and the documents whose
+/// logs hold unsaved edits, the latest first.
 pub(crate) fn left_behind() -> Vec<Recoverable> {
-    left_behind_in(&dir())
+    with_logs(left_behind_in(&dir()), doc_server::daemon::unsaved_logs())
+}
+
+/// `copies` with the documents `logs` names, the latest first.
+fn with_logs(
+    mut copies: Vec<Recoverable>,
+    logs: Vec<doc_server::daemon::UnsavedLog>,
+) -> Vec<Recoverable> {
+    copies.extend(logs.into_iter().map(|log| {
+        Recoverable {
+            name: log
+                .document
+                .file_name()
+                .map(|name| {
+                    crate::app::doc_io::document_name_from_file_name(&name.to_string_lossy())
+                        .to_string()
+                })
+                .unwrap_or_default(),
+            file: Some(log.document.clone()),
+            copy: log.document,
+            saved_ms: log.modified_ms,
+            from_log: true,
+        }
+    }));
+    copies.sort_by_key(|r| std::cmp::Reverse(r.saved_ms));
+    copies
 }
 
 fn left_behind_in(dir: &Path) -> Vec<Recoverable> {
@@ -117,6 +148,7 @@ fn left_behind_in(dir: &Path) -> Vec<Recoverable> {
                 name: note.name,
                 file: note.file,
                 saved_ms: note.saved_ms,
+                from_log: false,
             })
         })
         .collect();
@@ -153,6 +185,63 @@ mod tests {
         assert_eq!(names, ["newer", "older"]);
         remove(&dir.join("newer.prtcad"));
         assert_eq!(left_behind_in(&dir).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A document whose op log ends with an edit, or with a mark naming
+    /// unsaved edits, is offered beside the copies, in the order written;
+    /// one whose log ends saved is not, nor one whose file is gone.
+    #[test]
+    fn documents_whose_logs_end_unsaved_are_offered_with_the_copies() {
+        let dir = std::env::temp_dir().join(format!("printcad-oplog-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = |key: &str, document: &Path, last: serde_json::Value| {
+            std::fs::write(document, b"file").unwrap();
+            let note = dir.join(format!("{key}.oplog.document"));
+            std::fs::write(&note, serde_json::to_vec(document).unwrap()).unwrap();
+            let first = serde_json::json!({"op": {}, "batch": Uuid::new_v4()});
+            std::fs::write(note.with_extension("jsonl"), format!("{first}\n{last}\n")).unwrap();
+        };
+        let edited = dir.join("edited.prtcad");
+        let marked = dir.join("marked.prtcad");
+        let saved = dir.join("saved.prtcad");
+        let gone = dir.join("gone.prtcad");
+        log(
+            "a",
+            &edited,
+            serde_json::json!({"op": {}, "batch": Uuid::new_v4()}),
+        );
+        log(
+            "b",
+            &marked,
+            serde_json::json!({"unsaved": [Uuid::new_v4()]}),
+        );
+        log("c", &saved, serde_json::json!({"unsaved": []}));
+        log("d", &gone, serde_json::json!({"op": {}}));
+        std::fs::remove_file(&gone).unwrap();
+
+        let offered = with_logs(
+            vec![Recoverable {
+                copy: dir.join("copy.prtcad"),
+                name: "copy".into(),
+                file: None,
+                saved_ms: u64::MAX,
+                from_log: false,
+            }],
+            doc_server::daemon::unsaved_logs_in(&dir),
+        );
+        let names: Vec<(&str, bool)> = offered
+            .iter()
+            .map(|r| (r.name.as_str(), r.from_log))
+            .collect();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert_eq!(names[0], ("copy", false));
+        assert!(names.contains(&("edited", true)) && names.contains(&("marked", true)));
+        assert!(
+            offered
+                .iter()
+                .all(|r| !r.from_log || r.file == Some(r.copy.clone()))
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

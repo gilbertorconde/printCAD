@@ -124,6 +124,16 @@ pub enum ClientMessage {
     /// with the request that asked for it (an open may be abandoned by a
     /// newer one).
     OpenDocument { path: PathBuf, token: u64 },
+    /// The unsaved edits a session left in the document's log (the
+    /// `recoverable` an open reports) come back: the server orders them
+    /// after everything so far and sends them to every client.
+    RestoreUnsaved,
+    /// Let those edits go: the log no longer offers them.
+    DiscardUnsaved,
+    /// This client is done with the document: what it holds unsaved, it
+    /// chose to let go. A client that leaves without it (one that crashed)
+    /// leaves its unsaved edits in the log, for the next open to offer.
+    Leave,
     /// Ephemeral presence: who this editor is and what they have selected.
     /// Relayed to peers, never logged: presence is now-state, not history.
     Presence(PresenceState),
@@ -200,6 +210,12 @@ pub enum ServerMessage {
         /// them, and only a client that held them still has them.
         #[serde(default)]
         unsaved_lost: bool,
+        /// Batches of unsaved edits the document's log holds from a
+        /// session that ended without saving them, offered back:
+        /// [`ClientMessage::RestoreUnsaved`] brings them into the order,
+        /// [`ClientMessage::DiscardUnsaved`] lets them go.
+        #[serde(default)]
+        recoverable: u32,
     },
     OpenFailed {
         token: u64,

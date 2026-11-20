@@ -237,6 +237,11 @@ pub enum UiCommand {
     MarkEdit(crate::app::marking::MarkEdit),
     /// Put away the card saying a newer printCAD wrote the file.
     DismissFileNotice,
+    /// Bring back the unsaved edits the document's log holds from a
+    /// session that ended without saving them.
+    RestoreUnsaved,
+    /// Let those edits go.
+    DiscardUnsaved,
     CloseTab(uuid::Uuid),
     /// Close every tab but this one, each with edits asked about in turn.
     CloseOtherTabs(uuid::Uuid),
