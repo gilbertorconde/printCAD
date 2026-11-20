@@ -961,30 +961,129 @@ fn free_points_by_nudging(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
     free
 }
 
-/// Taking the points no equation reads for free without nudging them
-/// finds what nudging every point finds, across the corpus and with a
-/// loose point and a lone line added to each sketch.
+/// The null space's free points against nudging every point, across the
+/// corpus and with a loose point and a lone line added to each sketch.
+/// They agree but in five cases, where nudging cannot tell. A pinned
+/// external point and a stored text letter stay wherever a nudge puts
+/// them, so nudging calls them free. An ellipse free only to turn
+/// (`ellipse_swap`, `ellipse_held_focus`) pulls a nudged axis end back
+/// past half the nudge as its shape shares the correction, and a refitted
+/// spline's controls (`fit_spline`) are laid out again from its fit
+/// points, so nudging calls held the axis ends, the focus placed from the
+/// shape and the controls, which the fit points they follow move.
 #[test]
-fn unread_points_are_free_as_nudging_finds() {
-    let mut unread = 0;
+fn free_points_match_nudging_where_nudging_can_tell() {
+    let nudging_alone = |name: &str| match name {
+        "external_fully_held" => ids_of(&[1, 2]),
+        "text_follow" => ids_of(&[2, 3]),
+        _ => ids_of(&[]),
+    };
+    let null_space_alone = |name: &str| match name {
+        "ellipse_swap" | "ellipse_held_focus" => ids_of(&[2, 4, 5]),
+        "fit_spline" => ids_of(&[1, 2, 3]),
+        _ => ids_of(&[]),
+    };
+    let mut differing = 0;
     for (mut sketch, _) in cases() {
-        assert_eq!(
-            free_points(&sketch),
-            free_points_by_nudging(&sketch),
-            "{}",
-            sketch.name
-        );
+        let name = sketch.name.clone();
+        let nudged = free_points_by_nudging(&sketch);
+        let free = free_points(&sketch);
+        let expected: std::collections::HashSet<Uuid> = (nudged.difference(&nudging_alone(&name)))
+            .chain(&null_space_alone(&name))
+            .copied()
+            .collect();
+        assert_eq!(free, expected, "{name}");
+        differing += usize::from(free != nudged);
         let loose = point(&mut sketch, 31.0, 17.0);
         let a = point(&mut sketch, -12.0, 3.0);
         let b = point(&mut sketch, -9.0, 7.0);
         line(&mut sketch, a, b);
         let free = free_points(&sketch);
-        assert_eq!(free, free_points_by_nudging(&sketch), "{}", sketch.name);
-        unread += usize::from([loose, a, b].iter().all(|p| free.contains(p)));
+        assert!([loose, a, b].iter().all(|p| free.contains(p)), "{name}");
+        assert_eq!(
+            free.difference(&expected).count(),
+            3,
+            "{name}: only the added points join"
+        );
     }
-    assert_eq!(unread, cases().len());
+    assert_eq!(differing, 5);
 }
 
+/// The ellipse the null space calls free to turn does turn: its solved
+/// shape turned about its fixed centre solves where it is put, the axis
+/// ends and the focus with it.
+#[test]
+fn an_ellipse_free_to_turn_moves_its_axis_ends_and_focus() {
+    for (mut sketch, _) in cases() {
+        if !["ellipse_swap", "ellipse_held_focus"].contains(&sketch.name.as_str()) {
+            continue;
+        }
+        solve(&mut sketch);
+        let turn = |v: Vec2D| {
+            let (s, c) = 0.3f64.sin_cos();
+            Vec2D::new(c * v.x - s * v.y, s * v.x + c * v.y)
+        };
+        let mut turned = sketch.clone();
+        for g in &mut turned.geometry {
+            match g {
+                GeometryElement::Point(p) => p.position = turn(p.position),
+                GeometryElement::Ellipse(e) => e.major = turn(e.major),
+                _ => {}
+            }
+        }
+        let placed = turned.clone();
+        solve(&mut turned);
+        for (id, moved) in [(1, false), (2, true), (4, true), (5, true)] {
+            let id = Uuid::from_u128(id);
+            let before = sketch.point_position(id).unwrap().to_glam();
+            let after = turned.point_position(id).unwrap().to_glam();
+            let put = placed.point_position(id).unwrap().to_glam();
+            assert!((after - put).length() < 1e-6, "{}: {id}", sketch.name);
+            assert_eq!(
+                (after - before).length() > 0.5,
+                moved,
+                "{}: {id}",
+                sketch.name
+            );
+        }
+    }
+}
+
+/// A refitted spline's controls follow its free fit points.
+#[test]
+fn refitted_controls_follow_the_free_fit_points() {
+    let (mut sketch, _) = (cases().into_iter())
+        .find(|(s, _)| s.name == "fit_spline")
+        .unwrap();
+    solve(&mut sketch);
+    let before = sketch.clone();
+    for id in [4, 6].map(Uuid::from_u128) {
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(id) {
+            p.position = Vec2D::new(p.position.x - 1.0, p.position.y + 1.0);
+        }
+    }
+    solve(&mut sketch);
+    for id in [1, 2, 3].map(Uuid::from_u128) {
+        let moved = sketch.point_position(id).unwrap() - before.point_position(id).unwrap();
+        assert!(moved.to_glam().length() > 1e-3, "{id}");
+    }
+}
+
+/// A stored text's letters follow its point: held while it is, free with
+/// it once nothing holds it.
+#[test]
+fn stored_letters_are_free_with_their_point() {
+    let (mut sketch, _) = (cases().into_iter())
+        .find(|(s, _)| s.name == "text_follow")
+        .unwrap();
+    assert!(free_points(&sketch).is_empty());
+    sketch.constraints.clear();
+    assert_eq!(free_points(&sketch), ids_of(&[1, 2, 3]));
+}
+
+fn ids_of(ids: &[u128]) -> std::collections::HashSet<Uuid> {
+    ids.iter().map(|&i| Uuid::from_u128(i)).collect()
+}
 #[test]
 fn corpus_checks_geometric_meaning_and_held_fallback() {
     for (mut sketch, held) in cases() {

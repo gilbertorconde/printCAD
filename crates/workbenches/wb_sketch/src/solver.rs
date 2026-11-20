@@ -568,7 +568,6 @@ pub(crate) fn locked_elements(
     sketch: &Sketch,
     settled: Option<&Settled>,
 ) -> std::collections::HashSet<Uuid> {
-    use sketch_solver::problem::{CurveReference, PointReference};
     let too_large = |problem: &sketch_solver::problem::Problem| {
         problem.constraints.len() > problem.settings.diagnosis_limit
     };
@@ -584,12 +583,25 @@ pub(crate) fn locked_elements(
             &owned
         }
     };
-    let solved = &settled.sketch;
-    let problem = adapter::prepare(solved, &[]);
+    let problem = adapter::prepare(&settled.sketch, &[]);
     if too_large(&problem) {
         return Default::default();
     }
-    let locked = sketch_solver::freedom::locked(&problem);
+    locked_in(sketch, &problem)
+}
+
+/// [`locked_elements`] of `sketch` from `problem`, the solver's problem of
+/// it settled, at any size. What the application lays out after a solve
+/// follows what it is laid out from: a text's letters are locked when its
+/// point and its frame's corners or the curves it runs along are, and the
+/// controls of a spline refitted through its fit points when those
+/// points are.
+fn locked_in(
+    sketch: &Sketch,
+    problem: &sketch_solver::problem::Problem,
+) -> std::collections::HashSet<Uuid> {
+    use sketch_solver::problem::{CurveReference, PointReference};
+    let locked = sketch_solver::freedom::locked(problem);
     let point = |id: Uuid| {
         locked
             .points
@@ -604,18 +616,35 @@ pub(crate) fn locked_elements(
                 id.as_u128(),
             )))
     };
+    let letters: std::collections::HashSet<Uuid> = (sketch.texts.iter())
+        .flat_map(|b| b.elements.iter().copied())
+        .collect();
+    let refitted: std::collections::HashSet<Uuid> =
+        crate::spline::derived_points(sketch, &crate::spline::solved_fits(sketch))
+            .into_iter()
+            .collect();
     let mut locked: std::collections::HashSet<Uuid> = sketch
         .geometry
         .iter()
-        .filter(|g| !sketch.derived.contains(&g.id()))
+        .filter(|g| !sketch.derived.contains(&g.id()) && !letters.contains(&g.id()))
+        .filter(|g| !refitted.contains(&g.id()))
         .filter(|g| match g {
             GeometryElement::Point(p) => point(p.id),
             other => curve(other.id()) && Sketch::curve_point_ids(other).into_iter().all(point),
         })
         .map(GeometryElement::id)
         .collect();
-    // A text's letters cannot move when what they stand on cannot: its
-    // point, and its frame's corners or the curves it runs along.
+    let controls: Vec<Uuid> = (sketch.geometry.iter())
+        .filter_map(|g| match g {
+            GeometryElement::BSpline(b) if b.fit_points.iter().all(|f| locked.contains(f)) => {
+                Some(b.control_points.iter().filter(|c| refitted.contains(c)))
+            }
+            _ => None,
+        })
+        .flatten()
+        .copied()
+        .collect();
+    locked.extend(controls);
     let still: Vec<Uuid> = sketch
         .texts
         .iter()
@@ -630,67 +659,17 @@ pub(crate) fn locked_elements(
     locked
 }
 
-/// The points the constraints leave free to move: each is nudged in turn
-/// and the sketch re-solved; a point the solver leaves where it was
-/// nudged has a degree of freedom in that direction. A sketch nothing
-/// pins down reports every point free, which is what its three rigid
-/// degrees of freedom mean.
-///
-/// A point no equation reads, both its coordinates the solve's to move,
-/// is one the solve leaves wherever it is put: it is free without being
-/// nudged.
+/// The points the constraints leave free to move: every point of the
+/// sketch but those [`locked_elements`] finds, at any size. A sketch
+/// nothing pins down reports every point free, which is what its three
+/// rigid degrees of freedom mean; pinned external geometry is never free.
 pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
-    const NUDGE: f64 = 0.25;
-    let mut base = sketch.clone();
-    solve(&mut base);
-    let sys = build_system(&base);
-    let mut unread = vec![false; sys.vars.len()];
-    for &j in &sys.free {
-        unread[j] = true;
-    }
-    let mut reads = Vec::new();
-    for spec in &sys.specs {
-        spec.reads(&mut reads);
-    }
-    for j in reads {
-        unread[j] = false;
-    }
-    let unread = |id: Uuid| {
-        (sys.point_vars.get(&adapter::point(id))).is_some_and(|&k| unread[k] && unread[k + 1])
-    };
-    let points: Vec<(Uuid, Vec2D)> = base
-        .geometry
-        .iter()
+    let problem = adapter::prepare(&settle(sketch).sketch, &[]);
+    let locked = locked_in(sketch, &problem);
+    (sketch.geometry.iter())
         .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some((p.id, p.position)),
+            GeometryElement::Point(p) if !locked.contains(&p.id) => Some(p.id),
             _ => None,
         })
-        .collect();
-    let mut free = std::collections::HashSet::new();
-    for (id, at) in points {
-        if unread(id) {
-            free.insert(id);
-            continue;
-        }
-        for nudge in [Vec2D::new(NUDGE, 0.0), Vec2D::new(0.0, NUDGE)] {
-            let mut probe = base.clone();
-            for g in &mut probe.geometry {
-                if let GeometryElement::Point(p) = g
-                    && p.id == id
-                {
-                    p.position = Vec2D::new(at.x + nudge.x, at.y + nudge.y);
-                }
-            }
-            solve(&mut probe);
-            let Some(after) = probe.point_position(id) else {
-                continue;
-            };
-            let moved = ((after.x - at.x).powi(2) + (after.y - at.y).powi(2)).sqrt();
-            if moved > NUDGE * 0.5 {
-                free.insert(id);
-                break;
-            }
-        }
-    }
-    free
+        .collect()
 }

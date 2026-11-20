@@ -7,7 +7,8 @@
 //! Then, on the grid with a dimension on each cell's bottom side and
 //! circle, an edit (a segment drawn, the task panel drawn too) and a
 //! dimension's label dragged, with and without the panel; and an edit
-//! with dimensions on 25 cells only, which the diagnosis analyses.
+//! with dimensions on 25 cells only, which the diagnosis analyses; and
+//! the points the grid leaves free selected.
 //!
 //! `cargo run --release -p wb_sketch --example snap_bench -- [cells] [queries] [only]`:
 //! a square grid of `cells` × `cells` cells (20 by default), each a closed
@@ -363,6 +364,21 @@ fn label_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], panel:
     s.button(false, moves[0], tool);
 }
 
+/// The points the dimensioned grid leaves free selected, as the Select
+/// degrees of freedom action does.
+fn select_free(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
+    if !wanted(label) {
+        return;
+    }
+    let mut s = Session::new(sketch, span, false);
+    measure(label, queries, |_| {
+        s.send(
+            Some(WorkbenchInputEvent::ToolActivated),
+            "sketch.select_dof",
+        );
+    });
+}
+
 fn main() {
     let cells: usize = std::env::args()
         .nth(1)
@@ -457,6 +473,12 @@ fn main() {
     // Few enough dimensions for the diagnosis to look for redundancy.
     let few = dimensioned(sketch.clone(), 25);
     edit("edit, 50 dimensions", &few, span, edits);
+    select_free(
+        "select free points",
+        &marked,
+        span,
+        &queries[..queries.len().min(4)],
+    );
     label_drag("label drag", &marked, span, &queries, false);
     label_drag("label drag, panel drawn", &marked, span, &queries, true);
 }

@@ -33,7 +33,10 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   application diagnostics; `locked_elements`, through
   `sketch_solver::freedom::locked`, the elements nothing left free can
   move, drawn in `SketchPalette::locked` until the whole sketch is fully
-  constrained, cached by the sketch it was worked out on),
+  constrained, cached by the sketch it was worked out on; a text's
+  letters, a derived focus and a refitted spline's controls follow what
+  they are laid out from; `free_points`, Select degrees of freedom, is
+  every point it leaves out, at any size),
   the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
   the line and polyline runtime (`chain.rs`: a click resolved once,
