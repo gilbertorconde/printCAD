@@ -638,6 +638,168 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
     assert!((fits - 1.0).abs() < 0.01, "{fits} mm fits");
 }
 
+/// The size limit a preview of `op(small)` on `base` finds.
+fn previewed_limit(base: &SolidOp, op: SolidOp) -> kernel_api::SizeLimit {
+    let ops = [base.clone(), op];
+    let detail = kernel_api::TessellationSettings::default();
+    new_kernel()
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(1..2)))
+        .expect("the small size builds")
+        .size_limit
+        .expect("the preview's limit")
+}
+
+/// The relative step past a limit the kernel's reading is refused within.
+const PAST_LIMIT: f64 = 1.0 + 1e-4;
+
+/// A round of two edges meeting at a corner of a 20 x 20 x 10 block, the
+/// top's front and right edges: its limit is the largest radius that
+/// builds, the 10 mm walls' reach, whichever way its corner closes, and a
+/// ten-thousandth more is refused.
+#[test]
+fn a_fillet_chain_stops_at_the_largest_radius_that_builds() {
+    let block = box_of(20.0, 20.0, 10.0);
+    for corner in [
+        kernel_api::FilletCorner::Setback,
+        kernel_api::FilletCorner::RollingBall,
+    ] {
+        let round = |radius| SolidOp::Fillet {
+            radius,
+            edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0], [20.0, 10.0, 10.0]]),
+            follow_tangent: false,
+            corner,
+            distances: None,
+            auto: false,
+            variable: None,
+        };
+        let largest = previewed_limit(&block, round(1.0))
+            .largest
+            .expect("the walls stop it");
+        assert!(largest > 9.99 && largest <= 10.0, "{corner:?}: {largest}");
+        try_chain(&[block.clone(), round(largest)])
+            .unwrap_or_else(|e| panic!("{corner:?}: {largest} builds: {e}"));
+        assert!(
+            try_chain(&[block.clone(), round(largest * PAST_LIMIT)]).is_err(),
+            "{corner:?}: {largest} is the largest"
+        );
+    }
+}
+
+/// A variable round on the top front edge of a 40 x 30 x 10 block, 1 mm
+/// at its start and 3 mm at its end: each radius stops at the largest it
+/// builds at with the other held, the 10 mm wall's reach, under a key
+/// that holds while that radius alone moves; a ten-thousandth more is
+/// refused. Refused, the round says what share of its radii fits.
+#[test]
+fn a_variable_fillet_stops_each_radius_at_the_largest_that_builds() {
+    let block = long_block();
+    let round = |start: f64, end: f64| {
+        variable_round(
+            vec![[20.0, 0.0, 10.0]],
+            start,
+            kernel_api::VariableRadius {
+                end,
+                between: Vec::new(),
+                reversed: false,
+            },
+        )
+    };
+    let limit = previewed_limit(&block, round(1.0, 3.0));
+    assert_eq!(limit.key, round(2.0, 5.0).size_limit_key().unwrap());
+    let [start, end] = limit.law.as_slice() else {
+        panic!("a start and an end: {limit:?}");
+    };
+    assert_eq!(Some(start.key), round(2.0, 3.0).law_limit_key(0));
+    assert_eq!(Some(end.key), round(1.0, 5.0).law_limit_key(1));
+    assert_ne!(Some(start.key), round(1.0, 5.0).law_limit_key(0));
+    let at = |freed: usize, value: f64| match freed {
+        0 => try_chain(&[block.clone(), round(value, 3.0)]),
+        _ => try_chain(&[block.clone(), round(1.0, value)]),
+    };
+    for (freed, law) in limit.law.iter().enumerate() {
+        let largest = law.largest.expect("the wall stops it");
+        assert!(
+            largest > 9.99 && largest <= 10.0,
+            "radius {freed}: {largest}"
+        );
+        at(freed, largest).unwrap_or_else(|e| panic!("radius {freed} at {largest}: {e}"));
+        assert!(at(freed, largest * PAST_LIMIT).is_err(), "radius {freed}");
+    }
+    let refused = at(1, 30.0).expect_err("30 mm runs off the wall");
+    assert!(
+        refused
+            .message
+            .contains("its radii fit at 33.3 % of their size"),
+        "{}",
+        refused.message
+    );
+}
+
+/// A chamfer of one edge, the top front of a 20 x 20 x 10 block, stops
+/// at the largest size that builds and refuses a ten-thousandth more.
+#[test]
+fn a_one_edge_chamfer_stops_at_the_largest_size_that_builds() {
+    let block = box_of(20.0, 20.0, 10.0);
+    let bevel = |distance| SolidOp::Chamfer {
+        spec: ChamferSpec::EqualDistance { distance },
+        flip: false,
+        edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
+        follow_tangent: false,
+        corner: Default::default(),
+    };
+    let largest = previewed_limit(&block, bevel(1.0))
+        .largest
+        .expect("a size that fails");
+    try_chain(&[block.clone(), bevel(largest)])
+        .unwrap_or_else(|e| panic!("{largest} builds: {}", e.message));
+    assert!(
+        try_chain(&[block.clone(), bevel(largest * PAST_LIMIT)]).is_err(),
+        "{largest} is the largest"
+    );
+}
+
+/// Bevels on the top and bottom front edges of a plate 2 mm thick, which
+/// meet across its front at 1 mm each: the limit is read for both edges
+/// together, overlap included, and builds.
+#[test]
+fn a_chamfer_of_two_edges_stops_where_their_bevels_meet() {
+    let plate = box_of(20.0, 20.0, 2.0);
+    for corner in [
+        kernel_api::ChamferCorner::Facet,
+        kernel_api::ChamferCorner::Point,
+    ] {
+        let largest = previewed_limit(&plate, front_pair(0.5, corner))
+            .largest
+            .expect("the front stops them");
+        assert!((largest - 1.0).abs() < 1e-4, "{corner:?}: {largest}");
+        try_chain(&[plate.clone(), front_pair(largest, corner)])
+            .unwrap_or_else(|e| panic!("{corner:?}: {largest} builds: {}", e.message));
+    }
+}
+
+/// [`a_chamfer_of_two_edges_stops_where_their_bevels_meet`]'s limit is the
+/// largest size that builds: a ten-thousandth more is refused.
+#[test]
+#[ignore = "kernel: largest_chamfer_distance_all is a seat reading, not confirmed by building the request; the bevels build past it along a ridge (ogeom-rs#1223)"]
+fn a_chamfer_of_two_edges_refuses_past_its_limit() {
+    let plate = box_of(20.0, 20.0, 2.0);
+    let corner = kernel_api::ChamferCorner::Facet;
+    let largest = previewed_limit(&plate, front_pair(0.5, corner))
+        .largest
+        .expect("the front stops them");
+    assert!(try_chain(&[plate.clone(), front_pair(largest * PAST_LIMIT, corner)]).is_err());
+}
+
+/// Equal bevels on the top and bottom front edges of a 20 x 20 x 2 plate.
+fn front_pair(distance: f64, corner: kernel_api::ChamferCorner) -> SolidOp {
+    SolidOp::Chamfer {
+        spec: ChamferSpec::EqualDistance { distance },
+        flip: false,
+        edges: EdgeSelection::Near(vec![[10.0, 0.0, 2.0], [10.0, 0.0, 0.0]]),
+        follow_tangent: false,
+        corner,
+    }
+}
 #[test]
 fn a_chain_can_start_from_another_chains_snapshot_and_only_start_there() {
     let pad = blind_pad(

@@ -89,7 +89,7 @@ pub struct SolidBuildResult {
 }
 
 /// The largest size a fillet or chamfer builds at on the solid before it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SizeLimit {
     /// The op it is the limit of.
     pub op_index: usize,
@@ -104,6 +104,21 @@ pub struct SizeLimit {
     /// edges. `None` for any other op.
     #[serde(default)]
     pub sides: Option<RoundSides>,
+    /// A variable fillet's radii, each at the largest it builds at with
+    /// the others as they are: as [`SolidOp::law_radii`] counts them.
+    /// Empty for any other op.
+    #[serde(default)]
+    pub law: Vec<LawLimit>,
+}
+
+/// The largest one radius of a variable fillet builds at, the others held.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct LawLimit {
+    /// [`SolidOp::law_limit_key`] of the op and radius it was found for.
+    pub key: u64,
+    /// The radius at its limit, mm; `None` where every radius short of the
+    /// solid's own builds, or none does.
+    pub largest: Option<f64>,
 }
 
 /// The two faces beside the first edge of a round of distances, as a drag

@@ -12,9 +12,9 @@ use kernel_api::{
 };
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
-    Blend, BlendRefusal, BlendSizing, Chamfer, blend_edges, blend_limit, chamfer_edges_checked,
-    chamfer_edges_cornered, chamfer_edges_with, fillet_edge_distances, fillet_edges_corner,
-    fillet_edges_corner_checked, largest_chamfer_distance, largest_fillet_radius_all,
+    Blend, BlendRefusal, BlendSizing, Chamfer, LawSize, LawStation, blend_edges, blend_limit,
+    chamfer_edges_checked, chamfer_edges_cornered, fillet_edge_distances, fillet_edges_corner,
+    fillet_edges_corner_checked, largest_chamfer_distance_all,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -284,9 +284,6 @@ pub fn fillet(
         crate::naming::record(&built.history);
         return Ok(built.shape);
     }
-    if auto && let Some(shape) = auto_round(model, solid, radius, edges, follow_tangent)? {
-        return Ok(shape);
-    }
     let corner = kernel_corner(corner);
     let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
     let pick =
@@ -296,6 +293,14 @@ pub fn fillet(
             crate::naming::record(&built.history);
             Ok(built.shape)
         }
+        // An automatic round refused for running off a face stops its
+        // contact there; one that fits both faces is the round built.
+        Err(_)
+            if auto
+                && let Some(shape) = auto_round(model, solid, radius, edges, follow_tangent)? =>
+        {
+            Ok(shape)
+        }
         Err(refused) => Err(refusal(
             "fillet",
             radius,
@@ -304,9 +309,7 @@ pub fn fillet(
             &chain,
             refused,
             |m, picked| {
-                largest_fillet_radius_all(m, solid, &pick(picked), radius, tol())
-                    .ok()
-                    .map(|fits| fits.map(|r| r / radius))
+                fillet_reading(m, solid, &pick(picked), corner, radius).map(|r| r.per(radius))
             },
             |m, picked, share| {
                 fillet_edges_corner(m, solid, &pick(picked), radius * share, corner, tol())
@@ -329,12 +332,51 @@ pub fn variable_fillet(
     edges: &EdgeSelection,
     follow_tangent: bool,
 ) -> Result<Shape, String> {
-    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
-    let mut run = edge_run(model, &chain)?;
-    if variable.reversed {
-        run = run.iter().rev().map(Shape::reversed).collect();
+    let run = variable_run(model, solid, variable, edges, follow_tangent)?;
+    let law = radius_law(start, variable);
+    match ogeom::fillet::fillet_edges_variable(model, solid, &run, &law, tol()) {
+        Ok(built) => {
+            crate::naming::record(&built.history);
+            Ok(built.shape)
+        }
+        Err(ogeom::core::OgeomError::Cancelled) => Err("variable fillet failed: cancelled".into()),
+        Err(e) => {
+            let mut message = format!("variable fillet failed: {e}");
+            // The largest scale of every radius that builds, read by the
+            // kernel's own builds of the law.
+            let scale = ogeom::fillet::largest_law_scale(model, solid, &run, &law, 1.0, tol());
+            if let Ok(Some(scale)) = scale
+                && scale < 1.0
+            {
+                let percent = (scale * 1000.0).floor() / 10.0;
+                message.push_str(&format!("; its radii fit at {percent} % of their size"));
+            }
+            Err(message)
+        }
     }
-    let law = if variable.between.is_empty() {
+}
+
+/// A variable fillet's edges as the run its law goes along.
+fn variable_run(
+    model: &mut Model,
+    solid: &Shape,
+    variable: &kernel_api::VariableRadius,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+) -> Result<Vec<Shape>, String> {
+    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
+    let run = edge_run(model, &chain)?;
+    Ok(if variable.reversed {
+        run.iter().rev().map(Shape::reversed).collect()
+    } else {
+        run
+    })
+}
+
+/// The kernel's law for a variable fillet starting at `start`: its points
+/// the start, the radii between in the order of their places, the end.
+fn radius_law(start: f64, variable: &kernel_api::VariableRadius) -> ogeom::fillet::RadiusLaw {
+    if variable.between.is_empty() {
         ogeom::fillet::RadiusLaw::Linear {
             start,
             end: variable.end,
@@ -344,11 +386,37 @@ pub fn variable_fillet(
         points.extend(variable.between.iter().map(|[at, radius]| (*at, *radius)));
         points.push((1.0, variable.end));
         ogeom::fillet::RadiusLaw::Points(points)
+    }
+}
+
+/// The largest value the radius `at` of a variable fillet `op` builds at
+/// on `solid`, the others held, counted as [`kernel_api::SolidOp::law_radii`]
+/// counts them: the kernel's reading, confirmed by its builds of the whole
+/// law. `None` where every value short of the solid's diagonal builds,
+/// where none does, or for any other op.
+pub fn law_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp, at: usize) -> Option<f64> {
+    let kernel_api::SolidOp::Fillet {
+        radius,
+        edges,
+        follow_tangent,
+        variable: Some(variable),
+        ..
+    } = op
+    else {
+        return None;
     };
-    let built = ogeom::fillet::fillet_edges_variable(model, solid, &run, &law, tol())
-        .map_err(|e| format!("variable fillet failed: {e}"))?;
-    crate::naming::record(&built.history);
-    Ok(built.shape)
+    let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
+    let run = variable_run(&mut model.clone(), solid, variable, edges, *follow_tangent).ok()?;
+    let law = radius_law(*radius, variable);
+    let sizing = BlendSizing::RoundLaw {
+        chain: &run,
+        law: &law,
+        size: LawSize::At(LawStation::Point(at)),
+    };
+    let limit = blend_limit(model, solid, &sizing, span, tol()).ok()?;
+    // A bound that builds leaves the radius free.
+    limit.refused?;
+    limit.size
 }
 
 /// `chain`'s edges as one run end to end, each the way the run goes: from
@@ -507,7 +575,9 @@ const SLIVER: f64 = 1e-5;
 /// from, not the size that builds: a bevel past its face rolls over as a
 /// notch and builds), `sizings` the two read with the other face's
 /// distance kept at a sliver, so only its own face stops it. `None` where
-/// it runs on past the solid's size or the kernel cannot read it.
+/// it runs on past the solid's size or the kernel cannot read it. The
+/// kernel gives the seat only with the confirmed size, so each reach costs
+/// that reading's builds.
 fn sides_reach(model: &Model, solid: &Shape, sizings: [BlendSizing<'_>; 2]) -> [Option<f64>; 2] {
     let Some(span) = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())
     else {
@@ -685,10 +755,13 @@ fn profile(profile: RoundProfile) -> ogeom::fillet::RoundProfile {
 /// meeting at a vertex, each edge of a failing group named with the
 /// group's reason. Then the largest share of the size at which the whole
 /// request builds, and each edge failing alone on its own: the share
-/// `largest` reads from the kernel (`Some(None)` where nothing fits) when
-/// a build at it holds, else found by halving. Every try runs on its own
-/// copy of `model`. A long chain is not tried, and a cancelled try
-/// cancels.
+/// `largest` reads from the kernel, taken as it is where the kernel's own
+/// builds confirmed it, else once a build at it holds; found by halving
+/// where that build fails or the kernel cannot read it. The whole
+/// request's is the least of its failing edges' (alone, or together
+/// where none fails alone) where it builds there, and is read for the
+/// whole request only where it does not. Every try runs on its own copy
+/// of `model`. A long chain is not tried, and a cancelled try cancels.
 #[allow(clippy::too_many_arguments)]
 fn refusal(
     what: &str,
@@ -697,7 +770,7 @@ fn refusal(
     solid: &Shape,
     chain: &[Shape],
     refused: BlendRefusal,
-    largest: impl Fn(&Model, &[usize]) -> Option<Option<f64>>,
+    largest: impl Fn(&Model, &[usize]) -> Option<Reading>,
     build: impl Fn(&mut Model, &[usize], f64) -> ogeom::core::OgeomResult<()>,
 ) -> Result<Refusal, String> {
     let BlendRefusal {
@@ -754,17 +827,21 @@ fn refusal(
         alone.push(0);
     }
     let sized = |picked: &[usize]| -> Result<Option<f64>, String> {
+        let builds = |share| Ok(attempt(picked, share)?.is_none());
         match largest(model, picked) {
-            Some(None) => return Ok(None),
-            Some(Some(share)) if share < 1.0 && attempt(picked, share)?.is_none() => {
-                return Ok(Some(share));
+            Some(Reading::Built(None) | Reading::Seated(None)) => Ok(None),
+            Some(Reading::Built(Some(share))) if share < 1.0 => Ok(Some(share)),
+            Some(Reading::Seated(Some(share))) if share < 1.0 => {
+                if attempt(picked, share)?.is_none() {
+                    return Ok(Some(share));
+                }
+                largest_share(share, builds)
             }
-            _ => {}
+            // A reading that the asked size builds, which it did not.
+            _ => largest_share(1.0, builds),
         }
-        largest_share(|share| Ok(attempt(picked, share)?.is_none()))
     };
     let every: Vec<usize> = (0..chain.len()).collect();
-    let fits = if diagnosed { sized(&every)? } else { None };
     let mut fits_alone: Vec<(usize, f64)> = Vec::new();
     if chain.len() > 1 {
         for &i in alone.iter().take(SIZED_ALONE) {
@@ -772,7 +849,26 @@ fn refusal(
                 fits_alone.push((i, share));
             }
         }
-    } else if let Some(share) = fits {
+    }
+    // The whole request takes no more than an edge failing alone does, or
+    // the failing edges together where none fails alone: where it builds
+    // at the least of theirs, one build answers what a reading of the
+    // whole request would.
+    let failing_edges: Vec<usize> = failing.iter().map(|(i, _)| *i).collect();
+    let least_alone = match fits_alone.iter().map(|(_, share)| *share).reduce(f64::min) {
+        None if diagnosed && !failing_edges.is_empty() && failing_edges.len() < chain.len() => {
+            sized(&failing_edges)?
+        }
+        least => least,
+    };
+    let fits = match least_alone {
+        _ if !diagnosed => None,
+        Some(share) if attempt(&every, share)?.is_none() => Some(share),
+        _ => sized(&every)?,
+    };
+    if chain.len() == 1
+        && let Some(share) = fits
+    {
         fits_alone.push((0, share));
     }
     let of = chain.len();
@@ -813,27 +909,30 @@ fn refusal(
     })
 }
 
-/// The fewest share of the asked size a refusal is sized down to: one that
-/// fails there is not for its size.
+/// The fewest share of the bound a halving search goes down to: a request
+/// that fails there is not for its size.
 const LEAST_SHARE: f64 = 1.0 / 64.0;
 
-/// How close the largest share that fits is found.
+/// How close a halving search finds the largest share that fits, as a
+/// share of its bound.
 const SHARE_PRECISION: f64 = 0.004;
 
 /// The most failing edges each sized down on their own.
 const SIZED_ALONE: usize = 8;
 
-/// The largest share of the asked size, below one, at which `builds`
-/// holds, found by halving between [`LEAST_SHARE`] and one; `None` where
-/// even the least does not.
+/// The largest share below `bound` at which `builds` holds, found by
+/// halving between [`LEAST_SHARE`] of the bound and the bound; `None`
+/// where even the least does not.
 fn largest_share(
+    bound: f64,
     mut builds: impl FnMut(f64) -> Result<bool, String>,
 ) -> Result<Option<f64>, String> {
-    if !builds(LEAST_SHARE)? {
+    let least = LEAST_SHARE * bound;
+    if !builds(least)? {
         return Ok(None);
     }
-    let (mut lo, mut hi) = (LEAST_SHARE, 1.0);
-    while hi - lo > SHARE_PRECISION {
+    let (mut lo, mut hi) = (least, bound);
+    while hi - lo > SHARE_PRECISION * bound {
         let mid = (lo + hi) / 2.0;
         if builds(mid)? {
             lo = mid;
@@ -969,34 +1068,119 @@ fn failing_edge(
     }
 }
 
-/// The largest share of the asked chamfer each of `picked` takes as the
-/// kernel reads it, the least of them; `Some(None)` where one takes none,
-/// `None` where the kernel cannot say. Bevels meeting across a face are
-/// not read together, so the share is a guess the caller builds to check.
-fn largest_chamfer_share(
+/// The kernel's reading of the largest size a fillet or chamfer builds at,
+/// up to a bound.
+#[derive(Debug, Clone, Copy)]
+enum Reading {
+    /// Confirmed by the kernel's own builds of the request: every size it
+    /// probed up to this one builds, and one a ten-thousandth above it is
+    /// refused. `None` where none builds.
+    Built(Option<f64>),
+    /// Read from the seats without building, which a build has to
+    /// confirm: bevels on several edges, which the kernel holds clear of
+    /// their faces' far sides and of each other but does not build
+    /// together, so a corner where they meet goes unseen. `None` where
+    /// none fits.
+    Seated(Option<f64>),
+}
+
+impl Reading {
+    /// The reading as a share of `size`.
+    fn per(self, size: f64) -> Self {
+        match self {
+            Reading::Built(read) => Reading::Built(read.map(|r| r / size)),
+            Reading::Seated(read) => Reading::Seated(read.map(|r| r / size)),
+        }
+    }
+}
+
+/// The largest radius up to `up_to` at which a round of `edges` closed as
+/// `corner` says builds, read by the kernel; `None` where it cannot read
+/// it.
+fn fillet_reading(
+    model: &Model,
+    solid: &Shape,
+    edges: &[Shape],
+    corner: ogeom::fillet::FilletCorner,
+    up_to: f64,
+) -> Option<Reading> {
+    let sizing = BlendSizing::Rounds { edges, corner };
+    let limit = blend_limit(model, solid, &sizing, up_to, tol()).ok()?;
+    Some(Reading::Built(limit.size))
+}
+
+/// The largest share up to `up_to` of the bevels `specs` asks, each taken
+/// that share of the way, at which they build closed as `corner` says,
+/// read by the kernel: one edge's confirmed by its builds; several edges'
+/// read from their seats together (overlaps across a face they share
+/// included) where one measure scales them all, else the least of each
+/// edge's own. `None` where the kernel cannot read it.
+fn chamfer_reading(
     model: &Model,
     solid: &Shape,
     specs: &[(Shape, Chamfer)],
-    picked: &[usize],
-    asked: f64,
-) -> Option<Option<f64>> {
-    let mut least: f64 = 1.0;
-    for &i in picked {
-        let (edge, spec) = &specs[i];
-        // A distance is read up to the asked one; two distances as their
-        // common scale, up to one.
-        let (up_to, per) = match spec {
-            Chamfer::Distances { .. } => (1.0, 1.0),
-            _ => (asked, asked),
-        };
-        match largest_chamfer_distance(model, solid, edge, spec, up_to, tol()).ok()? {
-            Some(measure) => least = least.min(measure / per),
-            None => return Some(None),
+    corner: ogeom::fillet::ChamferCorner,
+    up_to: f64,
+) -> Option<Reading> {
+    // The measure the kernel reads each bevel by, at a share of one.
+    let measure = |spec: &Chamfer| match spec {
+        Chamfer::Symmetric(d) => *d,
+        Chamfer::Distances { .. } => 1.0,
+        Chamfer::Angle { distance, .. } => *distance,
+    };
+    let alone = |edge: &Shape, spec: &Chamfer| -> Option<Option<f64>> {
+        let per = measure(spec);
+        let sizing = BlendSizing::Chamfer { edge, spec, corner };
+        let limit = blend_limit(model, solid, &sizing, up_to * per, tol()).ok()?;
+        Some(limit.size.map(|m| m / per))
+    };
+    match specs {
+        [] => None,
+        [(edge, spec)] => Some(Reading::Built(alone(edge, spec)?)),
+        [(_, first), ..] => {
+            let per = measure(first);
+            if specs
+                .iter()
+                .all(|(_, spec)| (measure(spec) - per).abs() <= per * 1e-12)
+            {
+                let read = largest_chamfer_distance_all(model, solid, specs, up_to * per, tol());
+                return Some(Reading::Seated(read.ok()?.map(|m| m / per)));
+            }
+            let mut least = up_to;
+            for (edge, spec) in specs {
+                match alone(edge, spec)? {
+                    Some(share) => least = least.min(share),
+                    None => return Some(Reading::Seated(None)),
+                }
+            }
+            Some(Reading::Seated(Some(least)))
         }
     }
-    Some(Some(least))
 }
 
+/// Whether the bevels `specs` asks, each taken `share` of the way, build
+/// on `solid` closed as `corner` says, on a copy of `model`.
+fn chamfer_builds(
+    model: &Model,
+    solid: &Shape,
+    specs: &[(Shape, Chamfer)],
+    corner: ogeom::fillet::ChamferCorner,
+    share: f64,
+) -> bool {
+    let scaled: Vec<(Shape, Chamfer)> = specs
+        .iter()
+        .map(|(edge, spec)| (edge.clone(), scaled(spec, share)))
+        .collect();
+    chamfer_edges_cornered(&mut model.clone(), solid, &scaled, corner, tol()).is_ok()
+}
+
+/// The kernel's spelling of how a chamfer closes its corners.
+fn kernel_chamfer_corner(corner: ChamferCorner) -> ogeom::fillet::ChamferCorner {
+    match corner {
+        ChamferCorner::Point => ogeom::fillet::ChamferCorner::Point,
+        ChamferCorner::Facet => ogeom::fillet::ChamferCorner::Facet,
+    }
+}
 /// `chamfer` with its distances taken `share` of the way.
 fn scaled(chamfer: &Chamfer, share: f64) -> Chamfer {
     match chamfer {
@@ -1252,8 +1436,11 @@ pub fn chamfer(
     let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer")?;
     let specs = chamfer_specs(model, solid, spec, flip, chain)?;
     let edges: Vec<Shape> = specs.iter().map(|(edge, _)| edge.clone()).collect();
-    let largest =
-        |m: &Model, picked: &[usize]| largest_chamfer_share(m, solid, &specs, picked, asked);
+    let kernel_corner = kernel_chamfer_corner(corner);
+    let largest = |m: &Model, picked: &[usize]| {
+        let picked: Vec<(Shape, Chamfer)> = picked.iter().map(|&i| specs[i].clone()).collect();
+        chamfer_reading(m, solid, &picked, kernel_corner, 1.0)
+    };
     let picked_at = |picked: &[usize], share: f64| -> Vec<(Shape, Chamfer)> {
         picked
             .iter()
@@ -1302,7 +1489,8 @@ pub fn chamfer(
             refused,
             largest,
             |m, picked, share| {
-                chamfer_edges_with(m, solid, &picked_at(picked, share), tol()).map(|_| ())
+                chamfer_edges_cornered(m, solid, &picked_at(picked, share), kernel_corner, tol())
+                    .map(|_| ())
             },
         )?),
     }
@@ -1390,12 +1578,6 @@ fn auto_bevel(
     })
 }
 
-/// The largest first size `op`, a fillet or chamfer, builds at on
-/// `solid`: a fillet's radius, a chamfer's distance (with two distances,
-/// the first at their common scale). The kernel's reading, checked by one
-/// build at it and found by halving below it where that build fails.
-/// `None` where every size short of the solid's diagonal builds, where
-/// none does, or for any other op.
 /// What [`size_limit`] reads: the op's first size at its limit, and the
 /// faces beside a round or chamfer of distances at its first edge.
 pub type Limits = (Option<f64>, Option<kernel_api::RoundSides>);
@@ -1457,34 +1639,38 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Lim
     (largest_size(model, solid, op), None)
 }
 
-/// [`size_limit`]'s first size for an op of one size.
+/// [`size_limit`]'s first size for an op of one size: the largest first
+/// size `op`, a fillet or chamfer of one size, builds at on `solid` (a
+/// fillet's radius, a chamfer's distance; with two distances, the first at
+/// their common scale). A fillet's and a one-edge chamfer's are the
+/// kernel's reading, confirmed by its own builds; a chamfer on several
+/// edges is read from its seats and checked by one build there, and found
+/// by halving below it where that build fails. `None` where every size
+/// short of the solid's diagonal builds, where none does, or for any other
+/// op.
 fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Option<f64> {
     let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
     let mut model = model.clone();
-    let (read, builds): (f64, Box<dyn Fn(f64) -> bool>) = match op {
+    let below_span = |size: f64| (size < span * (1.0 - 1e-9)).then_some(size);
+    match op {
         kernel_api::SolidOp::Fillet {
             edges,
             follow_tangent,
             corner,
+            variable: None,
             ..
         } => {
             let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "fillet").ok()?;
-            let read = largest_fillet_radius_all(&model, solid, &chain, span, tol()).ok()??;
-            let model = model.clone();
-            let corner = kernel_corner(*corner);
-            (
-                read,
-                Box::new(move |r| {
-                    fillet_edges_corner(&mut model.clone(), solid, &chain, r, corner, tol()).is_ok()
-                }),
-            )
+            match fillet_reading(&model, solid, &chain, kernel_corner(*corner), span)? {
+                Reading::Built(read) | Reading::Seated(read) => below_span(read?),
+            }
         }
         kernel_api::SolidOp::Chamfer {
             spec,
             flip,
             edges,
             follow_tangent,
-            ..
+            corner,
         } => {
             let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "chamfer").ok()?;
             let specs = chamfer_specs(&mut model, solid, spec, *flip, chain).ok()?;
@@ -1497,42 +1683,25 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
             if first <= 0.0 {
                 return None;
             }
-            let mut least = span;
-            for (edge, spec) in &specs {
-                // Two distances are read as their common scale.
-                let per = match spec {
-                    Chamfer::Distances { .. } => first,
-                    _ => 1.0,
-                };
-                let measure =
-                    largest_chamfer_distance(&model, solid, edge, spec, span / per, tol())
-                        .ok()??;
-                least = least.min(measure * per);
-            }
-            let model = model.clone();
-            (
-                least,
-                Box::new(move |size| {
-                    let scaled: Vec<(Shape, Chamfer)> = specs
-                        .iter()
-                        .map(|(edge, spec)| (edge.clone(), scaled(spec, size / first)))
-                        .collect();
-                    chamfer_edges_with(&mut model.clone(), solid, &scaled, tol()).is_ok()
-                }),
-            )
+            let corner = kernel_chamfer_corner(*corner);
+            let bound = span / first;
+            let share = match chamfer_reading(&model, solid, &specs, corner, bound)? {
+                Reading::Built(share) => share?,
+                Reading::Seated(share) => {
+                    let share = share?;
+                    let builds = |share| chamfer_builds(&model, solid, &specs, corner, share);
+                    if share >= bound * (1.0 - 1e-9) || builds(share) {
+                        share
+                    } else {
+                        largest_share(share, |share| Ok(builds(share))).ok()??
+                    }
+                }
+            };
+            below_span(share * first)
         }
-        _ => return None,
-    };
-    if read >= span * (1.0 - 1e-9) {
-        return None;
+        _ => None,
     }
-    if builds(read) {
-        return Some(read);
-    }
-    let share = largest_share(|share| Ok(builds(read * share))).ok()??;
-    Some(read * share)
 }
-
 /// One of the two faces sharing the edge; `flip` selects the other.
 fn adjacent_face(model: &Model, solid: &Shape, edge: &Shape, flip: bool) -> Result<Shape, String> {
     let unique = faces_of_edge(model, solid, edge)?;

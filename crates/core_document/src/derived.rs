@@ -241,10 +241,10 @@ impl Derived {
         op_features: &[FeatureId],
         result: &kernel_api::SolidBuildResult,
     ) {
-        if let Some(limit) = result.size_limit
+        if let Some(limit) = &result.size_limit
             && let Some(feature) = op_features.get(limit.op_index)
         {
-            self.size_limits.insert(*feature, limit);
+            self.size_limits.insert(*feature, limit.clone());
         }
     }
 
