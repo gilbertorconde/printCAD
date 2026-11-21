@@ -9,7 +9,7 @@ use kernel_api::{
     MeshStepReport, TriMesh,
 };
 use ogeom::math::{Direction, Plane};
-use ogeom::mesh::{Cap, Editable, Fairing, Fill, Side, Smooth, Target};
+use ogeom::mesh::{Cap, Editable, Fairing, Fill, Remesh, Side, Smooth, Subdivision, Target};
 use ogeom::topo::Triangulation;
 use std::collections::{HashMap, HashSet};
 
@@ -309,11 +309,52 @@ fn step(
             }
             .into()
         }
-        MeshOp::Remesh { .. } => {
-            return Err("the kernel cannot remesh a mesh to an edge length yet".into());
+        MeshOp::Remesh {
+            edge_length,
+            keep_edges_deg,
+            passes,
+            region,
+            face_limit,
+        } => {
+            let mask = vertices_in(mesh, region, welded, sources);
+            let report = mesh
+                .remesh(&Remesh {
+                    edge: *edge_length,
+                    passes: *passes as usize,
+                    keep_edges: keep_edges_deg.map(f64::to_radians),
+                    region: (!matches!(region, MeshRegion::All)).then_some(mask.as_slice()),
+                    max_faces: Some(*face_limit),
+                })
+                .map_err(|e| e.to_string())?;
+            measured = Some(MeshStepReport::Remesh {
+                max: report.max,
+                rms: report.rms,
+            });
+            format!(
+                "{} edges split, {} collapsed, {} flipped",
+                report.split, report.collapsed, report.flipped
+            )
         }
-        MeshOp::Subdivide { .. } => {
-            return Err("the kernel cannot subdivide a mesh yet".into());
+        MeshOp::Subdivide {
+            levels,
+            smooth,
+            keep_edges_deg,
+            face_limit,
+        } => {
+            let scheme = if *smooth {
+                Subdivision::Smooth {
+                    keep_edges: keep_edges_deg.map(f64::to_radians),
+                }
+            } else {
+                Subdivision::Flat
+            };
+            let report = mesh
+                .subdivide(*levels, scheme, Some(*face_limit))
+                .map_err(|e| e.to_string())?;
+            measured = Some(MeshStepReport::Subdivide {
+                moved: report.moved,
+            });
+            format!("{} vertices added", report.added)
         }
         MeshOp::RepairIntersections => {
             return Err("the kernel cannot resolve where a mesh crosses itself yet".into());

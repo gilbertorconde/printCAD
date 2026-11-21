@@ -1,7 +1,7 @@
 //! Parameters and commands for filling, smoothing, offsetting, reducing,
 //! booleans and shells.
 use super::*;
-use kernel_api::MeshFairing;
+use kernel_api::{MESH_FACE_LIMIT, MeshFairing, REMESH_PASSES};
 
 pub(super) const TOOLS: [(&str, &str, &str); 9] = [
     ("mesh.fill", "Fill holes", "triangle"),
@@ -56,6 +56,51 @@ fn rounded(value: f64) -> f64 {
         .unwrap()
 }
 
+/// The most passes a remesh makes.
+pub(super) const MAX_PASSES: f64 = 20.0;
+
+/// The whole number `name` gives, from `lo` to `hi`; `default` without it.
+fn whole(a: &Args, name: &str, default: f64, lo: f64, hi: f64) -> Result<f64, CommandError> {
+    let n = a.opt_number(name)?.unwrap_or(default);
+    if n.fract() == 0.0 && (lo..=hi).contains(&n) {
+        Ok(n)
+    } else {
+        Err(CommandError::bad(
+            name,
+            format!("is a whole number from {lo} to {hi}"),
+        ))
+    }
+}
+
+/// The crease angle `keep_edges` and `edge_angle` give, in degrees: 30
+/// unless told otherwise, none with `keep_edges = false`.
+fn crease(a: &Args) -> Result<Option<f64>, CommandError> {
+    if !a.opt_bool("keep_edges")?.unwrap_or(true) {
+        return Ok(None);
+    }
+    let angle = a.opt_number("edge_angle")?.unwrap_or(30.0);
+    if (0.0..=180.0).contains(&angle) {
+        Ok(Some(angle))
+    } else {
+        Err(CommandError::bad("edge_angle", "is from 0 to 180 degrees"))
+    }
+}
+
+/// The most faces `face_limit` allows a step to make.
+fn face_limit(a: &Args) -> Result<usize, CommandError> {
+    let n = a
+        .opt_number("face_limit")?
+        .unwrap_or(MESH_FACE_LIMIT as f64);
+    if n >= 1.0 && n.fract() == 0.0 && n <= u32::MAX as f64 {
+        Ok(n as usize)
+    } else {
+        Err(CommandError::bad(
+            "face_limit",
+            "must be a positive integer within u32",
+        ))
+    }
+}
+
 pub(super) fn make(
     id: &str,
     a: &Args,
@@ -102,35 +147,29 @@ pub(super) fn make(
             region: region(a, ctx, body, true)?,
             bumps_up_to: positive("bumps_up_to", (d / 125.0).max(2.5 * mean_edge(mesh)))?,
             move_at_most: a.opt_number("move_at_most")?.unwrap_or(d / 1000.0),
-            keep_edges_deg: if a.opt_bool("keep_edges")?.unwrap_or(true) {
-                Some(a.opt_number("edge_angle")?.unwrap_or(30.0))
-            } else {
-                None
-            },
+            keep_edges_deg: crease(a)?,
         },
         "mesh.offset" => MeshOp::Offset {
             region: region(a, ctx, body, true)?,
             distance: a.opt_number("distance")?.unwrap_or(0.1),
         },
-        "mesh.remesh" => MeshOp::Remesh {
-            edge_length: positive("edge_length", mean_edge(mesh))?,
-            keep_edges_deg: if a.opt_bool("keep_edges")?.unwrap_or(true) {
-                Some(a.opt_number("edge_angle")?.unwrap_or(30.0))
-            } else {
-                None
-            },
-        },
-        "mesh.subdivide" => {
-            let levels = a.opt_number("levels")?.unwrap_or(1.0);
-            if levels.fract() != 0.0 || !(1.0..=MAX_LEVELS).contains(&levels) {
-                return Err(CommandError::bad(
-                    "levels",
-                    format!("is a whole number from 1 to {MAX_LEVELS}"),
-                ));
+        "mesh.remesh" => {
+            let passes = whole(a, "passes", REMESH_PASSES as f64, 1.0, MAX_PASSES)?;
+            MeshOp::Remesh {
+                edge_length: positive("edge_length", mean_edge(mesh))?,
+                keep_edges_deg: crease(a)?,
+                passes: passes as u32,
+                region: region(a, ctx, body, true)?,
+                face_limit: face_limit(a)?,
             }
+        }
+        "mesh.subdivide" => {
+            let levels = whole(a, "levels", 1.0, 1.0, MAX_LEVELS)?;
             MeshOp::Subdivide {
                 levels: levels as u32,
                 smooth: a.opt_bool("smooth")?.unwrap_or(false),
+                keep_edges_deg: crease(a)?,
+                face_limit: face_limit(a)?,
             }
         }
         "mesh.repair_intersections" => MeshOp::RepairIntersections,
@@ -270,11 +309,16 @@ fn register_steps(
     );
     commands::on_scan(
         t,
-        scan(CommandSpec::new("mesh.remesh", "Remesh evenly"))
+        region(scan(CommandSpec::new("mesh.remesh", "Remesh evenly")))
             .optional(
                 "edge_length",
                 ParamKind::Number,
                 "Edge length aimed for, mm; the mean edge length",
+            )
+            .optional(
+                "passes",
+                ParamKind::Number,
+                "Passes of split, collapse, flip and relax, 1 to 20; 5",
             )
             .optional(
                 "keep_edges",
@@ -285,6 +329,11 @@ fn register_steps(
                 "edge_angle",
                 ParamKind::Number,
                 "Turn beyond which an edge is a crease, degrees; 30",
+            )
+            .optional(
+                "face_limit",
+                ParamKind::Number,
+                "Most faces the result may have, refused past it; 4000000",
             )
             .returns("{feature, name}"),
         commands::made,
@@ -301,6 +350,21 @@ fn register_steps(
                 "smooth",
                 ParamKind::Bool,
                 "Move the points toward a smooth surface; false keeps the surface",
+            )
+            .optional(
+                "keep_edges",
+                ParamKind::Bool,
+                "Keep sharp edges sharp when smoothing; true",
+            )
+            .optional(
+                "edge_angle",
+                ParamKind::Number,
+                "Turn beyond which an edge is sharp, degrees; 30",
+            )
+            .optional(
+                "face_limit",
+                ParamKind::Number,
+                "Most faces the result may have, refused past it; 4000000",
             )
             .returns("{feature, name}"),
         commands::made,

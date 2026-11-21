@@ -74,21 +74,34 @@ pub enum MeshOp {
         tolerance: f64,
         triangle_limit: usize,
     },
-    /// Remeshed to even triangles whose edges are near `edge_length`, the
-    /// points kept on the surface; edges turning more than
-    /// `keep_edges_deg` stay as creases.
+    /// Remeshed in `passes` passes to even triangles whose edges are near
+    /// `edge_length`, the points kept on the surface; edges turning more
+    /// than `keep_edges_deg` stay as creases. Faces with a corner outside
+    /// `region` stay as they are. A result past `face_limit` faces is
+    /// refused.
     Remesh {
         edge_length: f64,
         #[serde(default)]
         keep_edges_deg: Option<f64>,
+        #[serde(default = "remesh_passes")]
+        passes: u32,
+        #[serde(default = "whole_mesh")]
+        region: MeshRegion,
+        #[serde(default = "face_limit")]
+        face_limit: usize,
     },
     /// Each triangle split into four, `levels` times: the surface as it
-    /// is, or with `smooth` its points moved toward a smooth surface,
-    /// sharp edges and open rims kept.
+    /// is, or with `smooth` its points moved toward a smooth surface, open
+    /// rims and the edges turning more than `keep_edges_deg` kept sharp.
+    /// A result past `face_limit` faces is refused.
     Subdivide {
         levels: u32,
         #[serde(default)]
         smooth: bool,
+        #[serde(default)]
+        keep_edges_deg: Option<f64>,
+        #[serde(default = "face_limit")]
+        face_limit: usize,
     },
     /// A closed mesh that crosses itself made whole: overlapping shells
     /// merged and the surface inside them dropped, as a union of the mesh
@@ -104,6 +117,24 @@ pub enum MeshOp {
         close: bool,
         bridge: f64,
     },
+}
+
+/// The passes a remesh makes unless told otherwise.
+pub const REMESH_PASSES: u32 = 5;
+
+/// The most faces a remesh or subdivision makes unless told otherwise.
+pub const MESH_FACE_LIMIT: usize = 4_000_000;
+
+fn remesh_passes() -> u32 {
+    REMESH_PASSES
+}
+
+fn whole_mesh() -> MeshRegion {
+    MeshRegion::All
+}
+
+fn face_limit() -> usize {
+    MESH_FACE_LIMIT
 }
 
 /// A bounded solid a mesh boolean takes, as it stood when the step was
@@ -194,6 +225,16 @@ pub enum MeshStepReport {
     Smooth {
         max: f64,
         rms: f64,
+    },
+    /// How far the remeshed surface lies from the one before, the
+    /// largest and RMS, over its vertices and face centres.
+    Remesh {
+        max: f64,
+        rms: f64,
+    },
+    /// The farthest a vertex there before moved: zero without smoothing.
+    Subdivide {
+        moved: f64,
     },
     Reduce {
         within_share: f64,

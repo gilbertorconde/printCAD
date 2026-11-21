@@ -15,8 +15,10 @@
   start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
   `mesh.offset`, `mesh.reduce`, `mesh.remesh`, `mesh.subdivide`,
-  `mesh.repair_intersections` (these three refused by the adapter until
-  the kernel has them), `mesh.boolean`, `mesh.thicken`,
+  `mesh.repair_intersections` (the kernel's `Editable::remesh` and
+  `Editable::subdivide`, both under a `face_limit`; the repair refused by
+  the adapter until the kernel has it),
+  `mesh.boolean`, `mesh.thicken`,
   `mesh.intersections` (`crossings.rs`: `KernelQueries::self_intersections`
   on the drawn mesh, also a toggle drawing the selected body's crossing
   triangles as a `scalar_maps` map, found on a thread; `on_frame` logs

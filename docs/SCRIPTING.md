@@ -9584,27 +9584,77 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 `pc.mesh.remesh`: Remesh evenly.
 
 - `scan` (id, optional): The mesh body; the selected one
+- `region` (any, optional): Explicit MeshRegion for replay
+- `box` (any, optional): {min = {x, y, z}, max = {x, y, z}} in the body's frame
+- `ball` (any, optional): {centre = {x, y, z}, radius = r} in the body's frame
 - `edge_length` (number, optional): Edge length aimed for, mm; the mean edge length
+- `passes` (number, optional): Passes of split, collapse, flip and relax, 1 to 20; 5
 - `keep_edges` (boolean, optional): Keep sharp edges as creases; true
 - `edge_angle` (number, optional): Turn beyond which an edge is a crease, degrees; 30
+- `face_limit` (number, optional): Most faces the result may have, refused past it; 4000000
 - Returns {feature, name}
 
 Notes:
 
-- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
-- Evens the triangles out to edges near edge_length, the points kept on the surface. With keep_edges, edges turning more than edge_angle stay as creases.
+- A result of more faces than face_limit is refused, the mesh before the step kept. Markings of the start's vertices follow them through the step.
+- Evens the triangles out to edges near edge_length, the points kept on the surface, in passes of split, collapse, flip and relax: edges settle within about 30 % of the length, most a little under it. With keep_edges, edges turning more than edge_angle stay as creases; open rims keep their shape. With a box, a ball or a marking, only faces with every corner in it change. mesh.result reports Remesh {max, rms}, how far the new surface lies from the old.
+
+Example: Remesh a cube to one millimetre edges.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = pc.file.temp_path{name = "part.stl"}
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local step = pc.mesh.remesh{scan = scan, edge_length = 1}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.result{feature = step.feature}
+    assert(r.faces > 1000)
+    assert(r.report.Remesh.max < 1e-3)
+    assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1000) < 0.01)
+```
 
 `pc.mesh.subdivide`: Subdivide triangles.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `levels` (number, optional): Times each triangle is split into four, 1 to 4; 1
 - `smooth` (boolean, optional): Move the points toward a smooth surface; false keeps the surface
+- `keep_edges` (boolean, optional): Keep sharp edges sharp when smoothing; true
+- `edge_angle` (number, optional): Turn beyond which an edge is sharp, degrees; 30
+- `face_limit` (number, optional): Most faces the result may have, refused past it; 4000000
 - Returns {feature, name}
 
 Notes:
 
-- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
-- Splits every triangle into four, levels times, so the count grows fourfold each level. Without smooth the surface stays exactly as it is; with smooth the points move toward a smooth surface, sharp edges and open rims kept.
+- A result of more faces than face_limit is refused, the mesh before the step kept. Markings of the start's vertices follow them through the step.
+- Splits every triangle into four, levels times, so the count grows fourfold each level. Without smooth the surface stays exactly as it is; with smooth the points move toward a smooth surface each level comes nearer, open rims and, with keep_edges, edges turning more than edge_angle kept sharp. mesh.result reports Subdivide {moved}, the farthest an existing point moved.
+
+Example: Round a cube.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = pc.file.temp_path{name = "part.stl"}
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local step = pc.mesh.subdivide{scan = scan, levels = 3, smooth = true, keep_edges = false}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.result{feature = step.feature}
+    assert(r.faces == 12 * 64)
+    assert(r.report.Subdivide.moved > 1)
+    assert(pc.mesh.inspect{scan = scan}.volume < 1000)
+```
 
 `pc.mesh.repair_intersections`: Repair self-intersections.
 
@@ -9613,7 +9663,7 @@ Notes:
 
 Notes:
 
-- The geometry kernel cannot make these yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
+- The geometry kernel cannot make this yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
 - Makes a closed mesh that crosses itself whole: overlapping shells merge into one and the surface inside them goes, as a union of the mesh with itself. An open mesh is refused.
 
 See also `pc.mesh.intersections`.
@@ -9625,7 +9675,7 @@ See also `pc.mesh.intersections`.
 
 Notes:
 
-- Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.
+- Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}; Remesh {max, rms}; Subdivide {moved}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.
 
 Example: Read a built step.
 
