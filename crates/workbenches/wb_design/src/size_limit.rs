@@ -1,6 +1,7 @@
 //! The largest size a fillet or chamfer builds at, which a drag of its
-//! size stops at: worked out by the kernel beside the task's preview build
-//! (`SolidBuildResult::size_limit`), kept by the document per feature, and
+//! size stops at: worked out by the kernel for the task's preview build,
+//! in it or after it (`SolidBuildResult::size_limit`, or a reading the app
+//! lands later), kept by the document per feature, and
 //! read here while the inputs it was found for still hold. Until it is
 //! known a drag goes where it is taken; a typed size is never held to it.
 

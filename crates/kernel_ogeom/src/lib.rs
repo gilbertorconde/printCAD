@@ -15,9 +15,11 @@ mod fit;
 mod health;
 mod holes;
 mod import;
+mod limit_reading;
 mod orient;
 pub use chain::ChainCache;
 pub use import::is_iges;
+pub use limit_reading::LimitReading;
 mod mesh;
 mod mesh_edit;
 mod mesh_intake;
@@ -242,6 +244,10 @@ pub struct ChainRequest<'a> {
     /// What this body's last builds kept, resumed from where the history
     /// agrees and updated for the next.
     pub cache: Option<&'a mut ChainCache>,
+    /// With a cache: a previewed size limit the cache does not know is
+    /// left in it to be read after the build
+    /// ([`ChainCache::take_limit_reading`]) rather than read before the op.
+    pub defer_limit: bool,
 }
 
 impl<'a> ChainRequest<'a> {
@@ -255,6 +261,7 @@ impl<'a> ChainRequest<'a> {
             probes: &[],
             projections: &[],
             cache: None,
+            defer_limit: false,
         }
     }
 
@@ -279,5 +286,12 @@ impl<'a> ChainRequest<'a> {
 
     pub fn cache(self, cache: Option<&'a mut ChainCache>) -> Self {
         Self { cache, ..self }
+    }
+
+    pub fn defer_limit(self, defer_limit: bool) -> Self {
+        Self {
+            defer_limit,
+            ..self
+        }
     }
 }

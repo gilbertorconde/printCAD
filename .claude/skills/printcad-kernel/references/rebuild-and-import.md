@@ -10,12 +10,34 @@ picks match what is drawn; `session.builds.previews` keeps the whole solid, put
 back when the task closes (and in the save snapshot), and the tool, drawn
 `front_only` in `rendering.preview_color`/`preview_opacity` with its edges
 over its faces (the renderer's `TranslucentFront` pass, back faces culled).
-A previewed fillet or chamfer also has the chain work out the largest size
-that builds (`ops::dressup::size_limit`, kept in the `ChainCache` by the
-history before it and `SolidOp::size_limit_key`), answered as
-`SolidBuildResult::size_limit` and kept by `Derived::store_size_limit`;
-Design's `size_limit.rs` reads it while the key holds, and its handle
-(`Handle::stop`) and fields (`Quantity::drag_max`) stop a drag there.
+A previewed fillet or chamfer also has the largest size that builds
+(`ops::dressup::size_limit`, kept in the `ChainCache`'s limit memo by the
+history before it and `SolidOp::size_limit_key`). A build that finds it
+in the memo answers it as `SolidBuildResult::size_limit`; one that does
+not reads it before the op (`ChainRequest::new` as it is, so a test or
+any caller that asks gets it inline) unless asked `defer_limit` with a
+cache: then the build answers as soon as its solid and preview are made,
+names the reading in `size_limit_to_come` and leaves a `LimitReading`
+(the solid before the op in a model of its own, the op, its names and
+tolerance) in the cache. The app's builds defer (`build_driver::
+execute_limit_after`): the kernel worker queues the reading once the
+build has answered and reads it on its own `printcad-limits` thread, one
+at a time (`build_driver::read_limit`, kept in the memo only when not
+cancelled); each whole build of a body says which reading it awaits
+(`LimitBook::settle`), so a newer history or op stops a running one and
+skips a queued one. It arrives as `KernelResponse::SizeLimitRead`, which
+answers no request (not in `in_flight`) and wakes the event loop
+(`KernelWorker::spawn_waking`, `AppEvent::Kernel`), landed by
+`build_driver::store_read_limit` only while the feature's last build
+awaits that reading. `Derived::store_size_limit` keeps a limit found
+in the build and clears the feature's limit while one is to come, so
+until it lands a drag goes free and a refusal shows as it does. Headless
+`--script` and project import (`build_all`) preview nothing and read no
+limit. Design's `size_limit.rs` reads the limit while the key holds, and
+its handle (`Handle::stop`) and fields (`Quantity::drag_max`) stop a
+drag there. A slow reading (an automatic round's second face, about 18 s
+on the corpus bracket in release) never holds the preview: it shows in
+under a second and the limit follows.
 
 **How a limit is read.** The kernel's readings (`blend_limit`, and the
 `largest_*` functions over it) are confirmed by its own builds: every size

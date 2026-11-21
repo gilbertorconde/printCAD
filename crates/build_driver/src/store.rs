@@ -89,6 +89,19 @@ pub fn store_answers(
     derived.store_projections(projections, &result.projections);
 }
 
+/// Keep the size limit read after the build of `feature`'s body, unless a
+/// later build of it awaits another reading or none. Whether it was kept.
+pub fn store_read_limit(
+    document: &mut Document,
+    feature: FeatureId,
+    reading: u64,
+    limit: kernel_api::SizeLimit,
+) -> bool {
+    document
+        .derived_mut()
+        .store_read_size_limit(feature, reading, limit)
+}
+
 /// Put a body's built solid in the document: its shape and the mesh drawn
 /// from it. The solid is derived from the history, so landing it is not an
 /// edit: a document opened and built again stays unedited.
@@ -216,4 +229,58 @@ pub fn land_shape(
             .set_imported_brep_data(body, read.brep_blob, read.face_colors);
     }
     Landed::Shape
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernel_api::{LimitToCome, SizeLimit};
+
+    fn to_come(reading: u64) -> SolidBuildResult {
+        SolidBuildResult {
+            size_limit_to_come: Some(LimitToCome {
+                op_index: 0,
+                reading,
+            }),
+            ..SolidBuildResult::default()
+        }
+    }
+
+    fn limit(largest: f64) -> SizeLimit {
+        SizeLimit {
+            largest: Some(largest),
+            ..SizeLimit::default()
+        }
+    }
+
+    /// A limit read after its build lands while the feature's last build
+    /// awaits that reading: one a newer build of another history replaced,
+    /// or one a newer build found itself, is dropped, and until a reading
+    /// lands the feature has no limit to stop a drag at.
+    #[test]
+    fn a_limit_read_after_a_newer_build_is_dropped() {
+        let mut document = Document::new("limits");
+        let feature = FeatureId(uuid::Uuid::from_u128(1));
+        let land = |document: &mut Document, result: &SolidBuildResult| {
+            store_answers(document, &[feature], &[], &[], result);
+        };
+        let known = |document: &Document| document.derived().size_limit(feature).cloned();
+
+        land(&mut document, &to_come(1));
+        land(&mut document, &to_come(2));
+        assert!(!store_read_limit(&mut document, feature, 1, limit(1.0)));
+        assert_eq!(known(&document), None);
+        assert!(store_read_limit(&mut document, feature, 2, limit(2.0)));
+        assert_eq!(known(&document), Some(limit(2.0)));
+
+        land(&mut document, &to_come(3));
+        assert_eq!(known(&document), None, "a new reading voids the old");
+        let found = SolidBuildResult {
+            size_limit: Some(limit(4.0)),
+            ..SolidBuildResult::default()
+        };
+        land(&mut document, &found);
+        assert!(!store_read_limit(&mut document, feature, 3, limit(3.0)));
+        assert_eq!(known(&document), Some(limit(4.0)));
+    }
 }

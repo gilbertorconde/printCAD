@@ -12,6 +12,7 @@ use ogeom::math::Point;
 use ogeom::topo::{Model, Shape, ShapeType, explore_unique};
 
 use crate::convert::{array, point, vector};
+use crate::limit_reading::{LimitKeys, LimitReading, SharedMemo};
 use crate::naming::{self, NameMap};
 use crate::ops::{self, pattern};
 use crate::{progress, tess};
@@ -40,12 +41,6 @@ impl ToolSnapshot {
 
 /// How many states a [`ChainCache`] keeps.
 const KEPT_STATES: usize = 4;
-
-/// How many fillet and chamfer limits a [`ChainCache`] keeps.
-const KEPT_LIMITS: usize = 8;
-
-/// How many limits of a variable fillet's radii a [`ChainCache`] keeps.
-const KEPT_LAW_LIMITS: usize = 32;
 
 /// The chain as it stood at the start of one of its ops: what a later
 /// build whose history agrees up to there resumes from.
@@ -109,12 +104,12 @@ pub struct ChainCache {
     /// Keep every edited op's solid for the next build to compare, whatever
     /// the build's timings say it is worth.
     every_edit: bool,
-    /// The largest sizes of previewed fillets and chamfers, newest last,
-    /// by the history before them and the op's size-free key.
-    limits: Vec<(u64, ops::dressup::Limits)>,
-    /// The largest values of previewed variable fillets' radii, newest
-    /// last, by the history before them and each radius's own key.
-    law_limits: Vec<(u64, Option<f64>)>,
+    /// The size limits of previewed fillets and chamfers, read in their
+    /// builds or after them.
+    limits: SharedMemo,
+    /// The last build's previewed limit, left to be read after it
+    /// ([`crate::ChainRequest::defer_limit`]).
+    reading: Option<LimitReading>,
 }
 
 /// What a build made of its edited op (the first that differs from the
@@ -201,6 +196,12 @@ impl ChainCache {
     /// How many faces' meshes the last build left for the next.
     pub fn faces_kept(&self) -> usize {
         self.faces.len()
+    }
+
+    /// The size limit the last build left to be read after it, taken out:
+    /// `None` when it previewed none, read it inline or found it known.
+    pub fn take_limit_reading(&mut self) -> Option<LimitReading> {
+        self.reading.take()
     }
 
     /// How many states it keeps.
@@ -463,6 +464,11 @@ fn tidy_numbers(message: &str) -> String {
 /// agrees with the last builds' and keeps the states the next build may
 /// resume from: at the start of the first op that differs from the last
 /// build's (where the user is editing) and at the end.
+///
+/// A previewed fillet's or chamfer's size limit the cache does not know is
+/// read before the op, unless `defer_limit` with a cache: then the build
+/// goes on without it, names it in `size_limit_to_come` and leaves its
+/// reading in the cache ([`ChainCache::take_limit_reading`]).
 pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, ChainError> {
     let crate::ChainRequest {
         ops: ops_list,
@@ -472,7 +478,12 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         probes,
         projections,
         mut cache,
+        defer_limit,
     } = request;
+    if let Some(cache) = cache.as_deref_mut() {
+        cache.reading = None;
+    }
+    let defer_limit = defer_limit && cache.is_some();
     let chain_err = |op_index: usize, message: String| ChainError {
         op_index,
         message,
@@ -536,6 +547,9 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         _ => false,
     };
     let mut size_limit: Option<kernel_api::SizeLimit> = None;
+    // The previewed limit left to be read after the build: its keys, the
+    // solid before the op, the op, its names and its tolerance.
+    let mut deferred: Option<(LimitKeys, Shape, SolidOp, NameMap, Option<f64>)> = None;
 
     // Where the last builds left a state this one agrees with, it starts
     // there. The op that differs from the last build's is where the next
@@ -641,7 +655,13 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         // A stated tolerance holds for the op's booleans, the op itself
         // read out of the wrapper that states it.
         let _tolerance = ops::ToleranceScope::state(solid_op.boolean_tolerance());
+        let tolerance = solid_op.boolean_tolerance();
         let solid_op = solid_op.inner();
+        // A limit read after the build looks its edges up in these names.
+        let limit_names = (defer_limit
+            && preview.as_ref().is_some_and(|r| r.start == index)
+            && solid_op.size_limit_key().is_some())
+        .then(|| names.clone());
         // What the op and the probes asked before it look up by name is
         // found in the solid as it stands.
         let named = naming::set_current(std::mem::take(&mut names));
@@ -712,33 +732,36 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                         hasher.finish()
                     })
                 };
-                let (largest, sides) = remembered(
-                    cache.as_deref_mut().map(|cache| &mut cache.limits),
-                    held(key),
-                    KEPT_LIMITS,
-                    || ops::dressup::size_limit(&model, shape, solid_op),
-                );
                 // Each radius of a law by its own key, which holds while
                 // that radius alone is dragged.
-                let law = (0..solid_op.law_radii())
-                    .filter_map(|at| {
-                        let key = solid_op.law_limit_key(at)?;
-                        let largest = remembered(
-                            cache.as_deref_mut().map(|cache| &mut cache.law_limits),
-                            held(key),
-                            KEPT_LAW_LIMITS,
-                            || ops::dressup::law_limit(&model, shape, solid_op, at),
-                        );
-                        Some(kernel_api::LawLimit { key, largest })
-                    })
-                    .collect();
-                size_limit = Some(kernel_api::SizeLimit {
+                let keys = LimitKeys {
                     op_index: index,
                     key,
-                    largest,
-                    sides,
-                    law,
-                });
+                    held: held(key),
+                    law: (0..solid_op.law_radii())
+                        .filter_map(|at| {
+                            let key = solid_op.law_limit_key(at)?;
+                            Some((at, key, held(key)))
+                        })
+                        .collect(),
+                };
+                let memo = cache.as_deref().map(|cache| &cache.limits);
+                size_limit = memo.and_then(|memo| keys.known(memo));
+                if size_limit.is_none() {
+                    match limit_names {
+                        Some(names) => {
+                            deferred =
+                                Some((keys, shape.clone(), solid_op.clone(), names, tolerance));
+                        }
+                        None => {
+                            let limit = keys.read(&model, shape, solid_op);
+                            if let Some(memo) = memo {
+                                keys.remember(memo, &limit);
+                            }
+                            size_limit = Some(limit);
+                        }
+                    }
+                }
             }
         }
         let mut tool_snapshot: Option<ToolSnapshot> = None;
@@ -1416,6 +1439,28 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         })
         .flatten()
         .map(Box::new);
+    // The limit left to read gets a model of its own, holding only the
+    // solid it reads.
+    let mut size_limit_to_come = None;
+    if let (Some(cache), Some((keys, solid, op, names, tolerance))) =
+        (cache.as_deref_mut(), deferred)
+    {
+        let mut own = model.clone();
+        compact(&mut own, std::slice::from_ref(&solid));
+        size_limit_to_come = Some(kernel_api::LimitToCome {
+            op_index: keys.op_index,
+            reading: keys.held.unwrap_or_default(),
+        });
+        cache.reading = Some(LimitReading {
+            keys,
+            model: own,
+            solid,
+            op,
+            names,
+            tolerance,
+            memo: cache.limits.clone(),
+        });
+    }
     let result = SolidBuildResult {
         brep_blob,
         mesh,
@@ -1427,6 +1472,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         probe_warnings: noted(&answers),
         projection_warnings: noted(&projected),
         size_limit,
+        size_limit_to_come,
     };
     if let (Some(cache), Some((at, tail))) = (cache.as_deref_mut(), edit) {
         let worth = cache.every_edit || tail_took.is_some_and(|t| t > snapshot_took * 2);
@@ -1728,29 +1774,6 @@ fn external_tool(
         tool = pattern::moved(model, &tool, matrix)?;
     }
     Ok(tool)
-}
-
-/// What `read` answers, kept in `kept` by `key` (newest last, at most
-/// `most`): the kept answer where there is one, else `read`'s, kept.
-/// Without a cache or a key it is read every time.
-fn remembered<T: Clone>(
-    kept: Option<&mut Vec<(u64, T)>>,
-    key: Option<u64>,
-    most: usize,
-    read: impl FnOnce() -> T,
-) -> T {
-    let (Some(kept), Some(key)) = (kept, key) else {
-        return read();
-    };
-    if let Some((_, known)) = kept.iter().find(|(k, _)| *k == key) {
-        return known.clone();
-    }
-    let answer = read();
-    kept.push((key, answer.clone()));
-    if kept.len() > most {
-        kept.remove(0);
-    }
-    answer
 }
 
 #[cfg(test)]

@@ -17,7 +17,8 @@ become `WaitUntil`, e.g. caret blink). Otherwise the event loop sleeps in
 `ControlFlow::Wait` until the next OS event. Consequences: anything that
 completes on a background channel must be covered by one of the
 "work pending" flags or it will not surface until the next input event; a
-thread whose work produces no window event (the 6-DoF reader) must also wake
+thread whose work produces no window event (the 6-DoF reader, the kernel
+worker's size-limit thread) must also wake
 the loop itself, through `EventLoopProxy::send_event` and the `AppEvent`
 user event; and
 `fps_cap` now caps the *active* rate rather than implying continuous

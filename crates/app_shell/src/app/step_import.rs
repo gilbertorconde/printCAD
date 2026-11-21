@@ -107,7 +107,8 @@ impl PrintCadApp {
                 | KernelResponse::MeshSolidBuilt { body_id, .. }
                 | KernelResponse::MeshSolidFailed { body_id, .. }
                 | KernelResponse::ShapeRefined { body_id, .. }
-                | KernelResponse::ShapeMirrored { body_id, .. } => self.tab_index_of_body(*body_id),
+                | KernelResponse::ShapeMirrored { body_id, .. }
+                | KernelResponse::SizeLimitRead { body_id, .. } => self.tab_index_of_body(*body_id),
             };
             match target {
                 Some(index) => self.with_tab(index, |app| app.apply_kernel_response(response)),
@@ -309,6 +310,29 @@ impl PrintCadApp {
                                 self.body_name(BodyId(body_id))
                             ));
                         }
+                    }
+                }
+                KernelResponse::SizeLimitRead {
+                    feature,
+                    reading,
+                    limit,
+                    elapsed,
+                    ..
+                } => {
+                    if build_driver::store_read_limit(
+                        &mut self.session.document,
+                        feature,
+                        reading,
+                        limit,
+                    ) {
+                        app_log::info(format!(
+                            "Read the size limit of `{}` in {:.0}ms",
+                            self.session
+                                .document
+                                .get_feature_meta(feature)
+                                .map_or("feature", |f| f.name.as_str()),
+                            elapsed.as_secs_f64() * 1000.0
+                        ));
                     }
                 }
                 KernelResponse::MinDistance { token, result, .. } => {

@@ -694,6 +694,56 @@ fn a_fillet_chain_stops_at_the_largest_radius_that_builds() {
     }
 }
 
+/// A preview build told to leave its size limit for later answers with
+/// its preview and no limit, naming the reading it left; read, the limit
+/// is the one a build reads inline, and kept, the next build of the same
+/// history at another radius has it at once. Another solid before the
+/// round is another reading.
+#[test]
+fn a_limit_read_after_its_build_is_the_one_read_inline() {
+    let round = |radius| SolidOp::Fillet {
+        radius,
+        edges: near_top_edge(),
+        follow_tangent: false,
+        corner: Default::default(),
+        distances: None,
+        auto: false,
+        variable: None,
+        overflow: Default::default(),
+    };
+    let detail = kernel_api::TessellationSettings::default();
+    let mut cache = kernel_ogeom::ChainCache::default();
+    let mut build = |base: &SolidOp, radius: f64| {
+        let ops = [base.clone(), round(radius)];
+        let result = new_kernel()
+            .execute_solid_chain(
+                kernel_ogeom::ChainRequest::new(&ops, &detail)
+                    .preview(Some(1..2))
+                    .cache(Some(&mut cache))
+                    .defer_limit(true),
+            )
+            .expect("the round builds");
+        (result, cache.take_limit_reading())
+    };
+    let block = box_of(20.0, 20.0, 10.0);
+    let (first, reading) = build(&block, 1.0);
+    assert!(first.preview.is_some() && first.size_limit.is_none());
+    let to_come = first.size_limit_to_come.expect("the limit is to come");
+    assert_eq!(to_come.op_index, 1);
+    let reading = reading.expect("left to read");
+    assert_eq!(reading.id(), to_come.reading);
+    let read = reading.read();
+    assert_eq!(read, previewed_limit(&block, round(1.0)));
+    reading.keep(&read);
+
+    let (again, left) = build(&block, 2.0);
+    assert_eq!(again.size_limit, Some(read));
+    assert!(again.size_limit_to_come.is_none() && left.is_none());
+    let (taller, _) = build(&box_of(20.0, 20.0, 12.0), 1.0);
+    let other = taller.size_limit_to_come.expect("another limit to come");
+    assert_ne!(other.reading, to_come.reading);
+}
+
 /// A variable round on the top front edge of a 40 x 30 x 10 block, 1 mm
 /// at its start and 3 mm at its end: each radius stops at the largest it
 /// builds at with the other held, the 10 mm wall's reach, under a key

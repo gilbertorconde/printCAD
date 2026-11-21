@@ -230,6 +230,8 @@ pub enum AppEvent {
     Script,
     /// An agent called a tool, or a chat has news.
     Agent,
+    /// The kernel worker read a size limit after its build.
+    Kernel,
     /// The system asked the process to end (SIGTERM, SIGINT).
     Terminate,
 }
@@ -353,7 +355,14 @@ impl PrintCadApp {
             input: Default::default(),
             registry,
             files: app::app_state::FileWork::new(app::doc_io::load_recent()),
-            kernel_worker: KernelWorker::spawn(),
+            kernel_worker: KernelWorker::spawn_waking({
+                let proxy = std::sync::Mutex::new(proxy.clone());
+                std::sync::Arc::new(move || {
+                    if let Ok(proxy) = proxy.lock() {
+                        let _ = proxy.send_event(AppEvent::Kernel);
+                    }
+                })
+            }),
             nav_device: app::sixdof::SixDofWorker::spawn({
                 let proxy = proxy.clone();
                 move || {
@@ -468,7 +477,7 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
             // The device thread only knocks when the puck starts or stops
             // moving, or a button changes; while it is deflected the frame
             // loop keeps itself awake.
-            AppEvent::DeviceInput | AppEvent::Script | AppEvent::Agent => {
+            AppEvent::DeviceInput | AppEvent::Script | AppEvent::Agent | AppEvent::Kernel => {
                 self.redraw_needed = true;
             }
             AppEvent::Terminate => self.exit_without_asking(
