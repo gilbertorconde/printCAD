@@ -555,6 +555,58 @@ pub enum FilletCorner {
     RollingBall,
 }
 
+/// What a round or bevel does where it reaches geometry other than its own
+/// two faces. The behaviours are tried in the order of the fields and the
+/// first that builds wins; every one is on by default, and where none that
+/// is on builds the request is refused by name.
+///
+/// A round of one radius takes them all; a bevel only
+/// `blend_into_round` and `trim_through`, having no ball to rest on an
+/// edge or to roll through a narrow passage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Overflow {
+    /// The round bends into an existing round it reaches, meeting it with
+    /// no step and no crease (a boss's foot reaching an edge round).
+    pub blend_into_round: bool,
+    /// A sharp edge the ball would roll over is kept, the ball resting on
+    /// it.
+    pub hold_edge: bool,
+    /// As `hold_edge`, where only a band's end runs over the edge.
+    pub hold_edge_at_end: bool,
+    /// The round keeps its own surface and the faces it reaches are
+    /// trimmed or extended to meet it.
+    pub trim_through: bool,
+    /// A concave zone tighter than the radius made of rounds alone is
+    /// rounded through, the rounds meeting where they cross.
+    pub narrow_blend_made: bool,
+    /// As `narrow_blend_made`, the zone also one whole face no round made.
+    pub narrow_whole_face: bool,
+    /// As `narrow_whole_face`, the zone also part of a face.
+    pub narrow_partial_face: bool,
+}
+
+impl Default for Overflow {
+    fn default() -> Self {
+        Self {
+            blend_into_round: true,
+            hold_edge: true,
+            hold_edge_at_end: true,
+            trim_through: true,
+            narrow_blend_made: true,
+            narrow_whole_face: true,
+            narrow_partial_face: true,
+        }
+    }
+}
+
+impl Overflow {
+    /// Every behaviour on, as by default.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// The section of a round set back a different distance on each face.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum RoundProfile {
@@ -650,6 +702,8 @@ impl SolidOp {
                     between: variable.between.iter().map(|[at, _]| [*at, 0.0]).collect(),
                     reversed: variable.reversed,
                 }),
+                // A variable round takes no overflow options.
+                overflow: Overflow::default(),
             },
             SolidOp::Fillet {
                 edges,
@@ -658,6 +712,7 @@ impl SolidOp {
                 distances,
                 auto,
                 variable: None,
+                overflow,
                 ..
             } => SolidOp::Fillet {
                 radius: 0.0,
@@ -668,6 +723,7 @@ impl SolidOp {
                 distances: distances.map(|d| RoundDistances { other: 0.0, ..d }),
                 auto: *auto,
                 variable: None,
+                overflow: *overflow,
             },
             SolidOp::Chamfer {
                 spec,
@@ -675,6 +731,7 @@ impl SolidOp {
                 edges,
                 follow_tangent,
                 corner,
+                overflow,
             } => SolidOp::Chamfer {
                 spec: match *spec {
                     ChamferSpec::EqualDistance { .. } => {
@@ -695,6 +752,7 @@ impl SolidOp {
                 edges: edges.clone(),
                 follow_tangent: *follow_tangent,
                 corner: *corner,
+                overflow: *overflow,
             },
             _ => return None,
         };
@@ -874,6 +932,10 @@ pub enum SolidOp {
         auto: bool,
         #[serde(default)]
         variable: Option<VariableRadius>,
+        /// What the round does where it reaches other geometry; a round
+        /// of one radius between setback corners alone takes it.
+        #[serde(default, skip_serializing_if = "Overflow::is_default")]
+        overflow: Overflow,
     },
     /// Round between two faces of the running solid, which need share no
     /// edge: the ball rolling between them, its round filling or taking off
@@ -888,6 +950,9 @@ pub enum SolidOp {
         follow_tangent: bool,
         #[serde(default)]
         corner: ChamferCorner,
+        /// What the bevel does where it reaches other geometry.
+        #[serde(default, skip_serializing_if = "Overflow::is_default")]
+        overflow: Overflow,
     },
     /// Tilt the selected faces by `angle_deg` about their intersection with
     /// the neutral plane.

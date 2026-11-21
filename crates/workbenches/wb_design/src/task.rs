@@ -973,6 +973,7 @@ mod tests {
             edges: crate::feature::EdgeSel::Edges(vec![edge]),
             follow_tangent: false,
             corner: Default::default(),
+            overflow: Default::default(),
             refine: false,
             mode: Default::default(),
             radius2: 0.0,
@@ -1063,6 +1064,7 @@ mod tests {
             edges: edges(),
             follow_tangent: false,
             corner: Default::default(),
+            overflow: Default::default(),
             refine: false,
             mode: crate::feature::FilletMode::TwoDistances,
             radius2,
@@ -1080,6 +1082,7 @@ mod tests {
             edges: edges(),
             follow_tangent: false,
             corner: Default::default(),
+            overflow: Default::default(),
             refine: false,
         };
         type Made = fn(f32, f32) -> DesignFeature;

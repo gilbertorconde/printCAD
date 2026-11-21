@@ -254,6 +254,7 @@ fn fillet_feature_rounds_the_pad_through_the_full_stack() {
             profile: Default::default(),
             rho: 0.5,
             points: Vec::new(),
+            overflow: Default::default(),
         },
     );
     let (a, b, c, r) = (20.0, 20.0, 10.0, 2.0f64);
@@ -601,6 +602,7 @@ fn bore_rim_fillets() {
             profile: Default::default(),
             rho: 0.5,
             points: Vec::new(),
+            overflow: Default::default(),
         },
     );
 
@@ -643,6 +645,7 @@ fn a_fillet_found_by_position_carries_a_warning() {
         profile: Default::default(),
         rho: 0.5,
         points: Vec::new(),
+        overflow: Default::default(),
     };
     let round = doc.add_in(body, "Fillet", fillet([7, 8]));
     doc.mark_feature_dirty(round);
@@ -2395,6 +2398,7 @@ fn rounded_corner_and(dress_up: DesignFeature) -> (Document, BodyId) {
             profile: Default::default(),
             rho: 0.5,
             points: Vec::new(),
+            overflow: Default::default(),
         },
     );
     doc.add_in(body, "Top", dress_up);
@@ -2448,6 +2452,7 @@ fn a_dress_up_on_one_edge_takes_its_tangent_chain() {
         profile: Default::default(),
         rho: 0.5,
         points: Vec::new(),
+        overflow: Default::default(),
     };
     let chain = top_chain();
     let one = vec![chain[0]];
@@ -2484,6 +2489,7 @@ fn chain_fillet(
         profile: Default::default(),
         rho: 0.5,
         points,
+        overflow: Default::default(),
     }
 }
 
@@ -2578,6 +2584,7 @@ fn a_two_distance_chamfer_keeps_its_sides_along_a_tangent_chain() {
         follow_tangent: true,
         corner: Default::default(),
         refine: false,
+        overflow: Default::default(),
     };
     // The top inset by h along the chain: a (20 - h) square whose rounded
     // corner, about (17, 17), has radius 3 - h.
@@ -3265,6 +3272,7 @@ fn a_fillet_follows_its_edge_by_name_when_the_pad_grows() {
             profile: Default::default(),
             rho: 0.5,
             points: Vec::new(),
+            overflow: Default::default(),
         },
     );
     let round = 4.0 * (1.0 - std::f64::consts::FRAC_PI_4);
@@ -4895,6 +4903,7 @@ fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
             profile: Default::default(),
             rho: 0.5,
             points: Vec::new(),
+            overflow: Default::default(),
         },
     );
     let refuse = |doc: &mut Document| {
@@ -5307,6 +5316,7 @@ fn a_fillet_between_two_faces_rounds_across_a_groove() {
         profile: Default::default(),
         rho: 0.5,
         points: Vec::new(),
+        overflow: Default::default(),
     };
     let fillet = doc.add_in(body, "Fillet", between(3.0));
     let grooved = 40.0 * 20.0 * 5.0 + 20.0 * 20.0 * 15.0 + 18.0 * 20.0 * 5.0;

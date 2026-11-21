@@ -547,6 +547,7 @@ impl<'a> Importer<'a> {
                 profile: Default::default(),
                 rho: 0.5,
                 points: Vec::new(),
+                overflow: Default::default(),
             }));
         }
         let mode = match object.integer("ChamferType")? {
@@ -577,6 +578,7 @@ impl<'a> Importer<'a> {
             follow_tangent: true,
             corner: Default::default(),
             refine,
+            overflow: Default::default(),
         }))
     }
 

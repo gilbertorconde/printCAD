@@ -1212,6 +1212,7 @@ mod panel_width {
                 "cone_angle_deg": 0.0, "reversed": false, "subtractive": true,
                 "keep_inside": true}}),
             json!({"Fillet": {"radius": 1.0}}),
+            json!({"Fillet": {"radius": 1.0, "overflow": {"trim_through": false}}}),
             json!({"Chamfer": {"size": 1.0, "mode": "DistanceAngle"}}),
             json!({"Draft": {"angle_deg": 3.0, "neutral": {"point": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0]}, "faces": []}}),
             json!({"Thickness": {"value": 1.0, "faces": []}}),

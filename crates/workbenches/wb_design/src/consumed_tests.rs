@@ -35,6 +35,7 @@ fn only_a_feature_made_from_a_sketch_consumes_it() {
         edges: EdgeSel::All,
         follow_tangent: false,
         corner: Default::default(),
+        overflow: Default::default(),
         refine: false,
         mode: Default::default(),
         radius2: 0.0,

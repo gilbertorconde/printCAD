@@ -7,14 +7,14 @@
 //! that meet at a vertex close their corner between them.
 
 use kernel_api::{
-    ChamferCorner, ChamferSpec, EdgeSelection, FilletCorner, RoundDistances, RoundProfile,
-    ThicknessJoin,
+    ChamferCorner, ChamferSpec, EdgeSelection, FilletCorner, Overflow, RoundDistances,
+    RoundProfile, ThicknessJoin,
 };
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
     Blend, BlendRefusal, BlendSizing, Chamfer, LawSize, LawStation, blend_edges, blend_limit,
-    chamfer_edges_checked, chamfer_edges_cornered, fillet_edge_distances, fillet_edges_corner,
-    fillet_edges_corner_checked, largest_chamfer_distance_all,
+    chamfer_edges_checked, chamfer_edges_overflow, fillet_edge_distances, fillet_edges_corner,
+    fillet_edges_corner_checked, fillet_edges_overflow, largest_chamfer_distance_all,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -255,6 +255,7 @@ pub fn fillet(
     corner: FilletCorner,
     distances: Option<RoundDistances>,
     auto: bool,
+    overflow: Overflow,
 ) -> Result<Shape, Refusal> {
     if let Some(distances) = distances {
         let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
@@ -288,7 +289,19 @@ pub fn fillet(
     let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
     let pick =
         |picked: &[usize]| -> Vec<Shape> { picked.iter().map(|&i| chain[i].clone()).collect() };
-    match fillet_edges_corner_checked(model, solid, &chain, radius, corner, tol()) {
+    // The checked call names the edges a refusal concerns, under every
+    // overflow behaviour (all a rolling-ball corner takes); other options
+    // go through the call taking them, whose refusal the edges are tried
+    // apart for.
+    let asked = if overflow.is_default() || corner == ogeom::fillet::FilletCorner::Rolling {
+        fillet_edges_corner_checked(model, solid, &chain, radius, corner, tol())
+    } else {
+        round(model, solid, &chain, radius, corner, overflow).map_err(|error| BlendRefusal {
+            edges: Vec::new(),
+            error,
+        })
+    };
+    match asked {
         Ok(built) => {
             crate::naming::record(&built.history);
             Ok(built.shape)
@@ -309,11 +322,11 @@ pub fn fillet(
             &chain,
             refused,
             |m, picked| {
-                fillet_reading(m, solid, &pick(picked), corner, radius).map(|r| r.per(radius))
+                fillet_reading(m, solid, &pick(picked), corner, overflow, radius)
+                    .map(|r| r.per(radius))
             },
             |m, picked, share| {
-                fillet_edges_corner(m, solid, &pick(picked), radius * share, corner, tol())
-                    .map(|_| ())
+                round(m, solid, &pick(picked), radius * share, corner, overflow).map(|_| ())
             },
         )?),
     }
@@ -490,6 +503,74 @@ fn kernel_corner(corner: FilletCorner) -> ogeom::fillet::FilletCorner {
     match corner {
         FilletCorner::Setback => ogeom::fillet::FilletCorner::Setback,
         FilletCorner::RollingBall => ogeom::fillet::FilletCorner::Rolling,
+    }
+}
+
+/// The kernel's spelling of what a blend does where it reaches other
+/// geometry.
+fn kernel_overflow(overflow: Overflow) -> ogeom::fillet::Overflow {
+    let mut kernel = ogeom::fillet::Overflow::default();
+    kernel.blend_into_round = overflow.blend_into_round;
+    kernel.hold_edge = overflow.hold_edge;
+    kernel.hold_edge_at_end = overflow.hold_edge_at_end;
+    kernel.trim_through = overflow.trim_through;
+    kernel.narrow_blend_made = overflow.narrow_blend_made;
+    kernel.narrow_whole_face = overflow.narrow_whole_face;
+    kernel.narrow_partial_face = overflow.narrow_partial_face;
+    kernel
+}
+
+/// The rounds of `edges` at `radius`, closed as `corner` says, reaching
+/// other geometry as `overflow` says. Rolling-ball corners take the
+/// kernel's own behaviours alone: its rolling rounds have no overflow
+/// options.
+fn round(
+    model: &mut Model,
+    solid: &Shape,
+    edges: &[Shape],
+    radius: f64,
+    corner: ogeom::fillet::FilletCorner,
+    overflow: Overflow,
+) -> ogeom::core::OgeomResult<ogeom::algo::Built> {
+    match corner {
+        ogeom::fillet::FilletCorner::Setback => fillet_edges_overflow(
+            model,
+            solid,
+            edges,
+            radius,
+            kernel_overflow(overflow),
+            tol(),
+        ),
+        _ => fillet_edges_corner(model, solid, edges, radius, corner, tol()),
+    }
+}
+
+/// The bevels `specs`, a vertex of three or more closed as `corner`
+/// says, reaching other geometry as `overflow` says.
+fn bevel(
+    model: &mut Model,
+    solid: &Shape,
+    specs: &[(Shape, Chamfer)],
+    corner: ogeom::fillet::ChamferCorner,
+    overflow: Overflow,
+) -> ogeom::core::OgeomResult<ogeom::algo::Built> {
+    chamfer_edges_overflow(
+        model,
+        solid,
+        specs,
+        corner,
+        kernel_overflow(overflow),
+        tol(),
+    )
+}
+
+/// `reading` as the request reads under `overflow`: the kernel confirms
+/// its readings with every behaviour on, so under other options one only
+/// seats the request, a build under them confirming it.
+fn under(reading: Reading, overflow: Overflow) -> Reading {
+    match reading {
+        Reading::Built(read) if !overflow.is_default() => Reading::Seated(read),
+        reading => reading,
     }
 }
 
@@ -681,6 +762,7 @@ fn chamfer_sides(
     flip: bool,
     edges: &EdgeSelection,
     follow_tangent: bool,
+    overflow: Overflow,
 ) -> Option<(Option<f64>, Option<kernel_api::RoundSides>)> {
     let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer").ok()?;
     let faces = match spec {
@@ -705,7 +787,7 @@ fn chamfer_sides(
                 largest_size(
                     model,
                     solid,
-                    &auto_as_equal(spec, flip, edges, follow_tangent),
+                    &auto_as_equal(spec, flip, edges, follow_tangent, overflow),
                 )
             } else if every.iter().any(Option::is_none) {
                 None
@@ -726,6 +808,7 @@ fn auto_as_equal(
     flip: bool,
     edges: &EdgeSelection,
     follow_tangent: bool,
+    overflow: Overflow,
 ) -> kernel_api::SolidOp {
     let distance = match spec {
         ChamferSpec::Auto { distance } => *distance,
@@ -737,6 +820,7 @@ fn auto_as_equal(
         edges: edges.clone(),
         follow_tangent,
         corner: Default::default(),
+        overflow,
     }
 }
 
@@ -1102,11 +1186,17 @@ fn fillet_reading(
     solid: &Shape,
     edges: &[Shape],
     corner: ogeom::fillet::FilletCorner,
+    overflow: Overflow,
     up_to: f64,
 ) -> Option<Reading> {
     let sizing = BlendSizing::Rounds { edges, corner };
     let limit = blend_limit(model, solid, &sizing, up_to, tol()).ok()?;
-    Some(Reading::Built(limit.size))
+    let reading = Reading::Built(limit.size);
+    // Rolling-ball corners take every behaviour whatever is asked.
+    Some(match corner {
+        ogeom::fillet::FilletCorner::Setback => under(reading, overflow),
+        _ => reading,
+    })
 }
 
 /// The largest share up to `up_to` of the bevels `specs` asks, each taken
@@ -1116,6 +1206,18 @@ fn fillet_reading(
 /// included) where one measure scales them all, else the least of each
 /// edge's own. `None` where the kernel cannot read it.
 fn chamfer_reading(
+    model: &Model,
+    solid: &Shape,
+    specs: &[(Shape, Chamfer)],
+    corner: ogeom::fillet::ChamferCorner,
+    overflow: Overflow,
+    up_to: f64,
+) -> Option<Reading> {
+    seated_chamfer_reading(model, solid, specs, corner, up_to).map(|r| under(r, overflow))
+}
+
+/// [`chamfer_reading`] with every overflow behaviour on.
+fn seated_chamfer_reading(
     model: &Model,
     solid: &Shape,
     specs: &[(Shape, Chamfer)],
@@ -1159,19 +1261,21 @@ fn chamfer_reading(
 }
 
 /// Whether the bevels `specs` asks, each taken `share` of the way, build
-/// on `solid` closed as `corner` says, on a copy of `model`.
+/// on `solid` closed as `corner` says and reaching other geometry as
+/// `overflow` says, on a copy of `model`.
 fn chamfer_builds(
     model: &Model,
     solid: &Shape,
     specs: &[(Shape, Chamfer)],
     corner: ogeom::fillet::ChamferCorner,
+    overflow: Overflow,
     share: f64,
 ) -> bool {
     let scaled: Vec<(Shape, Chamfer)> = specs
         .iter()
         .map(|(edge, spec)| (edge.clone(), scaled(spec, share)))
         .collect();
-    chamfer_edges_cornered(&mut model.clone(), solid, &scaled, corner, tol()).is_ok()
+    bevel(&mut model.clone(), solid, &scaled, corner, overflow).is_ok()
 }
 
 /// The kernel's spelling of how a chamfer closes its corners.
@@ -1418,6 +1522,7 @@ fn fades_at(model: &mut Model, solid: &Shape, edge: &Shape, at: Point) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments, reason = "the chamfer op's own fields")]
 pub fn chamfer(
     model: &mut Model,
     solid: &Shape,
@@ -1426,6 +1531,7 @@ pub fn chamfer(
     edges: &EdgeSelection,
     follow_tangent: bool,
     corner: ChamferCorner,
+    overflow: Overflow,
 ) -> Result<Shape, Refusal> {
     let asked = match spec {
         ChamferSpec::EqualDistance { distance }
@@ -1439,7 +1545,7 @@ pub fn chamfer(
     let kernel_corner = kernel_chamfer_corner(corner);
     let largest = |m: &Model, picked: &[usize]| {
         let picked: Vec<(Shape, Chamfer)> = picked.iter().map(|&i| specs[i].clone()).collect();
-        chamfer_reading(m, solid, &picked, kernel_corner, 1.0)
+        chamfer_reading(m, solid, &picked, kernel_corner, overflow, 1.0)
     };
     let picked_at = |picked: &[usize], share: f64| -> Vec<(Shape, Chamfer)> {
         picked
@@ -1447,53 +1553,39 @@ pub fn chamfer(
             .map(|&i| (specs[i].0.clone(), scaled(&specs[i].1, share)))
             .collect()
     };
-    // The kernel's plain chamfer closes a corner of three bevels with a
-    // facet; the mitre to one point is asked for by name. That call names
-    // no edge when it refuses, so the refusal tries the edges apart.
-    if corner == ChamferCorner::Point {
-        let point = ogeom::fillet::ChamferCorner::Point;
-        return match chamfer_edges_cornered(model, solid, &specs, point, tol()) {
-            Ok(built) => {
-                crate::naming::record(&built.history);
-                Ok(built.shape)
-            }
-            Err(error) => Err(refusal(
-                "chamfer",
-                asked,
-                model,
-                solid,
-                &edges,
-                BlendRefusal {
-                    edges: Vec::new(),
-                    error,
-                },
-                largest,
-                |m, picked, share| {
-                    chamfer_edges_cornered(m, solid, &picked_at(picked, share), point, tol())
-                        .map(|_| ())
-                },
-            )?),
-        };
-    }
-    match chamfer_edges_checked(model, solid, &specs, tol()) {
+    let error = match bevel(model, solid, &specs, kernel_corner, overflow) {
         Ok(built) => {
             crate::naming::record(&built.history);
-            Ok(built.shape)
+            return Ok(built.shape);
         }
-        Err(refused) => Err(refusal(
-            "chamfer",
-            asked,
-            model,
-            solid,
-            &edges,
-            refused,
-            largest,
-            |m, picked, share| {
-                chamfer_edges_cornered(m, solid, &picked_at(picked, share), kernel_corner, tol())
-                    .map(|_| ())
-            },
-        )?),
-    }
+        Err(error) => error,
+    };
+    // The facet's checked call names the specs a refusal concerns where
+    // the engine's own bevels refuse too; else the edges are tried apart.
+    let blamed = match corner {
+        ChamferCorner::Facet if !matches!(error, ogeom::core::OgeomError::Cancelled) => {
+            chamfer_edges_checked(&mut model.clone(), solid, &specs, tol())
+                .err()
+                .map(|refused| refused.edges)
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
+    Err(refusal(
+        "chamfer",
+        asked,
+        model,
+        solid,
+        &edges,
+        BlendRefusal {
+            edges: blamed,
+            error,
+        },
+        largest,
+        |m, picked, share| {
+            bevel(m, solid, &picked_at(picked, share), kernel_corner, overflow).map(|_| ())
+        },
+    )?)
 }
 
 /// The edges of `solid` a fillet or chamfer (`what`) takes: the selected
@@ -1623,6 +1715,7 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Lim
         flip,
         edges,
         follow_tangent,
+        overflow,
         ..
     } = op
         && let Some(read) = chamfer_sides(
@@ -1632,6 +1725,7 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Lim
             *flip,
             edges,
             *follow_tangent,
+            *overflow,
         )
     {
         return read;
@@ -1658,11 +1752,24 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
             follow_tangent,
             corner,
             variable: None,
+            overflow,
             ..
         } => {
             let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "fillet").ok()?;
-            match fillet_reading(&model, solid, &chain, kernel_corner(*corner), span)? {
-                Reading::Built(read) | Reading::Seated(read) => below_span(read?),
+            let corner = kernel_corner(*corner);
+            match fillet_reading(&model, solid, &chain, corner, *overflow, span)? {
+                Reading::Built(read) => below_span(read?),
+                // Read with every behaviour on: a build under the asked
+                // ones confirms it, or the halving finds theirs below.
+                Reading::Seated(read) => {
+                    let read = read?;
+                    let builds = |r| round(&mut model.clone(), solid, &chain, r, corner, *overflow);
+                    if builds(read).is_ok() {
+                        below_span(read)
+                    } else {
+                        largest_share(read, |r| Ok(builds(r).is_ok())).ok()?
+                    }
+                }
             }
         }
         kernel_api::SolidOp::Chamfer {
@@ -1671,6 +1778,7 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
             edges,
             follow_tangent,
             corner,
+            overflow,
         } => {
             let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "chamfer").ok()?;
             let specs = chamfer_specs(&mut model, solid, spec, *flip, chain).ok()?;
@@ -1685,11 +1793,12 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
             }
             let corner = kernel_chamfer_corner(*corner);
             let bound = span / first;
-            let share = match chamfer_reading(&model, solid, &specs, corner, bound)? {
+            let share = match chamfer_reading(&model, solid, &specs, corner, *overflow, bound)? {
                 Reading::Built(share) => share?,
                 Reading::Seated(share) => {
                     let share = share?;
-                    let builds = |share| chamfer_builds(&model, solid, &specs, corner, share);
+                    let builds =
+                        |share| chamfer_builds(&model, solid, &specs, corner, *overflow, share);
                     if share >= bound * (1.0 - 1e-9) || builds(share) {
                         share
                     } else {
