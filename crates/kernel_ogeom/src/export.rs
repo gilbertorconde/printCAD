@@ -9,6 +9,7 @@
 //! body's mesh is welded by position, so a closed solid arrives as a
 //! closed mesh rather than as faces that merely touch.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use kernel_api::{KernelError, KernelResult, TessellationSettings, TriMesh};
@@ -106,8 +107,8 @@ pub struct ExportBody<'a> {
     /// them off made up for, before the scale. STEP writes the body as
     /// drawn, and a body without a solid as it is.
     pub rounds: Option<[f64; 2]>,
-    /// The colours the body shows in, for a format that carries colour.
-    /// The kernel's 3MF writer takes none yet, so no format writes them.
+    /// The colours the body shows in, for a format that carries colour
+    /// (3MF; STL has none).
     pub colors: Option<ExportColors>,
 }
 
@@ -452,7 +453,9 @@ fn export_mesh(
             scaled_mesh(&mut mesh, scale);
         }
         if !mesh.indices.is_empty() {
-            meshes.push((body.name.clone(), welded(&mesh)?));
+            let (tri, faces) = welded(&mesh)?;
+            let colours = body.colors.as_ref().map(|c| colours_of(c, &faces));
+            meshes.push((body.name.clone(), tri, colours));
         }
     }
     if meshes.is_empty() {
@@ -460,11 +463,11 @@ fn export_mesh(
             "no body has triangles to write".into(),
         ));
     }
-    let triangles = meshes.iter().map(|(_, t)| t.triangles.len()).sum();
+    let triangles = meshes.iter().map(|(_, t, _)| t.triangles.len()).sum();
     let bytes = match format {
         ExportFormat::Stl => {
             let mut soup = Triangulation::new();
-            for (_, mesh) in &meshes {
+            for (_, mesh, _) in &meshes {
                 let base = soup.positions.len() as u32;
                 soup.positions.extend_from_slice(&mesh.positions);
                 soup.normals.extend_from_slice(&mesh.normals);
@@ -477,9 +480,17 @@ fn export_mesh(
         _ => {
             let objects: Vec<ogeom::io::threemf::Object<'_>> = meshes
                 .iter()
-                .map(|(name, mesh)| ogeom::io::threemf::Object {
-                    name: Some(name.clone()),
-                    ..ogeom::io::threemf::Object::new(mesh)
+                .map(|(name, mesh, colours)| {
+                    let (colour, colours) = match colours {
+                        Some((body, faces)) => (Some(*body), faces.clone()),
+                        None => (None, None),
+                    };
+                    ogeom::io::threemf::Object {
+                        name: Some(name.clone()),
+                        colour,
+                        colours,
+                        ..ogeom::io::threemf::Object::new(mesh)
+                    }
                 })
                 .collect();
             ogeom::io::threemf::write_3mf(&objects)
@@ -514,18 +525,31 @@ fn moved_mesh(mesh: &mut TriMesh, m: &[[f64; 4]; 4]) {
 /// The mesh with coincident vertices ([`mesh_intake::SAME_POINT`]) merged,
 /// whatever face they came from: a solid's faces share their boundary, and
 /// the file should say so. A sliver whose corners weld together is no
-/// triangle.
-fn welded(mesh: &TriMesh) -> KernelResult<Triangulation> {
+/// triangle. With it, the face each kept triangle came from, where the
+/// mesh names its triangles' faces.
+fn welded(mesh: &TriMesh) -> KernelResult<(Triangulation, Option<Vec<u32>>)> {
+    let intake = mesh_intake::intake(
+        mesh,
+        mesh_intake::Weld::Compact(mesh_intake::SAME_POINT),
+        mesh_intake::Degenerate::Drop,
+    )?;
+    let corners = mesh.indices.as_chunks::<3>().0;
+    let faces = (mesh.faces.len() == corners.len()).then(|| {
+        corners
+            .iter()
+            .zip(&mesh.faces)
+            .filter(|(t, _)| {
+                let [a, b, c] = t.map(|v| intake.vertex[v as usize]);
+                a != b && b != c && c != a
+            })
+            .map(|(_, face)| *face)
+            .collect()
+    });
     let Triangulation {
         positions,
         triangles,
         ..
-    } = mesh_intake::intake(
-        mesh,
-        mesh_intake::Weld::Compact(mesh_intake::SAME_POINT),
-        mesh_intake::Degenerate::Drop,
-    )?
-    .tri;
+    } = intake.tri;
     let mut normals = vec![Vector::new(0.0, 0.0, 0.0); positions.len()];
     for t in &triangles {
         let [a, b, c] = t.map(|i| positions[i as usize]);
@@ -545,12 +569,41 @@ fn welded(mesh: &TriMesh) -> KernelResult<Triangulation> {
             }
         })
         .collect();
-    Ok(Triangulation {
-        positions,
-        normals,
-        triangles,
-        ..Triangulation::new()
-    })
+    Ok((
+        Triangulation {
+            positions,
+            normals,
+            triangles,
+            ..Triangulation::new()
+        },
+        faces,
+    ))
+}
+
+/// A body's colours as a 3MF object writes them: the body's own, and one
+/// per triangle when single faces have their own and `faces` names each
+/// triangle's face.
+fn colours_of(
+    colors: &ExportColors,
+    faces: &Option<Vec<u32>>,
+) -> ([f64; 4], Option<Vec<[f64; 4]>>) {
+    let rgba = |c: [f32; 3]| [f64::from(c[0]), f64::from(c[1]), f64::from(c[2]), 1.0];
+    let body = rgba(colors.body);
+    let per_triangle = faces
+        .as_ref()
+        .filter(|_| !colors.faces.is_empty())
+        .map(|faces| {
+            let own: HashMap<u32, [f64; 4]> = colors
+                .faces
+                .iter()
+                .map(|(face, c)| (*face, rgba(*c)))
+                .collect();
+            faces
+                .iter()
+                .map(|face| own.get(face).copied().unwrap_or(body))
+                .collect()
+        });
+    (body, per_triangle)
 }
 
 /// A STEP file of one part, `part`, carrying `items` as construction
@@ -710,7 +763,7 @@ mod tests {
             indices: (0..12).collect(),
             ..Default::default()
         };
-        let exported = super::welded(&mesh).unwrap();
+        let (exported, _) = super::welded(&mesh).unwrap();
         let read = crate::mesh_intake::welded(&mesh).unwrap();
         assert_eq!(exported.positions.len(), 4);
         assert_eq!(read.positions, exported.positions);
