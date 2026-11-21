@@ -15,8 +15,11 @@
   start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
   `mesh.offset`, `mesh.reduce`, `mesh.remesh`, `mesh.subdivide`,
-  `mesh.repair_intersections` (these three refused by the adapter until
-  the kernel has them), `mesh.boolean`, `mesh.thicken`,
+  `mesh.repair_intersections` (the kernel's `Editable::remesh`,
+  `Editable::subdivide`, both under a `face_limit`, and
+  `resolve_self_intersections`; a repair resolves again from its single-precision copy
+  until that crosses nowhere, since the drawn mesh is `f32`),
+  `mesh.boolean`, `mesh.thicken`,
   `mesh.intersections` (`crossings.rs`: `KernelQueries::self_intersections`
   on the drawn mesh, also a toggle drawing the selected body's crossing
   triangles as a `scalar_maps` map, found on a thread; `on_frame` logs

@@ -840,7 +840,9 @@ mod tests {
             ("mesh.offset", "/op/Offset/distance", -0.1),
             ("mesh.reduce", "/op/Reduce/triangle_limit", 100.0),
             ("mesh.remesh", "/op/Remesh/edge_length", 0.5),
+            ("mesh.remesh", "/op/Remesh/passes", 2.0),
             ("mesh.subdivide", "/op/Subdivide/levels", 2.0),
+            ("mesh.subdivide", "/op/Subdivide/face_limit", 1000.0),
             ("mesh.thicken", "/op/Shell/thickness", 0.5),
         ] {
             let mut doc = Document::new("mesh task");

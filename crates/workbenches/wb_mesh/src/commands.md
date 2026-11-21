@@ -57,8 +57,8 @@ hidden. One undo takes it all back. A mesh of one piece is refused.
 Of the mesh the scan draws now: every pair of its triangles that meet away
 from the corners they share, counted as `pairs`, and the triangles in them
 by number. The tool shows them on the selected scan, their corners coloured
-over grey. The geometry kernel cannot search yet: the command fails, saying
-so, until it can.
+over grey. Copies of one corner at a crease count as one corner, and
+triangles without area are left out.
 
 See also: mesh.repair_intersections
 

@@ -86,35 +86,92 @@ reported, not hidden.
     assert(r.report.Reduce.within_share >= 0.999)
 ```
 
-## mesh.remesh, mesh.subdivide, mesh.repair_intersections
+## mesh.remesh, mesh.subdivide
 
-The geometry kernel cannot make these yet: the step is added and kept, its
-row says why it does not build, and the mesh before it is shown until the
-kernel can.
+A result of more faces than face_limit is refused, the mesh before the step
+kept. Markings of the start's vertices follow them through the step.
 
 ## mesh.repair_intersections
 
 Makes a closed mesh that crosses itself whole: overlapping shells merge into
-one and the surface inside them goes, as a union of the mesh with itself.
-An open mesh is refused.
+one and the surface inside them goes, as a union of the mesh with itself. A
+nested shell is dropped, one wound inside out is kept as a cavity. The result
+crosses nowhere as drawn and saved; a mesh that crosses nowhere is left as it
+is. mesh.result reports Repair {crossings, volume}. An open mesh is refused.
 
 See also: mesh.intersections
+
+### Merge two overlapping cubes
+
+```lua
+    for _, at in ipairs{0, 5} do
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.rect{sketch = s, x = at, y = at, width = 10, height = 10}
+        pc.design.pad{sketch = s, length = 10}
+    end
+    assert(#pc.doc.rebuild() == 0)
+    local path = pc.file.temp_path{name = "overlapping.stl"}
+    pc.file.export{path = path, format = "stl"}
+    pc.file.import{path = path, scan = true}
+    local scan
+    for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+    assert(pc.mesh.intersections{scan = scan}.pairs > 0)
+    local step = pc.mesh.repair_intersections{scan = scan}
+    assert(#pc.doc.rebuild() == 0)
+    assert(pc.mesh.result{feature = step.feature}.report.Repair.crossings > 0)
+    assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1750) < 0.01)
+    assert(pc.mesh.intersections{scan = scan}.pairs == 0)
+```
 
 ## mesh.remesh
 
 Evens the triangles out to edges near edge_length, the points kept on the
-surface. With keep_edges, edges turning more than edge_angle stay as creases.
+surface, in passes of split, collapse, flip and relax: edges settle within
+about 30 % of the length, most a little under it. With keep_edges, edges
+turning more than edge_angle stay as creases; open rims keep their shape.
+With a box, a ball or a marking, only faces with every corner in it change.
+mesh.result reports Remesh {max, rms}, how far the new surface lies from the
+old.
+
+### Remesh a cube to one millimetre edges
+
+```lua
+{{scan}}
+
+    local step = pc.mesh.remesh{scan = scan, edge_length = 1}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.result{feature = step.feature}
+    assert(r.faces > 1000)
+    assert(r.report.Remesh.max < 1e-3)
+    assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1000) < 0.01)
+```
 
 ## mesh.subdivide
 
 Splits every triangle into four, levels times, so the count grows fourfold
 each level. Without smooth the surface stays exactly as it is; with smooth
-the points move toward a smooth surface, sharp edges and open rims kept.
+the points move toward a smooth surface each level comes nearer, open rims
+and, with keep_edges, edges turning more than edge_angle kept sharp.
+mesh.result reports Subdivide {moved}, the farthest an existing point moved.
+
+### Round a cube
+
+```lua
+{{scan}}
+
+    local step = pc.mesh.subdivide{scan = scan, levels = 3, smooth = true, keep_edges = false}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.result{feature = step.feature}
+    assert(r.faces == 12 * 64)
+    assert(r.report.Subdivide.moved > 1)
+    assert(pc.mesh.inspect{scan = scan}.volume < 1000)
+```
 
 ## mesh.result
 
 Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999,
-furthest, max, rms, target_met}. Distances are mm, furthest is in the body's
+furthest, max, rms, target_met}; Remesh {max, rms}; Subdivide {moved}; Repair
+{crossings, volume}. Distances are mm, furthest is in the body's
 frame. A changed or failed history has no result for an unbuilt step.
 
 ### Read a built step

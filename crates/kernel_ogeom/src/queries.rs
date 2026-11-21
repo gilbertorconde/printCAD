@@ -41,6 +41,30 @@ const CURVATURE_SEEDS: [usize; 2] = [16, 64];
 /// touch: what a boolean of flush faces leaves behind.
 const TOUCHING_MM3: f64 = 1e-6;
 
+/// The pairs of `mesh`'s triangles, by their numbers in `mesh`, that meet
+/// away from the corners they share. Copies of one corner that a drawn
+/// mesh splits for shading are one corner, and triangles without area are
+/// left out of the search.
+fn self_intersections(mesh: &TriMesh) -> KernelResult<Vec<[u32; 2]>> {
+    use crate::mesh_intake::{Degenerate, HISTORY_POINT, Weld, intake};
+    let mut tri = intake(mesh, Weld::Compact(HISTORY_POINT), Degenerate::Keep)?.tri;
+    let positions = &tri.positions;
+    let number: Vec<u32> = (0..tri.triangles.len() as u32)
+        .filter(|t| {
+            let [a, b, c] = tri.triangles[*t as usize].map(|v| positions[v as usize]);
+            (b - a).cross(c - a).magnitude() > 0.0
+        })
+        .collect();
+    tri.triangles = number.iter().map(|t| tri.triangles[*t as usize]).collect();
+    let mut pairs: Vec<[u32; 2]> = ogeom::mesh::self_intersections(&tri)
+        .map_err(other)?
+        .into_iter()
+        .map(|p| p.map(|t| number[t as usize]))
+        .collect();
+    pairs.sort_unstable();
+    Ok(pairs)
+}
+
 impl KernelQueries for OgeomQueries {
     fn orient(&self, mesh: &TriMesh) -> KernelResult<kernel_api::Orientation> {
         crate::orient::orient(mesh)
@@ -80,10 +104,8 @@ impl KernelQueries for OgeomQueries {
         crate::mesh_edit::build(start, ops)
     }
 
-    fn self_intersections(&self, _mesh: &TriMesh) -> KernelResult<Vec<[u32; 2]>> {
-        Err(kernel_api::KernelError::Unsupported(
-            "the kernel cannot find where a mesh crosses itself yet".into(),
-        ))
+    fn self_intersections(&self, mesh: &TriMesh) -> KernelResult<Vec<[u32; 2]>> {
+        self_intersections(mesh)
     }
 
     fn write_mesh(&self, mesh: &TriMesh, format: &str) -> KernelResult<Vec<u8>> {

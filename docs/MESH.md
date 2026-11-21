@@ -74,25 +74,38 @@ reach the limit.
 
 **Remesh** evens the triangles out: a scan's slivers beside dense
 patches become triangles with edges near **Edge length** (the mean edge
-length to start with), the points kept on the surface. **Keep sharp
-edges** (on, at 30°) keeps the edges that turn more than **Edge angle**
-as creases.
+length to start with), the points kept on the surface. Each of the
+**Passes** (5) splits edges longer than 4/3 of the length, collapses
+those shorter than 4/5 of it, flips edges toward six around each point
+and relaxes the points across the surface, so the edges settle within
+about 30 % of the length, most a little under it. **Keep sharp edges**
+(on, at 30°) keeps the edges that turn more than **Edge angle** as
+creases, their points sliding only along them; open rims stay as they
+are shaped. With **Region** set to the current marking, only faces whose
+corners are all marked change. **Face limit** (4,000,000) refuses a
+length that would make more faces than that, before the work where it
+can tell. The task gives how far the new surface lies from the old,
+largest and RMS.
 
 **Subdivide** splits every triangle into four, **Levels** times (1 to
 4), for a finer mesh to smooth, offset or press a texture into. The
 surface stays as it is; with **Smooth the surface** on, the points move
-toward a smooth surface, sharp edges and open rims kept.
+toward a smooth surface that each level comes nearer, open rims kept
+and, with **Keep sharp edges** (on, at 30°), the edges that turn more
+than **Edge angle** too. A cube with its edges kept stays a cube; with
+them off it rounds toward a ball. **Face limit** (4,000,000) refuses
+more levels than it allows, before any work. The task gives the
+farthest an existing point moved.
 
 **Repair self-intersections** makes a closed mesh that crosses itself
 whole: shells exported overlapping, or a fold an edit left, are merged
 into one surface and what lay inside them goes, as a union of the mesh
-with itself. A slicer prints such a mesh wrongly, twice over where the
-shells overlap or not at all. An open mesh is refused: fill its holes
-first.
-
-The geometry kernel cannot remesh, subdivide or repair crossings yet.
-Each step is added and kept, its row says why it does not build, and
-the scan shows the mesh before it until the kernel can.
+with itself. A shell nested in another is dropped, and one wound inside
+out inside another is kept as a cavity. A slicer prints such a mesh
+wrongly, twice over where the shells overlap or not at all. The result
+crosses nowhere, as drawn and saved too; a mesh that crosses nowhere is
+left as it is. The task gives how many pairs of triangles crossed and
+the result's volume. An open mesh is refused: fill its holes first.
 
 **Boolean with solids** subtracts, adds or intersects a bounded solid:
 a solid body, placed where it sits against the scan, or an Inspection
@@ -109,12 +122,13 @@ a sealed cavity. An open sheet is thickened instead, **Inward**,
 result's volume.
 
 Vertex markings follow the start's vertices through smoothing,
-offsetting and reduction. A vertex Reduce collapsed stands for every
-start vertex merged into it, and is marked when all of them are. Added
-vertices have no start identity and are never marked.
+offsetting, reduction, remeshing and subdivision. A vertex that Reduce
+or Remesh collapsed stands for every start vertex merged into it, and is
+marked when all of them are. Added vertices have no start identity and
+are never marked.
 
-Booleans and shells make a new mesh: a marking of the start mesh does
-not reach past them either.
+Booleans, shells and a repair of self-intersections make a new mesh: a
+marking of the start mesh does not reach past them either.
 
 A step that cannot run (a delete with nothing in its region, a filter
 that would remove every piece) shows its error on its row. The scan keeps
@@ -151,8 +165,9 @@ corners they share. Their corners are coloured over a grey mesh, and the
 log and the legend give the number of pairs and of triangles; a mesh
 that crosses nowhere says so. Click it again to hide the map.
 `pc.mesh.intersections{scan = s}` answers `pairs` and the `triangles` by
-number. The geometry kernel cannot search yet, so for now the tool says
-so in the log and turns itself off, and the command fails.
+number. Copies of one corner the drawn mesh keeps at a crease count as
+one corner, and triangles without area are left out. **Repair
+self-intersections** mends what it finds.
 
 ## Trim to scan
 

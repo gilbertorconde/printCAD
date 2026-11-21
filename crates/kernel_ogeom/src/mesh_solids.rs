@@ -33,7 +33,7 @@ fn operand(value: &MeshOperand) -> Result<(Model, Shape), String> {
 }
 
 /// The volume a closed mesh bounds, by its triangles' signed tetrahedra.
-fn volume(mesh: &Triangulation) -> f64 {
+pub(crate) fn volume(mesh: &Triangulation) -> f64 {
     mesh.triangles
         .iter()
         .map(|t| {

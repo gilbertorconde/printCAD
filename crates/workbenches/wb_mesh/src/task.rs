@@ -159,7 +159,8 @@ impl MeshWorkbench {
             MeshOp::Delete { region }
             | MeshOp::Flip { region }
             | MeshOp::Smooth { region, .. }
-            | MeshOp::Offset { region, .. } => Some(region),
+            | MeshOp::Offset { region, .. }
+            | MeshOp::Remesh { region, .. } => Some(region),
             _ => None,
         };
         if let Some(region) = region {
@@ -265,9 +266,19 @@ impl MeshWorkbench {
             MeshOp::Remesh {
                 edge_length,
                 keep_edges_deg,
+                passes,
+                face_limit,
+                ..
             } => {
                 out.extend([
                     mm("/op/Remesh/edge_length", "Edge length", *edge_length),
+                    number(
+                        "/op/Remesh/passes",
+                        "Passes",
+                        f64::from(*passes),
+                        Dim::Number,
+                        Some(1.0),
+                    ),
                     check("edges", "Keep sharp edges", keep_edges_deg.is_some()),
                 ]);
                 if let Some(angle) = keep_edges_deg {
@@ -279,17 +290,50 @@ impl MeshWorkbench {
                         Some(0.0),
                     ));
                 }
-            }
-            MeshOp::Subdivide { levels, smooth } => out.extend([
-                number(
-                    "/op/Subdivide/levels",
-                    "Levels",
-                    f64::from(*levels),
+                out.push(number(
+                    "/op/Remesh/face_limit",
+                    "Face limit",
+                    *face_limit as f64,
                     Dim::Number,
                     Some(1.0),
-                ),
-                check("smooth", "Smooth the surface", *smooth),
-            ]),
+                ));
+            }
+            MeshOp::Subdivide {
+                levels,
+                smooth,
+                keep_edges_deg,
+                face_limit,
+            } => {
+                out.extend([
+                    number(
+                        "/op/Subdivide/levels",
+                        "Levels",
+                        f64::from(*levels),
+                        Dim::Number,
+                        Some(1.0),
+                    ),
+                    check("smooth", "Smooth the surface", *smooth),
+                ]);
+                if *smooth {
+                    out.push(check("edges", "Keep sharp edges", keep_edges_deg.is_some()));
+                    if let Some(angle) = keep_edges_deg {
+                        out.push(number(
+                            "/op/Subdivide/keep_edges_deg",
+                            "Edge angle",
+                            *angle,
+                            Dim::Angle,
+                            Some(0.0),
+                        ));
+                    }
+                }
+                out.push(number(
+                    "/op/Subdivide/face_limit",
+                    "Face limit",
+                    *face_limit as f64,
+                    Dim::Number,
+                    Some(1.0),
+                ));
+            }
             MeshOp::Reduce {
                 tolerance,
                 triangle_limit,
@@ -348,6 +392,17 @@ impl MeshWorkbench {
                         value("Max movement", mm(*max)),
                         value("RMS movement", mm(*rms)),
                     ]),
+                    Some(MeshStepReport::Remesh { max, rms }) => out.extend([
+                        value("Max distance", mm(*max)),
+                        value("RMS distance", mm(*rms)),
+                    ]),
+                    Some(MeshStepReport::Subdivide { moved }) => {
+                        out.push(value("Max movement", mm(*moved)));
+                    }
+                    Some(MeshStepReport::Repair { crossings, volume }) => out.extend([
+                        value("Crossing pairs", crossings.to_string()),
+                        value("Volume", format!("{volume:.3} mm³")),
+                    ]),
                     Some(MeshStepReport::Reduce {
                         within_share,
                         p999,
@@ -404,10 +459,14 @@ impl MeshWorkbench {
                 let Some(slot) = data.pointer_mut(id) else {
                     return;
                 };
-                *slot = if id.ends_with("triangle_limit") {
-                    json!(value.max(1.0).round() as u64)
+                *slot = if id.ends_with("_limit") {
+                    json!(value.clamp(1.0, f64::from(u32::MAX)).round() as u64)
                 } else if id.ends_with("levels") {
                     json!(value.clamp(1.0, steps::MAX_LEVELS).round() as u32)
+                } else if id.ends_with("passes") {
+                    json!(value.clamp(1.0, steps::MAX_PASSES).round() as u32)
+                } else if id.ends_with("keep_edges_deg") {
+                    json!(value.clamp(0.0, 180.0))
                 } else {
                     json!(value)
                 };
@@ -476,12 +535,15 @@ impl MeshWorkbench {
                     MeshOp::Delete { region }
                     | MeshOp::Flip { region }
                     | MeshOp::Smooth { region, .. }
-                    | MeshOp::Offset { region, .. } => *region = r,
+                    | MeshOp::Offset { region, .. }
+                    | MeshOp::Remesh { region, .. } => *region = r,
                     _ => return,
                 }
             }
             PanelEvent::Toggle { id, on } if id == "edges" => match &mut f.op {
-                MeshOp::Smooth { keep_edges_deg, .. } | MeshOp::Remesh { keep_edges_deg, .. } => {
+                MeshOp::Smooth { keep_edges_deg, .. }
+                | MeshOp::Remesh { keep_edges_deg, .. }
+                | MeshOp::Subdivide { keep_edges_deg, .. } => {
                     *keep_edges_deg = on.then_some(30.0);
                 }
                 _ => return,
