@@ -803,6 +803,12 @@ pub enum DesignFeature {
         #[serde(default = "half")]
         #[walk(number("rho", "Rho"))]
         rho: f32,
+        /// What the round does where it reaches geometry other than its
+        /// own two faces; a round of one radius between setback corners
+        /// alone takes it.
+        #[serde(default)]
+        #[walk(setting)]
+        overflow: kernel_api::Overflow,
     },
     Chamfer {
         #[walk(length("size", "Size"))]
@@ -834,6 +840,11 @@ pub enum DesignFeature {
         #[serde(default)]
         #[walk(setting)]
         corner: kernel_api::ChamferCorner,
+        /// What the bevel does where it reaches geometry other than its
+        /// own two faces: blend into round and trim through alone apply.
+        #[serde(default)]
+        #[walk(setting)]
+        overflow: kernel_api::Overflow,
     },
     Draft {
         #[walk(angle("angle", "Angle"))]

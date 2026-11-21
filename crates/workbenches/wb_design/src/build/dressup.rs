@@ -97,6 +97,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             profile,
             rho,
             points,
+            overflow,
             ..
         } => {
             if *radius <= 0.0 {
@@ -154,6 +155,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                     distances,
                     auto: *mode == crate::feature::FilletMode::Auto,
                     variable,
+                    overflow: *overflow,
                 },
             }
         }
@@ -166,6 +168,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
             edges,
             follow_tangent,
             corner,
+            overflow,
             ..
         } => {
             if *size <= 0.0 {
@@ -207,6 +210,7 @@ pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
                 edges: edge_selection(edges)?,
                 follow_tangent: *follow_tangent,
                 corner: *corner,
+                overflow: *overflow,
             }
         }
         _ => return Ok(None),

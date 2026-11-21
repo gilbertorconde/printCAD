@@ -1543,6 +1543,7 @@ mod tests {
             }]),
             follow_tangent: false,
             corner: Default::default(),
+            overflow: Default::default(),
             refine: false,
             mode: Default::default(),
             radius2: 0.0,

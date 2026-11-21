@@ -135,6 +135,26 @@ by_serde!(
     kernel_api::FaceSurface
 );
 
+/// A table of switches in the order serde reads them, each defaulted as
+/// in its default's JSON.
+impl Describe for kernel_api::Overflow {
+    fn shape() -> Shape {
+        let defaults = json(&kernel_api::Overflow::default());
+        let Shape::Fields(fields) = by_serde::<kernel_api::Overflow>() else {
+            return Shape::Unknown;
+        };
+        let fields = fields
+            .into_iter()
+            .map(|field| Field {
+                shape: Shape::Bool,
+                default: defaults.as_ref().and_then(|d| d.get(&field.name).cloned()),
+                ..field
+            })
+            .collect();
+        Shape::Fields(fields)
+    }
+}
+
 /// `T` as serde reads it: a table's field names, a type's forms with
 /// the field names of each, a list, an option, a number, a bool or text.
 /// Serde says nothing of a field's own type, so those are [`Shape::Unknown`].

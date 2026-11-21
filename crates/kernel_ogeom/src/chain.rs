@@ -947,6 +947,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 distances,
                 auto,
                 variable: None,
+                overflow,
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
                 ops::dressup::fillet(
@@ -958,6 +959,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     *corner,
                     *distances,
                     *auto,
+                    *overflow,
                 )
                 .map_err(refused)?
             }
@@ -971,6 +973,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 edges,
                 follow_tangent,
                 corner,
+                overflow,
             } => {
                 let solid = base.ok_or_else(|| err("chamfer needs an existing solid".into()))?;
                 ops::dressup::chamfer(
@@ -981,6 +984,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     edges,
                     *follow_tangent,
                     *corner,
+                    *overflow,
                 )
                 .map_err(refused)?
             }

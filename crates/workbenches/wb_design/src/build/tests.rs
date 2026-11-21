@@ -529,6 +529,32 @@ fn a_dress_up_s_corner_choice_reaches_its_op() {
     assert_eq!(corners(&chamfer), "Facet");
 }
 
+/// A fillet's and a chamfer's overflow switches reach the op they build: one
+/// saved before they had them, or one naming only some, has every other
+/// switch on.
+#[test]
+fn a_dress_up_s_overflow_switches_reach_its_op() {
+    use kernel_api::Overflow;
+    let read = |json| serde_json::from_value::<DesignFeature>(json).unwrap();
+    let overflow = |feature: &DesignFeature| match edge_op(feature).unwrap() {
+        Some(SolidOp::Fillet { overflow, .. } | SolidOp::Chamfer { overflow, .. }) => overflow,
+        other => panic!("not a dress-up op: {other:?}"),
+    };
+    for kind in ["Fillet", "Chamfer"] {
+        let old = read(serde_json::json!({kind: {"radius": 1.0, "size": 1.0}}));
+        assert_eq!(overflow(&old), Overflow::default());
+        let some = read(serde_json::json!({kind: {
+            "radius": 1.0, "size": 1.0, "overflow": {"blend_into_round": false}
+        }}));
+        let want = Overflow {
+            blend_into_round: false,
+            ..Overflow::default()
+        };
+        assert_eq!(overflow(&some), want);
+        assert_eq!(read(some.to_json()), some, "it saves and loads back");
+    }
+}
+
 /// A fillet of two distances builds the op carrying them, its profile
 /// and flip; one saved before fillets had them builds a plain round.
 #[test]

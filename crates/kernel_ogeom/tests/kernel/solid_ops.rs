@@ -275,6 +275,7 @@ fn an_edge_pick_far_from_every_edge_fails() {
                 distances: None,
                 auto: false,
                 variable: None,
+                overflow: Default::default(),
             },
         ])
     };
@@ -308,6 +309,7 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
                 distances: None,
                 auto: false,
                 variable: None,
+                overflow: Default::default(),
             },
         ])?;
         let volume = volume(&result.brep_blob);
@@ -471,6 +473,7 @@ fn a_fillet_too_big_for_the_box_is_refused_at_its_op() {
             distances: None,
             auto: false,
             variable: None,
+            overflow: Default::default(),
         },
     );
 }
@@ -488,6 +491,7 @@ fn a_chamfer_wider_than_the_front_rolls_over_as_a_notch() {
             edges: near_top_edge(),
             follow_tangent: false,
             corner: Default::default(),
+            overflow: Default::default(),
         },
     ]);
     let removed = 4000.0 - volume(&built.brep_blob);
@@ -558,6 +562,7 @@ fn a_refused_fillet_names_its_failing_edge() {
         distances: None,
         auto: false,
         variable: None,
+        overflow: Default::default(),
     });
 }
 
@@ -569,6 +574,7 @@ fn a_refused_chamfer_names_its_failing_edge() {
         edges: step_picks(),
         follow_tangent: false,
         corner: Default::default(),
+        overflow: Default::default(),
     });
 }
 
@@ -586,6 +592,7 @@ fn a_refused_point_chamfer_offers_the_size_that_fits() {
                 edges: EdgeSelection::All,
                 follow_tangent: false,
                 corner: kernel_api::ChamferCorner::Point,
+                overflow: Default::default(),
             },
         ])
     };
@@ -615,6 +622,7 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
             distances: None,
             auto: false,
             variable: None,
+            overflow: Default::default(),
         },
     ])
     .expect_err("top and bottom bands overlap on the 2 mm sides");
@@ -671,6 +679,7 @@ fn a_fillet_chain_stops_at_the_largest_radius_that_builds() {
             distances: None,
             auto: false,
             variable: None,
+            overflow: Default::default(),
         };
         let largest = previewed_limit(&block, round(1.0))
             .largest
@@ -746,6 +755,7 @@ fn a_one_edge_chamfer_stops_at_the_largest_size_that_builds() {
         edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
         follow_tangent: false,
         corner: Default::default(),
+        overflow: Default::default(),
     };
     let largest = previewed_limit(&block, bevel(1.0))
         .largest
@@ -798,6 +808,7 @@ fn front_pair(distance: f64, corner: kernel_api::ChamferCorner) -> SolidOp {
         edges: EdgeSelection::Near(vec![[10.0, 0.0, 2.0], [10.0, 0.0, 0.0]]),
         follow_tangent: false,
         corner,
+        overflow: Default::default(),
     }
 }
 #[test]
@@ -894,6 +905,7 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
             distances: None,
             auto: false,
             variable: None,
+            overflow: Default::default(),
         },
     ]);
     assert_eq!(
@@ -919,6 +931,7 @@ fn chamfers_of_one_face_meet_mitred_at_its_corners() {
             edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
             follow_tangent: false,
             corner: Default::default(),
+            overflow: Default::default(),
         },
     ]);
     assert_eq!(
@@ -957,6 +970,7 @@ fn fillets_of_three_edges_round_their_corner() {
                     distances: None,
                     auto: false,
                     variable: None,
+                    overflow: Default::default(),
                 },
             ],
             &fine_detail(),
@@ -1147,6 +1161,7 @@ fn rounding_the_refined_step_makes_one_cylinder_per_edge() {
         distances: None,
         auto: false,
         variable: None,
+        overflow: Default::default(),
     });
     let cylinders = chain(&ops)
         .mesh
@@ -1174,6 +1189,7 @@ fn rolling_ball_corners_on_the_step_are_analytic() {
         distances: None,
         auto: false,
         variable: None,
+        overflow: Default::default(),
     });
     let built = chain(&ops);
     let surfaces = &built.mesh.face_surfaces;
@@ -1210,6 +1226,7 @@ fn a_cube_rounded_with_rolling_ball_corners_is_a_rounded_cube() {
             distances: None,
             auto: false,
             variable: None,
+            overflow: Default::default(),
         },
     ];
     assert_volume(&ops, want, "rolling-ball cube");
@@ -1230,6 +1247,7 @@ fn facet_corners_cut_a_triangle_off_each_corner_of_a_box() {
                 edges: EdgeSelection::All,
                 follow_tangent: false,
                 corner,
+                overflow: Default::default(),
             },
         ])
     };
@@ -1257,6 +1275,7 @@ fn cube_rounded(profile: kernel_api::RoundProfile, flip: bool) -> kernel_api::So
             }),
             auto: false,
             variable: None,
+            overflow: Default::default(),
         },
     ])
 }
@@ -1325,6 +1344,7 @@ fn an_auto_round_stops_at_a_narrow_face_and_grows_on_the_other() {
         distances: None,
         auto: true,
         variable: None,
+        overflow: Default::default(),
     };
     let taken = |radius: f64| 1600.0 - volume(&chain(&[plate(), round(radius)]).brep_blob);
     let corner = 1.0 - std::f64::consts::FRAC_PI_4;
@@ -1385,6 +1405,7 @@ fn an_auto_chamfer_stops_at_a_narrow_face_and_grows_on_the_other() {
         edges: EdgeSelection::Near(vec![[10.0, 0.0, 20.0]]),
         follow_tangent: false,
         corner: Default::default(),
+        overflow: Default::default(),
     };
     let auto = |distance| bevel(ChamferSpec::Auto { distance });
     let taken = |op| 1600.0 - volume(&chain(&[plate(), op]).brep_blob);
@@ -1461,6 +1482,7 @@ fn a_round_of_two_distances_on_two_edges_stops_at_the_nearer_face() {
         }),
         auto: false,
         variable: None,
+        overflow: Default::default(),
     };
     let sides_of = |edges: Vec<[f64; 3]>| {
         let detail = kernel_api::TessellationSettings::default();
@@ -1509,6 +1531,7 @@ fn variable_round(
         distances: None,
         auto: false,
         variable: Some(variable),
+        overflow: Default::default(),
     }
 }
 
@@ -1648,6 +1671,7 @@ fn rounds_of_two_distances_on_every_edge_of_a_cube_build() {
             }),
             auto: false,
             variable: None,
+            overflow: Default::default(),
         },
     ]);
     assert!(built.is_ok(), "{:?}", built.err());
@@ -3196,6 +3220,7 @@ fn a_dress_up_previews_what_it_takes_off_or_adds() {
             edges: EdgeSelection::All,
             follow_tangent: false,
             corner: Default::default(),
+            overflow: Default::default(),
         },
     ];
     let (preview, whole) = preview_of(&bevelled, 1..2);
@@ -3215,6 +3240,7 @@ fn a_dress_up_previews_what_it_takes_off_or_adds() {
         distances: None,
         auto: false,
         variable: None,
+        overflow: Default::default(),
     });
     let (preview, whole) = preview_of(&inside, rounded_at..rounded_at + 1);
     assert!(!preview.cuts, "an inside round only adds");
@@ -3871,6 +3897,7 @@ fn a_cylinder_bevels_every_edge_and_its_top_face_s_leaving_the_seam() {
                 edges: edges.clone(),
                 follow_tangent: false,
                 corner: Default::default(),
+                overflow: Default::default(),
             },
         ];
         let got = volume_of(&ops).unwrap_or_else(|e| panic!("{edges:?}: {e}"));
@@ -3920,6 +3947,7 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
             distances: None,
             auto: false,
             variable: None,
+            overflow: Default::default(),
         });
         volume(&try_chain(&ops).expect("the seam rounds").brep_blob)
     };
@@ -4003,6 +4031,7 @@ mod heavy {
                 distances: None,
                 auto: false,
                 variable: None,
+                overflow: Default::default(),
             },
         ];
         let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");

@@ -140,4 +140,23 @@ mod tests {
             "{pad}"
         );
     }
+
+    /// A fillet's overflow switches are listed in the order they are
+    /// tried, each on when left out.
+    #[test]
+    fn a_fillet_lists_its_overflow_switches() {
+        let fillet = super::fields_of("design.fillet").unwrap();
+        let switches = [
+            "overflow: table",
+            "  blend_into_round: bool = true",
+            "  hold_edge: bool = true",
+            "  hold_edge_at_end: bool = true",
+            "  trim_through: bool = true",
+            "  narrow_blend_made: bool = true",
+            "  narrow_whole_face: bool = true",
+            "  narrow_partial_face: bool = true",
+        ]
+        .join("\n");
+        assert!(fillet.contains(&switches), "{fillet}");
+    }
 }
