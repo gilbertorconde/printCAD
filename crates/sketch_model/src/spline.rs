@@ -77,6 +77,16 @@ pub fn sample_span_basis(basis: &Basis, control: &[[f64; 2]], samples: usize) ->
 /// against is the curve that is stored. Any other fit spline's controls are
 /// held and placed by [`refit_splines`] after the solve.
 pub fn solved_fits(sketch: &Sketch) -> HashSet<Uuid> {
+    // Only a spline can be one, and the scan over every constraint's
+    // references would otherwise run on each solve of a sketch with none.
+    if !(sketch.geometry.iter()).any(|g| matches!(g, GeometryElement::BSpline(_))) {
+        return HashSet::new();
+    }
+    driven_fits(sketch)
+}
+
+/// [`solved_fits`] by the full scan, whatever the sketch holds.
+pub(crate) fn driven_fits(sketch: &Sketch) -> HashSet<Uuid> {
     let referenced: HashSet<Uuid> = sketch
         .constraints
         .iter()

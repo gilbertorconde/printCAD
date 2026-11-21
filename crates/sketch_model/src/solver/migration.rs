@@ -1084,6 +1084,86 @@ fn stored_letters_are_free_with_their_point() {
 fn ids_of(ids: &[u128]) -> std::collections::HashSet<Uuid> {
     ids.iter().map(|&i| Uuid::from_u128(i)).collect()
 }
+/// The corpus's sketches as stored; read back from a file and solved (a
+/// stored text then made as letters, which the solver leaves out, as it
+/// does a constraint naming one); and with a reference dimension, which
+/// it leaves out too, and a point on a spline, which makes a fit spline's
+/// controls the solver's.
+fn varied_cases() -> Vec<Sketch> {
+    let mut out = Vec::new();
+    for (sketch, _) in cases() {
+        let mut solved: Sketch =
+            serde_json::from_value(serde_json::to_value(&sketch).unwrap()).unwrap();
+        solve(&mut solved);
+        let mut marked = sketch.clone();
+        let a = point(&mut marked, 1.0, 1.0);
+        let b = point(&mut marked, 2.0, 3.0);
+        let l = line(&mut marked, a, b);
+        let mut reference = Constraint::new(ConstraintKind::Length {
+            line: l,
+            length: 4.0,
+        });
+        reference.driving = false;
+        marked.constraints.push(reference);
+        if let Some(spline) = (marked.geometry.iter()).find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.id),
+            _ => None,
+        }) {
+            relation(
+                &mut marked,
+                ConstraintKind::PointOnCurve {
+                    point: a,
+                    curve: spline,
+                },
+            );
+        }
+        let letter = (solved.derived.iter())
+            .find(|id| matches!(solved.get_geometry(**id), Some(GeometryElement::Point(_))));
+        if let Some(&letter) = letter {
+            let mut naming = solved.clone();
+            fixed(&mut naming, letter, 0.0, 0.0);
+            out.push(naming);
+        }
+        out.extend([sketch, solved, marked]);
+    }
+    out
+}
+
+#[test]
+fn constraint_count_is_the_prepared_problems() {
+    let sketches = varied_cases();
+    assert!(sketches.iter().any(|s| !s.derived.is_empty()));
+    for sketch in sketches {
+        let problem = adapter::prepare(&sketch, &[]);
+        assert_eq!(
+            adapter::constraint_count(&sketch),
+            problem.constraints.len(),
+            "{}",
+            sketch.name
+        );
+        assert_eq!(
+            diagnosable(&sketch),
+            problem.constraints.len() <= problem.settings.diagnosis_limit
+        );
+    }
+}
+
+#[test]
+fn solved_fits_skip_answers_as_the_full_scan() {
+    let sketches = varied_cases();
+    let has_spline =
+        |s: &Sketch| (s.geometry.iter()).any(|g| matches!(g, GeometryElement::BSpline(_)));
+    assert!(sketches.iter().any(|s| !has_spline(s)));
+    assert!((sketches.iter()).any(|s| !crate::spline::solved_fits(s).is_empty()));
+    for sketch in sketches {
+        assert_eq!(
+            crate::spline::solved_fits(&sketch),
+            crate::spline::driven_fits(&sketch),
+            "{}",
+            sketch.name
+        );
+    }
+}
 #[test]
 fn corpus_checks_geometric_meaning_and_held_fallback() {
     for (mut sketch, held) in cases() {

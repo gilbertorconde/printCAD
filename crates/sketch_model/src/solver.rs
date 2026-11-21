@@ -214,8 +214,7 @@ pub fn holds(sketch: &Sketch) -> bool {
 /// Whether the sketch is small enough for [`diagnose`] to look for
 /// redundant and conflicting constraints.
 pub fn diagnosable(sketch: &Sketch) -> bool {
-    let problem = adapter::prepare(sketch, &[]);
-    problem.constraints.len() <= problem.settings.diagnosis_limit
+    adapter::constraint_count(sketch) <= adapter::settings(sketch.solver).diagnosis_limit
 }
 
 pub fn dof_estimate(sketch: &Sketch) -> i32 {

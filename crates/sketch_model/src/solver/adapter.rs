@@ -380,6 +380,23 @@ fn group_reference(
     }
 }
 
+/// Whether `constraint` is one of the solver's: solved, and naming
+/// nothing a text's letters are made of.
+fn solved(sketch: &Sketch, constraint: &sketch::Constraint) -> bool {
+    constraint.is_solved()
+        && !sketch::constraint_refs(&constraint.kind)
+            .iter()
+            .any(|r| sketch.derived.contains(r))
+}
+
+/// How many constraints [`prepare`] hands the solver, without preparing
+/// the problem.
+pub fn constraint_count(sketch: &Sketch) -> usize {
+    (sketch.constraints.iter())
+        .filter(|c| solved(sketch, c))
+        .count()
+}
+
 pub fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
     let fitted = crate::spline::solved_fits(sketch);
     // A text's letters are made from its block where its point stands
@@ -454,12 +471,7 @@ pub fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
         constraints: sketch
             .constraints
             .iter()
-            .filter(|c| {
-                c.is_solved()
-                    && !sketch::constraint_refs(&c.kind)
-                        .iter()
-                        .any(|r| made.contains(r))
-            })
+            .filter(|c| solved(sketch, c))
             .map(|c| core::Constraint {
                 id: core::ConstraintId(c.id.as_u128()),
                 kind: relation(sketch, &c.kind),
