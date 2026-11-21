@@ -649,6 +649,19 @@ out) stops each round short and fills the gap with one patch; RollingBall
 runs the rounds into it and closes it with the ball's sphere or torus, on
 corners of three edges between flat faces.
 
+`overflow = {...}` says what the round does where it reaches more than its
+own two faces, each switch on when left out: `blend_into_round` bends it to
+meet a round already on the body (a boss's foot meeting a rounded edge),
+`hold_edge` keeps a sharp edge it would run over and rests on it
+(`hold_edge_at_end` where only its end does), `trim_through` keeps the
+round's own shape and cuts back or extends the faces it reaches, and
+`narrow_blend_made`, `narrow_whole_face` and `narrow_partial_face` run the
+rounds on through a gap tighter than the radius made of rounds alone, also
+taking in one whole face, or also part of one. The first that builds is
+used; with none, the fillet is refused. A table given is the whole set,
+switches left out of it on. Only a round of one radius (Auto or Radius)
+with Setback corners takes them.
+
 See also: `design.chamfer`
 
 ### Every edge of a cube rounded with rolling-ball corners
@@ -716,12 +729,35 @@ local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (12000 - taken)) < 0.01, volume)
 ```
 
+### A boss's foot round blending into the block's rounded edge
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local pad = pc.design.pad{sketch = s, length = 15}
+local body = pc.doc.feature{id = pad}.body
+pc.design.fillet{body = body, radius = 5, mode = "Radius",
+  edges = {Edges = {{point = {20, 0, 15}, direction = {1, 0, 0}}}}}
+local top = pc.sketch.new{body = body, plane = "XY", offset = 15}
+pc.sketch.circle{sketch = top, x = 20, y = 12, radius = 6}
+pc.design.pad{sketch = top, length = 15}
+-- The foot round reaches 2 mm past where the edge round starts.
+-- With `overflow = {blend_into_round = false}` it could not reach so far.
+pc.design.fillet{body = body, radius = 3, mode = "Radius",
+  edges = {Edges = {{point = {26, 12, 15}, direction = {0, 1, 0}}}}}
+assert(#pc.doc.rebuild() == 0, "the foot round blends into the edge round")
+```
+
 ## design.chamfer
 
 `mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`)
 or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far
 as a face too narrow for it goes, edge by edge. `size` and `size2` must be
 above zero and `angle_deg` between 0 and 90, or the chamfer does not build.
+
+`overflow` takes the fillet's switches; a bevel has `blend_into_round` (it
+runs on over a round already on the body) and `trim_through` alone, and
+leaves the rest as they are.
 
 See also: `design.fillet`
 

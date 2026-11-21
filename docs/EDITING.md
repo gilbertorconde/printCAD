@@ -441,6 +441,29 @@ torus closing what is left, on corners of three edges between flat faces
 mitres the bevels into one point; Facet ends them on a small flat facet,
 a triangle where three meet (not yet on a padded solid's corners).
 
+**Overflow** says what a round or bevel does where it reaches more than
+its own two faces. Every switch is on at first, and the first that works
+is used; with none that works, the feature fails and says why.
+
+- **Blend into round**: where it reaches a round already on the body, it
+  bends to meet that round smoothly, with no step. A boss's foot round
+  near a rounded edge of the block runs on into that edge round instead
+  of stopping short of it.
+- **Hold edge**: where the round would run over a sharp edge of the body,
+  the edge is kept and the round rests on it. **Hold edge at the end** does
+  the same where only the round's end runs over the edge.
+- **Trim through**: the round keeps its own shape, and the faces it
+  reaches are cut back or extended to meet it.
+- **Narrow gaps between rounds**, **across a face** and **across part of a
+  face**: where a gap is tighter than the radius (a slot narrower than
+  twice the radius, a pocket's tight corner), each round runs on until the
+  rounds meet. The first takes gaps made of rounds alone, the second also
+  one whole face, the third also part of a face.
+
+A chamfer has Blend into round and Trim through only. The fillet shows
+Overflow for one radius (Auto or Radius) with Setback corners; Rolling
+ball, Two distances and Variable rounds take none of these switches yet.
+
 A fillet's Edges choice **Between two faces** rounds between two picked
 faces that need share no edge: the ball rolls between them, and the round
 fills or takes off what lies between it and where the faces' surfaces

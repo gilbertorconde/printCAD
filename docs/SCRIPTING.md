@@ -4396,6 +4396,7 @@ Notes:
 - `mode` is Auto (when left out), Radius, TwoDistances or Variable. Auto on one edge takes each face's contact `radius` from the edge or as far as the face goes, whichever is less; with Radius, a radius larger than the faces beside an edge can take fails at `pc.doc.rebuild()`. TwoDistances puts `radius` on one face and `radius2` on the other (`flip` swaps them), its `profile` Elliptical or Conic (with `rho` strictly between 0 and 1, 0.5 when left out), on one edge, a tangent chain of edges, or the three edges meeting at a box's corner.
 - Variable runs the radius along the edges as one run end to end: `radius` at its start, `radius2` at its end, and `points = {{at = .., radius = ..}, ...}` between, each `at` a share of the run's length from its start strictly between 0 and 1. `flip` starts the run at its other end. Edges that branch at a vertex are refused.
 - `corner` says how a vertex where rounds meet closes: Setback (when left out) stops each round short and fills the gap with one patch; RollingBall runs the rounds into it and closes it with the ball's sphere or torus, on corners of three edges between flat faces.
+- `overflow = {...}` says what the round does where it reaches more than its own two faces, each switch on when left out: `blend_into_round` bends it to meet a round already on the body (a boss's foot meeting a rounded edge), `hold_edge` keeps a sharp edge it would run over and rests on it (`hold_edge_at_end` where only its end does), `trim_through` keeps the round's own shape and cuts back or extends the faces it reaches, and `narrow_blend_made`, `narrow_whole_face` and `narrow_partial_face` run the rounds on through a gap tighter than the radius made of rounds alone, also taking in one whole face, or also part of one. The first that builds is used; with none, the fillet is refused. A table given is the whole set, switches left out of it on. Only a round of one radius (Auto or Radius) with Setback corners takes them.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.chamfer`.
 
@@ -4433,6 +4434,7 @@ Notes:
 - `edges = {Edges = {{point = {x, y, z}, direction = {x, y, z}}, ...}}` picks edges by a point on each and its direction there, and `edges = {Faces = {{point = .., normal = ..}}}` every edge around those faces, in the body's own frame. A bare list of picks is refused.
 - Edges running on tangentially are taken too (`follow_tangent`, on by default).
 - `mode` is Auto (when left out), EqualDistance, TwoDistances (with `size2`) or DistanceAngle (with `angle_deg`). Auto bevels `size` each way, or as far as a face too narrow for it goes, edge by edge. `size` and `size2` must be above zero and `angle_deg` between 0 and 90, or the chamfer does not build.
+- `overflow` takes the fillet's switches; a bevel has `blend_into_round` (it runs on over a round already on the body) and `trim_through` alone, and leaves the rest as they are.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.design.fillet`.
 

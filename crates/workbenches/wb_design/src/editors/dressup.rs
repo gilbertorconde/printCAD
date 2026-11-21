@@ -4,7 +4,7 @@
 
 use bench_api::{ButtonStyle, Select, Tone};
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
-use kernel_api::{ChamferCorner, FilletCorner};
+use kernel_api::{ChamferCorner, FilletCorner, Overflow};
 
 use crate::feature::{
     ChamferMode, DesignFeature, EdgePick, EdgeSel, ExtrudeMode, FacePick, FilletMode,
@@ -151,6 +151,7 @@ pub(super) fn dressup_editor(
             profile,
             rho,
             points,
+            overflow,
             ..
         } => {
             let between = matches!(edges, EdgeSel::BetweenFaces(_));
@@ -191,6 +192,11 @@ pub(super) fn dressup_editor(
                 if !two && !variable {
                     changed |= pick(f, "Corners", &FILLET_CORNERS, corner, fillet_corner_label);
                 }
+                // The kernel takes the behaviours on rounds of one radius
+                // between setback corners alone.
+                if !two && !variable && *corner == FilletCorner::Setback {
+                    changed |= overflow_editor(f, overflow, true);
+                }
             }
         }
         DesignFeature::Chamfer {
@@ -202,6 +208,7 @@ pub(super) fn dressup_editor(
             edges,
             follow_tangent,
             corner,
+            overflow,
             ..
         } => {
             changed |= pick(f, "Type", &ChamferMode::ALL, mode, |candidate| {
@@ -225,6 +232,7 @@ pub(super) fn dressup_editor(
             changed |= edge_sel_editor(f, ctx, edges, false);
             changed |= tangent_row(f, follow_tangent);
             changed |= pick(f, "Corners", &CHAMFER_CORNERS, corner, chamfer_corner_label);
+            changed |= overflow_editor(f, overflow, false);
         }
         DesignFeature::Draft {
             angle_deg,
@@ -428,6 +436,102 @@ fn faces_of_selection(edges: &EdgeSel) -> Vec<crate::feature::FacePick> {
         EdgeSel::Faces(faces) | EdgeSel::BetweenFaces(faces) => faces.clone(),
         EdgeSel::All | EdgeSel::Edges(_) => Vec::new(),
     }
+}
+
+/// The Overflow group: what a round (`round`) or a bevel does where it
+/// reaches geometry other than its own two faces, each behaviour a switch,
+/// tried in the order shown. A bevel has blend into round and trim through
+/// alone, having no ball to rest on an edge or roll through a gap.
+fn overflow_editor(f: &mut Form, overflow: &mut Overflow, round: bool) -> bool {
+    let what = if round { "round" } else { "bevel" };
+    let mut off: Vec<&str> = Vec::new();
+    let mut note = |on: bool, name| {
+        if !on {
+            off.push(name);
+        }
+    };
+    note(overflow.blend_into_round, "blend");
+    if round {
+        note(overflow.hold_edge, "hold edge");
+        note(
+            overflow.hold_edge_at_end || !overflow.hold_edge,
+            "hold at end",
+        );
+    }
+    note(overflow.trim_through, "trim");
+    if round {
+        let narrow = overflow.narrow_blend_made
+            && overflow.narrow_whole_face
+            && overflow.narrow_partial_face;
+        note(narrow, "narrow passages");
+    }
+    let summary = if off.is_empty() {
+        "all on".to_string()
+    } else {
+        format!("off: {}", off.join(", "))
+    };
+    f.section("Overflow", &summary, !off.is_empty(), |f| {
+        f.caption(
+            &format!(
+                "Where the {what} reaches more than its own two faces, the first of these \
+                 that works is used; with none, the {what} is refused."
+            ),
+            Tone::Neutral,
+            true,
+            false,
+        );
+        let mut changed = f.check(
+            &mut overflow.blend_into_round,
+            "Blend into round",
+            &format!(
+                "Where the {what} reaches a round already on the body, it bends to meet that \
+                 round smoothly, with no step: a boss's foot meeting a rounded edge"
+            ),
+        );
+        if round {
+            changed |= f.check(
+                &mut overflow.hold_edge,
+                "Hold edge",
+                "Where the round would run over a sharp edge of the body, the edge is kept \
+                 and the round rests on it",
+            );
+            if overflow.hold_edge {
+                changed |= f.check(
+                    &mut overflow.hold_edge_at_end,
+                    "Hold edge at the end",
+                    "The same where only the round's end runs over a sharp edge",
+                );
+            }
+        }
+        changed |= f.check(
+            &mut overflow.trim_through,
+            "Trim through",
+            &format!(
+                "The {what} keeps its own shape, and the faces it reaches are cut back or \
+                 extended to meet it"
+            ),
+        );
+        if round {
+            changed |= f.check(
+                &mut overflow.narrow_blend_made,
+                "Narrow gaps between rounds",
+                "Where a gap is tighter than the radius and made of rounds alone, each round \
+                 runs on until they meet",
+            );
+            changed |= f.check(
+                &mut overflow.narrow_whole_face,
+                "Narrow gaps across a face",
+                "The same where the gap also takes in one whole face, such as a tight \
+                 corner",
+            );
+            changed |= f.check(
+                &mut overflow.narrow_partial_face,
+                "Narrow gaps across part of a face",
+                "The same where the gap takes in part of a face",
+            );
+        }
+        changed
+    })
 }
 
 /// The switch that makes a dress-up take the edges tangent to its own.
