@@ -9663,10 +9663,31 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 
 Notes:
 
-- The geometry kernel cannot make this yet: the step is added and kept, its row says why it does not build, and the mesh before it is shown until the kernel can.
-- Makes a closed mesh that crosses itself whole: overlapping shells merge into one and the surface inside them goes, as a union of the mesh with itself. An open mesh is refused.
+- Makes a closed mesh that crosses itself whole: overlapping shells merge into one and the surface inside them goes, as a union of the mesh with itself. A nested shell is dropped, one wound inside out is kept as a cavity. The result crosses nowhere as drawn and saved; a mesh that crosses nowhere is left as it is. mesh.result reports Repair {crossings, volume}. An open mesh is refused.
 
 See also `pc.mesh.intersections`.
+
+Example: Merge two overlapping cubes.
+
+```lua
+for _, at in ipairs{0, 5} do
+    local s = pc.sketch.new{plane = "XY"}
+    pc.sketch.rect{sketch = s, x = at, y = at, width = 10, height = 10}
+    pc.design.pad{sketch = s, length = 10}
+end
+assert(#pc.doc.rebuild() == 0)
+local path = pc.file.temp_path{name = "overlapping.stl"}
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+assert(pc.mesh.intersections{scan = scan}.pairs > 0)
+local step = pc.mesh.repair_intersections{scan = scan}
+assert(#pc.doc.rebuild() == 0)
+assert(pc.mesh.result{feature = step.feature}.report.Repair.crossings > 0)
+assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1750) < 0.01)
+assert(pc.mesh.intersections{scan = scan}.pairs == 0)
+```
 
 `pc.mesh.result`: Step results.
 
@@ -9675,7 +9696,7 @@ See also `pc.mesh.intersections`.
 
 Notes:
 
-- Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}; Remesh {max, rms}; Subdivide {moved}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.
+- Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}; Remesh {max, rms}; Subdivide {moved}; Repair {crossings, volume}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.
 
 Example: Read a built step.
 
@@ -9809,7 +9830,7 @@ assert(math.abs(math.min(a, b) - 250) < 1 and math.abs(math.max(a, b) - 1000) < 
 
 Notes:
 
-- Of the mesh the scan draws now: every pair of its triangles that meet away from the corners they share, counted as `pairs`, and the triangles in them by number. The tool shows them on the selected scan, their corners coloured over grey. The geometry kernel cannot search yet: the command fails, saying so, until it can.
+- Of the mesh the scan draws now: every pair of its triangles that meet away from the corners they share, counted as `pairs`, and the triangles in them by number. The tool shows them on the selected scan, their corners coloured over grey. Copies of one corner at a crease count as one corner, and triangles without area are left out.
 
 See also `pc.mesh.repair_intersections`.
 

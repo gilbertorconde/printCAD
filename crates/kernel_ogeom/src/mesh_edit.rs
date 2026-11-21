@@ -357,7 +357,20 @@ fn step(
             format!("{} vertices added", report.added)
         }
         MeshOp::RepairIntersections => {
-            return Err("the kernel cannot resolve where a mesh crosses itself yet".into());
+            let repaired = repair(mesh)?;
+            measured = Some(MeshStepReport::Repair {
+                crossings: repaired.crossings,
+                volume: crate::mesh_solids::volume(&repaired.mesh),
+            });
+            if repaired.crossings == 0 {
+                return Ok(("the mesh crosses itself nowhere".into(), measured));
+            }
+            *mesh = Editable::from(&repaired.mesh, 0.0).map_err(|e| e.to_string())?;
+            *sources = vec![None; repaired.mesh.positions.len()];
+            format!(
+                "{} crossing pairs resolved, {} triangles cut",
+                repaired.crossings, repaired.cut
+            )
         }
         MeshOp::Cut {
             origin,
@@ -394,4 +407,82 @@ fn step(
         }
     };
     Ok((note, measured))
+}
+
+/// A self-intersection repair: the mesh made, the pairs of triangles that
+/// crossed before and how many of its triangles are pieces of cut ones.
+struct Repaired {
+    mesh: Triangulation,
+    crossings: usize,
+    cut: usize,
+}
+
+/// How many more times a repair whose single-precision copy still crosses
+/// itself is resolved again from that copy.
+const SINGLE_PASSES: usize = 3;
+
+/// `mesh` resolved where it crosses itself, so that it does not once its
+/// points are rounded to the single precision a drawn, saved or exported
+/// mesh holds them in: a sliver the resolution leaves can tilt through its
+/// neighbour in that rounding, and is resolved again from the rounded
+/// copy. A mesh that crosses nowhere comes back as it is, `crossings` zero.
+fn repair(mesh: &Editable) -> Result<Repaired, String> {
+    let tri = mesh.to_triangulation();
+    let crossing = |t: &Triangulation| {
+        ogeom::mesh::self_intersections(t)
+            .map(|p| !p.is_empty())
+            .map_err(|e| e.to_string())
+    };
+    if !crossing(&tri)? {
+        return Ok(Repaired {
+            mesh: tri,
+            crossings: 0,
+            cut: 0,
+        });
+    }
+    let open = !mesh.rims().is_empty();
+    let resolve = |t: &Triangulation| {
+        ogeom::mesh::resolve_self_intersections(t).map_err(|e| {
+            if open {
+                format!("the mesh is open, fill holes first: {e}")
+            } else {
+                e.to_string()
+            }
+        })
+    };
+    let first = resolve(&tri)?;
+    let (crossings, mut cut) = (first.crossings, first.cut);
+    let mut out = single(&first.mesh);
+    for _ in 0..SINGLE_PASSES {
+        if !crossing(&out)? {
+            break;
+        }
+        let again = resolve(&out)?;
+        cut = again.cut;
+        out = single(&again.mesh);
+    }
+    if crossing(&out)? {
+        return Err(
+            "the repaired mesh still crosses itself once rounded to single precision".into(),
+        );
+    }
+    Ok(Repaired {
+        mesh: out,
+        crossings,
+        cut: cut.iter().filter(|c| **c).count(),
+    })
+}
+
+/// `tri` with its points rounded to single precision.
+fn single(tri: &Triangulation) -> Triangulation {
+    let round = |v: f64| f64::from(v as f32);
+    Triangulation {
+        positions: tri
+            .positions
+            .iter()
+            .map(|p| ogeom::math::Point::new(round(p.x), round(p.y), round(p.z)))
+            .collect(),
+        triangles: tri.triangles.clone(),
+        ..Triangulation::new()
+    }
 }

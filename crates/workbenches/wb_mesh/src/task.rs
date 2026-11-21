@@ -399,6 +399,10 @@ impl MeshWorkbench {
                     Some(MeshStepReport::Subdivide { moved }) => {
                         out.push(value("Max movement", mm(*moved)));
                     }
+                    Some(MeshStepReport::Repair { crossings, volume }) => out.extend([
+                        value("Crossing pairs", crossings.to_string()),
+                        value("Volume", format!("{volume:.3} mm³")),
+                    ]),
                     Some(MeshStepReport::Reduce {
                         within_share,
                         p999,

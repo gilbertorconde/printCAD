@@ -100,13 +100,12 @@ farthest an existing point moved.
 **Repair self-intersections** makes a closed mesh that crosses itself
 whole: shells exported overlapping, or a fold an edit left, are merged
 into one surface and what lay inside them goes, as a union of the mesh
-with itself. A slicer prints such a mesh wrongly, twice over where the
-shells overlap or not at all. An open mesh is refused: fill its holes
-first.
-
-The geometry kernel cannot repair crossings yet. The step is added and
-kept, its row says why it does not build, and the scan shows the mesh
-before it until the kernel can.
+with itself. A shell nested in another is dropped, and one wound inside
+out inside another is kept as a cavity. A slicer prints such a mesh
+wrongly, twice over where the shells overlap or not at all. The result
+crosses nowhere, as drawn and saved too; a mesh that crosses nowhere is
+left as it is. The task gives how many pairs of triangles crossed and
+the result's volume. An open mesh is refused: fill its holes first.
 
 **Boolean with solids** subtracts, adds or intersects a bounded solid:
 a solid body, placed where it sits against the scan, or an Inspection
@@ -128,8 +127,8 @@ or Remesh collapsed stands for every start vertex merged into it, and is
 marked when all of them are. Added vertices have no start identity and
 are never marked.
 
-Booleans and shells make a new mesh: a marking of the start mesh does
-not reach past them either.
+Booleans, shells and a repair of self-intersections make a new mesh: a
+marking of the start mesh does not reach past them either.
 
 A step that cannot run (a delete with nothing in its region, a filter
 that would remove every piece) shows its error on its row. The scan keeps
@@ -166,8 +165,9 @@ corners they share. Their corners are coloured over a grey mesh, and the
 log and the legend give the number of pairs and of triangles; a mesh
 that crosses nowhere says so. Click it again to hide the map.
 `pc.mesh.intersections{scan = s}` answers `pairs` and the `triangles` by
-number. The geometry kernel cannot search yet, so for now the tool says
-so in the log and turns itself off, and the command fails.
+number. Copies of one corner the drawn mesh keeps at a crease count as
+one corner, and triangles without area are left out. **Repair
+self-intersections** mends what it finds.
 
 ## Trim to scan
 

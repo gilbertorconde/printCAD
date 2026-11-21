@@ -236,6 +236,11 @@ pub enum MeshStepReport {
     Subdivide {
         moved: f64,
     },
+    /// `crossings` the pairs of triangles that crossed; `volume` in mm³.
+    Repair {
+        crossings: usize,
+        volume: f64,
+    },
     Reduce {
         within_share: f64,
         p999: f64,

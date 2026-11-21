@@ -93,15 +93,35 @@ kept. Markings of the start's vertices follow them through the step.
 
 ## mesh.repair_intersections
 
-The geometry kernel cannot make this yet: the step is added and kept, its row
-says why it does not build, and the mesh before it is shown until the kernel
-can.
-
 Makes a closed mesh that crosses itself whole: overlapping shells merge into
-one and the surface inside them goes, as a union of the mesh with itself.
-An open mesh is refused.
+one and the surface inside them goes, as a union of the mesh with itself. A
+nested shell is dropped, one wound inside out is kept as a cavity. The result
+crosses nowhere as drawn and saved; a mesh that crosses nowhere is left as it
+is. mesh.result reports Repair {crossings, volume}. An open mesh is refused.
 
 See also: mesh.intersections
+
+### Merge two overlapping cubes
+
+```lua
+    for _, at in ipairs{0, 5} do
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.rect{sketch = s, x = at, y = at, width = 10, height = 10}
+        pc.design.pad{sketch = s, length = 10}
+    end
+    assert(#pc.doc.rebuild() == 0)
+    local path = pc.file.temp_path{name = "overlapping.stl"}
+    pc.file.export{path = path, format = "stl"}
+    pc.file.import{path = path, scan = true}
+    local scan
+    for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+    assert(pc.mesh.intersections{scan = scan}.pairs > 0)
+    local step = pc.mesh.repair_intersections{scan = scan}
+    assert(#pc.doc.rebuild() == 0)
+    assert(pc.mesh.result{feature = step.feature}.report.Repair.crossings > 0)
+    assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1750) < 0.01)
+    assert(pc.mesh.intersections{scan = scan}.pairs == 0)
+```
 
 ## mesh.remesh
 
@@ -150,7 +170,8 @@ mesh.result reports Subdivide {moved}, the farthest an existing point moved.
 ## mesh.result
 
 Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999,
-furthest, max, rms, target_met}; Remesh {max, rms}; Subdivide {moved}. Distances are mm, furthest is in the body's
+furthest, max, rms, target_met}; Remesh {max, rms}; Subdivide {moved}; Repair
+{crossings, volume}. Distances are mm, furthest is in the body's
 frame. A changed or failed history has no result for an unbuilt step.
 
 ### Read a built step

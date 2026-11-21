@@ -363,7 +363,6 @@ fn two_cubes(apart: bool) -> TriMesh {
 /// The overlapping cubes cross each other, never themselves; cubes apart
 /// cross nothing.
 #[test]
-#[ignore = "kernel: mesh::self_intersections is not wired in yet (ogeom-rs#1187)"]
 fn overlapping_cubes_cross_and_cubes_apart_do_not() {
     let pairs = QUERIES.self_intersections(&two_cubes(false)).unwrap();
     assert!(!pairs.is_empty());
@@ -378,20 +377,87 @@ fn overlapping_cubes_cross_and_cubes_apart_do_not() {
     );
 }
 
+/// A drawn mesh splits its corners at creases for shading: the copies of
+/// one corner are one corner, so neighbours across a crease do not cross,
+/// and the pairs come back by the mesh's own triangle numbers.
+#[test]
+fn split_corners_are_one_corner_and_pairs_keep_the_mesh_numbers() {
+    let welded = two_cubes(false);
+    let split = TriMesh {
+        positions: welded
+            .indices
+            .iter()
+            .map(|i| welded.positions[*i as usize])
+            .collect(),
+        indices: (0..welded.indices.len() as u32).collect(),
+        ..TriMesh::default()
+    };
+    assert_eq!(
+        QUERIES.self_intersections(&split).unwrap(),
+        QUERIES.self_intersections(&welded).unwrap()
+    );
+}
+
 /// The overlapping cubes repaired are one closed solid of their union's
 /// volume that crosses nothing.
 #[test]
-#[ignore = "kernel: mesh::resolve_self_intersections is not wired in yet (ogeom-rs#1187)"]
 fn overlapping_cubes_repair_into_their_union() {
     let answer = built(&two_cubes(false), MeshOp::RepairIntersections);
     assert_eq!(edges(&answer.mesh).1, 0, "closed");
     assert!((volume(&answer.mesh) - (2000.0 - 125.0)).abs() < 1e-6);
     assert!(QUERIES.self_intersections(&answer.mesh).unwrap().is_empty());
+    let Some(MeshStepReport::Repair { crossings, volume }) = answer.steps[0].report else {
+        panic!("{:?}", answer.steps[0].report);
+    };
+    assert!(crossings > 0);
+    assert!((volume - 1875.0).abs() < 1e-6);
+}
+
+/// A mesh that does not cross itself is left as it is by a repair, and an
+/// open one that does is refused with what to do first.
+#[test]
+fn a_repair_leaves_a_whole_mesh_and_refuses_an_open_one() {
+    let apart = two_cubes(true);
+    let answer = built(&apart, MeshOp::RepairIntersections);
+    assert_eq!(answer.mesh.indices.len(), apart.indices.len());
+    assert!((volume(&answer.mesh) - 2000.0).abs() < 1e-6);
+
+    let mut open = two_cubes(false);
+    open.indices.truncate(open.indices.len() - 3);
+    let why = refused(&open, MeshOp::RepairIntersections);
+    assert!(why.contains("fill holes first"), "{why}");
 }
 
 #[cfg(feature = "heavy-tests")]
 mod heavy {
     use super::*;
+
+    /// Two spheres of thousands of triangles each, overlapping: their
+    /// crossings found, and repaired into a closed union that crosses
+    /// nothing, of a volume between the larger sphere's and their sum.
+    #[test]
+    fn overlapping_fine_spheres_repair_into_their_union() {
+        let first = uv_sphere(10.0, 60);
+        let second = uv_sphere(8.0, 50);
+        let mut both = first.clone();
+        let base = both.positions.len() as u32;
+        both.indices.extend(second.indices.iter().map(|i| i + base));
+        both.positions.extend(
+            second
+                .positions
+                .iter()
+                .map(|p| [p[0] + 9.0, p[1] + 0.3, p[2] + 0.2]),
+        );
+        assert!(!QUERIES.self_intersections(&both).unwrap().is_empty());
+        let answer = built(&both, MeshOp::RepairIntersections);
+        assert_eq!(edges(&answer.mesh).1, 0, "closed");
+        assert!(QUERIES.self_intersections(&answer.mesh).unwrap().is_empty());
+        let v = volume(&answer.mesh);
+        assert!(
+            v > volume(&first) && v < volume(&first) + volume(&second),
+            "{v}"
+        );
+    }
 
     /// A sphere of tens of thousands of uneven triangles remeshed to
     /// 0.5 mm edges keeps its volume within a thousandth.
