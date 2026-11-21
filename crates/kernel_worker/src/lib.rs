@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use build_driver::{BuildFailure, Built, Chain, build_until_failure};
 use core_document::FeatureId;
 use kernel_api::{ImportedModel, SolidBuildResult, SolidOp, TessellationSettings};
-use kernel_ogeom::{Canceller, OgeomKernel, Watch};
+use kernel_ogeom::{Canceller, LimitReading, OgeomKernel, Watch};
 use tracing::info;
 use uuid::Uuid;
 
@@ -212,6 +212,17 @@ pub enum KernelResponse {
         from: Arc<Vec<u8>>,
         result: Result<Vec<u8>, String>,
     },
+    /// The size limit a preview build of `feature` left to be read after
+    /// it (`SolidBuildResult::size_limit_to_come`'s `reading`). It answers
+    /// no request: `in_flight` does not count it, and a reading a newer
+    /// build made stale, or one cancelled, sends nothing.
+    SizeLimitRead {
+        body_id: Uuid,
+        feature: FeatureId,
+        reading: u64,
+        limit: kernel_api::SizeLimit,
+        elapsed: Duration,
+    },
 }
 
 /// What the kernel thread is doing right now, shared with the UI thread.
@@ -250,12 +261,56 @@ struct BuildBook {
 }
 
 /// What the build threads share: the solids kept, each body's chain
-/// states, and the builds out.
+/// states, the builds out and the size limits to read.
 #[derive(Default)]
 struct BuildShared {
     built: Mutex<BuiltSolids>,
     chains: Mutex<Chains>,
     book: Mutex<BuildBook>,
+    limits: Mutex<LimitBook>,
+}
+
+/// The size limits preview builds left to be read after them, read one at
+/// a time on a thread of their own, so a slow reading holds neither the
+/// preview nor the next build.
+#[derive(Default)]
+struct LimitBook {
+    /// The reading each body's last preview build awaits: any other of
+    /// the body's is stale.
+    wanted: std::collections::HashMap<Uuid, u64>,
+    /// The readings queued or running, by body and reading.
+    pending: std::collections::HashSet<(Uuid, u64)>,
+    /// The reading running, and how to stop it.
+    running: Option<(Uuid, u64, Canceller)>,
+}
+
+impl LimitBook {
+    /// `body`'s last build awaits `wanted` (or no reading): a reading of
+    /// the body's running for anything else stops, one queued is skipped.
+    fn settle(&mut self, body: Uuid, wanted: Option<u64>) {
+        match wanted {
+            Some(reading) => self.wanted.insert(body, reading),
+            None => self.wanted.remove(&body),
+        };
+        if let Some((running, reading, canceller)) = &self.running
+            && *running == body
+            && Some(*reading) != wanted
+        {
+            canceller.cancel();
+        }
+    }
+
+    /// Whether `reading` of `body` is queued or running.
+    fn awaits(&self, body: Uuid, reading: u64) -> bool {
+        self.pending.contains(&(body, reading))
+    }
+}
+
+/// A size limit to read after its build, for the limit thread.
+struct LimitJob {
+    body: Uuid,
+    feature: FeatureId,
+    reading: LimitReading,
 }
 
 /// How many bodies build at once: a few, each build's own work going wide
@@ -314,6 +369,13 @@ impl KernelWorker {
     /// the lifetime of the app; the channels disconnect when the UI side is
     /// dropped, which lets the worker exit cleanly.
     pub fn spawn() -> Self {
+        Self::spawn_waking(Arc::new(|| {}))
+    }
+
+    /// [`Self::spawn`], with `wake` called whenever an answer arrives that
+    /// answers no request (a size limit read after its build), which
+    /// nothing else would bring to the caller's notice.
+    pub fn spawn_waking(wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         let (req_tx, req_rx) = channel::<KernelRequest>();
         let (resp_tx, resp_rx) = channel::<KernelResponse>();
 
@@ -323,22 +385,34 @@ impl KernelWorker {
         let (build_tx, build_rx) = channel::<BuildRequest>();
         let build_rx = Arc::new(Mutex::new(build_rx));
         let builds = Arc::new(BuildShared::default());
+        let (limit_tx, limit_rx) = channel::<LimitJob>();
         let build_activities: Vec<_> = (0..build_threads())
             .map(|n| {
                 let activity = Arc::new(Mutex::new(Activity::default()));
-                let (rx, tx, shared, slot) = (
+                let (rx, tx, limits, shared, slot) = (
                     Arc::clone(&build_rx),
                     resp_tx.clone(),
+                    limit_tx.clone(),
                     Arc::clone(&builds),
                     Arc::clone(&activity),
                 );
                 thread::Builder::new()
                     .name(format!("printcad-build-{n}"))
-                    .spawn(move || build_loop(&rx, &tx, &shared, &slot))
+                    .spawn(move || build_loop(&rx, &tx, &limits, &shared, &slot))
                     .expect("failed to spawn a build thread");
                 activity
             })
             .collect();
+        // The build threads hold the only senders of limit jobs: the limit
+        // thread ends when they do.
+        drop(limit_tx);
+        {
+            let (tx, shared) = (resp_tx.clone(), Arc::clone(&builds));
+            thread::Builder::new()
+                .name("printcad-limits".to_string())
+                .spawn(move || limit_loop(&limit_rx, &tx, &shared, &*wake))
+                .expect("failed to spawn the limit thread");
+        }
 
         thread::Builder::new()
             .name("printcad-kernel-worker".to_string())
@@ -545,7 +619,9 @@ impl KernelWorker {
     pub fn drain(&mut self) -> Vec<KernelResponse> {
         let mut out = Vec::new();
         while let Ok(resp) = self.rx.try_recv() {
-            self.in_flight = self.in_flight.saturating_sub(1);
+            if !matches!(resp, KernelResponse::SizeLimitRead { .. }) {
+                self.in_flight = self.in_flight.saturating_sub(1);
+            }
             out.push(resp);
         }
         out
@@ -691,6 +767,19 @@ impl BuiltSolids {
         Some(result)
     }
 
+    /// Give the body's solids kept awaiting `reading` the limit it read.
+    fn fill_limit(&mut self, body: Uuid, reading: u64, limit: &kernel_api::SizeLimit) {
+        for (_, _, result) in self.kept.iter_mut().filter(|(b, ..)| *b == body) {
+            if result
+                .size_limit_to_come
+                .is_some_and(|c| c.reading == reading)
+            {
+                result.size_limit = Some(limit.clone());
+                result.size_limit_to_come = None;
+            }
+        }
+    }
+
     fn keep(&mut self, body: Uuid, key: u64, result: &SolidBuildResult) {
         self.kept.retain(|(b, k, _)| !(*b == body && *k == key));
         self.kept.push_back((body, key, result.clone()));
@@ -740,6 +829,7 @@ impl Chains {
 fn build_loop(
     rx: &Mutex<Receiver<BuildRequest>>,
     tx: &Sender<KernelResponse>,
+    limits: &Sender<LimitJob>,
     shared: &BuildShared,
     activity: &Arc<Mutex<Activity>>,
 ) {
@@ -748,40 +838,108 @@ fn build_loop(
         let Ok(request) = lock(rx).recv() else {
             return;
         };
-        let response = serve_build(&mut kernel, shared, activity, request);
+        let (response, reading) = serve_build(&mut kernel, shared, activity, request);
         if tx.send(response).is_err() {
+            return;
+        }
+        // Queued once its build has answered, so the preview goes first.
+        if let Some(job) = reading
+            && lock(&shared.limits)
+                .pending
+                .insert((job.body, job.reading.id()))
+            && limits.send(job).is_err()
+        {
             return;
         }
     }
 }
 
-/// One build on a build thread, watched as a worker request is.
+/// The limit thread: reads the size limits builds left, one at a time,
+/// skipping those a newer build of their body made stale.
+fn limit_loop(
+    rx: &Receiver<LimitJob>,
+    tx: &Sender<KernelResponse>,
+    shared: &BuildShared,
+    wake: &(dyn Fn() + Send + Sync),
+) {
+    while let Ok(job) = rx.recv() {
+        let id = job.reading.id();
+        let watch = Watch::new();
+        {
+            let mut book = lock(&shared.limits);
+            if book.wanted.get(&job.body) != Some(&id) {
+                book.pending.remove(&(job.body, id));
+                continue;
+            }
+            book.running = Some((job.body, id, watch.canceller()));
+        }
+        let started = Instant::now();
+        let canceller = watch.canceller();
+        let limit = kernel_ogeom::watched(&watch, || {
+            build_driver::read_limit(&job.reading, || canceller.is_cancelled())
+        });
+        let wanted = {
+            let mut book = lock(&shared.limits);
+            book.running = None;
+            book.pending.remove(&(job.body, id));
+            book.wanted.get(&job.body) == Some(&id)
+        };
+        let Some(limit) = limit else {
+            tracing::debug!(target: "printcad.chain", "size limit reading stopped");
+            continue;
+        };
+        lock(&shared.built).fill_limit(job.body, id, &limit);
+        tracing::debug!(
+            target: "printcad.chain",
+            "size limit read after the build: {:.1} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        if !wanted {
+            continue;
+        }
+        let response = KernelResponse::SizeLimitRead {
+            body_id: job.body,
+            feature: job.feature,
+            reading: id,
+            limit,
+            elapsed: started.elapsed(),
+        };
+        if tx.send(response).is_err() {
+            return;
+        }
+        wake();
+    }
+}
+
+/// One build on a build thread, watched as a worker request is, with the
+/// size limit it left to read after it.
 fn serve_build(
     kernel: &mut OgeomKernel,
     shared: &BuildShared,
     activity: &Arc<Mutex<Activity>>,
     request: BuildRequest,
-) -> KernelResponse {
+) -> (KernelResponse, Option<LimitJob>) {
     let watch = watch_for(activity);
     *lock(activity) = Activity {
         canceller: Some(watch.canceller()),
         ..Activity::default()
     };
     let serial = request.serial;
-    let response = kernel_ogeom::watched(&watch, || build(kernel, shared, &watch, request));
+    let answer = kernel_ogeom::watched(&watch, || build(kernel, shared, &watch, request));
     lock(&shared.book).running.remove(&serial);
     *lock(activity) = Activity::default();
-    response
+    answer
 }
 
 /// Build one body's solid: from the solids kept when it was built alike
-/// before, else through the body's chain states.
+/// before, else through the body's chain states. A whole build says which
+/// size limit reading the body awaits now, and gives the one it left.
 fn build(
     kernel: &mut OgeomKernel,
     shared: &BuildShared,
     watch: &Watch,
     request: BuildRequest,
-) -> KernelResponse {
+) -> (KernelResponse, Option<LimitJob>) {
     let BuildRequest {
         body_id,
         ops,
@@ -796,7 +954,7 @@ fn build(
     {
         let mut book = lock(&shared.book);
         if book.superseded.remove(&serial) {
-            return KernelResponse::SolidFailed {
+            let skipped = KernelResponse::SolidFailed {
                 body_id,
                 failure: BuildFailure {
                     feature: None,
@@ -807,6 +965,7 @@ fn build(
                 },
                 nothing_built: false,
             };
+            return (skipped, None);
         }
         book.running.insert(serial, (started, watch.canceller()));
     }
@@ -819,52 +978,73 @@ fn build(
         projections: &projections,
     };
     match build_until_failure(chain, |chain| run_chain(kernel, shared, body_id, chain)) {
-        Built::Whole((result, kept)) => KernelResponse::SolidBuilt {
-            body_id,
-            result: Box::new(result),
-            elapsed: started.elapsed(),
-            probes,
-            projections,
-            op_features,
-            kept,
-            failed: None,
-        },
-        // The history before the failing feature is what the body is.
+        Built::Whole((result, kept, reading)) => {
+            let to_come = result.size_limit_to_come;
+            lock(&shared.limits).settle(body_id, to_come.map(|c| c.reading));
+            let job = reading.zip(to_come).and_then(|(reading, to_come)| {
+                Some(LimitJob {
+                    body: body_id,
+                    feature: *op_features.get(to_come.op_index)?,
+                    reading,
+                })
+            });
+            let built = KernelResponse::SolidBuilt {
+                body_id,
+                result: Box::new(result),
+                elapsed: started.elapsed(),
+                probes,
+                projections,
+                op_features,
+                kept,
+                failed: None,
+            };
+            (built, job)
+        }
+        // The history before the failing feature is what the body is; a
+        // reading the body awaits still holds for the feature refused.
         Built::Before {
-            result: (result, kept),
+            result: (result, kept, _),
             ops: start,
             probes,
             projections,
             failure,
-        } => KernelResponse::SolidBuilt {
-            body_id,
-            result: Box::new(result),
-            elapsed: started.elapsed(),
-            probes,
-            projections,
-            op_features: op_features[..start].to_vec(),
-            kept,
-            failed: Some(failure),
-        },
+        } => {
+            let built = KernelResponse::SolidBuilt {
+                body_id,
+                result: Box::new(result),
+                elapsed: started.elapsed(),
+                probes,
+                projections,
+                op_features: op_features[..start].to_vec(),
+                kept,
+                failed: Some(failure),
+            };
+            (built, None)
+        }
         Built::Failed {
             failure,
             nothing_built,
-        } => KernelResponse::SolidFailed {
-            body_id,
-            failure,
-            nothing_built,
-        },
+        } => {
+            let failed = KernelResponse::SolidFailed {
+                body_id,
+                failure,
+                nothing_built,
+            };
+            (failed, None)
+        }
     }
 }
 
 /// One chain run, from the solids kept when it was built alike before,
-/// else through the body's chain states; whether it was found kept.
+/// else through the body's chain states; whether it was found kept, and
+/// the size limit it left to read after it. A kept solid whose limit was
+/// to come, and no longer is (its reading stopped), is built again.
 fn run_chain(
     kernel: &mut OgeomKernel,
     shared: &BuildShared,
     body_id: Uuid,
     chain: Chain<'_>,
-) -> Result<(SolidBuildResult, bool), kernel_api::ChainError> {
+) -> Result<(SolidBuildResult, bool, Option<LimitReading>), kernel_api::ChainError> {
     let asked: Vec<kernel_api::ChainProbe> = chain.probes.iter().map(|p| p.probe).collect();
     let projections: Vec<kernel_api::ChainProjection> =
         chain.projections.iter().map(|p| p.projection).collect();
@@ -876,16 +1056,20 @@ fn run_chain(
         &asked,
         &projections,
     );
-    if let Some(result) = key.and_then(|key| lock(&shared.built).get(body_id, key)) {
-        return Ok((result, true));
+    if let Some(result) = key.and_then(|key| lock(&shared.built).get(body_id, key))
+        && result
+            .size_limit_to_come
+            .is_none_or(|c| lock(&shared.limits).awaits(body_id, c.reading))
+    {
+        return Ok((result, true, None));
     }
     let mut states = lock(&shared.chains).take(body_id);
-    let outcome = build_driver::execute(kernel, &chain, Some(&mut states));
+    let outcome = build_driver::execute_limit_after(kernel, &chain, &mut states);
     lock(&shared.chains).put(body_id, states);
-    if let (Ok(result), Some(key)) = (&outcome, key) {
+    if let (Ok((result, _)), Some(key)) = (&outcome, key) {
         lock(&shared.built).keep(body_id, key, result);
     }
-    outcome.map(|result| (result, false))
+    outcome.map(|(result, reading)| (result, false, reading))
 }
 
 fn worker_loop(
@@ -1433,5 +1617,90 @@ mod tests {
         );
         let out = answers(&mut worker, 1);
         assert!(matches!(&out[0], KernelResponse::SolidBuilt { .. }));
+    }
+
+    /// A preview of a round answers with its solid and preview, the size
+    /// limit to come; the limit arrives after it, uncounted by
+    /// `in_flight`, under the reading the build named. A newer build with
+    /// another solid before the round awaits another reading, and its
+    /// limit is the one the body ends with.
+    #[test]
+    fn a_previewed_limit_arrives_after_its_build() {
+        use kernel_api::{BooleanOp, EdgeSelection, Placement, PrimitiveKind};
+        let block = |height: f64| SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: 20.0,
+                width: 20.0,
+                height,
+            },
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        };
+        let round = SolidOp::Fillet {
+            radius: 1.0,
+            edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
+            follow_tangent: false,
+            corner: Default::default(),
+            distances: None,
+            auto: false,
+            variable: None,
+            overflow: Default::default(),
+        };
+        let [base, fillet] = [Uuid::new_v4(), Uuid::new_v4()];
+        let mut worker = KernelWorker::spawn();
+        let body = Uuid::new_v4();
+        let preview = |worker: &mut KernelWorker, height: f64| {
+            worker.request_build_solid(
+                body,
+                vec![block(height), round.clone()],
+                vec![FeatureId(base), FeatureId(fillet)],
+                TessellationSettings::default(),
+                Some(fillet),
+                Vec::new(),
+                Vec::new(),
+            );
+            let out = answers(worker, 1);
+            let Some(KernelResponse::SolidBuilt { result, .. }) = out.first() else {
+                panic!("the preview builds");
+            };
+            assert!(result.preview.is_some() && result.size_limit.is_none());
+            assert_eq!(worker.in_flight(), 0, "the build is answered");
+            result
+                .size_limit_to_come
+                .expect("its limit to come")
+                .reading
+        };
+        let read = |worker: &mut KernelWorker, reading: u64| {
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while Instant::now() < deadline {
+                for answer in worker.drain() {
+                    if let KernelResponse::SizeLimitRead {
+                        reading: arrived,
+                        feature,
+                        limit,
+                        ..
+                    } = answer
+                        && arrived == reading
+                    {
+                        assert_eq!(feature, FeatureId(fillet));
+                        return limit;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("the limit never arrived");
+        };
+        let first = preview(&mut worker, 10.0);
+        let limit = read(&mut worker, first);
+        let largest = limit.largest.expect("the wall stops it");
+        assert!(largest > 9.99 && largest <= 10.0, "{largest}");
+        assert_eq!(worker.in_flight(), 0);
+
+        let taller = preview(&mut worker, 12.0);
+        assert_ne!(taller, first);
+        let largest = read(&mut worker, taller)
+            .largest
+            .expect("the wall stops it");
+        assert!(largest > 11.99 && largest <= 12.0, "{largest}");
     }
 }

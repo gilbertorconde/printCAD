@@ -72,6 +72,9 @@ pub struct Derived {
     /// The largest size each previewed fillet or chamfer builds at, as its
     /// last preview build found it.
     pub(crate) size_limits: HashMap<FeatureId, kernel_api::SizeLimit>,
+    /// The reading of each feature's size limit its last preview build
+    /// left to come after it (`SolidBuildResult::size_limit_to_come`).
+    pub(crate) size_limits_to_come: HashMap<FeatureId, u64>,
     /// Mesh build measurements and source vertices, keyed by the full plan.
     pub(crate) mesh_results: HashMap<BodyId, rebuild::MeshResult>,
     /// The cosmetic threads the features in the bodies' builds declare,
@@ -235,7 +238,9 @@ impl Derived {
     }
 
     /// Keep the largest size the build of `op_features` found for its
-    /// previewed fillet or chamfer, under the feature it belongs to.
+    /// previewed fillet or chamfer, under the feature it belongs to; one
+    /// left to be read after the build leaves the feature no limit until
+    /// that reading lands ([`Self::store_read_size_limit`]).
     pub fn store_size_limit(
         &mut self,
         op_features: &[FeatureId],
@@ -245,7 +250,32 @@ impl Derived {
             && let Some(feature) = op_features.get(limit.op_index)
         {
             self.size_limits.insert(*feature, limit.clone());
+            self.size_limits_to_come.remove(feature);
         }
+        if let Some(to_come) = &result.size_limit_to_come
+            && let Some(feature) = op_features.get(to_come.op_index)
+        {
+            self.size_limits.remove(feature);
+            self.size_limits_to_come.insert(*feature, to_come.reading);
+        }
+    }
+
+    /// Keep `limit`, read after a build of `feature`, when it is the
+    /// reading the feature's last preview build left to come: a later
+    /// build of another history or op, or one that found its limit
+    /// itself, leaves it stale. Whether it was kept.
+    pub fn store_read_size_limit(
+        &mut self,
+        feature: FeatureId,
+        reading: u64,
+        limit: kernel_api::SizeLimit,
+    ) -> bool {
+        if self.size_limits_to_come.get(&feature) != Some(&reading) {
+            return false;
+        }
+        self.size_limits_to_come.remove(&feature);
+        self.size_limits.insert(feature, limit);
+        true
     }
 
     /// The largest size `feature`'s last preview build found it builds at,

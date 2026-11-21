@@ -2,8 +2,8 @@
 
 use core_document::rebuild::FailedPrefix;
 use core_document::{BuildPlan, FeatureId, PlanProbe, PlanProjection};
-use kernel_api::{ChainError, SolidBuildResult, SolidOp, TessellationSettings};
-use kernel_ogeom::{ChainCache, ChainRequest, OgeomKernel};
+use kernel_api::{ChainError, SizeLimit, SolidBuildResult, SolidOp, TessellationSettings};
+use kernel_ogeom::{ChainCache, ChainRequest, LimitReading, OgeomKernel};
 
 /// What one chain run builds: the ops, the feature of each, the detail,
 /// the edited feature's ops and the probes and projections asked.
@@ -40,11 +40,46 @@ impl<'a> Chain<'a> {
 }
 
 /// Run `chain` on `kernel`, resuming from the states `cache` keeps when
-/// given one. Each op's faces are named after the feature it builds.
+/// given one. Each op's faces are named after the feature it builds; a
+/// previewed fillet's or chamfer's size limit is read in the build.
 pub fn execute(
     kernel: &mut OgeomKernel,
     chain: &Chain<'_>,
     cache: Option<&mut ChainCache>,
+) -> Result<SolidBuildResult, ChainError> {
+    run(kernel, chain, cache, false)
+}
+
+/// [`execute`], but a previewed size limit `cache` does not know is left
+/// to be read after the build ([`read_limit`]): the build answers as soon
+/// as its solid and preview are made, naming the reading in
+/// `SolidBuildResult::size_limit_to_come`.
+pub fn execute_limit_after(
+    kernel: &mut OgeomKernel,
+    chain: &Chain<'_>,
+    cache: &mut ChainCache,
+) -> Result<(SolidBuildResult, Option<LimitReading>), ChainError> {
+    let result = run(kernel, chain, Some(&mut *cache), true)?;
+    Ok((result, cache.take_limit_reading()))
+}
+
+/// Read the size limit a build left, and keep it where the body's next
+/// builds look unless `cancelled` says the reading was cut short (its
+/// answer then is no limit).
+pub fn read_limit(reading: &LimitReading, cancelled: impl Fn() -> bool) -> Option<SizeLimit> {
+    let limit = reading.read();
+    if cancelled() {
+        return None;
+    }
+    reading.keep(&limit);
+    Some(limit)
+}
+
+fn run(
+    kernel: &mut OgeomKernel,
+    chain: &Chain<'_>,
+    cache: Option<&mut ChainCache>,
+    defer_limit: bool,
 ) -> Result<SolidBuildResult, ChainError> {
     let asked: Vec<kernel_api::ChainProbe> = chain.probes.iter().map(|p| p.probe).collect();
     let projections: Vec<kernel_api::ChainProjection> =
@@ -60,7 +95,8 @@ pub fn execute(
             .preview(chain.range.clone())
             .probes(&asked)
             .projections(&projections)
-            .cache(cache),
+            .cache(cache)
+            .defer_limit(defer_limit),
     )
 }
 

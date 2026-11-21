@@ -6,7 +6,10 @@
 //! geometry dropped), runs the chain ([`execute`], and
 //! [`build_until_failure`] for a failing step, which leaves the body the
 //! history before it), and lands the results ([`store_answers`],
-//! [`store_solid`], [`record_failure`], [`clear_unbuilt`]).
+//! [`store_solid`], [`record_failure`], [`clear_unbuilt`]). The app's
+//! builds leave a previewed size limit to be read after them
+//! ([`execute_limit_after`], [`read_limit`]), landed by
+//! [`store_read_limit`].
 //!
 //! [`build_all`] puts the pieces together on the calling thread, round
 //! after round until no job is left: headless scripts and project import
@@ -18,11 +21,13 @@ mod chain;
 mod run;
 mod store;
 
-pub use chain::{BuildFailure, Built, Chain, build_until_failure, execute};
+pub use chain::{
+    BuildFailure, Built, Chain, build_until_failure, execute, execute_limit_after, read_limit,
+};
 pub use run::{BodyBuild, Build, KernelStep, ShapeReader, build_all};
 pub use store::{
     Begun, Landed, Next, begin, clear_unbuilt, land_shape, record_failure, store_answers,
-    store_solid,
+    store_read_limit, store_solid,
 };
 
-pub use kernel_ogeom::{ChainCache, OgeomKernel};
+pub use kernel_ogeom::{ChainCache, LimitReading, OgeomKernel};
