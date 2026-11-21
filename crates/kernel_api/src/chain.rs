@@ -86,6 +86,20 @@ pub struct SolidBuildResult {
     /// build previewed one: what a drag of its size stops at.
     #[serde(default)]
     pub size_limit: Option<SizeLimit>,
+    /// The previewed fillet's or chamfer's limit when the build left it to
+    /// be read after it: until it arrives no size is known to stop at.
+    #[serde(default)]
+    pub size_limit_to_come: Option<LimitToCome>,
+}
+
+/// A size limit a build left to be read after it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitToCome {
+    /// The op it is the limit of.
+    pub op_index: usize,
+    /// Which reading it is: one for every build of the same history
+    /// before the op and the same op but for its sizes.
+    pub reading: u64,
 }
 
 /// The largest size a fillet or chamfer builds at on the solid before it.
