@@ -9,12 +9,16 @@ use core_document::{Document, FeatureId, WorkbenchFeature};
 use crate::feature::{ChamferMode, DesignFeature, FilletMode};
 
 /// The largest values a drag sets for a fillet's or chamfer's sizes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DragLimits {
-    /// A fillet's radius, a chamfer's size.
+    /// A fillet's radius (a variable fillet's start radius), a chamfer's
+    /// size.
     pub first: Option<f32>,
-    /// A fillet's or chamfer's second size, with two distances.
+    /// A fillet's or chamfer's second size, with two distances; a variable
+    /// fillet's end radius.
     pub second: Option<f32>,
+    /// A variable fillet's radii between, in the order of its points.
+    pub points: Vec<Option<f32>>,
 }
 
 /// `feature`'s drag limits, when its last preview build found them for the
@@ -42,11 +46,20 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
         ),
         _ => return None,
     };
-    let key = crate::build::edge_op(&part).ok()??.size_limit_key()?;
+    let op = crate::build::edge_op(&part).ok()??;
+    let key = op.size_limit_key()?;
     let limit = document
         .derived()
         .size_limit(feature)
         .filter(|limit| limit.key == key);
+    if let DesignFeature::Fillet {
+        mode: FilletMode::Variable,
+        points,
+        ..
+    } = &part
+    {
+        return law_limits(&op, limit?, points);
+    }
     // Two distances each stop where their own face runs out.
     let two = matches!(
         part,
@@ -59,12 +72,12 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
         }
     );
     if two && let Some(sides) = limit.and_then(|limit| limit.sides) {
-        let [first, second] = sides.sides.map(|side| {
-            side.largest
-                .map(|most| hundredths_below(most as f32))
-                .filter(|most| *most > 0.0)
+        let [first, second] = sides.sides.map(|side| below(side.largest));
+        return (first.is_some() || second.is_some()).then_some(DragLimits {
+            first,
+            second,
+            points: Vec::new(),
         });
-        return (first.is_some() || second.is_some()).then_some(DragLimits { first, second });
     }
     let largest = match limit {
         Some(limit) => limit.largest? as f32,
@@ -74,6 +87,33 @@ pub(crate) fn drag_limits(document: &Document, feature: FeatureId) -> Option<Dra
     (first > 0.0).then(|| DragLimits {
         first: Some(first),
         second: size2.map(|s2| hundredths_below(s2 * largest / size)),
+        points: Vec::new(),
+    })
+}
+
+/// A variable fillet's limits: each radius's own, found with the others
+/// as they are now, by the key of the op with that radius left out.
+fn law_limits(
+    op: &kernel_api::SolidOp,
+    limit: &kernel_api::SizeLimit,
+    points: &[crate::feature::RadiusPoint],
+) -> Option<DragLimits> {
+    let most = |at: usize| {
+        let key = op.law_limit_key(at)?;
+        let found = limit.law.iter().find(|law| law.key == key)?;
+        below(found.largest)
+    };
+    // The op holds the radii between in the order of their places.
+    let mut by_place: Vec<usize> = (0..points.len()).collect();
+    by_place.sort_by(|a, b| points[*a].at.total_cmp(&points[*b].at));
+    let mut between = vec![None; points.len()];
+    for (rank, &i) in by_place.iter().enumerate() {
+        between[i] = most(rank + 1);
+    }
+    Some(DragLimits {
+        first: most(0),
+        second: most(points.len() + 1),
+        points: between,
     })
 }
 
@@ -86,6 +126,13 @@ pub(crate) fn drag_most(document: &Document, feature: FeatureId, pointer: &str) 
         "/Fillet/radius2" | "/Chamfer/size2" => limits.second,
         _ => None,
     }
+}
+
+/// A limit in mm as a drag stops at it, `None` where there is none.
+fn below(largest: Option<f64>) -> Option<f32> {
+    largest
+        .map(|most| hundredths_below(most as f32))
+        .filter(|most| *most > 0.0)
 }
 
 /// `size` rounded down to a hundredth of a millimetre, as fields show it:
