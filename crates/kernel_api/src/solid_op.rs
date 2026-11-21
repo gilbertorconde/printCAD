@@ -628,11 +628,29 @@ pub enum ChamferSpec {
 
 impl SolidOp {
     /// What a fillet's or chamfer's largest size depends on, hashed: the
-    /// op with its sizes left out.
-    /// `None` for any other op.
+    /// op with its sizes left out (a variable fillet's radii too, their
+    /// places kept). `None` for any other op.
     pub fn size_limit_key(&self) -> Option<u64> {
-        use std::hash::{Hash, Hasher};
         let sized = match self {
+            SolidOp::Fillet {
+                edges,
+                follow_tangent,
+                corner,
+                variable: Some(variable),
+                ..
+            } => SolidOp::Fillet {
+                radius: 0.0,
+                edges: edges.clone(),
+                follow_tangent: *follow_tangent,
+                corner: *corner,
+                distances: None,
+                auto: false,
+                variable: Some(VariableRadius {
+                    end: 0.0,
+                    between: variable.between.iter().map(|[at, _]| [*at, 0.0]).collect(),
+                    reversed: variable.reversed,
+                }),
+            },
             SolidOp::Fillet {
                 edges,
                 follow_tangent,
@@ -680,10 +698,54 @@ impl SolidOp {
             },
             _ => return None,
         };
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{sized:?}").hash(&mut hasher);
-        Some(hasher.finish())
+        Some(hash_of(&sized, None))
     }
+
+    /// How many radii a variable fillet's law holds: its start, those
+    /// between, its end. Zero for any other op.
+    pub fn law_radii(&self) -> usize {
+        match self {
+            SolidOp::Fillet {
+                variable: Some(variable),
+                ..
+            } => variable.between.len() + 2,
+            _ => 0,
+        }
+    }
+
+    /// What the largest value of a variable fillet's radius `at` depends
+    /// on, hashed: the op with that radius left out, the others kept. The
+    /// radii count as [`SolidOp::law_radii`] counts them, those between in
+    /// the order of their places. `None` for any other op or past the
+    /// last radius.
+    pub fn law_limit_key(&self, at: usize) -> Option<u64> {
+        let mut freed = self.clone();
+        let SolidOp::Fillet {
+            radius,
+            variable: Some(law),
+            ..
+        } = &mut freed
+        else {
+            return None;
+        };
+        let n = law.between.len();
+        match at {
+            0 => *radius = 0.0,
+            i if i <= n => law.between[i - 1][1] = 0.0,
+            i if i == n + 1 => law.end = 0.0,
+            _ => return None,
+        }
+        Some(hash_of(&freed, Some(at)))
+    }
+}
+
+/// `op` hashed by its debug spelling, with the radius a law key frees.
+fn hash_of(op: &SolidOp, freed: Option<usize>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    format!("{op:?}").hash(&mut hasher);
+    freed.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Boolean between the running solid and an external tool solid.

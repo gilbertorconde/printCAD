@@ -217,8 +217,10 @@ From a script, `pc.file.export{path = folder, per_body = true}` writes a
 file per body and answers each file's path in `files`, and
 `pc.file.send_to_slicer{selected = true}` sends the selection.
 
-A 3MF names each body's object after it. The bodies' colours are not
-written yet: the kernel's 3MF writer takes no colours.
+A 3MF names each body's object after it and carries the colour the body
+shows in; a face given a colour of its own, or imported with one, keeps
+it, so the slicer shows the bodies as the view draws them. STL carries
+no colour.
 
 ## Overhangs
 

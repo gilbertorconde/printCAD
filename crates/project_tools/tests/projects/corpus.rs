@@ -147,6 +147,11 @@ fn a_corpus_run_reports_every_archive_and_where_a_body_first_strays() {
         let (saved, built) = (volume(body.saved).unwrap(), volume(body.built).unwrap());
         assert!((saved - built).abs() <= 1e-9 * saved, "{saved} {built}");
     }
+    // The main body's saved solid, its hole's bore a trimmed cylinder the
+    // kernel measures approximately, matches the rebuilt one through the
+    // hole step, its centre of mass included.
+    let main = body("body_features", "Body");
+    assert_eq!(main.verdict, Verdict::Matches, "{main:?}");
     let lengthened = body("longer_pad", "Body");
     assert_eq!(lengthened.verdict, Verdict::Differs);
     let divergence = lengthened.first_divergence.unwrap();

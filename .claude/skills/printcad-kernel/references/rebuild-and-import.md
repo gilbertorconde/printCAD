@@ -17,6 +17,30 @@ history before it and `SolidOp::size_limit_key`), answered as
 Design's `size_limit.rs` reads it while the key holds, and its handle
 (`Handle::stop`) and fields (`Quantity::drag_max`) stop a drag there.
 
+**How a limit is read.** The kernel's readings (`blend_limit`, and the
+`largest_*` functions over it) are confirmed by its own builds: every size
+probed below builds and one 1e-4 above is refused. `dressup.rs` takes them
+as they are for a fillet (`BlendSizing::Rounds` with the op's corner), a
+one-edge chamfer (`BlendSizing::Chamfer`) and each radius of a variable
+fillet (`law_limit`, `LawSize::At`; `SizeLimit::law` holds one `LawLimit`
+per radius under `SolidOp::law_limit_key`, the op with that radius left
+out, so a radius's limit holds while it alone is dragged; the chain cache
+keeps them by that key). A chamfer on several edges reads
+`largest_chamfer_distance_all`, a seat reading (overlaps across shared
+faces included, not built together): one build confirms it and halving
+below it is the fallback where that build fails. It is no largest that
+builds: past it bevels still build along a ridge or as a notch, so the
+drag stops early there (ogeom-rs#1223 asks for a confirmed reading). A
+refusal's "X mm fits" is the same reading; the whole request's is the
+least of its failing edges' (alone, or together where none fails alone)
+confirmed by one build, read for the whole request only where that build
+fails. Each reading costs the kernel at least eight builds of the request
+(about twenty where the seat does not bracket the limit). Each face's
+own reach (`sides_reach`, for two distances and automatic sizes) needs
+only the seat, which the kernel gives only with a confirmed reading
+(ogeom-rs#1224); an automatic round reads it only once the plain round is
+refused, an automatic bevel on every build.
+
 **A feature that changes nothing.** The chain compares the solid before a
 feature's ops (one run of one tag) with the solid after them when one of
 them adds or removes material (`unchanged.rs`: `said_of` says which, a

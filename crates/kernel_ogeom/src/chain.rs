@@ -44,6 +44,9 @@ const KEPT_STATES: usize = 4;
 /// How many fillet and chamfer limits a [`ChainCache`] keeps.
 const KEPT_LIMITS: usize = 8;
 
+/// How many limits of a variable fillet's radii a [`ChainCache`] keeps.
+const KEPT_LAW_LIMITS: usize = 32;
+
 /// The chain as it stood at the start of one of its ops: what a later
 /// build whose history agrees up to there resumes from.
 struct Saved {
@@ -109,6 +112,9 @@ pub struct ChainCache {
     /// The largest sizes of previewed fillets and chamfers, newest last,
     /// by the history before them and the op's size-free key.
     limits: Vec<(u64, ops::dressup::Limits)>,
+    /// The largest values of previewed variable fillets' radii, newest
+    /// last, by the history before them and each radius's own key.
+    law_limits: Vec<(u64, Option<f64>)>,
 }
 
 /// What a build made of its edited op (the first that differs from the
@@ -698,32 +704,40 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         if preview.as_ref().is_some_and(|r| r.start == index) {
             before = base.clone();
             if let (Some(key), Some(shape)) = (solid_op.size_limit_key(), base.as_ref()) {
-                let held = prefix.as_ref().map(|p| {
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    (p[index], key).hash(&mut hasher);
-                    hasher.finish()
-                });
-                let known = cache.as_deref().zip(held).and_then(|(cache, held)| {
-                    cache
-                        .limits
-                        .iter()
-                        .find(|(k, _)| *k == held)
-                        .map(|(_, l)| *l)
-                });
-                let (largest, sides) =
-                    known.unwrap_or_else(|| ops::dressup::size_limit(&model, shape, solid_op));
-                if let (Some(cache), Some(held), None) = (cache.as_deref_mut(), held, known) {
-                    cache.limits.push((held, (largest, sides)));
-                    if cache.limits.len() > KEPT_LIMITS {
-                        cache.limits.remove(0);
-                    }
-                }
+                let held = |key: u64| {
+                    prefix.as_ref().map(|p| {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        (p[index], key).hash(&mut hasher);
+                        hasher.finish()
+                    })
+                };
+                let (largest, sides) = remembered(
+                    cache.as_deref_mut().map(|cache| &mut cache.limits),
+                    held(key),
+                    KEPT_LIMITS,
+                    || ops::dressup::size_limit(&model, shape, solid_op),
+                );
+                // Each radius of a law by its own key, which holds while
+                // that radius alone is dragged.
+                let law = (0..solid_op.law_radii())
+                    .filter_map(|at| {
+                        let key = solid_op.law_limit_key(at)?;
+                        let largest = remembered(
+                            cache.as_deref_mut().map(|cache| &mut cache.law_limits),
+                            held(key),
+                            KEPT_LAW_LIMITS,
+                            || ops::dressup::law_limit(&model, shape, solid_op, at),
+                        );
+                        Some(kernel_api::LawLimit { key, largest })
+                    })
+                    .collect();
                 size_limit = Some(kernel_api::SizeLimit {
                     op_index: index,
                     key,
                     largest,
                     sides,
+                    law,
                 });
             }
         }
@@ -1710,6 +1724,29 @@ fn external_tool(
         tool = pattern::moved(model, &tool, matrix)?;
     }
     Ok(tool)
+}
+
+/// What `read` answers, kept in `kept` by `key` (newest last, at most
+/// `most`): the kept answer where there is one, else `read`'s, kept.
+/// Without a cache or a key it is read every time.
+fn remembered<T: Clone>(
+    kept: Option<&mut Vec<(u64, T)>>,
+    key: Option<u64>,
+    most: usize,
+    read: impl FnOnce() -> T,
+) -> T {
+    let (Some(kept), Some(key)) = (kept, key) else {
+        return read();
+    };
+    if let Some((_, known)) = kept.iter().find(|(k, _)| *k == key) {
+        return known.clone();
+    }
+    let answer = read();
+    kept.push((key, answer.clone()));
+    if kept.len() > most {
+        kept.remove(0);
+    }
+    answer
 }
 
 #[cfg(test)]

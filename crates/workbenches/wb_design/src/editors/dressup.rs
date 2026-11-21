@@ -37,15 +37,19 @@ fn chamfer_corner_label(corner: &ChamferCorner) -> &'static str {
 
 /// A variable fillet's radii: at its run's start and end, which end it
 /// starts at, and the radii between, each at a share of the run's length.
+/// A drag of a radius stops at the largest it builds at, once known.
 fn variable_editor(
     f: &mut Form,
     fx: &mut Formulas,
     (start, end): (&mut f32, &mut f32),
     reversed: &mut bool,
     points: &mut Vec<RadiusPoint>,
+    most: Option<&crate::size_limit::DragLimits>,
 ) -> bool {
-    let mut changed = mm_drag(f, fx, start, ("Start radius:", "radius"));
-    changed |= mm_drag(f, fx, end, ("End radius:", "radius2"));
+    let first = most.and_then(|m| m.first);
+    let mut changed = mm_drag_upto(f, fx, start, ("Start radius:", "radius"), first);
+    let second = most.and_then(|m| m.second);
+    changed |= mm_drag_upto(f, fx, end, ("End radius:", "radius2"), second);
     changed |= f.check(
         reversed,
         "Start from the other end",
@@ -70,7 +74,8 @@ fn variable_editor(
         // This point's numbers are `point{n}_…` to formulas.
         fx.prefix = Some(format!("point{}_", i + 1));
         changed |= share_drag(f, fx, &mut point.at, ("At:", "at"));
-        changed |= mm_drag(f, fx, &mut point.radius, ("Radius:", "radius"));
+        let held = most.and_then(|m| m.points.get(i).copied().flatten());
+        changed |= mm_drag_upto(f, fx, &mut point.radius, ("Radius:", "radius"), held);
         fx.prefix = None;
     }
     if let Some(i) = remove {
@@ -162,14 +167,14 @@ pub(super) fn dressup_editor(
             let variable = !between && *mode == FilletMode::Variable;
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
             if variable {
-                changed |= variable_editor(f, fx, (radius, radius2), flip, points);
+                changed |= variable_editor(f, fx, (radius, radius2), flip, points, most.as_ref());
             } else {
                 let label = if two { "Distance 1:" } else { "Radius:" };
-                let most = most.and_then(|m| m.first);
+                let most = most.as_ref().and_then(|m| m.first);
                 changed |= mm_drag_upto(f, fx, radius, (label, "radius"), most);
             }
             if two {
-                let most = most.and_then(|m| m.second);
+                let most = most.as_ref().and_then(|m| m.second);
                 changed |= mm_drag_upto(f, fx, radius2, ("Distance 2:", "radius2"), most);
                 changed |= f.check(flip, "Flip direction", "");
                 changed |= pick(f, "Profile", &FilletProfile::ALL, profile, |candidate| {
@@ -203,7 +208,8 @@ pub(super) fn dressup_editor(
                 candidate.label()
             });
             let most = crate::size_limit::drag_limits(ctx.document, feature_id);
-            changed |= mm_drag_upto(f, fx, size, ("Size:", "size"), most.and_then(|m| m.first));
+            let first = most.as_ref().and_then(|m| m.first);
+            changed |= mm_drag_upto(f, fx, size, ("Size:", "size"), first);
             match mode {
                 ChamferMode::Auto | ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {

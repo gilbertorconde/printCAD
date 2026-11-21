@@ -995,6 +995,7 @@ mod tests {
                 key,
                 largest: Some(2.4999),
                 sides: None,
+                law: Vec::new(),
             }),
             ..Default::default()
         };
@@ -1117,6 +1118,7 @@ mod tests {
                             side([0.0, 0.0, -1.0], Some(7.0)),
                         ],
                     }),
+                    law: Vec::new(),
                 }),
                 ..Default::default()
             };
