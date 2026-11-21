@@ -13,7 +13,8 @@
 //! journal clears rather than store an inverse that would lie.
 //!
 //! Entries keep feature payloads as compressed JSON text ([`packed`]),
-//! the tree built again when a step is applied.
+//! written on a thread of its own after the step closes, the tree built
+//! again when a step is applied.
 
 mod packed;
 
@@ -89,6 +90,21 @@ impl OpJournal {
             limit: limit.max(1),
             ..Self::default()
         }
+    }
+
+    /// Wait until every step closed so far holds its payloads packed,
+    /// as it does a moment after closing: what a test or a bench
+    /// measures the history's memory after.
+    #[doc(hidden)]
+    pub fn settle(&self) {
+        packed::settle();
+    }
+
+    /// Pack the payloads of steps as they close, on this thread, rather
+    /// than on the packing thread: what a bench compares against.
+    #[doc(hidden)]
+    pub fn pack_on_this_thread(&mut self, here: bool) {
+        self.packer.set_background(!here);
     }
 
     /// Name the gesture the next boundary closes.
@@ -699,8 +715,9 @@ mod tests {
     }
 
     /// The history keeps no payload tree of its own: each one an edit
-    /// replaced is gone once its step closes, though undo still reaches
-    /// it, and one undo put back goes once the next edit replaces it.
+    /// replaced is gone once its step is packed, though undo still
+    /// reaches it, and one undo put back goes once the next edit replaces
+    /// it.
     #[test]
     fn the_history_holds_no_payload_tree() {
         let mut doc = Document::new("Compact");
@@ -724,6 +741,7 @@ mod tests {
             let _ = doc.take_pending_ops();
             doc.confirm_sent_ops();
         }
+        journal.settle();
         assert!(
             replaced.iter().all(|tree| tree.strong_count() == 0),
             "every replaced payload dropped"
@@ -737,6 +755,7 @@ mod tests {
         journal.note(&mut doc);
         let _ = doc.take_pending_ops();
         doc.confirm_sent_ops();
+        journal.settle();
         assert_eq!(restored.strong_count(), 0, "the undone-to payload too");
         journal.undo(&mut doc);
         assert_eq!(doc.get_feature_data(d).unwrap()["tag"], 3.0);

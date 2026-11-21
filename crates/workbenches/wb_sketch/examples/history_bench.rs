@@ -2,10 +2,12 @@
 //! grid of `cells` × `cells` cells (20 by default, about 7200 elements),
 //! each step one point moved, the whole payload written as the bench
 //! writes it and the step closed. Prints the heap the history keeps per
-//! step against the payload's JSON text, and the time to close a step,
-//! undo one and redo one.
+//! step against the payload's JSON text, and what it holds more right
+//! after a step closes, while its payload is being packed; the time to
+//! close a step, undo one and redo one. With `here` as a third argument
+//! the payloads are packed as each step closes, on this thread.
 //!
-//! `cargo run --release -p wb_sketch --example history_bench -- [cells] [steps]`
+//! `cargo run --release -p wb_sketch --example history_bench -- [cells] [steps] [here]`
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -119,6 +121,7 @@ fn main() {
         .add_feature_in_body(feature, "sketch".into(), None)
         .expect("sketch feature");
     let mut journal = OpJournal::new(steps + 1);
+    journal.pack_on_this_thread(std::env::args().nth(3).as_deref() == Some("here"));
     journal.note(&mut doc);
     sent(&mut doc);
 
@@ -136,6 +139,9 @@ fn main() {
         journal.note(&mut doc);
         closes.push(start.elapsed());
     }
+    // Steps whose packing has not landed still hold their payloads.
+    let unsettled = LIVE.load(Ordering::Relaxed) - before;
+    journal.settle();
     let held = LIVE.load(Ordering::Relaxed) - before;
     let rounds = steps.min(20);
     let mut undos = Vec::new();
@@ -161,6 +167,10 @@ fn main() {
         "history held per step: {:.2} MB ({:.2}x the text)",
         per_step / 1e6,
         per_step / text as f64
+    );
+    println!(
+        "right after the last close: {:.2} MB more",
+        (unsettled - held) as f64 / 1e6
     );
     for (label, times) in [("close", closes), ("undo", undos), ("redo", redos)] {
         let (min, mid, max) = spread(times);
