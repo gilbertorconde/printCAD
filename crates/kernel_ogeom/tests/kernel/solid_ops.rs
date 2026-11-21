@@ -557,7 +557,6 @@ fn a_refused_fillet_names_its_failing_edge() {
 }
 
 #[test]
-#[ignore = "kernel: Point corners refuse the step's edges each alone (ogeom-rs#1161), and a facet chamfer wider than the wall under it builds"]
 fn a_refused_chamfer_names_its_failing_edge() {
     names_its_failing_edge(&|size| SolidOp::Chamfer {
         spec: ChamferSpec::EqualDistance { distance: size },

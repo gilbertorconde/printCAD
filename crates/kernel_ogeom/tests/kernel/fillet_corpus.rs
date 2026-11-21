@@ -564,24 +564,10 @@ fn dressed(
 
 /// The cases the kernel builds to the wrong volume, and why; held to it
 /// apart by [`the_cases_the_kernel_owes_come_to_their_volume`].
-const OWED: [(&str, &str); 4] = [
-    (
-        "tangent chain stops at a 4 degree kink",
-        "the round runs on past the kink",
-    ),
-    (
-        "boss foot chamfer",
-        "a concave rim's bevel mitred to a point is refused",
-    ),
-    (
-        "lever pocket floor chamfer",
-        "a concave tangent loop's bevel is refused",
-    ),
-    (
-        "kidney pocket floor chamfer",
-        "a concave tangent loop's bevel is refused",
-    ),
-];
+const OWED: [(&str, &str); 1] = [(
+    "tangent chain stops at a 4 degree kink",
+    "the round runs on past the kink",
+)];
 
 #[test]
 fn every_case_comes_to_its_volume() {
@@ -590,7 +576,7 @@ fn every_case_comes_to_its_volume() {
 }
 
 #[test]
-#[ignore = "kernel: a tangent fillet chain runs past a 4 degree kink, and concave rims and loops bevel no more (ogeom-rs#1161)"]
+#[ignore = "kernel: a tangent fillet chain runs past a 4 degree kink (ogeom-rs#1161)"]
 fn the_cases_the_kernel_owes_come_to_their_volume() {
     let wrong = wrong_cases(|name| OWED.iter().any(|(owed, _)| *owed == name));
     assert!(wrong.is_empty(), "{wrong:#?}");
@@ -730,7 +716,6 @@ fn a_kidney_pocket_floor_rounds_in_time() {
 /// A cone's rims, at its foot on the plate and at its top, chamfer as they
 /// round.
 #[test]
-#[ignore = "kernel: a cone's rims refuse a bevel mitred to a point (ogeom-rs#1161)"]
 fn a_cones_rims_chamfer() {
     for point in [[0.0, -6.0, 5.0], [0.0, -2.0, 13.0]] {
         let built = dressed(
@@ -748,7 +733,6 @@ fn a_cones_rims_chamfer() {
 /// The four concave edges where the slanted bar meets the flanges round
 /// and chamfer, adding each edge's section along its 10 mm.
 #[test]
-#[ignore = "kernel: concave straight edges between planes bevel no more (ogeom-rs#1161)"]
 fn a_slanted_bar_rounds_into_its_flanges() {
     let feet = || {
         EdgeSelection::Near(vec![
@@ -994,7 +978,6 @@ fn a_stepped_block_chamfers_on_every_edge() {
 /// The same part built as a plate with the block padded on chamfers to the
 /// same solid as the one-piece step.
 #[test]
-#[ignore = "kernel: concave chamfers between planes are refused (ogeom-rs#1161)"]
 fn a_padded_step_chamfers_as_the_one_piece_step_does() {
     let at = |fused: bool| {
         let mut chain = stepped(fused);
