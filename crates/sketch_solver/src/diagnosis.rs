@@ -80,6 +80,19 @@ pub fn diagnose_measured(
     solved: &Problem,
     dof: i32,
 ) -> Diagnosis {
+    diagnose_compiled(problem, outcome, solved, dof, None)
+}
+
+/// [`diagnose_measured`], given the system it compiles where the caller
+/// keeps it: `compile_system(problem, None, false)` when `outcome` did
+/// not converge, else `compile_system(solved, None, false)`.
+pub fn diagnose_compiled(
+    problem: &Problem,
+    outcome: SolveOutcome,
+    solved: &Problem,
+    dof: i32,
+    full: Option<&crate::compile::System>,
+) -> Diagnosis {
     if problem.constraints.len() > problem.settings.diagnosis_limit {
         return Diagnosis {
             dof,
@@ -98,11 +111,18 @@ pub fn diagnose_measured(
             // system compiled once with its rows left out where that is
             // all leaving it out changes, as for redundancy below, its
             // element maps kept for the solve's continuation.
-            let full = compile_system(problem, None, false);
-            let local = Local::of(problem, &full);
+            let owned;
+            let full = match full {
+                Some(full) => full,
+                None => {
+                    owned = compile_system(problem, None, false);
+                    &owned
+                }
+            };
+            let local = Local::of(problem, full);
             for c in &problem.constraints {
                 let system = if local.holds(c) {
-                    let mut system = without(&full, c.id);
+                    let mut system = without(full, c.id);
                     system.point_vars.clone_from(&full.point_vars);
                     system.radius_vars.clone_from(&full.radius_vars);
                     system.shape_vars.clone_from(&full.shape_vars);
@@ -122,13 +142,20 @@ pub fn diagnose_measured(
             }
         }
         SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve => {
-            let full = compile_system(solved, None, false);
+            let owned;
+            let full = match full {
+                Some(full) => full,
+                None => {
+                    owned = compile_system(solved, None, false);
+                    &owned
+                }
+            };
             if !full.specs.is_empty() && !full.vars.is_empty() {
-                let full_rank = rank(&full, problem.settings.rank_tolerance);
+                let full_rank = rank(full, problem.settings.rank_tolerance);
                 // Fewer rows than a rank as large as the row count cannot
                 // keep that rank: no rank to work out for those.
                 let row_rank = full_rank == full.residual_len;
-                let local = Local::of(solved, &full);
+                let local = Local::of(solved, full);
                 for c in &problem.constraints {
                     let system = if local.holds(c) {
                         let own = (full.origins.iter())
@@ -137,7 +164,7 @@ pub fn diagnose_measured(
                         if own == 0 || row_rank {
                             continue;
                         }
-                        without(&full, c.id)
+                        without(full, c.id)
                     } else {
                         compile_system(solved, Some(c.id), false)
                     };

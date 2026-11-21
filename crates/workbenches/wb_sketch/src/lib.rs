@@ -574,6 +574,10 @@ struct Tab {
     /// its locked elements, with the content number of the sketch it was
     /// solved from.
     settled: std::cell::RefCell<Option<(u64, std::sync::Arc<solver::Settled>)>>,
+    /// The solver's problem of the open sketch, with the content number of
+    /// the sketch it was prepared from: its settling, locked elements and
+    /// diagnosis share it. Kept for a sketch small enough to diagnose.
+    prepared: std::cell::RefCell<Option<(u64, std::sync::Arc<solver::Prepared>)>>,
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
     sketch_picker: Option<SketchPicker>,
@@ -883,21 +887,27 @@ impl SketchWorkbench {
     }
 
     /// [`Self::store_sketch`] of a sketch [`Self::solve`] has just answered,
-    /// `dof` the freedom that solve measured: kept as the verdict's
-    /// freedom for the content the stored sketch is numbered, which a read
-    /// of it shares while it reads back the same.
+    /// `measured` the freedom that solve measured and the problem it
+    /// measured it on: kept as the verdict's freedom, and the problem for
+    /// a sketch small enough to diagnose, for the content the stored
+    /// sketch is numbered, which a read of it shares while it reads back
+    /// the same.
     fn store_solved(
         &self,
         ctx: &mut WorkbenchRuntimeContext,
         feature: SketchFeature,
-        dof: Option<i32>,
+        measured: Option<solver::Measured>,
     ) -> bool {
         let Some(stored) = self.write_sketch(ctx, feature) else {
             return false;
         };
-        if let Some(dof) = dof {
+        if let Some(measured) = measured {
             let shape = self.frame.content(&stored).shape;
-            *self.tab.freedom.borrow_mut() = Some((shape, dof));
+            *self.tab.freedom.borrow_mut() = Some((shape, measured.dof));
+            if solver::diagnosable(&stored.sketch) {
+                let prepared = std::sync::Arc::new(measured.prepared);
+                *self.tab.prepared.borrow_mut() = Some((shape, prepared));
+            }
         }
         true
     }
@@ -1003,7 +1013,7 @@ impl SketchWorkbench {
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         feature: &mut SketchFeature,
-    ) -> Option<i32> {
+    ) -> Option<solver::Measured> {
         // An edit may have taken selected items away: they leave the
         // selection with it, so Delete and the tools act on what is there.
         self.tab
@@ -1027,8 +1037,8 @@ impl SketchWorkbench {
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         feature: &mut SketchFeature,
-    ) -> Option<i32> {
-        let (outcome, dof) = solver::solve_measured(&mut feature.sketch);
+    ) -> Option<solver::Measured> {
+        let (outcome, dof) = solver::solve_measuring(&mut feature.sketch);
         self.tab.unsolved_edits = false;
         self.tab.last_solve = Some(outcome);
         self.tab.last_diagnosis = None; // recomputed lazily by the panel

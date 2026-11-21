@@ -1148,6 +1148,111 @@ fn constraint_count_is_the_prepared_problems() {
     }
 }
 
+/// A compiled system's every field, floats by their bits.
+fn system_print(sys: &System) -> String {
+    let vars: Vec<u64> = sys.vars.iter().map(|v| v.to_bits()).collect();
+    format!(
+        "{vars:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {}",
+        sys.free,
+        sys.point_vars,
+        sys.radius_vars,
+        sys.shape_vars,
+        sys.derived_foci,
+        sys.specs,
+        sys.origins,
+        sys.residual_len
+    )
+}
+
+/// One prepared problem shared by a sketch's freedom, settling, locked
+/// elements and diagnosis answers as each worked out on its own: the
+/// system compiled for rank stands in for the plain one only where it is
+/// the same, and a solve hands over the problem of the sketch it leaves.
+#[test]
+fn a_shared_problem_answers_as_each_prepared_alone() {
+    let mut sketches = varied_cases();
+    // Arcs and nothing constraining them: rank's system has their
+    // equations, the plain one none.
+    let mut loose = Sketch::new("loose arc");
+    let c = point(&mut loose, 0.0, 0.0);
+    let s = point(&mut loose, 2.0, 0.0);
+    let e = point(&mut loose, 0.0, 2.0);
+    loose.add_geometry(GeometryElement::Arc(Arc {
+        id: Uuid::new_v4(),
+        center: c,
+        start: s,
+        end: e,
+        radius: 2.0,
+    }));
+    sketches.push(loose);
+    let (mut same, mut apart) = (0, 0);
+    for sketch in sketches {
+        let name = sketch.name.clone();
+        let problem = adapter::prepare(&sketch, &[]);
+        let prepared = Prepared::of(&sketch);
+        let rank = prepared.rank();
+        let plain = sketch_solver::compile::compile_system(&problem, None, false);
+        if rank.plain {
+            assert_eq!(system_print(&rank.system), system_print(&plain), "{name}");
+            same += 1;
+        } else if system_print(&rank.system) != system_print(&plain) {
+            apart += 1;
+        }
+        let dof = sketch_solver::freedom::estimate(&problem).degrees;
+        assert_eq!(prepared.dof(), dof, "{name}");
+        let shared = settle_with(&sketch, Some(&prepared));
+        let alone = settle(&sketch);
+        assert_eq!(shared.outcome, alone.outcome, "{name}");
+        assert_eq!(
+            format!("{:?}", shared.sketch),
+            format!("{:?}", alone.sketch)
+        );
+        // The diagnosis as each part prepared and compiled its own.
+        let expected = (problem.constraints.len() <= problem.settings.diagnosis_limit
+            && sketch.soft.is_empty())
+        .then(|| {
+            let mut probe = settle(&sketch).sketch;
+            crate::spline::refit_splines(&mut probe);
+            crate::text::refresh(&mut probe);
+            let solved = adapter::prepare(&probe, &[]);
+            let d = sketch_solver::diagnosis::diagnose_measured(
+                &problem,
+                to_core(alone.outcome),
+                &solved,
+                dof,
+            );
+            let ids = |v: Vec<sketch_solver::problem::ConstraintId>| {
+                v.into_iter().map(|id| Uuid::from_u128(id.0)).collect()
+            };
+            Diagnosis {
+                dof: d.dof,
+                analyzed: d.analyzed,
+                redundant: ids(d.redundant),
+                conflicting: ids(d.conflicting),
+            }
+        });
+        let diagnosis = diagnose_with(&sketch, Some(&shared), Some(dof), Some(&prepared));
+        if let Some(expected) = expected {
+            assert_eq!(diagnosis, expected, "{name}");
+        }
+        assert_eq!(diagnosis, diagnose(&sketch), "{name}");
+        assert_eq!(
+            locked_elements(&sketch, Some(&shared)),
+            locked_elements(&sketch, None),
+            "{name}"
+        );
+        let mut solved = sketch.clone();
+        if let (_, Some(measured)) = solve_measuring(&mut solved) {
+            assert_eq!(
+                format!("{:?}", measured.prepared.problem),
+                format!("{:?}", adapter::prepare(&solved, &[])),
+                "{name}"
+            );
+        }
+    }
+    assert!(same > 0 && apart > 0, "{same} {apart}");
+}
+
 #[test]
 fn solved_fits_skip_answers_as_the_full_scan() {
     let sketches = varied_cases();

@@ -85,9 +85,26 @@ impl SketchWorkbench {
         {
             return settled.clone();
         }
-        let settled = Arc::new(solver::settle(&feature.sketch));
+        let prepared = self.prepared(feature);
+        let settled = Arc::new(solver::settle_with(&feature.sketch, Some(&prepared)));
         *self.tab.settled.borrow_mut() = Some((shape, settled.clone()));
         settled
+    }
+
+    /// [`solver::Prepared::of`] `feature`'s sketch, prepared again only
+    /// when its content number differs from the one the kept problem was
+    /// prepared from; a solve hands over the problem it measured the
+    /// sketch it stored on.
+    fn prepared(&self, feature: &Arc<SketchFeature>) -> Arc<solver::Prepared> {
+        let shape = self.frame.content(feature).shape;
+        if let Some((at, prepared)) = self.tab.prepared.borrow().as_ref()
+            && *at == shape
+        {
+            return prepared.clone();
+        }
+        let prepared = Arc::new(solver::Prepared::of(&feature.sketch));
+        *self.tab.prepared.borrow_mut() = Some((shape, prepared.clone()));
+        prepared
     }
 
     /// [`solver::dof_estimate`] of `feature`'s sketch, worked out again
@@ -103,7 +120,11 @@ impl SketchWorkbench {
         {
             return *dof;
         }
-        let dof = solver::dof_estimate(&feature.sketch);
+        let dof = if solver::diagnosable(&feature.sketch) {
+            self.prepared(feature).dof()
+        } else {
+            solver::dof_estimate(&feature.sketch)
+        };
         *self.tab.freedom.borrow_mut() = Some((shape, dof));
         dof
     }
@@ -116,7 +137,8 @@ impl SketchWorkbench {
         if solver::diagnosable(sketch) {
             let settled = (sketch.soft.is_empty()).then(|| self.settled(feature));
             let dof = self.freedom(feature);
-            return solver::diagnose_with(sketch, settled.as_deref(), Some(dof));
+            let prepared = self.prepared(feature);
+            return solver::diagnose_with(sketch, settled.as_deref(), Some(dof), Some(&prepared));
         }
         solver::Diagnosis {
             dof: self.freedom(feature),
@@ -295,9 +317,14 @@ mod tests {
         let dof = wb.solve_now(&mut ctx, &mut feature);
         wb.store_solved(&mut ctx, feature, dof);
         let kept = (*wb.tab.freedom.borrow()).unwrap();
+        let stored = stored_sketch(&doc, id).unwrap().sketch;
+        assert_eq!(kept.1, solver::dof_estimate(&stored));
+        // So is the problem it measured, as the stored sketch prepares.
+        let prepared = wb.tab.prepared.borrow().as_ref().unwrap().clone();
+        assert_eq!(prepared.0, kept.0);
         assert_eq!(
-            kept.1,
-            solver::dof_estimate(&stored_sketch(&doc, id).unwrap().sketch)
+            format!("{:?}", prepared.1.problem()),
+            format!("{:?}", solver::Prepared::of(&stored).problem())
         );
         wb.tab.freedom.borrow_mut().as_mut().unwrap().1 = -7;
         assert_eq!(frame(&mut doc, &mut wb, 480.0), -7);
@@ -425,6 +452,9 @@ mod tests {
             assert_eq!(wb.freedom(shown), -7);
             assert!(!wb.diagnose(shown).conflicting.is_empty());
             assert!(wb.locked_elements(shown).contains(&nil));
+            let planted = Arc::new(solver::Prepared::of(&Sketch::new("planted")));
+            wb.tab.prepared.borrow_mut().as_mut().unwrap().1 = planted.clone();
+            assert!(Arc::ptr_eq(&wb.prepared(shown), &planted));
         };
         let fresh = |wb: &SketchWorkbench, shown: &Arc<SketchFeature>, what: &str| {
             let sketch = &shown.sketch;

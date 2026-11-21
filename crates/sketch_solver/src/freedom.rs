@@ -18,7 +18,12 @@ pub fn analyze(problem: &Problem) -> Result<Freedom, crate::input::InputError> {
 }
 
 pub fn estimate(problem: &Problem) -> Freedom {
-    let sys = compile_system(problem, None, true);
+    estimate_in(problem, &compile_system(problem, None, true))
+}
+
+/// [`estimate`] from `sys`, `problem` compiled for rank
+/// ([`crate::compile::compile_for_rank`]).
+pub fn estimate_in(problem: &Problem, sys: &crate::compile::System) -> Freedom {
     let unsolved_shape = problem
         .geometry
         .iter()
@@ -39,7 +44,7 @@ pub fn estimate(problem: &Problem) -> Freedom {
     let rank = if sys.specs.is_empty() || sys.free.is_empty() {
         0
     } else {
-        crate::sparse::rank(&sys, problem.settings.rank_tolerance)
+        crate::sparse::rank(sys, problem.settings.rank_tolerance)
     };
     Freedom {
         free_variables,
@@ -65,13 +70,18 @@ pub struct Locked {
 }
 
 pub fn locked(problem: &Problem) -> Locked {
-    let sys = compile_system(problem, None, true);
+    locked_in(problem, &compile_system(problem, None, true))
+}
+
+/// [`locked`] from `sys`, `problem` compiled for rank
+/// ([`crate::compile::compile_for_rank`]).
+pub fn locked_in(problem: &Problem, sys: &crate::compile::System) -> Locked {
     let mut var_locked = vec![true; sys.vars.len()];
     for &j in &sys.free {
         var_locked[j] = false;
     }
     if !sys.free.is_empty() && !sys.specs.is_empty() {
-        let columns = crate::sparse::determined(&sys, problem.settings.rank_tolerance);
+        let columns = crate::sparse::determined(sys, problem.settings.rank_tolerance);
         for (&j, held) in sys.free.iter().zip(columns) {
             var_locked[j] = held;
         }
