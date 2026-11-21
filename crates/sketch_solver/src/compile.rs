@@ -134,6 +134,38 @@ pub fn compile_system(
     exclude: Option<ConstraintId>,
     arcs_always: bool,
 ) -> System {
+    compile_counting(problem, exclude, arcs_always).0
+}
+
+/// A problem's system compiled for rank (`arcs_always` set), which a
+/// freedom estimate, the locked elements and a diagnosis read.
+#[doc(hidden)]
+pub struct RankSystem {
+    pub system: System,
+    /// The system compiled without `arcs_always` is this same one: some
+    /// constraint brings an equation, and the arcs' own equations join
+    /// either way.
+    pub plain: bool,
+}
+
+/// [`compile_system`] of `problem` for rank, saying whether it is also
+/// the plain compilation.
+#[doc(hidden)]
+pub fn compile_for_rank(problem: &Problem) -> RankSystem {
+    let (system, constrained) = compile_counting(problem, None, true);
+    RankSystem {
+        system,
+        plain: constrained,
+    }
+}
+
+/// [`compile_system`], and whether the constraints brought any equation
+/// before the arcs' own: when they did, `arcs_always` changes nothing.
+fn compile_counting(
+    problem: &Problem,
+    exclude: Option<ConstraintId>,
+    arcs_always: bool,
+) -> (System, bool) {
     let sketch = &Sketch::new(problem);
     let mut vars = Vec::new();
     let mut point_vars = IdMap::default();
@@ -1135,7 +1167,8 @@ pub fn compile_system(
     // never runs, so gating on "at least one constraint exists" costs nothing.
     // An arc a group holds keeps its ends on it with the rest of its shape.
     let rigid = rigid_curves(sketch, &skip);
-    if arcs_always || !specs.is_empty() {
+    let constrained = !specs.is_empty();
+    if arcs_always || constrained {
         for element in &sketch.geometry {
             if let GeometryElement::Arc(arc) = element
                 && !rigid.contains(&arc.id.into())
@@ -1181,7 +1214,7 @@ pub fn compile_system(
         held[i] = true;
     }
     let free: Vec<usize> = (0..vars.len()).filter(|&i| !held[i]).collect();
-    System {
+    let system = System {
         origins,
         settings: sketch.settings,
         vars,
@@ -1192,7 +1225,8 @@ pub fn compile_system(
         derived_foci,
         specs,
         residual_len,
-    }
+    };
+    (system, constrained)
 }
 
 /// Fit points at their fixed parameters, so the interpolation that stores
