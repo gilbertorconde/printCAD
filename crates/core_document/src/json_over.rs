@@ -22,6 +22,67 @@ pub fn write_over<T: Serialize + ?Sized>(target: &mut Value, value: &T) -> Resul
     Ok(())
 }
 
+/// Each item of a list as the bytes of everything it serializes
+/// (MessagePack, field names and bit patterns included, as a JSON writer
+/// is handed them): two items with the same bytes serialize to the same
+/// JSON.
+#[derive(Debug, Default)]
+pub struct Prints {
+    bytes: Vec<u8>,
+    ends: Vec<usize>,
+}
+
+impl Prints {
+    /// The prints of `items`; none at all when an item does not
+    /// serialize.
+    pub fn of<T: Serialize>(items: &[T]) -> Self {
+        let mut bytes = Vec::new();
+        let mut ends = Vec::with_capacity(items.len());
+        for item in items {
+            let mut writer = rmp_serde::Serializer::new(&mut bytes)
+                .with_struct_map()
+                .with_human_readable();
+            if item.serialize(&mut writer).is_err() {
+                return Self::default();
+            }
+            ends.push(bytes.len());
+        }
+        Self { bytes, ends }
+    }
+
+    fn get(&self, at: usize) -> Option<&[u8]> {
+        let end = *self.ends.get(at)?;
+        let start = at.checked_sub(1).map_or(0, |before| self.ends[before]);
+        Some(&self.bytes[start..end])
+    }
+}
+
+/// `items` written over `target`, a list written from the items `then`
+/// prints, `now` printing `items`: an item printed alike in both keeps
+/// its node as it stands, the rest are written over as [`write_over`]
+/// writes them. `target` then holds exactly what
+/// `serde_json::to_value(items)` answers.
+pub fn write_items_over<T: Serialize>(
+    target: &mut Value,
+    items: &[T],
+    then: &Prints,
+    now: &Prints,
+) -> Result<(), Error> {
+    let list = array(target);
+    list.truncate(items.len());
+    for (at, item) in items.iter().enumerate() {
+        match list.get_mut(at) {
+            Some(node) => {
+                if then.get(at).is_none() || then.get(at) != now.get(at) {
+                    write_over(node, item)?;
+                }
+            }
+            None => list.push(serde_json::to_value(item)?),
+        }
+    }
+    Ok(())
+}
+
 /// Writes one value over the node it holds.
 struct Over<'a>(&'a mut Value);
 

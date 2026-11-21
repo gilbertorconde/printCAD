@@ -177,19 +177,26 @@ impl SketchWorkbench {
         kept: Vec<Item>,
     ) -> Vec<Item> {
         let sketch = &feature.sketch;
+        let pal = ctx.sketch_palette;
+        let style = Some((pal, sketch.is_fully_constrained));
         let mut kept = KeptRows {
-            rows: (std::mem::take(&mut self.tab.panel.element_keys).into_iter())
-                .zip(kept)
-                .map(|(key, item)| key.map(|key| (key, item)))
-                .collect(),
+            keys: std::mem::take(&mut self.tab.panel.element_keys),
+            items: kept,
             next: 0,
             index: None,
         };
+        if std::mem::replace(&mut self.tab.panel.element_style, style) != style {
+            kept.keys.clear();
+        }
         self.tab.panel.elements.clear();
         let mut items = Vec::new();
         if sketch.geometry.is_empty() {
             return items;
         }
+        let rows_at_most = sketch.geometry.len() + 3;
+        items.reserve(rows_at_most);
+        self.tab.panel.element_keys.reserve(rows_at_most);
+        self.tab.panel.elements.reserve(rows_at_most);
         let text = self.tab.constraint_filter.trim().to_lowercase();
         let named = |name: &str| text.is_empty() || name.to_lowercase().contains(&text);
         // The reference geometry every sketch has: pickable from here as
@@ -228,7 +235,6 @@ impl SketchWorkbench {
                 });
             }
         }
-        let pal = ctx.sketch_palette;
         let diagnosis = self.tab.last_diagnosis.clone().unwrap_or_default();
         let formulas = Formulas::of(ctx.document, self.tab.active_sketch_id);
         // Projected elements whose edge, face, element or datum is gone.
@@ -278,9 +284,7 @@ impl SketchWorkbench {
                     external.contains(&id),
                     sketch.external.get(&id).map(|source| source.defining),
                     sketch.is_construction(id),
-                    sketch.is_fully_constrained,
                     locked.contains(&id),
-                    pal,
                 ),
                 lit: (
                     selected,
@@ -789,7 +793,7 @@ mod kept_lists {
         let removed = edit(|sketch, [lone, _, _]| {
             sketch.remove_geometry_cascade(&[lone]);
         });
-        let changes: [(&str, &Change); 10] = [
+        let changes: [(&str, &Change); 12] = [
             ("a selection", &move |wb, _| {
                 wb.tab.selected.insert(line);
             }),
@@ -807,6 +811,15 @@ mod kept_lists {
             ("an edit", &|wb, ctx| {
                 let mut feature = wb.get_active_sketch(ctx).unwrap();
                 feature.sketch.constraints.clear();
+                wb.store_sketch(ctx, feature);
+            }),
+            // What every row is drawn in.
+            ("the palette changed", &|_, ctx| {
+                ctx.sketch_palette.geometry = [0.1, 0.9, 0.2];
+            }),
+            ("the sketch fully constrained", &|wb, ctx| {
+                let mut feature = wb.get_active_sketch(ctx).unwrap();
+                feature.sketch.is_fully_constrained = true;
                 wb.store_sketch(ctx, feature);
             }),
             ("a filter", &|wb, _| {

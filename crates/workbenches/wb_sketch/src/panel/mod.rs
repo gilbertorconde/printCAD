@@ -75,6 +75,9 @@ pub(crate) struct PanelState {
     /// their order (none for the reference rows): a row whose key holds
     /// is taken over when the lists are declared again.
     element_keys: Vec<Option<ElementRowKey>>,
+    /// What every key of `element_keys` was declared under: the palette
+    /// and whether the sketch was fully constrained.
+    element_style: Option<(core_document::SketchPalette, bool)>,
     /// Where the lists stand among the widgets of the panel being drawn.
     list_range: std::ops::Range<usize>,
     /// The font choice of the text tool and of the selected text, while
@@ -117,26 +120,18 @@ struct ElementRow {
     badges: Vec<Uuid>,
 }
 
-/// Everything an element's row is declared from: the element, a line's
-/// ends (its length), its number among its kind, how it is drawn
-/// (projected, itself or as a projected curve's point, and whether as
-/// defining, construction, locked, the palette's colours and whether
-/// the sketch is fully constrained) and lit (selected, related, hovered),
-/// whether it is lost, and each constraint badge's kind, name, light
-/// and tint.
+/// Everything an element's row is declared from beyond what every row
+/// shares (`PanelState::element_style`): the element, a line's ends (its
+/// length), its number among its kind, how it is drawn (projected,
+/// itself or as a projected curve's point, and whether as defining,
+/// construction or locked) and lit (selected, related, hovered), whether
+/// it is lost, and each constraint badge's kind, name, light and tint.
 #[derive(PartialEq)]
 struct ElementRowKey {
     geom: sketch::GeometryElement,
     ends: Option<[sketch::Vec2D; 2]>,
     ordinal: Option<usize>,
-    style: (
-        bool,
-        Option<bool>,
-        bool,
-        bool,
-        bool,
-        core_document::SketchPalette,
-    ),
+    style: (bool, Option<bool>, bool, bool),
     lit: (bool, bool, bool, bool),
     badges: Vec<BadgeKey>,
 }
@@ -145,27 +140,30 @@ struct ElementRowKey {
 /// taken once: the next in order is looked at first, as rows mostly
 /// stand where they stood, and the rest by element.
 struct KeptRows {
-    rows: Vec<Option<(ElementRowKey, Item)>>,
+    keys: Vec<Option<ElementRowKey>>,
+    items: Vec<Item>,
     next: usize,
     index: Option<std::collections::HashMap<Uuid, usize>>,
 }
 
 impl KeptRows {
     fn take(&mut self, id: Uuid) -> Option<(ElementRowKey, Item)> {
-        let at = match self.rows.get(self.next) {
-            Some(Some((key, _))) if key.geom.id() == id => self.next,
+        let at = match self.keys.get(self.next) {
+            Some(Some(key)) if key.geom.id() == id => self.next,
             _ => {
-                let rows = &self.rows;
+                let keys = &self.keys;
                 let index = self.index.get_or_insert_with(|| {
-                    (rows.iter().enumerate())
-                        .filter_map(|(i, row)| row.as_ref().map(|(key, _)| (key.geom.id(), i)))
+                    (keys.iter().enumerate())
+                        .filter_map(|(i, key)| key.as_ref().map(|key| (key.geom.id(), i)))
                         .collect()
                 });
                 *index.get(&id)?
             }
         };
         self.next = at + 1;
-        self.rows[at].take()
+        let item = self.items.get_mut(at)?;
+        let key = self.keys[at].take()?;
+        Some((key, std::mem::take(item)))
     }
 }
 
