@@ -468,7 +468,6 @@ fn export_mesh(
                 let base = soup.positions.len() as u32;
                 soup.positions.extend_from_slice(&mesh.positions);
                 soup.normals.extend_from_slice(&mesh.normals);
-                soup.parameters.extend_from_slice(&mesh.parameters);
                 soup.triangles
                     .extend(mesh.triangles.iter().map(|t| t.map(|i| i + base)));
             }
@@ -479,11 +478,12 @@ fn export_mesh(
             let objects: Vec<ogeom::io::threemf::Object<'_>> = meshes
                 .iter()
                 .map(|(name, mesh)| ogeom::io::threemf::Object {
-                    mesh,
                     name: Some(name.clone()),
+                    ..ogeom::io::threemf::Object::new(mesh)
                 })
                 .collect();
             ogeom::io::threemf::write_3mf(&objects)
+                .map_err(|e| KernelError::Other(anyhow::anyhow!("3MF writing failed: {e}")))?
         }
     };
     Ok(Exported {
@@ -545,13 +545,11 @@ fn welded(mesh: &TriMesh) -> KernelResult<Triangulation> {
             }
         })
         .collect();
-    let count = positions.len();
     Ok(Triangulation {
         positions,
         normals,
-        parameters: vec![(0.0, 0.0); count],
         triangles,
-        deflection_met: true,
+        ..Triangulation::new()
     })
 }
 

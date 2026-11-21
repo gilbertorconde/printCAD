@@ -34,7 +34,6 @@ fn cube(skip_one: bool) -> Triangulation {
             for p in tri {
                 mesh.positions.push(p);
                 mesh.normals.push(Vector::new(n.x, n.y, n.z));
-                mesh.parameters.push((0.0, 0.0));
             }
             mesh.triangles.push([base, base + 1, base + 2]);
         }
@@ -122,9 +121,10 @@ fn an_obj_imports_as_one_mesh_body() {
 fn a_3mf_imports_one_body_per_build_item_with_its_name() {
     let mesh = cube(false);
     let bytes = ogeom::io::write_3mf(&[ogeom::io::threemf::Object {
-        mesh: &mesh,
         name: Some("Block".into()),
-    }]);
+        ..ogeom::io::threemf::Object::new(&mesh)
+    }])
+    .unwrap();
     let model = import(&staged("cube.3mf", &bytes));
     assert_eq!(model.bodies.len(), 1);
     assert_eq!(model.bodies[0].name.as_deref(), Some("Block"));
@@ -187,7 +187,6 @@ fn cylinder(radius: f64, height: f64, sides: usize) -> Triangulation {
         for p in tri {
             mesh.positions.push(p);
             mesh.normals.push(Vector::new(n.x, n.y, n.z));
-            mesh.parameters.push((0.0, 0.0));
         }
         mesh.triangles.push([base, base + 1, base + 2]);
     };

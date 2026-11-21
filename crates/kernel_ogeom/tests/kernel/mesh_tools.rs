@@ -67,7 +67,7 @@ fn built(mesh: &TriMesh, op: MeshOp) -> MeshChainAnswer {
 /// A 10 mm cube remeshed to 1 mm edges keeps its shape, its sharp edges
 /// and its volume, and most edges come out near 1 mm.
 #[test]
-#[ignore = "kernel: Editable has no isotropic remesh to an edge length (ogeom-rs#1186)"]
+#[ignore = "kernel: Editable::remesh is not wired in yet (ogeom-rs#1186)"]
 fn a_cube_remeshes_to_even_edges() {
     let answer = built(
         &cube([0.0; 3], [10.0; 3]),
@@ -94,7 +94,7 @@ fn a_cube_remeshes_to_even_edges() {
 /// A cube subdivided twice without smoothing is the same cube in sixteen
 /// times the triangles.
 #[test]
-#[ignore = "kernel: Editable has no subdivision (ogeom-rs#1186)"]
+#[ignore = "kernel: Editable::subdivide is not wired in yet (ogeom-rs#1186)"]
 fn a_cube_subdivides_flat_into_sixteen_times_the_triangles() {
     let answer = built(
         &cube([0.0; 3], [10.0; 3]),
@@ -123,7 +123,7 @@ fn two_cubes(apart: bool) -> TriMesh {
 /// The overlapping cubes cross each other, never themselves; cubes apart
 /// cross nothing.
 #[test]
-#[ignore = "kernel: no query for the triangles where a mesh crosses itself (ogeom-rs#1187)"]
+#[ignore = "kernel: mesh::self_intersections is not wired in yet (ogeom-rs#1187)"]
 fn overlapping_cubes_cross_and_cubes_apart_do_not() {
     let pairs = QUERIES.self_intersections(&two_cubes(false)).unwrap();
     assert!(!pairs.is_empty());
@@ -141,7 +141,7 @@ fn overlapping_cubes_cross_and_cubes_apart_do_not() {
 /// The overlapping cubes repaired are one closed solid of their union's
 /// volume that crosses nothing.
 #[test]
-#[ignore = "kernel: no repair of a mesh that crosses itself (ogeom-rs#1187)"]
+#[ignore = "kernel: mesh::resolve_self_intersections is not wired in yet (ogeom-rs#1187)"]
 fn overlapping_cubes_repair_into_their_union() {
     let answer = built(&two_cubes(false), MeshOp::RepairIntersections);
     assert_eq!(edges(&answer.mesh).1, 0, "closed");

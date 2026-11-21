@@ -371,10 +371,31 @@ fn mesh_faces(
             mesh.face_makers.push(names.maker_of(face_shape));
         }
 
-        for t in &tri.triangles {
-            mesh.indices.push(base + t[0]);
-            mesh.indices.push(base + t[1]);
-            mesh.indices.push(base + t[2]);
+        for (k, t) in tri.triangles.iter().enumerate() {
+            let corners = tri.triangle_normals(k);
+            for (j, v) in t.iter().enumerate() {
+                // A cone's tip or a sphere's pole is one vertex with a
+                // normal per corner: a corner whose normal is not its
+                // vertex's gets a vertex of its own, so the fan shades
+                // along each ruling.
+                let own = corners.map(|c| c[j]).filter(|n| {
+                    tri.normals
+                        .get(*v as usize)
+                        .is_some_and(|m| n.dot(*m) < 1.0 - 1e-9)
+                });
+                let index = match own {
+                    Some(n) => {
+                        let p = tri.positions[*v as usize];
+                        mesh.positions.push([p.x as f32, p.y as f32, p.z as f32]);
+                        mesh.normals.push([n.x as f32, n.y as f32, n.z as f32]);
+                        mesh.colors.push(color);
+                        vertex_face.push(face_id);
+                        mesh.positions.len() as u32 - 1
+                    }
+                    None => base + v,
+                };
+                mesh.indices.push(index);
+            }
             mesh.faces.push(face_id);
         }
     }

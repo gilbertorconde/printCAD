@@ -12,9 +12,9 @@ use kernel_api::{
 };
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
-    Blend, BlendRefusal, Chamfer, blend_edges, chamfer_edges_checked, chamfer_edges_cornered,
-    chamfer_edges_with, fillet_edge_distances, fillet_edges_corner, fillet_edges_corner_checked,
-    largest_chamfer_distance, largest_fillet_distances, largest_fillet_radius_all,
+    Blend, BlendRefusal, BlendSizing, Chamfer, blend_edges, blend_limit, chamfer_edges_checked,
+    chamfer_edges_cornered, chamfer_edges_with, fillet_edge_distances, fillet_edges_corner,
+    fillet_edges_corner_checked, largest_chamfer_distance, largest_fillet_radius_all,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -464,9 +464,14 @@ fn auto_round(
 /// How far a round's contact goes on `face`, then on the edge's other
 /// face, before running off it.
 fn side_limits(model: &Model, solid: &Shape, edge: &Shape, face: &Shape) -> [Option<f64>; 2] {
-    sides_reach(model, solid, |on_face, on_other, up_to| {
-        largest_fillet_distances(model, solid, edge, face, on_face, on_other, up_to, tol())
-    })
+    let round = |on_face, on_other| BlendSizing::RoundDistances {
+        edge,
+        face,
+        on_face,
+        on_other,
+        profile: ogeom::fillet::RoundProfile::Elliptical,
+    };
+    sides_reach(model, solid, [round(1.0, SLIVER), round(SLIVER, 1.0)])
 }
 
 /// How far a bevel's leg goes on `face`, then on the edge's other face,
@@ -477,37 +482,43 @@ fn chamfer_side_limits(
     edge: &Shape,
     face: &Shape,
 ) -> [Option<f64>; 2] {
-    sides_reach(model, solid, |on_face, on_other, up_to| {
-        let legs = Chamfer::Distances {
-            face: face.clone(),
-            on_face,
-            on_other,
-        };
-        largest_chamfer_distance(model, solid, edge, &legs, up_to, tol())
-    })
+    let legs = |on_face, on_other| Chamfer::Distances {
+        face: face.clone(),
+        on_face,
+        on_other,
+    };
+    let legs = [legs(1.0, SLIVER), legs(SLIVER, 1.0)];
+    sides_reach(
+        model,
+        solid,
+        legs.each_ref().map(|spec| BlendSizing::Chamfer {
+            edge,
+            spec,
+            corner: ogeom::fillet::ChamferCorner::Facet,
+        }),
+    )
 }
 
-/// Each face's own limit, as `reach` reads the largest common scale of
-/// two distances up to a bound: each read with the other face's distance
-/// kept at a sliver, so only its own face stops it. `None` where it runs
-/// on past the solid's size or the kernel cannot read it.
-fn sides_reach(
-    model: &Model,
-    solid: &Shape,
-    reach: impl Fn(f64, f64, f64) -> ogeom::core::OgeomResult<Option<f64>>,
-) -> [Option<f64>; 2] {
-    const SLIVER: f64 = 1e-5;
+/// The other face's distance while one face's own reach is read.
+const SLIVER: f64 = 1e-5;
+
+/// Each face's own reach, the scale of two distances at which a contact
+/// first leaves its face (the seat the kernel's limit reading starts
+/// from, not the size that builds: a bevel past its face rolls over as a
+/// notch and builds), `sizings` the two read with the other face's
+/// distance kept at a sliver, so only its own face stops it. `None` where
+/// it runs on past the solid's size or the kernel cannot read it.
+fn sides_reach(model: &Model, solid: &Shape, sizings: [BlendSizing<'_>; 2]) -> [Option<f64>; 2] {
     let Some(span) = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())
     else {
         return [None, None];
     };
-    let read = |on_face: f64, on_other: f64| {
-        reach(on_face, on_other, span)
+    sizings.map(|sizing| {
+        blend_limit(model, solid, &sizing, span, tol())
             .ok()
-            .flatten()
+            .and_then(|limit| limit.seat)
             .filter(|scale| *scale < span * (1.0 - 1e-9))
-    };
-    [read(1.0, SLIVER), read(SLIVER, 1.0)]
+    })
 }
 
 /// The faces beside a round's edges as its drag handles read them, at

@@ -126,10 +126,9 @@ pub(crate) fn write(mesh: &TriMesh, format: &str) -> Result<Vec<u8>, String> {
     let export = io::mesh_formats::ExportMesh::plain(&tri);
     match format.to_ascii_lowercase().as_str() {
         "stl" => io::stl::write(&tri, io::stl::Encoding::Binary).map_err(|e| e.to_string()),
-        "3mf" => Ok(io::threemf::write_3mf(&[io::threemf::Object {
-            mesh: &tri,
-            name: None,
-        }])),
+        "3mf" => {
+            io::threemf::write_3mf(&[io::threemf::Object::new(&tri)]).map_err(|e| e.to_string())
+        }
         "ply" => Ok(io::write_ply(&export).into_bytes()),
         "obj" => Ok(io::write_obj(&[export]).into_bytes()),
         _ => Err("the format is stl, 3mf, ply or obj".into()),

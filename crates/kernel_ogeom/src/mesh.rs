@@ -338,7 +338,6 @@ pub fn solid_of_mesh(
         .iter()
         .map(|n| Vector::new(f64::from(n[0]), f64::from(n[1]), f64::from(n[2])))
         .collect();
-    tri.parameters = vec![(0.0, 0.0); mesh.positions.len()];
     let tol = tess::tolerances();
     let mut model = Model::new();
     let options = MeshSolidOptions {
