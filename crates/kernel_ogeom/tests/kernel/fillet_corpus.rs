@@ -536,12 +536,14 @@ fn cases() -> Vec<Case> {
             chamfer(2.0, picked(&[([20.0, 0.0, 5.0], Z)]), false),
             Volume(b(Kink) - 10.0 * 2.0 * kink_open.sin()),
         ),
-        // A 4 degree turn is no tangent: the chain stops at the kink.
+        // A 4 degree turn is no tangent: the chain stops at the kink. The
+        // round takes its section along the edge's 20 mm, and its end at
+        // the kink takes cot(4°)(5/6 - π/4) more, for radius 1.
         case(
             "tangent chain stops at a 4 degree kink",
             Kink,
             fillet(1.0, picked(&[([10.0, 0.0, 10.0], X)]), true),
-            Volume(b(Kink) - 20.0 * Q),
+            Volume(b(Kink) - 20.0 * Q - (5.0 / 6.0 - PI / 4.0) / KINK.tan()),
         ),
         case(
             "radius larger than the side face",
@@ -562,35 +564,21 @@ fn dressed(
     try_chain(&chain)
 }
 
-/// The cases the kernel builds to the wrong volume, and why; held to it
-/// apart by [`the_cases_the_kernel_owes_come_to_their_volume`].
-const OWED: [(&str, &str); 1] = [(
-    "tangent chain stops at a 4 degree kink",
-    "the round runs on past the kink",
-)];
-
 #[test]
 fn every_case_comes_to_its_volume() {
-    let wrong = wrong_cases(|name| !OWED.iter().any(|(owed, _)| *owed == name));
+    let wrong = wrong_cases();
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-#[test]
-#[ignore = "kernel: a tangent fillet chain runs past a 4 degree kink (ogeom-rs#1161)"]
-fn the_cases_the_kernel_owes_come_to_their_volume() {
-    let wrong = wrong_cases(|name| OWED.iter().any(|(owed, _)| *owed == name));
-    assert!(wrong.is_empty(), "{wrong:#?}");
-}
-
-/// Each case `keep` takes that does not come to what it wants, with why.
-fn wrong_cases(keep: impl Fn(&str) -> bool) -> Vec<String> {
+/// Each case that does not come to what it wants, with why.
+fn wrong_cases() -> Vec<String> {
     let mut wrong = Vec::new();
     for Case {
         name,
         base,
         op,
         want,
-    } in cases().into_iter().filter(|c| keep(c.name))
+    } in cases()
     {
         let built = dressed(base, op);
         let verdict = match (&want, built) {

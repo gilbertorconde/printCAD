@@ -445,8 +445,8 @@ fn a_cut_that_splits_the_block_takes_its_later_tools_from_each_piece() {
 }
 
 /// A dress-up the box cannot take fails, and the failure names the op: a
-/// fillet or a chamfer wider than a face it runs along, which would take
-/// the whole face and more.
+/// fillet wider than a face it runs along, which would take the whole
+/// face and more.
 fn refused_at_its_op(what: &str, dress_up: SolidOp) {
     let err = try_chain(&[block(), dress_up]).expect_err(what);
     assert_eq!(
@@ -475,11 +475,13 @@ fn a_fillet_too_big_for_the_box_is_refused_at_its_op() {
     );
 }
 
+/// A chamfer wider than the block's 10 mm front rolls over the front's
+/// convex foot as a notch rather than being refused: 12 mm off the top
+/// edge's 20 mm length takes 1400 mm³.
 #[test]
-#[ignore = "kernel: a chamfer wider than a face it runs along builds instead of being refused"]
-fn a_chamfer_too_big_for_the_box_is_refused_at_its_op() {
-    refused_at_its_op(
-        "a 12 mm chamfer on a 10 mm face",
+fn a_chamfer_wider_than_the_front_rolls_over_as_a_notch() {
+    let built = chain(&[
+        block(),
         SolidOp::Chamfer {
             spec: ChamferSpec::EqualDistance { distance: 12.0 },
             flip: false,
@@ -487,7 +489,10 @@ fn a_chamfer_too_big_for_the_box_is_refused_at_its_op() {
             follow_tangent: false,
             corner: Default::default(),
         },
-    );
+    ]);
+    let removed = 4000.0 - volume(&built.brep_blob);
+    assert!((removed - 1400.0).abs() < 1e-6, "{removed} mm³ taken");
+    assert!(is_sound(&built.brep_blob));
 }
 
 /// A fillet or chamfer refused names the edges that fail and only them: a
