@@ -9848,11 +9848,11 @@ Notes:
 `pc.mesh.inspect`: Topology and volume.
 
 - `scan` (id, optional): The mesh body; the selected one
-- Returns {triangles, open_edges, volume, pieces, bounds = {min, max}}
+- Returns {triangles, open_edges, holes, closed, non_manifold, volume, pieces, bounds = {min, max}}
 
 Notes:
 
-- Of the mesh the body draws now, its history applied. A closed mesh has no open edges; its volume is positive when its faces point out.
+- Of the mesh the body draws now, its history applied, copies of one corner taken as one. `open_edges` counts triangle sides joined to no other (no triangle shares them, or the one that does runs the same way along them) and `holes` the loops they make; a mesh is `closed` when it has none. `non_manifold` counts corners where the mesh is not a surface: fans meeting at one point, or an edge more than two triangles use. The volume is positive when the faces point out. `pieces` counts what Split into bodies makes.
 
 ### project
 

@@ -476,3 +476,42 @@ mod heavy {
         );
     }
 }
+
+/// A closed box is closed and encloses its volume; one triangle taken out
+/// leaves a hole of three open sides; one turned over is a seam the faces
+/// beside it cannot cross; two boxes meeting at a corner are not a surface
+/// there.
+#[test]
+fn a_mesh_reads_its_holes_seams_and_corners() {
+    let health = |m: &TriMesh| QUERIES.mesh_health(m).expect("health");
+    let one = cube([0.0; 3], [1.0; 3]);
+    let read = health(&one);
+    assert!(
+        read.closed && read.open_edges == 0 && read.holes == 0,
+        "{read:?}"
+    );
+    assert_eq!((read.triangles, read.non_manifold), (12, 0));
+    assert!((read.volume - 1.0).abs() < 1e-12);
+
+    let mut open = one.clone();
+    open.indices.truncate(33);
+    let read = health(&open);
+    assert!(!read.closed, "{read:?}");
+    assert_eq!((read.open_edges, read.holes, read.non_manifold), (3, 1, 0));
+
+    let mut turned = one.clone();
+    turned.indices.swap(1, 2);
+    let read = health(&turned);
+    assert!(!read.closed && read.non_manifold > 0, "{read:?}");
+    assert_eq!(read.open_edges, 6, "both sides of each of its three edges");
+
+    let mut two = one.clone();
+    let other = cube([1.0; 3], [2.0; 3]);
+    let base = two.positions.len() as u32;
+    two.positions.extend(other.positions);
+    two.indices.extend(other.indices.iter().map(|i| i + base));
+    let read = health(&two);
+    assert!(read.closed, "{read:?}");
+    assert_eq!(read.non_manifold, 2, "the two copies of the shared corner");
+    assert!((read.volume - 2.0).abs() < 1e-12);
+}

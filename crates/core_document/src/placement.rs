@@ -107,7 +107,8 @@ impl BodyPlacement {
     }
 
     /// A copy of `mesh` moved by this placement: positions, normals and
-    /// the faces' surfaces. Indices, outlines and colours are unchanged.
+    /// the faces' surfaces and edges' curves. Indices, outlines and colours
+    /// are unchanged.
     pub fn mesh(&self, mesh: &TriMesh) -> TriMesh {
         let mut out = mesh.clone();
         for p in &mut out.positions {
@@ -118,6 +119,9 @@ impl BodyPlacement {
         }
         for surface in &mut out.face_surfaces {
             *surface = surface.moved(|p| self.point(p), |d| self.direction(d));
+        }
+        for curve in &mut out.edge_curves {
+            *curve = curve.moved(|p| self.point(p), |d| self.direction(d));
         }
         out
     }

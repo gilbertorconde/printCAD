@@ -1579,3 +1579,159 @@ fn a_shadow_fills_holes_narrower_than_asked() {
     };
     assert_eq!((loops(0.0), loops(1.0)), (2, 1));
 }
+
+/// `wire` on the XY plane padded 5 mm up.
+fn padded(wire: ProfileWire) -> kernel_api::SolidBuildResult {
+    chain(&[SolidOp::Sweep {
+        profile: Profile {
+            plane: xy_plane(),
+            wires: vec![wire],
+        },
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::Blind { distance: 5.0 },
+            second_side: None,
+            symmetric: false,
+            reversed: false,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op: BooleanOp::NewSolid,
+    }])
+}
+
+/// Whether every point the mesh draws edge `edge` through lies at height
+/// `z`.
+fn edge_at(mesh: &kernel_api::TriMesh, edge: u32, z: f32) -> bool {
+    mesh.edges
+        .chunks(2)
+        .zip(&mesh.edge_ids)
+        .filter(|(_, id)| **id == edge)
+        .flat_map(|(pair, _)| pair.iter().map(|&i| mesh.positions[i as usize]))
+        .all(|p| (p[2] - z).abs() < 1e-3)
+}
+
+/// The edges a fillet's tangent chain takes from a side of a padded
+/// rounded rectangle's top are its top outline, numbered as the drawn mesh
+/// numbers its edges; the corners where the sides go down stop it.
+#[test]
+fn a_tangent_chain_is_the_top_outline_of_a_rounded_box() {
+    let built = padded(rounded_rectangle(20.0, 10.0, 2.0));
+    let mesh = &built.mesh;
+    let start = *mesh
+        .edge_ids
+        .iter()
+        .find(|e| edge_at(mesh, **e, 5.0))
+        .expect("a top edge");
+    let chain = QUERIES.tangent_chain(&built.brep_blob, start).unwrap();
+    assert_eq!(chain[0], start, "the picked edge first");
+    assert_eq!(chain.len(), 8, "{chain:?}");
+    assert!(
+        chain.iter().all(|e| edge_at(mesh, *e, 5.0)),
+        "only the top loop"
+    );
+}
+
+/// Two sides meeting at a 10° kink are two chains, as a fillet takes them:
+/// the chain runs on only through a turn of a degree or less.
+#[test]
+fn a_tangent_chain_stops_at_a_slight_kink() {
+    let turn = 10f64.to_radians();
+    let built = padded(polygon(&[
+        [0.0, 0.0],
+        [10.0, 0.0],
+        [10.0 + 10.0 * turn.cos(), 10.0 * turn.sin()],
+        [10.0, 10.0],
+        [0.0, 10.0],
+    ]));
+    let mesh = &built.mesh;
+    let bottom_side = (0..mesh.edge_curves.len() as u32)
+        .find(|e| {
+            edge_at(mesh, *e, 5.0)
+                && mesh
+                    .edges
+                    .chunks(2)
+                    .zip(&mesh.edge_ids)
+                    .filter(|(_, id)| **id == *e)
+                    .all(|(pair, _)| {
+                        pair.iter()
+                            .all(|&i| mesh.positions[i as usize][1].abs() < 1e-4)
+                    })
+        })
+        .expect("the top edge along y = 0");
+    let chain = QUERIES
+        .tangent_chain(&built.brep_blob, bottom_side)
+        .unwrap();
+    assert_eq!(chain, [bottom_side]);
+}
+
+/// The drawn mesh carries each edge's exact curve: the rounded box's arcs
+/// are circles of their radius a quarter turn long, its sides lines of
+/// their length, where the drawn arcs' chords fall short.
+#[test]
+fn a_mesh_carries_its_edges_exact_curves() {
+    use kernel_api::EdgeKind;
+    let built = padded(rounded_rectangle(20.0, 10.0, 2.0));
+    let mesh = &built.mesh;
+    let mut ids = mesh.edge_ids.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(mesh.edge_curves.len(), *ids.last().unwrap() as usize + 1);
+    let top: Vec<u32> = ids.into_iter().filter(|e| edge_at(mesh, *e, 5.0)).collect();
+    assert_eq!(top.len(), 8);
+    let mut sides = Vec::new();
+    for edge in top {
+        let curve = mesh.edge_curves[edge as usize];
+        match curve.kind {
+            EdgeKind::Circle {
+                center,
+                normal,
+                radius,
+            } => {
+                assert!((radius - 2.0).abs() < 1e-5, "{curve:?}");
+                assert!((center[2] - 5.0).abs() < 1e-5 && normal[2].abs() > 0.999);
+                let quarter = std::f32::consts::PI;
+                assert!((curve.length - quarter).abs() < 1e-5, "{curve:?}");
+                let drawn: f32 = mesh
+                    .edges
+                    .chunks(2)
+                    .zip(&mesh.edge_ids)
+                    .filter(|(_, id)| **id == edge)
+                    .map(|(pair, _)| {
+                        let [a, b] = [0, 1].map(|k| mesh.positions[pair[k] as usize]);
+                        ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2))
+                            .sqrt()
+                    })
+                    .sum();
+                assert!(drawn < curve.length, "chords cut the arc's corners");
+            }
+            EdgeKind::Line => sides.push(curve.length),
+            other => panic!("{other:?}"),
+        }
+    }
+    sides.sort_by(f32::total_cmp);
+    for (got, want) in sides.iter().zip([6.0, 6.0, 16.0, 16.0]) {
+        assert!((got - want).abs() < 1e-5, "{sides:?}");
+    }
+}
+
+/// A round bar's wall is its circumference times its height, integrated on
+/// the cylinder, not the drawn facets' smaller area.
+#[test]
+fn a_face_s_area_is_integrated_on_its_surface() {
+    let built = padded(circle(3.0));
+    let wall = FaceProbe {
+        point: [3.0, 0.0, 2.5],
+        normal: [1.0, 0.0, 0.0],
+        name: 0,
+    };
+    let area = QUERIES.face_area(&built.brep_blob, &wall).unwrap();
+    let exact = 2.0 * std::f64::consts::PI * 3.0 * 5.0;
+    assert!((area - exact).abs() < 1e-6, "{area} against {exact}");
+    let top = FaceProbe {
+        point: [0.0, 0.0, 5.0],
+        normal: [0.0, 0.0, 1.0],
+        name: 0,
+    };
+    let disc = QUERIES.face_area(&built.brep_blob, &top).unwrap();
+    assert!((disc - std::f64::consts::PI * 9.0).abs() < 1e-6, "{disc}");
+}

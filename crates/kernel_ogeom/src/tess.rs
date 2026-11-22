@@ -482,10 +482,11 @@ fn mesh_faces(
                 }
                 mesh.edges = outline.segments.iter().map(|i| base + i).collect();
                 mesh.edge_ids = outline.edge_ids;
-                if let Some(names) = names
-                    && let Ok(edges) = explore_unique(model, root, ShapeType::Edge)
-                {
-                    mesh.edge_faces = crate::naming::edge_faces(model, names, &edges);
+                if let Ok(edges) = explore_unique(model, root, ShapeType::Edge) {
+                    mesh.edge_curves = edge_curves(model, &edges, faces_threading, tol);
+                    if let Some(names) = names {
+                        mesh.edge_faces = crate::naming::edge_faces(model, names, &edges);
+                    }
                 }
             }
             Ok(_) => mesh.edges = extract_boundary_edges(&mesh.indices),
@@ -573,6 +574,84 @@ fn kernel_edge_outline(
         meshes.replace_edges(drawn);
     }
     Ok(outline)
+}
+
+/// Each of `edges`' curves and lengths, in their order, placed as the
+/// edges are. They go wide when the faces did: a length off a spline is
+/// an integral.
+fn edge_curves(
+    model: &Model,
+    edges: &[Shape],
+    threading: Faces,
+    tol: Tolerances,
+) -> Vec<kernel_api::EdgeCurve> {
+    let one = |edge: &Shape| edge_curve(model, edge, tol);
+    match threading {
+        Faces::Wide => map_ordered(edges, |_, edge| one(edge)),
+        Faces::Inline => edges.iter().map(one).collect(),
+    }
+}
+
+/// What `edge`'s curve is, in the shape's frame, and its arc length. An
+/// edge with no curve (a pole) is another curve of no length.
+pub(crate) fn edge_curve(model: &Model, edge: &Shape, tol: Tolerances) -> kernel_api::EdgeCurve {
+    use kernel_api::{EdgeCurve, EdgeKind};
+    use ogeom::geom::{Curve, Transformable as _};
+    use ogeom::topo::EdgeRepr;
+    let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
+        return EdgeCurve::default();
+    };
+    if data.degenerate {
+        return EdgeCurve::default();
+    }
+    let Some(EdgeRepr::Curve3d {
+        curve,
+        location,
+        range,
+    }) = data.curve3d()
+    else {
+        return EdgeCurve::default();
+    };
+    let placed = (|| {
+        let geometry = model.geometry().curve(*curve)?;
+        let local = location.composed(model.datums()).ok()?;
+        let placement = edge.transform(model.datums()).ok()?;
+        geometry
+            .transformed(&local, tol)
+            .ok()?
+            .transformed(&placement, tol)
+            .ok()
+    })();
+    let Some(curve) = placed else {
+        return EdgeCurve::default();
+    };
+    let f = |p: Point| [p.x as f32, p.y as f32, p.z as f32];
+    let integrated = || ogeom::algo::curve_length(&curve, *range, tol).unwrap_or(f64::NAN);
+    // A trim runs on its basis's parameter, so its basis says what it is.
+    let mut basis = &curve;
+    while let Curve::Trimmed(trim) = basis {
+        basis = trim.basis();
+    }
+    let (kind, length) = match basis {
+        Curve::Line(_) => (EdgeKind::Line, integrated()),
+        Curve::Circle(c) => {
+            let circle = c.circle();
+            let n = circle.frame().z().vector();
+            (
+                EdgeKind::Circle {
+                    center: f(circle.centre()),
+                    normal: [n.x as f32, n.y as f32, n.z as f32],
+                    radius: circle.radius() as f32,
+                },
+                circle.radius() * (range.1 - range.0).abs(),
+            )
+        }
+        _ => (EdgeKind::Other, integrated()),
+    };
+    EdgeCurve {
+        kind,
+        length: length as f32,
+    }
 }
 
 /// Edges used by exactly one triangle, as flat index pairs (the mesh outline).

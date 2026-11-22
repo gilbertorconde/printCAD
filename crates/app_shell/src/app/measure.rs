@@ -496,10 +496,13 @@ pub(crate) fn readout(picks: &[MeasurePick], unit: Unit) -> Vec<String> {
 /// the face of the picked body's mesh at the picked point, else the point.
 /// The face comes from the body's mesh rather than the hover paint, which is
 /// dropped while a button is down and so is gone when the release lands.
+/// Its area is what `solid_area` gives for the mesh's face, else the sum of
+/// the face's triangles.
 pub(crate) fn pick_at(
     edge: Option<MeasurePick>,
     body_mesh: Option<&TriMesh>,
     point: Option<[f32; 3]>,
+    solid_area: impl FnOnce(u32) -> Option<f64>,
 ) -> Option<MeasurePick> {
     if edge.is_some() {
         return edge;
@@ -507,16 +510,57 @@ pub(crate) fn pick_at(
     let point = point?;
     let face = body_mesh.and_then(|mesh| {
         let face = crate::app::input::face_ref_from_mesh(mesh, Vec3::from_array(point))?;
-        let (_, sub) = crate::app::input::face_submesh(mesh, 0, None, face.point, face.normal)?;
+        let (id, sub) = crate::app::input::face_submesh(mesh, 0, None, face.point, face.normal)?;
         Some(MeasurePick::Face {
             point: face.point,
             normal: face.normal,
             surface: face.surface,
-            area: mesh_area(&sub),
+            area: id.and_then(solid_area).unwrap_or_else(|| mesh_area(&sub)),
             body: None,
         })
     });
     Some(face.unwrap_or(MeasurePick::Point(point)))
+}
+
+/// The area of face `face` of `body`'s drawn mesh, integrated by the
+/// kernel on the body's solid; `None` for a body with no solid or a face
+/// the kernel cannot find there. The face's largest triangle stands for
+/// it: its middle lies on the face to within the mesh's chord.
+pub(crate) fn solid_face_area(
+    document: &core_document::Document,
+    body: core_document::BodyId,
+    face: u32,
+) -> Option<f64> {
+    use kernel_api::KernelQueries as _;
+    let derived = document.derived();
+    let blob = derived.imported_brep_blob_arc(body)?;
+    let mesh = &derived.imported_geometry(body)?.mesh;
+    let corner = |i: u32| Vec3::from_array(mesh.positions[i as usize]);
+    let (middle, normal) = mesh
+        .faces
+        .iter()
+        .zip(mesh.indices.as_chunks::<3>().0)
+        .filter(|(f, _)| **f == face)
+        .map(|(_, t)| {
+            let [a, b, c] = t.map(corner);
+            ((a + b + c) / 3.0, (b - a).cross(c - a))
+        })
+        .max_by(|x, y| x.1.length_squared().total_cmp(&y.1.length_squared()))?;
+    let into_solid = document.body_placement(body).inverse();
+    let probe = kernel_api::FaceProbe {
+        point: into_solid.point(middle.to_array()).map(f64::from),
+        normal: into_solid
+            .direction(normal.normalize_or_zero().to_array())
+            .map(f64::from),
+        name: mesh.face_names.get(face as usize).copied().unwrap_or(0),
+    };
+    match kernel_ogeom::QUERIES.face_area(&blob, &probe) {
+        Ok(area) => Some(area),
+        Err(e) => {
+            tracing::debug!(target: "printcad.kernel", "a face's area was summed from its triangles: {e}");
+            None
+        }
+    }
 }
 
 /// The area of a mesh's triangles, mm².
@@ -593,7 +637,7 @@ mod tests {
     #[test]
     fn a_click_on_a_body_picks_the_face_there_with_its_area() {
         let mesh = two_face_body();
-        let pick = pick_at(None, Some(&mesh), Some([1.0, 1.5, 1.0])).unwrap();
+        let pick = pick_at(None, Some(&mesh), Some([1.0, 1.5, 1.0]), |_| None).unwrap();
         let MeasurePick::Face { area, normal, .. } = pick else {
             panic!("a face, not {pick:?}");
         };
@@ -603,17 +647,83 @@ mod tests {
         assert!(lines[0].starts_with("Area 6.00"), "{lines:?}");
     }
 
+    /// On a padded round bar the wall reads the area integrated on its
+    /// cylinder, the face the click lands on, and the rim the circle it is:
+    /// not the drawn facets' and chords' smaller measures.
+    #[test]
+    fn a_solid_s_faces_and_edges_measure_exactly() {
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        registry.set_kernel(&kernel_ogeom::QUERIES);
+        let script = r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 3}
+            pc.design.pad{sketch = s, length = 5}
+            assert(#pc.doc.rebuild() == 0)"#;
+        let (doc, out) = crate::headless::run_in_document(
+            &mut registry,
+            core_document::Document::new("bar"),
+            script,
+            "bar",
+        );
+        out.unwrap();
+        let body = doc.bodies()[0].id;
+        let mesh = std::sync::Arc::clone(&doc.derived().imported_geometry(body).unwrap().mesh);
+        let wall = mesh
+            .face_surfaces
+            .iter()
+            .position(|s| matches!(s, FaceSurface::Cylinder { .. }))
+            .expect("the bar's wall") as u32;
+        let exact = 2.0 * std::f64::consts::PI * 3.0 * 5.0;
+        let pick = pick_at(None, Some(&mesh), Some([3.0, 0.0, 2.5]), |face| {
+            solid_face_area(&doc, body, face)
+        });
+        let Some(MeasurePick::Face { area, .. }) = pick else {
+            panic!("the wall, not {pick:?}");
+        };
+        assert!((area - exact).abs() < 1e-6, "{area} against {exact}");
+        let facets = solid_face_area(&doc, body, wall).unwrap();
+        assert_eq!(facets, area, "the click found the wall");
+        let drawn = pick_at(None, Some(&mesh), Some([3.0, 0.0, 2.5]), |_| None);
+        let Some(MeasurePick::Face { area: drawn, .. }) = drawn else {
+            panic!("the wall");
+        };
+        assert!(drawn < exact - 1e-3, "the facets cut inside the wall");
+
+        let edges = crate::app::edges::edges_of(&mesh);
+        let rims: Vec<&serde_json::Value> = edges
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["kind"] == "circle")
+            .collect();
+        assert_eq!(rims.len(), 2, "{edges}");
+        for rim in rims {
+            assert!(
+                (rim["radius"].as_f64().unwrap() - 3.0).abs() < 1e-6,
+                "{rim}"
+            );
+            let length = rim["length"].as_f64().unwrap();
+            assert!((length - 6.0 * std::f64::consts::PI).abs() < 1e-4, "{rim}");
+        }
+    }
+
     #[test]
     fn an_edge_takes_the_click_and_empty_space_gives_a_point() {
         let mesh = two_face_body();
         let edge = edge([1.0, 0.0, 1.0], [1.0, 0.0, 0.0], 2.0);
-        let picked = pick_at(Some(edge.clone()), Some(&mesh), Some([1.0, 0.0, 1.0]));
+        let picked = pick_at(
+            Some(edge.clone()),
+            Some(&mesh),
+            Some([1.0, 0.0, 1.0]),
+            |_| None,
+        );
         assert_eq!(picked, Some(edge));
         assert_eq!(
-            pick_at(None, None, Some([9.0, 9.0, 9.0])),
+            pick_at(None, None, Some([9.0, 9.0, 9.0]), |_| None),
             Some(MeasurePick::Point([9.0, 9.0, 9.0]))
         );
-        assert_eq!(pick_at(None, Some(&mesh), None), None);
+        assert_eq!(pick_at(None, Some(&mesh), None, |_| None), None);
     }
 
     /// The unit chosen in the readout bar is saved with the document, and
