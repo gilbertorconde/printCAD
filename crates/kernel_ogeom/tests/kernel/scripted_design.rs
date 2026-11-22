@@ -7,7 +7,10 @@ use kernel_api::{FaceProbe, KernelQueries, PhysicalProperties};
 use kernel_ogeom::OgeomKernel;
 use scripting::ScriptEngine;
 
-use super::common::{benches, settle_as_host, try_chain};
+use super::common::{benches, try_chain};
+
+#[cfg(feature = "heavy-tests")]
+use super::common::settle_as_host;
 
 /// Run `script` on a document with one body, `BODY` in it standing for
 /// the body's id, and build the body: its snapshot.
@@ -215,6 +218,7 @@ fn text_projected_across_a_cylinders_seam_stands_out() {
 
 /// `letters` straight letters spread round a whole Ø20 cylinder and sunk
 /// in, each cutting as much as one alone does.
+#[cfg(feature = "heavy-tests")]
 fn letters_cut_alike(letters: usize) {
     let removed = |text: &str| {
         let blob = built(&format!(
@@ -238,17 +242,11 @@ fn letters_cut_alike(letters: usize) {
     );
 }
 
-/// Two letters spread round a whole cylinder each cut as much as one alone
-/// does; four are the heavy test's.
-#[test]
-fn text_round_a_whole_cylinder_cuts_each_letter_alike() {
-    letters_cut_alike(2);
-}
-
 /// `text` spread round a whole cylinder built at radius 10, then the
 /// cylinder's radius set to each of `radii`: the letters sit as they would
 /// on a cylinder of that size from the start. Six letters round a 3 mm
 /// cylinder say they do not fit.
+#[cfg(feature = "heavy-tests")]
 fn follows_its_radius(radii: &[f64], text: &str) {
     let script = |radius: f64, text: &str| {
         format!(
@@ -320,20 +318,27 @@ fn follows_its_radius(radii: &[f64], text: &str) {
     assert!(long.contains("does not fit"), "{long}");
 }
 
-/// A letter spread round a whole cylinder made smaller, past where its face
-/// was picked, sits as it would on the smaller cylinder from the start, and
-/// text longer than the turn says it does not fit; two letters, and the
-/// cylinder made larger, are the heavy test's.
-#[test]
-fn text_round_a_whole_cylinder_follows_a_smaller_radius() {
-    follows_its_radius(&[5.0], "L");
-}
-
 /// What needs a big model or a long build, compiled and run only with the
 /// `heavy-tests` feature (`node scripts/test-budget.mjs --heavy`).
 #[cfg(feature = "heavy-tests")]
 mod heavy {
     use super::*;
+
+    /// A letter spread round a whole cylinder made smaller, past where its face
+    /// was picked, sits as it would on the smaller cylinder from the start, and
+    /// text longer than the turn says it does not fit; two letters, and the
+    /// cylinder made larger, are the heavy test's.
+    #[test]
+    fn text_round_a_whole_cylinder_follows_a_smaller_radius() {
+        follows_its_radius(&[5.0], "L");
+    }
+
+    /// Two letters spread round a whole cylinder each cut as much as one alone
+    /// does; four are the heavy test's.
+    #[test]
+    fn text_round_a_whole_cylinder_cuts_each_letter_alike() {
+        letters_cut_alike(2);
+    }
 
     /// Text spread round a whole cylinder, its letters sunk in: wrapped across
     /// the cylinder's seam, all the way round, every letter cutting as much as
