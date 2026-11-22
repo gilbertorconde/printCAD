@@ -4,10 +4,12 @@
 //! kernel model, and the bodies' notes as drawn callouts: a leader from
 //! the point to the label, named by the note's text and carrying it as
 //! text, naming the faces the note is about on its own part. The mesh
-//! formats carry triangles: a body with a shape is meshed afresh at the export's own tolerance (a print wants a finer mesh
-//! than the viewport), and a mesh body goes out as the mesh it is. Each
-//! body's mesh is welded by position, so a closed solid arrives as a
-//! closed mesh rather than as faces that merely touch.
+//! formats carry triangles: a body with a shape is meshed afresh at the
+//! export's own tolerance (a print wants a finer mesh than the viewport),
+//! placed where it sits and welded by the kernel in double precision, so a
+//! closed solid arrives as a closed mesh rather than as faces that merely
+//! touch. A body pressed with a surface finish or scaled for shrinkage, and
+//! a mesh body, go out as their meshes, welded by position.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -421,6 +423,18 @@ fn export_mesh(
     for body in bodies {
         progress::checkpoint()
             .map_err(|e| KernelError::Other(anyhow::anyhow!("export stopped: {e}")))?;
+        let faces_wanted = body.colors.as_ref().is_some_and(|c| !c.faces.is_empty());
+        if let Some(blob) = body
+            .brep
+            .filter(|_| body.finish.is_none() && body.scale.is_none())
+            && let Ok((tri, faces)) = solid_triangles(body, blob, detail, faces_wanted)
+        {
+            if !tri.triangles.is_empty() {
+                let colours = body.colors.as_ref().map(|c| colours_of(c, &faces));
+                meshes.push((body.name.clone(), tri, colours));
+            }
+            continue;
+        }
         let mesh = match body.brep {
             Some(blob) => {
                 let mesh = match body.rounds.filter(|r| r.iter().any(|d| *d != 0.0)) {
@@ -504,6 +518,65 @@ fn export_mesh(
         annotations_left_out: Vec::new(),
         triangles,
     })
+}
+
+/// A body's solid meshed by the kernel where it sits, in double precision
+/// and welded into one closed surface; with it, when `faces_wanted`, the
+/// face (by its index among the shape's faces) each triangle lies on.
+fn solid_triangles(
+    body: &ExportBody<'_>,
+    blob: &[u8],
+    detail: &TessellationSettings,
+    faces_wanted: bool,
+) -> KernelResult<(Triangulation, Option<Vec<u32>>)> {
+    let fail =
+        |e: &dyn std::fmt::Display| KernelError::Other(anyhow::anyhow!("{}: {e}", body.name));
+    let (mut model, root) = tess::read_blob(blob)?;
+    let mut shape = match body.rounds.filter(|r| r.iter().any(|d| *d != 0.0)) {
+        Some([hole, boss]) => {
+            crate::rounds::offset_rounds(&mut model, &root, hole, boss).map_err(|e| fail(&e))?
+        }
+        None => root,
+    };
+    if let Some(m) = &body.transform {
+        let at = crate::ops::pattern::rigid_of(m)
+            .ok_or_else(|| KernelError::InvalidInput(format!("{}: not rigid", body.name)))?;
+        shape = ogeom::algo::transformed(&mut model, &shape, at)
+            .map_err(|e| fail(&e))?
+            .shape;
+    }
+    let tol = tess::tolerances();
+    let deflection = tess::deflection_for(&model, &shape, detail);
+    let (whole, _, face_meshes) =
+        ogeom::mesh::triangulate_with_face_meshes(&model, &shape, deflection, None, tol)
+            .map_err(|e| fail(&e))?;
+    if !faces_wanted {
+        return Ok((whole, None));
+    }
+    // The weld splits, drops and seals triangles, so each one finds its
+    // face by the face mesh nearest its middle.
+    let mut drawn = Triangulation::new();
+    let mut face_of: Vec<u32> = Vec::new();
+    for (index, (_, piece)) in face_meshes.iter().enumerate() {
+        let piece = piece.as_ref().map_err(|e| fail(e))?;
+        drawn.append(piece);
+        face_of.resize(drawn.triangles.len(), index as u32);
+    }
+    let index = ogeom::mesh::Bvh::build(&drawn).map_err(|e| fail(&e))?;
+    let middles: Vec<Point> = whole
+        .triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| whole.positions[i as usize]);
+            Point::ORIGIN + ((a - Point::ORIGIN) + (b - Point::ORIGIN) + (c - Point::ORIGIN)) / 3.0
+        })
+        .collect();
+    let faces = index
+        .nearest_many(&middles, f64::INFINITY)
+        .into_iter()
+        .map(|hit| hit.map_or(0, |h| face_of[h.triangle as usize]))
+        .collect();
+    Ok((whole, Some(faces)))
 }
 
 /// Move a mesh's points and normals by a rigid row-major matrix.
@@ -776,5 +849,82 @@ mod tests {
             }
         }
         assert!(uses.values().all(|n| *n == 2), "open: {uses:?}");
+    }
+
+    /// A placed box meshed for a file: closed, its volume the box's, where
+    /// it is placed, and each triangle named by the face it lies on, so a
+    /// face's own colour covers that face and nothing else.
+    #[test]
+    fn a_solid_is_meshed_closed_where_it_sits_each_triangle_on_its_face() {
+        use ogeom::topo::{Filter, ShapeType, explore};
+        let tol = crate::tess::tolerances();
+        let mut model = ogeom::topo::Model::with_tolerances(tol);
+        let solid = ogeom::algo::make_box(
+            &mut model,
+            ogeom::math::Frame::WORLD,
+            (10.0, 20.0, 30.0),
+            tol,
+        )
+        .unwrap()
+        .shape;
+        let faces = explore(&model, &solid, Filter::OfType(ShapeType::Face)).unwrap();
+        // Each face's plane, as the axis it stands across and where.
+        let planes: Vec<(usize, f64)> = faces
+            .iter()
+            .map(|face| {
+                let mesh =
+                    ogeom::mesh::triangulate(&model, face, ogeom::mesh::Deflection::default(), tol)
+                        .unwrap();
+                let p = mesh.positions[0];
+                let q = mesh.positions[1..].iter();
+                let axis = (0..3)
+                    .find(|&k| {
+                        q.clone()
+                            .all(|r| (r.to_array()[k] - p.to_array()[k]).abs() < 1e-9)
+                    })
+                    .unwrap();
+                (axis, p.to_array()[axis])
+            })
+            .collect();
+        let blob = crate::tess::write_blob(&model, &solid).unwrap();
+        let mut shift = [[0.0; 4]; 4];
+        for (k, row) in shift.iter_mut().enumerate() {
+            row[k] = 1.0;
+        }
+        shift[0][3] = 100.0;
+        let mesh = kernel_api::TriMesh::default();
+        let body = super::ExportBody {
+            name: "box".into(),
+            brep: Some(&blob),
+            transform: Some(shift),
+            mesh: &mesh,
+            finish: None,
+            scale: None,
+            rounds: None,
+            colors: None,
+        };
+        let (tri, named) = super::solid_triangles(
+            &body,
+            &blob,
+            &kernel_api::TessellationSettings::default(),
+            true,
+        )
+        .unwrap();
+        assert!(tri.is_closed());
+        assert!((tri.volume() - 6000.0).abs() < 1e-6, "{}", tri.volume());
+        let named = named.unwrap();
+        assert_eq!(named.len(), tri.triangles.len());
+        for (t, face) in tri.triangles.iter().zip(&named) {
+            let (axis, at) = planes[*face as usize];
+            let at = if axis == 0 { at + 100.0 } else { at };
+            for v in t {
+                let p = tri.positions[*v as usize].to_array();
+                assert!((p[axis] - at).abs() < 1e-9, "{p:?} off face {face}");
+            }
+        }
+        let mut each: Vec<u32> = named.clone();
+        each.sort_unstable();
+        each.dedup();
+        assert_eq!(each.len(), 6, "every face has triangles");
     }
 }
