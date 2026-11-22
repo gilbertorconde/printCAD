@@ -375,7 +375,7 @@ fn step(
             let repaired = repair(mesh)?;
             measured = Some(MeshStepReport::Repair {
                 crossings: repaired.crossings,
-                volume: crate::mesh_solids::volume(&repaired.mesh),
+                volume: repaired.mesh.volume(),
             });
             if repaired.crossings == 0 {
                 return Ok(("the mesh crosses itself nowhere".into(), measured));

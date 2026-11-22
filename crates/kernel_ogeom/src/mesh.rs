@@ -373,7 +373,7 @@ pub fn refine_blob(
     let tol = tess::tolerances();
     // The solid's points came from a single-precision mesh: the rounding
     // at its largest coordinate is what they may stand off their surface.
-    let quantum = tess::robust_bounds(&model, &root).map(|(lo, hi)| {
+    let quantum = tess::guaranteed_bounds(&model, &root).map(|(lo, hi)| {
         single_precision_quantum(&Triangulation {
             positions: vec![lo, hi],
             ..Triangulation::default()
@@ -429,10 +429,9 @@ fn finish(
     let face_colors = uniform.map_or_else(Vec::new, |c| vec![c; faces.len()]);
 
     progress::context("Meshing the solid");
-    let shaped =
-        tess::mesh_shape_with(model, &built.shape, &face_colors, detail, tess::Faces::Wide)
-            .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
-    let bounds_mm = tess::robust_bounds(model, &built.shape).map(|(lo, hi)| {
+    let shaped = tess::mesh_shape(model, &built.shape, &face_colors, detail)
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
+    let bounds_mm = tess::guaranteed_bounds(model, &built.shape).map(|(lo, hi)| {
         (
             [lo.x as f32, lo.y as f32, lo.z as f32],
             [hi.x as f32, hi.y as f32, hi.z as f32],

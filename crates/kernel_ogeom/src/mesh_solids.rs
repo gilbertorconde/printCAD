@@ -32,17 +32,6 @@ fn operand(value: &MeshOperand) -> Result<(Model, Shape), String> {
     }
 }
 
-/// The volume a closed mesh bounds, by its triangles' signed tetrahedra.
-pub(crate) fn volume(mesh: &Triangulation) -> f64 {
-    mesh.triangles
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.map(|v| mesh.positions[v as usize]);
-            a.to_vector().dot(b.to_vector().cross(c.to_vector())) / 6.0
-        })
-        .sum()
-}
-
 pub(crate) fn boolean(
     mesh: &Editable,
     value: &MeshOperand,
@@ -73,7 +62,7 @@ pub(crate) fn boolean(
     }
     let report = MeshStepReport::Boolean {
         cut_triangles: result.cut.iter().filter(|v| **v).count(),
-        volume: volume(&result.mesh),
+        volume: result.mesh.volume(),
     };
     Ok((result.mesh, report))
 }
@@ -101,7 +90,7 @@ pub(crate) fn shell(
     };
     let report = MeshStepReport::Shell {
         hollow,
-        volume: volume(&result),
+        volume: result.volume(),
     };
     Ok((result, report))
 }
@@ -150,7 +139,7 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
     let (mut model, shape) = tess::read_blob(&request.solid)?;
     let tol = tess::tolerances();
     let scan = crate::mesh_intake::welded(&request.scan)?;
-    let (low, high) = tess::robust_bounds(&model, &shape)
+    let (low, high) = tess::guaranteed_bounds(&model, &shape)
         .ok_or_else(|| KernelError::InvalidInput("the solid has no extent".into()))?;
     let chord = low.distance(high) / 2000.0;
     let solid = ogeom::mesh::triangulate(
@@ -240,7 +229,7 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
         .into_bytes();
     Ok(TrimAnswer {
         brep,
-        volume: volume(&piece),
+        volume: piece.volume(),
         mating_area,
         gap_median,
         gap_range,

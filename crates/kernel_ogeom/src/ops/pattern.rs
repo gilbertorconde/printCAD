@@ -702,7 +702,7 @@ pub fn scaled(
     let centre = match centre {
         Some(centre) => centre,
         None => {
-            let (lo, hi) = crate::tess::robust_bounds(model, solid)
+            let (lo, hi) = crate::tess::guaranteed_bounds(model, solid)
                 .ok_or("the solid has no bounds to scale about")?;
             [
                 (lo.x + hi.x) / 2.0,

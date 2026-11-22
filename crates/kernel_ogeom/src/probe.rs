@@ -151,7 +151,7 @@ impl Reach {
     /// The distance in millimetres this reach allows on `root`.
     pub(crate) fn limit(self, model: &Model, root: &Shape) -> f64 {
         match self {
-            Reach::Pick => tess::robust_bounds(model, root)
+            Reach::Pick => tess::guaranteed_bounds(model, root)
                 .map(|(lo, hi)| (hi - lo).magnitude() * 0.1)
                 .unwrap_or(f64::INFINITY),
             Reach::Within(mm) => mm,

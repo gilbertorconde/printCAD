@@ -117,7 +117,7 @@ impl Print {
 impl Drawing {
     fn of(model: &Model, face: &Shape) -> Self {
         let tol = tess::tolerances();
-        let chord = tess::robust_bounds(model, face)
+        let chord = tess::guaranteed_bounds(model, face)
             .map_or(COARSEST, |(lo, hi)| (hi - lo).magnitude() * CHORD_PART)
             .clamp(FINEST, COARSEST);
         let triangles: Vec<[Point; 3]> = Deflection::with_chord(chord)
