@@ -38,6 +38,13 @@ const FINEST: f64 = 0.005;
 const COARSEST: f64 = 0.25;
 /// Slack on top of two faces' chords for a point to lie on a face.
 const SLACK: f64 = 1e-4;
+/// How much smaller than a face's largest triangle, as a part of it, a
+/// triangle may be and still count as alike in size: far above rounding,
+/// far below the steps a mesh's sizes take.
+const AREA_TIE: f64 = 1e-9;
+/// How near, in mm, two faces' samples are along an axis to count as
+/// level on it when faces alike are put in order.
+const LEVEL: f64 = 1e-3;
 
 /// One face with its names, and what telling it apart takes, worked out
 /// when first asked: most faces take their names from the kernel's history
@@ -138,12 +145,21 @@ impl Drawing {
                     .collect()
             })
             .unwrap_or_default();
-        let sample = triangles
+        // The face is sampled on its largest triangle. Triangles alike in
+        // size (as along a helix) differ only by rounding, which differs
+        // from one platform's maths to another's, so of every triangle
+        // within `AREA_TIE` of the largest the last is taken.
+        let areas: Vec<f64> = triangles
             .iter()
-            .map(|[a, b, c]| (((*b - *a).cross(*c - *a)).magnitude(), [*a, *b, *c]))
-            .max_by(|x, y| x.0.total_cmp(&y.0))
-            .filter(|(area, _)| *area > 0.0)
-            .map(|(_, [a, b, c])| {
+            .map(|[a, b, c]| ((*b - *a).cross(*c - *a)).magnitude())
+            .collect();
+        let largest = areas.iter().copied().fold(0.0, f64::max);
+        let sample = areas
+            .iter()
+            .rposition(|area| *area >= largest * (1.0 - AREA_TIE))
+            .filter(|_| largest > 0.0)
+            .map(|i| {
+                let [a, b, c] = triangles[i];
                 let centre = Point::new(
                     (a.x + b.x + c.x) / 3.0,
                     (a.y + b.y + c.y) / 3.0,
@@ -488,7 +504,7 @@ impl NameMap {
     /// [`Self::name_the_rest`], the faces at `alike` ranking among them
     /// as if they had no name either, keeping the names they have.
     fn name_ranked(&mut self, model: &Model, fresh: TopoName, alike: &[usize]) {
-        let mut keyed: Vec<(TopoName, [i64; 3], usize)> = Vec::new();
+        let mut keyed: Vec<(TopoName, [f64; 3], usize)> = Vec::new();
         for (index, f) in self.faces.iter().enumerate() {
             if !f.names.is_empty() && !alike.contains(&index) {
                 continue;
@@ -497,9 +513,9 @@ impl NameMap {
                 Some((p, n)) => (
                     surface_kind(model, &f.face),
                     array(n).map(|c| (c * 100.0).round() as i64),
-                    array(p).map(|c| (c * 1000.0).round() as i64),
+                    array(p),
                 ),
-                None => (0, [0; 3], [0; 3]),
+                None => (0, [0; 3], [0.0; 3]),
             };
             let mut bytes = vec![b'f', kind];
             for c in facing {
@@ -507,6 +523,12 @@ impl NameMap {
             }
             keyed.push((naming::child(fresh, &bytes), at, index));
         }
+        let levels = levels(&keyed.iter().map(|k| k.1).collect::<Vec<_>>());
+        let mut keyed: Vec<(TopoName, [usize; 3], usize)> = keyed
+            .into_iter()
+            .zip(levels)
+            .map(|((key, _, index), level)| (key, level, index))
+            .collect();
         keyed.sort();
         let mut previous: Option<TopoName> = None;
         let mut rank = 0u32;
@@ -529,6 +551,26 @@ impl NameMap {
     pub fn faces(&self) -> impl Iterator<Item = (&Shape, &[TopoName])> {
         self.faces.iter().map(|f| (&f.face, f.names.as_slice()))
     }
+}
+
+/// Where each of `points` stands along each axis among the others, as
+/// a level: points within [`LEVEL`] of one another along an axis share
+/// a level on it, so a face and its copy moved along one axis are put in
+/// order by that axis, never by rounding in another.
+fn levels(points: &[[f64; 3]]) -> Vec<[usize; 3]> {
+    let mut out = vec![[0; 3]; points.len()];
+    for axis in 0..3 {
+        let mut order: Vec<usize> = (0..points.len()).collect();
+        order.sort_by(|&a, &b| points[a][axis].total_cmp(&points[b][axis]));
+        let mut level = 0;
+        for pair in order.windows(2) {
+            if points[pair[1]][axis] - points[pair[0]][axis] > LEVEL {
+                level += 1;
+            }
+            out[pair[1]][axis] = level;
+        }
+    }
+    out
 }
 
 /// A number for the kind of surface a face lies on, as far as naming

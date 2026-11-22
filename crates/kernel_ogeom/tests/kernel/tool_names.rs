@@ -3,8 +3,8 @@
 //! of its two faces), so a document saved by an earlier release finds the
 //! same faces only while every tool names its faces as that release did.
 //! `tests/data/tool_names.txt` holds the names each kind of tool gave,
-//! face by face (each face by where its middle is); every build names
-//! them alike. `PRINTCAD_WRITE_TOOL_NAMES=1` writes the file afresh.
+//! face by face (each face by where its middle is, found again within
+//! [`NEAR`]); every build names them alike. `PRINTCAD_WRITE_TOOL_NAMES=1` writes the file afresh.
 
 use kernel_api::{
     BooleanOp, ExtrudeTermination, Profile, ProfilePlane, ProfileSegment, ProfileWire,
@@ -101,6 +101,25 @@ fn on_block(then: SolidOp) -> Vec<SolidOp> {
         ),
         then,
     ]
+}
+
+/// Two turns of a 2 mm square about the axis, `pitch` apart.
+fn helix(pitch: f64) -> Vec<SolidOp> {
+    new_solid(
+        profile(vec![rect(10.0, 0.0, 2.0, 2.0)]),
+        SweepKind::Helix {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            pitch,
+            height: 2.0 * pitch,
+            left_handed: false,
+            cone_angle_deg: 0.0,
+            reversed: false,
+            turns: None,
+            growth: None,
+            through_all: false,
+        },
+    )
 }
 
 /// Every case: a name and its ops.
@@ -367,24 +386,7 @@ fn cases() -> Vec<(&'static str, Vec<SolidOp>)> {
                 revolve(360.0, false),
             ),
         ),
-        (
-            "helix",
-            new_solid(
-                profile(vec![rect(10.0, 0.0, 2.0, 2.0)]),
-                SweepKind::Helix {
-                    axis_origin: [0.0, 0.0],
-                    axis_dir: [0.0, 1.0],
-                    pitch: 5.0,
-                    height: 10.0,
-                    left_handed: false,
-                    cone_angle_deg: 0.0,
-                    reversed: false,
-                    turns: None,
-                    growth: None,
-                    through_all: false,
-                },
-            ),
-        ),
+        ("helix", helix(5.0)),
     ];
     let section = |z: f64, w: f64| Profile {
         plane: plane(z),
@@ -451,31 +453,89 @@ fn faces(ops: &[SolidOp]) -> Vec<([i64; 3], TopoName)> {
     out
 }
 
-#[test]
-fn every_tool_names_its_faces_as_earlier_releases_did() {
-    let mut text = String::new();
-    for (case, ops) in cases() {
-        for (at, name) in faces(&ops) {
-            text.push_str(&format!(
-                "{case}: {} {} {} {name:016x}\n",
-                at[0], at[1], at[2]
-            ));
+/// A face as the file lists it: its case, where its middle is and its
+/// name.
+type Listed = (String, [i64; 3], u64);
+
+fn listed(text: &str) -> Vec<Listed> {
+    text.lines()
+        .map(|line| {
+            let (case, rest) = line.rsplit_once(": ").unwrap();
+            let words: Vec<&str> = rest.split(' ').collect();
+            let at = [0, 1, 2].map(|i| words[i].parse().unwrap());
+            (
+                case.to_owned(),
+                at,
+                u64::from_str_radix(words[3], 16).unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// How far, in tenths of a millimetre, a face's middle may move between
+/// builds and still be the same face: rounding on another platform moves
+/// it a tenth at most, and faces of a case stand millimetres apart.
+const NEAR: i64 = 5;
+
+/// The faces of `want` that `got` names otherwise: each listed face is
+/// matched to a face of its case near it of the same name.
+fn named_otherwise(want: &[Listed], got: &[Listed]) -> Vec<String> {
+    let mut unused: Vec<bool> = vec![true; got.len()];
+    let mut wrong = Vec::new();
+    for (case, at, name) in want {
+        let found = got.iter().enumerate().position(|(i, (c, a, n))| {
+            unused[i]
+                && c == case
+                && n == name
+                && a.iter().zip(at).all(|(a, b)| (a - b).abs() <= NEAR)
+        });
+        match found {
+            Some(i) => unused[i] = false,
+            None => wrong.push(format!("want {case}: {at:?} {name:016x}")),
         }
     }
+    for ((case, at, name), unused) in got.iter().zip(unused) {
+        if unused {
+            wrong.push(format!(" got {case}: {at:?} {name:016x}"));
+        }
+    }
+    wrong
+}
+
+fn listing(case: &str, ops: &[SolidOp]) -> String {
+    faces(ops)
+        .into_iter()
+        .map(|(at, name)| format!("{case}: {} {} {} {name:016x}\n", at[0], at[1], at[2]))
+        .collect()
+}
+
+#[test]
+fn every_tool_names_its_faces_as_earlier_releases_did() {
+    let text: String = cases()
+        .into_iter()
+        .map(|(case, ops)| listing(case, &ops))
+        .collect();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tool_names.txt");
     if std::env::var_os("PRINTCAD_WRITE_TOOL_NAMES").is_some() {
         std::fs::write(&path, &text).unwrap();
     }
     let want = std::fs::read_to_string(&path).unwrap();
-    let wrong: Vec<String> = want
-        .lines()
-        .zip(text.lines())
-        .filter(|(w, g)| w != g)
-        .map(|(w, g)| format!("want {w}\n got {g}"))
-        .collect();
+    let wrong = named_otherwise(&listed(&want), &listed(&text));
     assert!(
-        wrong.is_empty() && want.lines().count() == text.lines().count(),
+        wrong.is_empty(),
         "faces named otherwise than before:\n{}",
         wrong.join("\n")
     );
+}
+
+/// A helix's faces are named by where they lie and which way they face,
+/// its walls being alike in shape turn after turn: a pitch one rounding
+/// step away, as another platform's maths may give, names them alike.
+#[test]
+fn a_helix_names_its_faces_alike_a_rounding_step_away() {
+    let want = listed(&listing("helix", &helix(5.0)));
+    for pitch in [5.0f64.next_up(), 5.0f64.next_down()] {
+        let wrong = named_otherwise(&want, &listed(&listing("helix", &helix(pitch))));
+        assert!(wrong.is_empty(), "pitch {pitch:e}:\n{}", wrong.join("\n"));
+    }
 }
