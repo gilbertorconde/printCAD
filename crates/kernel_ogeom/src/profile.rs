@@ -263,19 +263,13 @@ fn segment_curve(
                 .map(|p| world_point(plane, p[0], p[1]))
                 .collect();
             let (curve, range) = if *periodic {
-                // ogeom has no public periodic constructor; an unclamped
-                // uniform spline over the wrapped control polygon is the same
-                // curve over [degree, n + degree].
+                // A cubic ring (lower through fewer points), over the whole
+                // of its domain.
                 let degree = 3usize.min(n - 1).max(1);
-                let mut wrapped = poles.clone();
-                wrapped.extend_from_slice(&poles[..degree.min(poles.len())]);
-                let knot_count = wrapped.len() + degree + 1;
-                let knots: Vec<f64> = (0..knot_count).map(|i| i as f64).collect();
-                let kv = KnotVector::new(knots, degree)
-                    .map_err(|e| seg_err(&format!("periodic B-spline knots: {e}")))?;
-                let curve = BSplineCurve::new(kv, wrapped, tol)
+                let curve = BSplineCurve::periodic(&poles, degree, tol)
                     .map_err(|e| seg_err(&format!("periodic B-spline: {e}")))?;
-                (curve, (degree as f64, (n + degree) as f64))
+                let range = curve.knots().domain();
+                (curve, range)
             } else {
                 let degree = 3usize.min(n - 1);
                 let kv = KnotVector::clamped_uniform(degree, n)
@@ -310,21 +304,17 @@ fn segment_curve(
                 .iter()
                 .map(|p| world_point(plane, p[0], p[1]))
                 .collect();
-            let (kv, poles, range) = if *periodic {
-                // An unclamped uniform spline over the wrapped control
-                // polygon, as for the cubic ring above.
-                let mut wrapped = poles.clone();
-                wrapped.extend_from_slice(&poles[..degree]);
-                let knots: Vec<f64> = (0..wrapped.len() + degree + 1).map(|i| i as f64).collect();
-                let kv = KnotVector::new(knots, degree)
-                    .map_err(|e| seg_err(&format!("periodic spline knots: {e}")))?;
-                (kv, wrapped, (degree as f64, (n + degree) as f64))
-            } else {
-                let kv = KnotVector::new(knots.clone(), degree)
-                    .map_err(|e| seg_err(&format!("spline knots: {e}")))?;
-                let range = kv.domain();
-                (kv, poles, range)
-            };
+            if *periodic {
+                // A uniform ring of the stated degree; its knots are the
+                // ring's own.
+                let curve = BSplineCurve::periodic(&poles, degree, tol)
+                    .map_err(|e| seg_err(&format!("periodic spline: {e}")))?;
+                let range = curve.knots().domain();
+                return Ok((Curve::BSpline(curve), range));
+            }
+            let kv = KnotVector::new(knots.clone(), degree)
+                .map_err(|e| seg_err(&format!("spline knots: {e}")))?;
+            let range = kv.domain();
             let curve = if weights.is_empty() {
                 BSplineCurve::new(kv, poles, tol)
             } else {

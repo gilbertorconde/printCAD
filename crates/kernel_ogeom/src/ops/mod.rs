@@ -67,28 +67,11 @@ pub fn bounds_overlap(model: &Model, a: &Shape, b: &Shape) -> bool {
         && blo.z <= ahi.z + m
 }
 
-/// Fuse two solids, or compound them when they are clearly disjoint (the
-/// kernel's disjoint-fuse path drops swept solids; building the compound
-/// directly sidesteps it and costs nothing).
-pub fn fuse_or_compound(model: &mut Model, a: &Shape, b: &Shape) -> Result<Shape, String> {
-    if bounds_overlap(model, a, b) {
-        ogeom::boolean::fuse(model, a, b, tol())
-            .map(|built| {
-                crate::naming::record(&built.history);
-                built.shape
-            })
-            .map_err(|e| format!("fuse failed: {e}"))
-    } else {
-        model
-            .add_compound(&[a.clone(), b.clone()])
-            .map_err(|e| format!("compounding disjoint solids failed: {e}"))
-    }
-}
-
 /// Fuse a list of region solids into one (multi-region profiles): each
 /// region fuses with the solids its bounds meet, one at a time, and what
-/// stays apart is compounded at the end, since a boolean takes solids and
-/// never a compound.
+/// stays apart is compounded at the end. The kernel's union takes the
+/// compound too, but at a full boolean for every region standing apart,
+/// several times slower over a profile of many.
 pub fn fuse_all(model: &mut Model, parts: Vec<Shape>) -> Result<Shape, String> {
     if parts.is_empty() {
         return Err("operation produced no solid".to_string());
@@ -174,9 +157,8 @@ pub(crate) fn wrap_pieces(model: &mut Model, mut pieces: Vec<Shape>) -> Result<S
 /// One solid-vs-solid boolean. At a stated tolerance (see
 /// [`ToleranceScope`]) it runs fuzzy at that tolerance from the start,
 /// since an exact boolean that succeeds can still leave the sliver the
-/// user stated it to close; otherwise it runs exact, with a fuzzy retry at
-/// a hundred times the confusion when the kernel says a looser tolerance
-/// could resolve a near-coincidence.
+/// user stated it to close; otherwise it runs exact, the kernel retrying a
+/// near-coincidence at wider confusions itself.
 pub fn bool_once(
     model: &mut Model,
     a: &Shape,
@@ -214,16 +196,14 @@ pub fn bool_once(
     };
     match exact {
         Ok(built) => Ok(done(model, built)),
-        Err(e) if e.is_tolerance_sensitive() => fuzzy(model, t.confusion() * 100.0)
-            .map(|built| done(model, built))
-            .map_err(|e| format!("boolean {verb} failed: {e}")),
         Err(e) => Err(format!("boolean {verb} failed: {e}")),
     }
 }
 
-/// Compound-aware boolean: both operands may be compounds of disjoint
-/// solids, where ogeom's booleans insist on solids. Pieces pair up by
-/// bounding-box overlap; disjoint pieces skip the boolean entirely.
+/// Compound-aware boolean: both operands may be compounds of solids, and
+/// their solids may overlap (a thread's groove and its chamfer cone),
+/// where the kernel takes a compound for lumps standing apart. Pieces pair
+/// up by bounding-box overlap; disjoint pieces skip the boolean entirely.
 pub fn combine_solids(
     model: &mut Model,
     base: &Shape,
