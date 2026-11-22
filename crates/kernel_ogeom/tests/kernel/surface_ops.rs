@@ -1863,6 +1863,60 @@ fn sheets_trimmed_by_a_scan_close_into_its_solid() {
     assert!(refused.message.contains("vertex 99"), "{}", refused.message);
 }
 
+/// A network bounded by sketch curves fits a flat scan: a side of one
+/// edge, an arc, holds its exact curve, and a side of two edges joins
+/// them; the sheet stays flat and inside the arc, reaching its crown.
+#[test]
+fn a_patch_network_fits_sketch_curves() {
+    // The arc through (10, 0), (12, 5), (10, 10): centre (4.75, 5).
+    let (centre, radius) = ([4.75, 5.0], 7.25);
+    let mut points = Vec::new();
+    for i in 0..=60 {
+        for j in 0..=50 {
+            let (x, y) = (12.0 * f64::from(i) / 60.0, 10.0 * f64::from(j) / 50.0);
+            let inside = x <= 10.0 || (x - centre[0]).hypot(y - centre[1]) < radius - 0.05;
+            if inside {
+                points.push([x, y, 0.0]);
+            }
+        }
+    }
+    let op = SurfaceOp::FitNetwork {
+        curves: vec![
+            sketch(xy(0.0), vec![line([0.0, 0.0], [10.0, 0.0])]),
+            sketch(xy(0.0), vec![arc([10.0, 0.0], [12.0, 5.0], [10.0, 10.0])]),
+            sketch(xy(0.0), vec![line([10.0, 10.0], [0.0, 10.0])]),
+            sketch(
+                xy(0.0),
+                vec![line([0.0, 10.0], [0.0, 5.0]), line([0.0, 5.0], [0.0, 0.0])],
+            ),
+        ],
+        polylines: Vec::new(),
+        patches: vec![[1, 2, 3, 4]],
+        chained: Vec::new(),
+        corrections: 0,
+        points,
+        tolerance: 0.01,
+        smoothing: 1e-6,
+        creases: Vec::new(),
+    };
+    let result = build(vec![op]).unwrap();
+    assert_eq!(census(&result), (1, 0));
+    let mut crown = f64::MIN;
+    for p in &result.mesh.positions {
+        let [x, y, z] = p.map(f64::from);
+        assert!(z.abs() < 0.02, "a point off the plane: {p:?}");
+        if x > 10.0 {
+            let out = (x - centre[0]).hypot(y - centre[1]) - radius;
+            assert!(out < 0.02, "a point outside the arc by {out}: {p:?}");
+        }
+        crown = crown.max(x);
+    }
+    assert!(
+        (crown - 12.0).abs() < 0.02,
+        "the sheet reaches {crown}, not the arc's crown"
+    );
+}
+
 /// Networks fitted to a bent sheet meet tangent, including a T-junction,
 /// and every point of the sheet lies on the fitted patches.
 #[test]

@@ -9,8 +9,8 @@ use super::common::{
     xy_plane,
 };
 use kernel_api::{
-    BooleanOp, ExtrudeTermination, Profile, ProfilePlane, ProfileSegment, ProfileWire, SolidOp,
-    SweepKind, TessellationSettings, TriMesh,
+    BooleanOp, ExtrudeTermination, LoftSection, Profile, ProfilePlane, ProfileSegment, ProfileWire,
+    SolidOp, SweepKind, TessellationSettings, TriMesh,
 };
 use kernel_ogeom::OgeomKernel;
 use std::f64::consts::PI;
@@ -325,6 +325,53 @@ fn chains_fill_the_box_and_the_volume_they_describe() {
             [-10.0, -10.0, 0.0],
             [10.0, 10.0, 15.0],
             15.0 / 3.0 * (400.0 + 64.0 + 160.0),
+        ),
+        (
+            "a ruled loft through three sections, to a point",
+            vec![SolidOp::LoftThrough {
+                sections: vec![
+                    LoftSection::Profile(Profile {
+                        plane: xy_plane(),
+                        wires: vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
+                    }),
+                    LoftSection::Profile(Profile {
+                        plane: plane_at_z(15.0),
+                        wires: vec![rect_wire(-4.0, -4.0, 4.0, 4.0)],
+                    }),
+                    LoftSection::Point([0.0, 0.0, 25.0]),
+                ],
+                ruled: true,
+                closed: false,
+                op: NewSolid,
+            }],
+            [-10.0, -10.0, 0.0],
+            [10.0, 10.0, 25.0],
+            15.0 / 3.0 * (400.0 + 64.0 + 160.0) + 64.0 * 10.0 / 3.0,
+        ),
+        (
+            "a ruled loft through three sections",
+            vec![SolidOp::Loft {
+                sections: vec![
+                    Profile {
+                        plane: xy_plane(),
+                        wires: vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
+                    },
+                    Profile {
+                        plane: plane_at_z(15.0),
+                        wires: vec![rect_wire(-4.0, -4.0, 4.0, 4.0)],
+                    },
+                    Profile {
+                        plane: plane_at_z(25.0),
+                        wires: vec![rect_wire(-8.0, -8.0, 8.0, 8.0)],
+                    },
+                ],
+                ruled: true,
+                closed: false,
+                op: NewSolid,
+            }],
+            [-10.0, -10.0, 0.0],
+            [10.0, 10.0, 25.0],
+            15.0 / 3.0 * (400.0 + 64.0 + 160.0) + 10.0 / 3.0 * (64.0 + 256.0 + 128.0),
         ),
         (
             "half a turn about the sketch's v axis",
