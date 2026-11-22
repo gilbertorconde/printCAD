@@ -158,7 +158,6 @@ fn a_boss_s_foot_round_blends_into_the_edge_round_it_reaches() {
 /// Rolling-ball corners take the switches too: the foot round with blend
 /// into round off is refused as it is with setback corners.
 #[test]
-#[ignore = "kernel: rolling-ball corners take no overflow options (ogeom-rs#1222)"]
 fn a_rolling_ball_foot_round_takes_the_overflow_switches() {
     let mut op = fillet(3.0, &[FOOT], with(|o| o.blend_into_round = false));
     if let SolidOp::Fillet { corner, .. } = &mut op {
@@ -166,6 +165,57 @@ fn a_rolling_ball_foot_round_takes_the_overflow_switches() {
     }
     let why = refused(&[bossed(), vec![op]].concat());
     assert!(why.contains("does not reach so far"), "{why}");
+}
+
+/// A variable round holding one radius and a round of two equal distances
+/// are the round of that radius, and take its switches: by default each
+/// blends the foot into the edge round as the round of 3 does, and with
+/// blend into round off each is refused.
+#[test]
+fn one_radius_rounds_of_a_law_or_two_distances_take_the_overflow_switches() {
+    let base = bossed();
+    let round = built(
+        &[
+            base.clone(),
+            vec![fillet(3.0, &[FOOT], Overflow::default())],
+        ]
+        .concat(),
+    );
+    let law = |overflow| {
+        let mut op = fillet(3.0, &[FOOT], overflow);
+        if let SolidOp::Fillet { variable, .. } = &mut op {
+            *variable = Some(kernel_api::VariableRadius {
+                end: 3.0,
+                between: Vec::new(),
+                reversed: false,
+            });
+        }
+        op
+    };
+    let distances = |overflow| {
+        let mut op = fillet(3.0, &[FOOT], overflow);
+        if let SolidOp::Fillet { distances, .. } = &mut op {
+            *distances = Some(kernel_api::RoundDistances {
+                other: 3.0,
+                flip: false,
+                profile: kernel_api::RoundProfile::Elliptical,
+            });
+        }
+        op
+    };
+    let off = with(|o| o.blend_into_round = false);
+    for (what, op) in [
+        ("law", law as fn(Overflow) -> SolidOp),
+        ("distances", distances),
+    ] {
+        let blended = built(&[base.clone(), vec![op(Overflow::default())]].concat());
+        assert!(
+            (blended - round).abs() < 1e-6,
+            "{what}: {blended} against {round}"
+        );
+        let why = refused(&[base.clone(), vec![op(off)]].concat());
+        assert!(why.contains("does not reach so far"), "{what}: {why}");
+    }
 }
 
 /// A chamfer takes blend into round too: the boss's foot bevel of 3 runs

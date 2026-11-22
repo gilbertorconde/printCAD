@@ -460,9 +460,14 @@ is used; with none that works, the feature fails and says why.
   rounds meet. The first takes gaps made of rounds alone, the second also
   one whole face, the third also part of a face.
 
-A chamfer has Blend into round and Trim through only. The fillet shows
-Overflow for one radius (Auto or Radius) with Setback corners; Rolling
-ball, Two distances and Variable rounds take none of these switches yet.
+A chamfer has Blend into round and Trim through only. Every fillet along
+edges shows Overflow. A round of one radius takes every switch, with
+Setback or Rolling ball corners, and so does a Variable round holding one
+radius all along and Two distances that are equal with the Elliptical
+profile. A radius that varies, two different distances, the Conic profile
+and a rolling-ball corner joining convex and concave rounds take Trim
+through alone: the other switches change nothing there, and with Trim
+through off a round that would change another face fails and says so.
 
 A fillet's Edges choice **Between two faces** rounds between two picked
 faces that need share no edge: the ball rolls between them, and the round

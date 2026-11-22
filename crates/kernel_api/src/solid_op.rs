@@ -932,8 +932,11 @@ pub enum SolidOp {
         auto: bool,
         #[serde(default)]
         variable: Option<VariableRadius>,
-        /// What the round does where it reaches other geometry; a round
-        /// of one radius between setback corners alone takes it.
+        /// What the round does where it reaches other geometry: every
+        /// switch for a round of one radius; trim through alone for a
+        /// radius that varies, two different distances or a conic
+        /// profile, and at a rolling-ball corner mixing convex and
+        /// concave rounds.
         #[serde(default, skip_serializing_if = "Overflow::is_default")]
         overflow: Overflow,
     },

@@ -949,6 +949,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 edges,
                 follow_tangent,
                 variable: Some(variable),
+                overflow,
                 ..
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
@@ -959,6 +960,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     variable,
                     edges,
                     *follow_tangent,
+                    *overflow,
                 )
                 .map_err(&err)?
             }

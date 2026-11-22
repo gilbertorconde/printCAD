@@ -804,8 +804,8 @@ pub enum DesignFeature {
         #[walk(number("rho", "Rho"))]
         rho: f32,
         /// What the round does where it reaches geometry other than its
-        /// own two faces; a round of one radius between setback corners
-        /// alone takes it.
+        /// own two faces, as [`kernel_api::SolidOp::Fillet`]'s overflow
+        /// says.
         #[serde(default)]
         #[walk(setting)]
         overflow: kernel_api::Overflow,

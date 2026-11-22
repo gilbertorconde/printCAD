@@ -12,9 +12,10 @@ use kernel_api::{
 };
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
-    Blend, BlendRefusal, BlendSizing, Chamfer, LawSize, LawStation, blend_edges, blend_limit,
-    chamfer_edges_checked, chamfer_edges_overflow, fillet_edge_distances, fillet_edges_corner,
-    fillet_edges_corner_checked, fillet_edges_overflow, largest_chamfer_distance_all,
+    Blend, BlendRefusal, BlendSizing, Chamfer, LawSize, LawStation, blend_edges_overflow,
+    blend_limit, chamfer_edges_checked, chamfer_edges_overflow, fillet_edge_distances_overflow,
+    fillet_edges_corner_checked, fillet_edges_corner_overflow, fillet_edges_variable_overflow,
+    largest_chamfer_distance_all,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -274,11 +275,12 @@ pub fn fillet(
             })
             .collect();
         // Rounds alone: the chamfer corner the call takes is never used.
-        let built = blend_edges(
+        let built = blend_edges_overflow(
             model,
             solid,
             &rounds,
             ogeom::fillet::ChamferCorner::Facet,
+            kernel_overflow(overflow),
             tol(),
         )
         .map_err(|e| format!("fillet with two distances failed: {e}"))?;
@@ -290,10 +292,9 @@ pub fn fillet(
     let pick =
         |picked: &[usize]| -> Vec<Shape> { picked.iter().map(|&i| chain[i].clone()).collect() };
     // The checked call names the edges a refusal concerns, under every
-    // overflow behaviour (all a rolling-ball corner takes); other options
-    // go through the call taking them, whose refusal the edges are tried
-    // apart for.
-    let asked = if overflow.is_default() || corner == ogeom::fillet::FilletCorner::Rolling {
+    // overflow behaviour; other options go through the call taking them,
+    // whose refusal the edges are tried apart for.
+    let asked = if overflow.is_default() {
         fillet_edges_corner_checked(model, solid, &chain, radius, corner, tol())
     } else {
         round(model, solid, &chain, radius, corner, overflow).map_err(|error| BlendRefusal {
@@ -310,7 +311,8 @@ pub fn fillet(
         // contact there; one that fits both faces is the round built.
         Err(_)
             if auto
-                && let Some(shape) = auto_round(model, solid, radius, edges, follow_tangent)? =>
+                && let Some(shape) =
+                    auto_round(model, solid, radius, edges, follow_tangent, overflow)? =>
         {
             Ok(shape)
         }
@@ -344,10 +346,13 @@ pub fn variable_fillet(
     variable: &kernel_api::VariableRadius,
     edges: &EdgeSelection,
     follow_tangent: bool,
+    overflow: Overflow,
 ) -> Result<Shape, String> {
     let run = variable_run(model, solid, variable, edges, follow_tangent)?;
     let law = radius_law(start, variable);
-    match ogeom::fillet::fillet_edges_variable(model, solid, &run, &law, tol()) {
+    let built =
+        fillet_edges_variable_overflow(model, solid, &run, &law, kernel_overflow(overflow), tol());
+    match built {
         Ok(built) => {
             crate::naming::record(&built.history);
             Ok(built.shape)
@@ -356,10 +361,14 @@ pub fn variable_fillet(
         Err(e) => {
             let mut message = format!("variable fillet failed: {e}");
             // The largest scale of every radius that builds, read by the
-            // kernel's own builds of the law.
+            // kernel's own builds of the law under every overflow
+            // behaviour, so under other options told only where the law so
+            // scaled builds under them.
             let scale = ogeom::fillet::largest_law_scale(model, solid, &run, &law, 1.0, tol());
             if let Ok(Some(scale)) = scale
                 && scale < 1.0
+                && (overflow.is_default()
+                    || law_builds(model, solid, &run, &law_scaled(&law, scale), overflow))
             {
                 let percent = (scale * 1000.0).floor() / 10.0;
                 message.push_str(&format!("; its radii fit at {percent} % of their size"));
@@ -402,17 +411,96 @@ fn radius_law(start: f64, variable: &kernel_api::VariableRadius) -> ogeom::fille
     }
 }
 
+/// `law` with every radius times `scale`.
+fn law_scaled(law: &ogeom::fillet::RadiusLaw, scale: f64) -> ogeom::fillet::RadiusLaw {
+    use ogeom::fillet::RadiusLaw;
+    match law {
+        RadiusLaw::Linear { start, end } => RadiusLaw::Linear {
+            start: start * scale,
+            end: end * scale,
+        },
+        RadiusLaw::Points(points) => {
+            RadiusLaw::Points(points.iter().map(|(s, r)| (*s, r * scale)).collect())
+        }
+    }
+}
+
+/// `law` with its point `at` (a linear law's start 0 and end 1) at
+/// `radius`; on a `closed` run its first and last points are one, and
+/// either sets both, as the kernel's reading frees them.
+fn law_with(
+    law: &ogeom::fillet::RadiusLaw,
+    at: usize,
+    radius: f64,
+    closed: bool,
+) -> ogeom::fillet::RadiusLaw {
+    use ogeom::fillet::RadiusLaw;
+    let last = match law {
+        RadiusLaw::Linear { .. } => 1,
+        RadiusLaw::Points(points) => points.len().saturating_sub(1),
+    };
+    let ends = closed && (at == 0 || at == last);
+    let set = |i: usize| i == at || (ends && (i == 0 || i == last));
+    match law {
+        RadiusLaw::Linear { start, end } => RadiusLaw::Linear {
+            start: if set(0) { radius } else { *start },
+            end: if set(1) { radius } else { *end },
+        },
+        RadiusLaw::Points(points) => RadiusLaw::Points(
+            points
+                .iter()
+                .enumerate()
+                .map(|(i, (s, r))| (*s, if set(i) { radius } else { *r }))
+                .collect(),
+        ),
+    }
+}
+
+/// Whether `run`, its edges end to end, closes on itself: no vertex of it
+/// ends one edge alone.
+fn closed_run(model: &Model, run: &[Shape]) -> bool {
+    let mut ends: Vec<(Shape, usize)> = Vec::new();
+    for edge in run {
+        let Ok(Some((a, b))) = ogeom::algo::edge_vertices(model, edge) else {
+            return false;
+        };
+        for vertex in [a, b] {
+            match ends.iter_mut().find(|(v, _)| v.is_same(&vertex)) {
+                Some((_, count)) => *count += 1,
+                None => ends.push((vertex, 1)),
+            }
+        }
+    }
+    !ends.is_empty() && ends.iter().all(|(_, count)| *count % 2 == 0)
+}
+
+/// Whether the round of `run` under `law` builds on `solid` reaching other
+/// geometry as `overflow` says, on a copy of `model`.
+fn law_builds(
+    model: &Model,
+    solid: &Shape,
+    run: &[Shape],
+    law: &ogeom::fillet::RadiusLaw,
+    overflow: Overflow,
+) -> bool {
+    let overflow = kernel_overflow(overflow);
+    fillet_edges_variable_overflow(&mut model.clone(), solid, run, law, overflow, tol()).is_ok()
+}
+
 /// The largest value the radius `at` of a variable fillet `op` builds at
 /// on `solid`, the others held, counted as [`kernel_api::SolidOp::law_radii`]
 /// counts them: the kernel's reading, confirmed by its builds of the whole
-/// law. `None` where every value short of the solid's diagonal builds,
-/// where none does, or for any other op.
+/// law under every overflow behaviour. Under other options it holds where
+/// the law builds at it under them, and is `None` where it does not, the
+/// kernel reading no law under them. `None` too where every value short of
+/// the solid's diagonal builds, where none does, or for any other op.
 pub fn law_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp, at: usize) -> Option<f64> {
     let kernel_api::SolidOp::Fillet {
         radius,
         edges,
         follow_tangent,
         variable: Some(variable),
+        overflow,
         ..
     } = op
     else {
@@ -429,7 +517,12 @@ pub fn law_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp, at: usi
     let limit = blend_limit(model, solid, &sizing, span, tol()).ok()?;
     // A bound that builds leaves the radius free.
     limit.refused?;
-    limit.size
+    let size = limit.size?;
+    (overflow.is_default() || {
+        let law = law_with(&law, at, size, closed_run(model, &run));
+        law_builds(model, solid, &run, &law, *overflow)
+    })
+    .then_some(size)
 }
 
 /// `chain`'s edges as one run end to end, each the way the run goes: from
@@ -521,9 +614,7 @@ fn kernel_overflow(overflow: Overflow) -> ogeom::fillet::Overflow {
 }
 
 /// The rounds of `edges` at `radius`, closed as `corner` says, reaching
-/// other geometry as `overflow` says. Rolling-ball corners take the
-/// kernel's own behaviours alone: its rolling rounds have no overflow
-/// options.
+/// other geometry as `overflow` says.
 fn round(
     model: &mut Model,
     solid: &Shape,
@@ -532,17 +623,15 @@ fn round(
     corner: ogeom::fillet::FilletCorner,
     overflow: Overflow,
 ) -> ogeom::core::OgeomResult<ogeom::algo::Built> {
-    match corner {
-        ogeom::fillet::FilletCorner::Setback => fillet_edges_overflow(
-            model,
-            solid,
-            edges,
-            radius,
-            kernel_overflow(overflow),
-            tol(),
-        ),
-        _ => fillet_edges_corner(model, solid, edges, radius, corner, tol()),
-    }
+    fillet_edges_corner_overflow(
+        model,
+        solid,
+        edges,
+        radius,
+        corner,
+        kernel_overflow(overflow),
+        tol(),
+    )
 }
 
 /// The bevels `specs`, a vertex of three or more closed as `corner`
@@ -584,6 +673,7 @@ fn auto_round(
     radius: f64,
     edges: &EdgeSelection,
     follow_tangent: bool,
+    overflow: Overflow,
 ) -> Result<Option<Shape>, String> {
     let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
     let [edge] = chain.as_slice() else {
@@ -595,7 +685,7 @@ fn auto_round(
     if on_face >= radius && on_other >= radius {
         return Ok(None);
     }
-    let built = fillet_edge_distances(
+    let built = fillet_edge_distances_overflow(
         model,
         solid,
         edge,
@@ -603,6 +693,7 @@ fn auto_round(
         on_face,
         on_other,
         ogeom::fillet::RoundProfile::Elliptical,
+        kernel_overflow(overflow),
         tol(),
     )
     .map_err(|e| format!("fillet failed: {e}"))?;
@@ -1191,12 +1282,7 @@ fn fillet_reading(
 ) -> Option<Reading> {
     let sizing = BlendSizing::Rounds { edges, corner };
     let limit = blend_limit(model, solid, &sizing, up_to, tol()).ok()?;
-    let reading = Reading::Built(limit.size);
-    // Rolling-ball corners take every behaviour whatever is asked.
-    Some(match corner {
-        ogeom::fillet::FilletCorner::Setback => under(reading, overflow),
-        _ => reading,
-    })
+    Some(under(Reading::Built(limit.size), overflow))
 }
 
 /// The largest share up to `up_to` of the bevels `specs` asks, each taken
