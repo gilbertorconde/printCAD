@@ -553,20 +553,6 @@ fn step_picks() -> EdgeSelection {
 }
 
 #[test]
-fn a_refused_fillet_names_its_failing_edge() {
-    names_its_failing_edge(&|size| SolidOp::Fillet {
-        radius: size,
-        edges: step_picks(),
-        follow_tangent: false,
-        corner: Default::default(),
-        distances: None,
-        auto: false,
-        variable: None,
-        overflow: Default::default(),
-    });
-}
-
-#[test]
 fn a_refused_chamfer_names_its_failing_edge() {
     names_its_failing_edge(&|size| SolidOp::Chamfer {
         spec: ChamferSpec::EqualDistance { distance: size },
@@ -4010,6 +3996,20 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
 #[cfg(feature = "heavy-tests")]
 mod heavy {
     use super::*;
+
+    #[test]
+    fn a_refused_fillet_names_its_failing_edge() {
+        names_its_failing_edge(&|size| SolidOp::Fillet {
+            radius: size,
+            edges: step_picks(),
+            follow_tangent: false,
+            corner: Default::default(),
+            distances: None,
+            auto: false,
+            variable: None,
+            overflow: Default::default(),
+        });
+    }
 
     /// A worm (a revolved core with a helical groove and a bore) and a 608
     /// ball bearing, as the hardware package makes them, the worm seven and a
