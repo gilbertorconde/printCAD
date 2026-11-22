@@ -307,6 +307,9 @@ fn mesh_faces(
     // still draws, but silently dropping it would leave a hole nobody
     // accounts for, so the count is reported below.
     let mut skipped = 0usize;
+    // What the mesher could not mesh as asked, by face, reported below.
+    let mut folds: Vec<(usize, Point)> = Vec::new();
+    let mut capped: Vec<(usize, Point)> = Vec::new();
 
     for (i, work) in computed.into_iter().enumerate() {
         let face_shape = &faces[i];
@@ -326,6 +329,13 @@ fn mesh_faces(
             }
         };
         let tri = &drawn.triangles;
+        for finding in &tri.findings {
+            match finding {
+                ogeom::topo::MeshFinding::SurfaceFolds { point, .. } => folds.push((i, *point)),
+                ogeom::topo::MeshFinding::RepairCapped { point, .. } => capped.push((i, *point)),
+                _ => {}
+            }
+        }
         if tri.triangles.is_empty() || tri.positions.is_empty() {
             continue;
         }
@@ -407,6 +417,33 @@ fn mesh_faces(
             faces = faces.len(),
             "{skipped} of {} faces could not be triangulated; this body draws with gaps",
             faces.len()
+        );
+    }
+
+    if let Some((face, at)) = folds.first() {
+        warn!(
+            target: "printcad.kernel",
+            faces = folds.len(),
+            face,
+            "{} face(s) fold over on themselves, the first at ({:.3}, {:.3}, {:.3}): no flat \
+             triangle there faces the way the surface does on every side",
+            folds.len(),
+            at.x,
+            at.y,
+            at.z
+        );
+    }
+    if let Some((face, at)) = capped.first() {
+        warn!(
+            target: "printcad.kernel",
+            faces = capped.len(),
+            face,
+            "{} face(s) stopped refining before meeting the chord, the first near \
+             ({:.3}, {:.3}, {:.3}): the mesh may stand off the face there by more than asked",
+            capped.len(),
+            at.x,
+            at.y,
+            at.z
         );
     }
 
