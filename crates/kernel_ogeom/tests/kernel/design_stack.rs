@@ -4185,6 +4185,7 @@ fn sketch_projected_onto(
 /// A Ø20 × 20 cylinder with `label` projected onto its side, or wrapped
 /// round it, picked where it faces -Y, as `mode` says; the plain
 /// cylinder's volume and the built result.
+#[cfg(feature = "heavy-tests")]
 fn sketch_projected_onto_a_cylinder(
     label: SketchFeature,
     mode: kernel_api::ProjectMode,
@@ -4203,6 +4204,7 @@ fn sketch_projected_onto_a_cylinder(
 
 /// "P", 8 mm tall, sketched in front of the Ø20 cylinder's side, left of
 /// its middle: a letter of lines and curves, with a counter.
+#[cfg(feature = "heavy-tests")]
 fn text_label() -> SketchFeature {
     let plane = sketch_model::sketch::SketchPlane {
         origin: [0.0, -15.0, 10.0],
@@ -4225,6 +4227,7 @@ fn text_label() -> SketchFeature {
 /// sides are cut alike carry alike meshing errors, which their difference
 /// cancels: at this chord the raised-to-sunk ratios below sit within 1e-3
 /// of what a chord ten times finer gives.
+#[cfg(feature = "heavy-tests")]
 fn meshed_volume(result: &kernel_api::SolidBuildResult) -> f64 {
     let (model, shape) = read_shape(&result.brep_blob);
     let tol = ogeom::core::Tolerances::millimetres();
@@ -4247,6 +4250,7 @@ fn meshed_volume(result: &kernel_api::SolidBuildResult) -> f64 {
 /// The text label split onto, embossed on and debossed into the cylinder's
 /// side, wrapped round it or carried straight: the three results, each
 /// built on a thread of its own and checked sound.
+#[cfg(feature = "heavy-tests")]
 fn text_on_a_cylinder(wrap: bool) -> [kernel_api::SolidBuildResult; 3] {
     use kernel_api::ProjectMode::{Deboss, Emboss, Split};
     std::thread::scope(|scope| {
@@ -4267,31 +4271,11 @@ fn text_on_a_cylinder(wrap: bool) -> [kernel_api::SolidBuildResult; 3] {
 
 /// [`text_on_a_cylinder`] carried straight, built once for the three tests
 /// that read it.
+#[cfg(feature = "heavy-tests")]
 fn straight_text_on_a_cylinder() -> &'static [kernel_api::SolidBuildResult; 3] {
     static STRAIGHT: std::sync::OnceLock<[kernel_api::SolidBuildResult; 3]> =
         std::sync::OnceLock::new();
     STRAIGHT.get_or_init(|| text_on_a_cylinder(false))
-}
-
-#[test]
-fn projected_text_embosses_and_debosses_a_cylinder() {
-    let [split, up, down] = straight_text_on_a_cylinder().each_ref().map(meshed_volume);
-    let (gained, lost) = (up - split, split - down);
-    // The letter's area on the side, raised and sunk 1 mm: the shells
-    // between radii 10 and 11 and between 9 and 10 it fills are 21 to 19.
-    assert!(gained > 5.0 && lost > 5.0, "{gained} and {lost}");
-    assert!(
-        (gained / lost - 21.0 / 19.0).abs() < 0.03,
-        "{gained} raised against {lost} sunk"
-    );
-}
-
-#[test]
-fn embossed_text_measures_what_it_adds() {
-    let plain = std::f64::consts::PI * 100.0 * 20.0;
-    let measured = volume(&straight_text_on_a_cylinder()[1].brep_blob);
-    // The letter adds some 9 mm³.
-    assert!(measured > plain + 7.5, "{} added", measured - plain);
 }
 
 /// A 6 × 4 rectangle split onto a round solid by a wrap, its middle
@@ -5334,6 +5318,27 @@ fn a_fillet_between_two_faces_rounds_across_a_groove() {
 #[cfg(feature = "heavy-tests")]
 mod heavy {
     use super::*;
+
+    #[test]
+    fn embossed_text_measures_what_it_adds() {
+        let plain = std::f64::consts::PI * 100.0 * 20.0;
+        let measured = volume(&straight_text_on_a_cylinder()[1].brep_blob);
+        // The letter adds some 9 mm³.
+        assert!(measured > plain + 7.5, "{} added", measured - plain);
+    }
+
+    #[test]
+    fn projected_text_embosses_and_debosses_a_cylinder() {
+        let [split, up, down] = straight_text_on_a_cylinder().each_ref().map(meshed_volume);
+        let (gained, lost) = (up - split, split - down);
+        // The letter's area on the side, raised and sunk 1 mm: the shells
+        // between radii 10 and 11 and between 9 and 10 it fills are 21 to 19.
+        assert!(gained > 5.0 && lost > 5.0, "{gained} and {lost}");
+        assert!(
+            (gained / lost - 21.0 / 19.0).abs() < 0.03,
+            "{gained} raised against {lost} sunk"
+        );
+    }
 
     #[test]
     fn wrapped_text_embosses_and_debosses_a_cylinder() {
