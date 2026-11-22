@@ -1,0 +1,205 @@
+pad: 0 100 50 cdeeecd7da37e67d
+pad: 100 0 50 37f2acbe1d1ecfa0
+pad: 100 100 0 d2ff6496fab0eb65
+pad: 100 100 100 017999c66530b3fc
+pad: 100 200 50 26e5a14a09626fb1
+pad: 200 100 50 022a157393cbbf77
+pad reversed: 0 100 -50 cdeeecd7da37e67d
+pad reversed: 100 0 -50 37f2acbe1d1ecfa0
+pad reversed: 100 100 -100 d949b235fad654e8
+pad reversed: 100 100 0 d2ff6496fab0eb65
+pad reversed: 100 200 -50 26e5a14a09626fb1
+pad reversed: 200 100 -50 022a157393cbbf77
+pad symmetric: 0 100 0 cdeeecd7da37e67d
+pad symmetric: 100 0 0 37f2acbe1d1ecfa0
+pad symmetric: 100 100 -50 d949b235fad654e8
+pad symmetric: 100 100 50 017999c66530b3fc
+pad symmetric: 100 200 0 26e5a14a09626fb1
+pad symmetric: 200 100 0 022a157393cbbf77
+pad two sides: 0 100 30 cdeeecd7da37e67d
+pad two sides: 100 0 30 37f2acbe1d1ecfa0
+pad two sides: 100 100 -40 d949b235fad654e8
+pad two sides: 100 100 100 017999c66530b3fc
+pad two sides: 100 200 30 26e5a14a09626fb1
+pad two sides: 200 100 30 022a157393cbbf77
+pad tapered: -4 100 51 cdeeecd7da37e67d
+pad tapered: 100 -4 51 37f2acbe1d1ecfa0
+pad tapered: 100 100 0 d2ff6496fab0eb65
+pad tapered: 100 100 100 017999c66530b3fc
+pad tapered: 100 204 51 26e5a14a09626fb1
+pad tapered: 204 100 51 022a157393cbbf77
+pad tapered two sides: -4 100 51 cdeeecd7da37e67d
+pad tapered two sides: -2 100 -20 cdeeecd7da37e67d
+pad tapered two sides: 100 -4 51 37f2acbe1d1ecfa0
+pad tapered two sides: 100 -2 -20 37f2acbe1d1ecfa0
+pad tapered two sides: 100 100 -40 d949b235fad654e8
+pad tapered two sides: 100 100 100 017999c66530b3fc
+pad tapered two sides: 100 202 -20 26e5a14a09626fb1
+pad tapered two sides: 100 204 51 26e5a14a09626fb1
+pad tapered two sides: 202 100 -20 022a157393cbbf77
+pad tapered two sides: 204 100 51 022a157393cbbf77
+pad slanted: 14 109 47 cdeeecd7da37e67d
+pad slanted: 100 100 0 d2ff6496fab0eb65
+pad slanted: 114 9 47 37f2acbe1d1ecfa0
+pad slanted: 114 209 47 26e5a14a09626fb1
+pad slanted: 128 119 94 017999c66530b3fc
+pad slanted: 214 109 47 022a157393cbbf77
+pad with a hole: 0 100 50 cdeeecd7da37e67d
+pad with a hole: 100 0 50 37f2acbe1d1ecfa0
+pad with a hole: 100 100 0 d2ff6496fab0eb65
+pad with a hole: 100 100 50 95f36565a15afb6b
+pad with a hole: 100 100 100 017999c66530b3fc
+pad with a hole: 100 200 50 26e5a14a09626fb1
+pad with a hole: 200 100 50 022a157393cbbf77
+pad of two regions: 0 50 50 cdeeecd7da37e67d
+pad of two regions: 50 0 50 37f2acbe1d1ecfa0
+pad of two regions: 50 50 0 d2ff6496fab0eb65
+pad of two regions: 50 50 100 017999c66530b3fc
+pad of two regions: 50 100 50 26e5a14a09626fb1
+pad of two regions: 100 50 50 022a157393cbbf77
+pad of two regions: 200 50 50 cdeeecd7da37e67d
+pad of two regions: 250 0 50 37f2acbe1d1ecfa0
+pad of two regions: 250 50 0 d2ff6496fab0eb65
+pad of two regions: 250 50 100 017999c66530b3fc
+pad of two regions: 250 100 50 26e5a14a09626fb1
+pad of two regions: 300 50 50 022a157393cbbf77
+pad of a hexagon: -75 -43 30 cdeeecd7da37e67d
+pad of a hexagon: -75 43 30 26e5a14a09626fb1
+pad of a hexagon: 0 -87 30 166f7f713582d087
+pad of a hexagon: 0 0 0 d2ff6496fab0eb65
+pad of a hexagon: 0 0 60 017999c66530b3fc
+pad of a hexagon: 0 87 30 022a157393cbbf77
+pad of a hexagon: 75 -43 30 a19f4634960806ea
+pad of a hexagon: 75 43 30 37f2acbe1d1ecfa0
+pad of unnamed sides: 0 50 25 0f7d9a45013527ce
+pad of unnamed sides: 100 0 25 b2b22ddf55c36bf2
+pad of unnamed sides: 100 50 0 d2ff6496fab0eb65
+pad of unnamed sides: 100 50 50 017999c66530b3fc
+pad of unnamed sides: 100 100 25 f120294b81e9a420
+pad of unnamed sides: 200 50 25 2a90381d53c06a1b
+pad of a spline: 0 50 25 26e5a14a09626fb1
+pad of a spline: 96 54 0 d2ff6496fab0eb65
+pad of a spline: 96 54 50 017999c66530b3fc
+pad of a spline: 100 0 25 37f2acbe1d1ecfa0
+pad of a spline: 127 89 25 a74bb7ca624be828
+pad up to a plane: 0 100 60 cdeeecd7da37e67d
+pad up to a plane: 100 0 60 37f2acbe1d1ecfa0
+pad up to a plane: 100 100 0 d2ff6496fab0eb65
+pad up to a plane: 100 100 120 017999c66530b3fc
+pad up to a plane: 100 200 60 26e5a14a09626fb1
+pad up to a plane: 200 100 60 022a157393cbbf77
+pad up to a slanted plane: 0 100 60 cdeeecd7da37e67d
+pad up to a slanted plane: 89 0 47 37f2acbe1d1ecfa0
+pad up to a slanted plane: 89 200 47 26e5a14a09626fb1
+pad up to a slanted plane: 100 100 0 d2ff6496fab0eb65
+pad up to a slanted plane: 100 100 90 4408f2ba5086d1c7
+pad up to a slanted plane: 200 100 30 022a157393cbbf77
+pocket through all: -200 0 50 cdeeecd7da37e67d
+pocket through all: -50 0 50 474c898fe283dc41
+pocket through all: 0 -150 50 37f2acbe1d1ecfa0
+pocket through all: 0 -50 50 8122f8bd82800a9c
+pocket through all: 0 0 0 d2ff6496fab0eb65
+pocket through all: 0 0 100 017999c66530b3fc
+pocket through all: 0 50 50 7dd73b8b15d3eebd
+pocket through all: 0 150 50 26e5a14a09626fb1
+pocket through all: 50 0 50 d946d1bff855fc0b
+pocket through all: 200 0 50 022a157393cbbf77
+pad to the first face: -200 0 225 cdeeecd7da37e67d
+pad to the first face: 0 -150 225 37f2acbe1d1ecfa0
+pad to the first face: 0 0 0 23ce5d4051236069
+pad to the first face: 0 0 100 9149552ff7f1a75f
+pad to the first face: 0 0 200 d2ff6496fab0eb65
+pad to the first face: 0 0 250 017999c66530b3fc
+pad to the first face: 0 150 225 26e5a14a09626fb1
+pad to the first face: 200 0 225 022a157393cbbf77
+revolve a quarter: 0 100 -100 ef37447d6b040e91
+revolve a quarter: 32 100 -32 cdeeecd7da37e67d
+revolve a quarter: 69 0 -69 37f2acbe1d1ecfa0
+revolve a quarter: 69 200 -69 26e5a14a09626fb1
+revolve a quarter: 95 100 -95 022a157393cbbf77
+revolve a quarter: 100 100 0 d2ff6496fab0eb65
+revolve a half: -100 100 0 d2ff6496fab0eb65
+revolve a half: 0 0 -69 37f2acbe1d1ecfa0
+revolve a half: 0 100 -95 022a157393cbbf77
+revolve a half: 0 100 -32 cdeeecd7da37e67d
+revolve a half: 0 200 -69 26e5a14a09626fb1
+revolve a half: 100 100 0 d2ff6496fab0eb65
+revolve whole: 0 0 0 37f2acbe1d1ecfa0
+revolve whole: 0 100 0 022a157393cbbf77
+revolve whole: 0 100 0 cdeeecd7da37e67d
+revolve whole: 0 200 0 26e5a14a09626fb1
+revolve on the axis: -21 100 -21 022a157393cbbf77
+revolve on the axis: -14 0 -14 37f2acbe1d1ecfa0
+revolve on the axis: -14 200 -14 26e5a14a09626fb1
+revolve on the axis: 0 100 50 cdeeecd7da37e67d
+revolve on the axis: 50 100 0 d2ff6496fab0eb65
+revolve whole on the axis: 0 0 0 37f2acbe1d1ecfa0
+revolve whole on the axis: 0 100 0 022a157393cbbf77
+revolve whole on the axis: 0 200 0 26e5a14a09626fb1
+revolve about the middle: 41 100 0 cdeeecd7da37e67d
+revolve about the middle: 50 100 -87 a6eb5f4e970d0e4d
+revolve about the middle: 50 100 87 9c3b0623708403f6
+revolve about the middle: 89 0 0 37f2acbe1d1ecfa0
+revolve about the middle: 89 200 0 26e5a14a09626fb1
+revolve about the middle: 124 100 0 022a157393cbbf77
+revolve two ways: 43 100 -12 cdeeecd7da37e67d
+revolve two ways: 50 100 -87 a6eb5f4e970d0e4d
+revolve two ways: 87 100 50 8955fff0ac09f5f4
+revolve two ways: 94 0 -25 37f2acbe1d1ecfa0
+revolve two ways: 94 200 -25 26e5a14a09626fb1
+revolve two ways: 130 100 -35 022a157393cbbf77
+revolve a circle: 0 0 0 95f36565a15afb6b
+helix: -108 35 0 0005421e01077a3f
+helix: -108 85 0 05a01964d2ddc282
+helix: -99 25 0 4ee1d7947f6379e3
+helix: -99 45 0 9b07d6512cc0e0a8
+helix: -99 75 0 64e223dcdf365428
+helix: -99 95 0 d9cbae2964640f95
+helix: -90 35 0 998d7a936b807c70
+helix: -90 85 0 22a9362cc831fe4e
+helix: 0 13 -99 ee2fe48d79240278
+helix: 0 23 -108 e4d8bae5253723ce
+helix: 0 23 -90 47fe0942b4775ebe
+helix: 0 32 -99 dbad54a633c3f393
+helix: 0 37 99 9d86a9decfdfa24c
+helix: 0 48 90 8f737db619a0ae0b
+helix: 0 48 108 254a5c98b1148669
+helix: 0 57 99 5a2e33b7edaca807
+helix: 0 62 -99 3f15414306f258bd
+helix: 0 73 -108 84d366ed7b6ce05f
+helix: 0 73 -90 e7f8b54b0aad1b4f
+helix: 0 82 -99 da9c72ebf54cd18a
+helix: 0 87 99 9ace4d2afceecb70
+helix: 0 98 90 44de0edccf01673d
+helix: 0 98 108 a8035d3a5e41a22d
+helix: 0 107 99 525aa30634802962
+helix: 90 13 -37 cdeeecd7da37e67d
+helix: 90 60 0 20153e04fe66448c
+helix: 90 107 37 c00fea0d549c011d
+helix: 99 3 -41 37f2acbe1d1ecfa0
+helix: 99 23 -41 26e5a14a09626fb1
+helix: 99 50 0 dd829b893606eca7
+helix: 99 70 0 e5b84e58717afc2c
+helix: 99 97 41 b160ae8e8347e212
+helix: 99 117 41 7e100b4502392184
+helix: 108 13 -45 022a157393cbbf77
+helix: 108 60 0 82ae8a2471fc41bd
+helix: 108 107 45 e2b3de1c1bc6852c
+helix: 110 10 0 d2ff6496fab0eb65
+helix: 110 110 0 d2ff6496fab0eb65
+loft: -78 0 44 cdeeecd7da37e67d
+loft: 0 -78 44 37f2acbe1d1ecfa0
+loft: 0 0 0 d2ff6496fab0eb65
+loft: 0 0 100 017999c66530b3fc
+loft: 0 78 44 26e5a14a09626fb1
+loft: 78 0 44 022a157393cbbf77
+loft of three: -100 0 50 cdeeecd7da37e67d
+loft of three: -100 0 150 10985e7ae890ee1d
+loft of three: 0 -100 50 37f2acbe1d1ecfa0
+loft of three: 0 -100 150 83a316e789a43701
+loft of three: 0 0 0 d2ff6496fab0eb65
+loft of three: 0 0 200 017999c66530b3fc
+loft of three: 0 100 50 26e5a14a09626fb1
+loft of three: 0 100 150 06c9d10b2878c35d
+loft of three: 100 0 50 022a157393cbbf77
+loft of three: 100 0 150 2dce02c9111a1b3b

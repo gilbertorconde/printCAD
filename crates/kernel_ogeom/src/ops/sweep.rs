@@ -26,6 +26,13 @@ use crate::tess;
 
 const TAU: f64 = std::f64::consts::TAU;
 
+/// `built`'s shape, what the kernel said it did kept for the tool it
+/// builds (`naming::record_tool`).
+fn kept(built: ogeom::algo::Built) -> Shape {
+    crate::naming::record_tool(&built.history);
+    built.shape
+}
+
 pub fn build_tool(
     model: &mut Model,
     base: Option<&Shape>,
@@ -33,6 +40,7 @@ pub fn build_tool(
     kind: &SweepKind,
 ) -> Result<Shape, String> {
     let built = profile::build_profile(model, prof)?;
+    crate::naming::record_profile(&built);
     match kind {
         SweepKind::Extrude { .. } => {
             let normal =
@@ -149,6 +157,7 @@ pub fn build_revolve_to_face_of_tool(
         return Err("only a revolution turns until it meets a borrowed face".into());
     };
     let built = profile::build_profile(model, prof)?;
+    crate::naming::record_profile(&built);
     let mut other = crate::chain::absorb_shape(model, shape)?;
     if let Some(matrix) = transform {
         other = super::pattern::moved(model, &other, matrix)?;
@@ -307,13 +316,13 @@ fn extrude(
     if let Some(term2) = second_side {
         let back = extrude_one_side(model, base, built, dir.reversed(), term2, taper_deg)?;
         tool = ogeom::boolean::fuse(model, &tool, &back, tol())
-            .map_err(|e| format!("fusing the two sweep sides failed: {e}"))?
-            .shape;
+            .map(kept)
+            .map_err(|e| format!("fusing the two sweep sides failed: {e}"))?;
     } else if symmetric && let ExtrudeTermination::Blind { distance } = termination {
         let shift = Transform::translation(dir.vector() * (-distance * 0.5));
         tool = ogeom::algo::transformed(model, &tool, shift)
-            .map_err(|e| format!("centering the symmetric extrusion failed: {e}"))?
-            .shape;
+            .map(kept)
+            .map_err(|e| format!("centering the symmetric extrusion failed: {e}"))?;
     }
     Ok(tool)
 }
@@ -331,11 +340,12 @@ fn one_prism_from(
     let mut parts = Vec::with_capacity(built.faces.len());
     for face in &built.faces {
         let moved = ogeom::algo::transformed(model, face, shift)
-            .map_err(|e| format!("placing the extrusion's start failed: {e}"))?
-            .shape;
+            .map(kept)
+            .map_err(|e| format!("placing the extrusion's start failed: {e}"))?;
         let part = make_prism(model, &moved, dir.vector() * length, tol())
+            .map(kept)
             .map_err(|e| format!("extrude operation failed: {e}"))?;
-        parts.push(part.shape);
+        parts.push(part);
     }
     fuse_all(model, parts)
 }
@@ -539,20 +549,20 @@ fn up_to_shape(
             ));
         }
         let mut stop = ogeom::algo::copied(model, face)
-            .map_err(|e| format!("copying a stop face failed: {e}"))?
-            .shape;
+            .map(kept)
+            .map_err(|e| format!("copying a stop face failed: {e}"))?;
         if offset != 0.0 {
             let shift = Transform::translation(dir.vector() * offset);
             stop = ogeom::algo::transformed(model, &stop, shift)
-                .map_err(|e| format!("moving a stop face by its offset failed: {e}"))?
-                .shape;
+                .map(kept)
+                .map_err(|e| format!("moving a stop face by its offset failed: {e}"))?;
         }
         let shadow = make_prism(model, &stop, dir.vector() * (2.0 * reach), tol())
-            .map_err(|e| format!("sweeping a stop face on failed: {e}"))?
-            .shape;
+            .map(kept)
+            .map_err(|e| format!("sweeping a stop face on failed: {e}"))?;
         tool = ogeom::boolean::cut(model, &tool, &shadow, tol())
-            .map_err(|e| format!("stopping the sweep at a stop face failed: {e}"))?
-            .shape;
+            .map(kept)
+            .map_err(|e| format!("stopping the sweep at a stop face failed: {e}"))?;
         tool = super::normalized(model, tool);
     }
     starting_at_profile(model, tool, centroid, dir)
@@ -724,8 +734,8 @@ fn up_to_face(
         .map_err(|e| format!("the target surface's half-space: {e}"))?
         .shape;
     let trimmed = ogeom::boolean::common(model, &long_prism, &half, tol())
-        .map_err(|e| format!("trimming the sweep at the target face failed: {e}"))?
-        .shape;
+        .map(kept)
+        .map_err(|e| format!("trimming the sweep at the target face failed: {e}"))?;
     starting_at_profile(model, trimmed, centroid, dir)
 }
 
@@ -747,7 +757,7 @@ pub fn trim_with_halfspace(
         .map_err(|e| format!("trim half-space: {e}"))?
         .shape;
     ogeom::boolean::common(model, shape, &half, tol())
-        .map(|b| super::normalized(model, b.shape))
+        .map(|b| super::normalized(model, kept(b)))
         .map_err(|e| format!("trimming the sweep at the target plane failed: {e}"))
 }
 
@@ -790,15 +800,17 @@ fn prism_solid(
     for face in &built.faces {
         let part = if taper_deg.abs() <= 1e-9 {
             make_prism(model, face, sweep, tol())
+                .map(kept)
                 .map_err(|e| format!("prism extrusion failed: {e}"))?
         } else {
             if taper_deg.abs() >= 89.9 {
                 return Err("taper angle must be below 90 degrees".into());
             }
             make_prism_tapered(model, face, sweep, taper_deg.to_radians(), tol())
+                .map(kept)
                 .map_err(|e| format!("tapered prism failed: {e}"))?
         };
-        parts.push(part.shape);
+        parts.push(part);
     }
     fuse_all(model, parts)
 }
@@ -983,8 +995,9 @@ fn revolve(
                     let mut parts = Vec::with_capacity(built.faces.len());
                     for face in &built.faces {
                         let part = make_revolution_until(model, face, axis, &limit, tol())
+                            .map(kept)
                             .map_err(|e| format!("revolve up to the face failed: {e}"))?;
-                        parts.push(part.shape);
+                        parts.push(part);
                     }
                     return fuse_all(model, parts);
                 }
@@ -1015,14 +1028,15 @@ fn revolve(
         let sweep_face = if pre_angle != 0.0 {
             let pre = Transform::rotation(axis, pre_angle);
             ogeom::algo::transformed(model, face, pre)
+                .map(kept)
                 .map_err(|e| format!("pre-rotating the revolve profile failed: {e}"))?
-                .shape
         } else {
             face.clone()
         };
         let part = make_revolution(model, &sweep_face, axis, total_rad, tol())
+            .map(kept)
             .map_err(|e| format!("revolve operation failed: {e}"))?;
-        parts.push(part.shape);
+        parts.push(part);
     }
     fuse_all(model, parts)
 }
@@ -1310,8 +1324,9 @@ fn helix_about(
             extent.growth,
             tol(),
         )
+        .map(kept)
         .map_err(|e| format!("helix sweep failed: {e}"))?;
-        parts.push(part.shape);
+        parts.push(part);
     }
     fuse_all(model, parts)
 }

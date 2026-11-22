@@ -7,11 +7,11 @@ use kernel_api::{
     BoolKind, BooleanOp, ChainError, ChainProbe, ChainProjection, FeaturePreview, OpWarning,
     ProbeAnswer, ProjectedEdge, SolidBuildResult, SolidOp, TessellationSettings,
 };
-use kernel_api::{Profile, TopoName, naming as names};
+use kernel_api::{TopoName, naming as names};
 use ogeom::math::Point;
 use ogeom::topo::{Model, Shape, ShapeType, explore_unique};
 
-use crate::convert::{array, point, vector};
+use crate::convert::{array, point};
 use crate::limit_reading::{LimitKeys, LimitReading, SharedMemo};
 use crate::naming::{self, NameMap};
 use crate::ops::{self, pattern};
@@ -346,23 +346,6 @@ fn op_tags(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<TopoName> {
             }
         })
         .collect()
-}
-
-/// The names of a sweep's tool: its walls after the profile's segments
-/// (every sweep's wall passes through the segment it sweeps) and its ends
-/// after where they stand along the profile's normal; the rest afresh.
-fn sweep_names(model: &Model, tool: &Shape, tag: TopoName, profile: &Profile) -> NameMap {
-    let plane = &profile.plane;
-    let origin = point(plane.origin);
-    let normal = vector(plane.normal);
-    naming::tool_names(
-        model,
-        tool,
-        tag,
-        &naming::profile_segments(profile),
-        origin,
-        normal,
-    )
 }
 
 /// A tool's faces named afresh, by their surfaces and where they face.
@@ -781,9 +764,11 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         let next = match solid_op {
             SolidOp::Shape { brep } => absorb_shape(&mut model, brep).map_err(&err)?,
             SolidOp::Sweep { profile, kind, op } => {
+                let building = naming::ToolBuild::start();
                 let tool = ops::sweep::build_tool(&mut model, base.as_ref(), profile, kind)
                     .map_err(&err)?;
-                tool_names = Some(sweep_names(&model, &tool, tag, profile));
+                let built = building.take();
+                tool_names = Some(naming::tool_names(&model, &tool, tag, profile, &built));
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
@@ -828,6 +813,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 point,
                 op,
             } => {
+                let building = naming::ToolBuild::start();
                 let tool = ops::sweep::build_revolve_to_face_of_tool(
                     &mut model,
                     profile,
@@ -837,7 +823,8 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     *point,
                 )
                 .map_err(&err)?;
-                tool_names = Some(sweep_names(&model, &tool, tag, profile));
+                let built = building.take();
+                tool_names = Some(naming::tool_names(&model, &tool, tag, profile, &built));
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
@@ -883,18 +870,16 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             } => {
                 let tool = ops::loft_pipe::loft_tool(&mut model, sections, *ruled, *closed)
                     .map_err(&err)?;
+                // A loft's kernel record says only that its sections made
+                // the whole solid: its walls are named by where they lie.
                 tool_names = Some(match sections.first() {
-                    Some(first) if !*closed => {
-                        let plane = &first.plane;
-                        naming::tool_names(
-                            &model,
-                            &tool,
-                            tag,
-                            &naming::profile_segments(first),
-                            point(plane.origin),
-                            vector(plane.normal),
-                        )
-                    }
+                    Some(first) if !*closed => naming::tool_names(
+                        &model,
+                        &tool,
+                        tag,
+                        first,
+                        &naming::ToolRecord::default(),
+                    ),
                     _ => tool_names_fresh(&model, &tool, tag),
                 });
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);

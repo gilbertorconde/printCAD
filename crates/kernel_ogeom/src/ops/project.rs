@@ -9,9 +9,9 @@
 //! the normal from where the piece faces the plane, or unrolled.
 
 use kernel_api::{FaceProbe, Profile, ProjectMode};
-use ogeom::algo::{Containment, classify_in_solid_exact, classify_on_face, copied};
+use ogeom::algo::{Containment, classify_on_face, copied};
 use ogeom::heal::{Projection, split_face};
-use ogeom::math::{Direction, Point, Vector};
+use ogeom::math::{Direction, Point};
 use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::offset::make_thick_sheet;
 use ogeom::topo::{Model, Shape};
@@ -148,7 +148,7 @@ pub fn apply(
                 .is_ok_and(|c| c == Containment::In)
         });
         if in_region {
-            covered.push((piece, inside));
+            covered.push(piece);
         }
     }
     if covered.is_empty() {
@@ -161,8 +161,8 @@ pub fn apply(
     } else {
         kernel_api::BoolKind::Cut
     };
-    for (piece, inside) in covered {
-        let slab = slab(model, &piece, inside, height, raise)?;
+    for piece in covered {
+        let slab = slab(model, &piece, height, raise)?;
         shape = super::combine_solids(model, &shape, &slab, kind)?;
     }
     Ok(shape)
@@ -248,42 +248,16 @@ fn onto_plane(sketch: &Profile, along: Direction, p: Point) -> Point {
     p - n * off
 }
 
-/// `piece` thickened by `height` out of the solid (`raise`) or into it.
-fn slab(
-    model: &mut Model,
-    piece: &Shape,
-    inside: Point,
-    height: f64,
-    raise: bool,
-) -> Result<Shape, String> {
-    let (at, outward) = crate::probe::outward_at(model, piece, inside)?;
-    let outward = outward * (1.0 / outward.magnitude().max(1e-300));
-    let toward: Vector = if raise { outward } else { -outward };
-    let middle = at + toward * (height * 0.5);
+/// `piece` thickened by `height` out of the solid (`raise`) or into it:
+/// a face of the solid faces out of it, and the kernel thickens a face
+/// the way it faces.
+fn slab(model: &mut Model, piece: &Shape, height: f64, raise: bool) -> Result<Shape, String> {
     let sheet = copied(model, piece)
         .map_err(|e| format!("copying a region failed: {e}"))?
         .shape;
-    let mut last = String::new();
-    for thickness in [height, -height] {
-        let built = match make_thick_sheet(model, &sheet, thickness, false, tol()) {
-            Ok(built) => built,
-            Err(e) => {
-                last = format!("thickening a region failed: {e}");
-                continue;
-            }
-        };
-        // Asked of the exact shape: a thin slab's middle lies closer to
-        // its walls than a mesh's chord, where a meshed answer says On.
-        let holds = classify_in_solid_exact(model, &built.shape, middle, tol())
-            .is_ok_and(|c| c == Containment::In);
-        if holds {
-            crate::naming::record(&built.history);
-            return Ok(built.shape);
-        }
-    }
-    Err(if last.is_empty() {
-        "a region's slab came out on the wrong side of its face".into()
-    } else {
-        last
-    })
+    let thickness = if raise { height } else { -height };
+    let built = make_thick_sheet(model, &sheet, thickness, false, tol())
+        .map_err(|e| format!("thickening a region failed: {e}"))?;
+    crate::naming::record(&built.history);
+    Ok(built.shape)
 }
