@@ -640,7 +640,7 @@ fn region_solid(
 ) -> Result<Shape, String> {
     let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
     for copy in copies {
-        let Some((lo, hi)) = tess::robust_bounds(model, copy) else {
+        let Some((lo, hi)) = tess::guaranteed_bounds(model, copy) else {
             continue;
         };
         for x in [lo.x, hi.x] {

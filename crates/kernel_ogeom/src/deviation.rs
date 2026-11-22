@@ -202,7 +202,7 @@ fn target_index(target: DistanceTarget<'_>) -> KernelResult<Bvh> {
                 mesh_deviation: SHAPE_CHORD_SHARE,
                 ..TessellationSettings::default()
             };
-            meshed = tess::tessellate_blob(blob, &[], &detail, tess::Faces::Wide)?;
+            meshed = tess::tessellate_blob(blob, &[], &detail)?;
             &meshed
         }
     };

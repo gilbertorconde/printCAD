@@ -99,7 +99,7 @@ pub struct ChainCache {
     /// The last build's edited op made the solid the build before's did,
     /// and the rest of its result was that build's.
     reused: bool,
-    /// The meshes of the faces the last build drew.
+    /// The meshes, boxes and outlines of the faces the builds before drew.
     faces: crate::reuse::FaceMeshes,
     /// Keep every edited op's solid for the next build to compare, whatever
     /// the build's timings say it is worth.
@@ -191,11 +191,6 @@ impl ChainCache {
     /// solid the build before's did, and took the rest from that build.
     pub fn reused(&self) -> bool {
         self.reused
-    }
-
-    /// How many faces' meshes the last build left for the next.
-    pub fn faces_kept(&self) -> usize {
-        self.faces.len()
     }
 
     /// The size limit the last build left to be read after it, taken out:

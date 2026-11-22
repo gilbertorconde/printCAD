@@ -161,6 +161,14 @@ fn a_resumed_build_is_the_build_from_scratch() {
     part.set(last, "length", 5.0);
     let (fresh, cached) = part.build(&mut cache);
     same(&fresh, &cached, "the last feature edited again");
+    // Back to a length two builds ago: faces kept from before the last
+    // build draw as a build from scratch draws them.
+    part.set(last, "length", 4.0);
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "the last feature edited back");
+    part.set(last, "length", 5.0);
+    let (fresh, cached) = part.build(&mut cache);
+    same(&fresh, &cached, "the last feature edited forth");
     assert!(
         cache.resumed() >= ops - 2,
         "resumed after {} of {ops} ops",

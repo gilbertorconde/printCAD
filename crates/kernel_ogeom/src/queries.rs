@@ -11,8 +11,8 @@ use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_pla
 use ogeom::core::Tolerances;
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Plane, Point, Vector};
-use ogeom::mesh::{Deflection, discretize};
-use ogeom::topo::{EdgeRepr, Model, NodeData, Orientation, Shape, ShapeType, explore_unique};
+use ogeom::mesh::Deflection;
+use ogeom::topo::{EdgeRepr, Model, NodeData, Shape, ShapeType, explore_unique};
 
 use crate::convert::{array, point, vector};
 use crate::probe::Reach;
@@ -1274,30 +1274,11 @@ pub(crate) fn edge_points(
     deflection: Deflection,
     tol: Tolerances,
 ) -> KernelResult<Vec<[f64; 3]>> {
-    let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
-        return Err(other("the centre line holds no edge"));
-    };
-    let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
+    let points = ogeom::mesh::polyline_of_edge(model, edge, deflection, tol).map_err(other)?;
+    if points.is_empty() {
         return Err(other("the centre line's edge has no curve"));
-    };
-    let geometry = model
-        .geometry()
-        .curve(*curve)
-        .ok_or_else(|| other("the centre line's curve is missing"))?;
-    let placement = edge.transform(model.datums()).map_err(other)?;
-    let line = discretize(geometry, *range, deflection, tol).map_err(other)?;
-    let mut points: Vec<[f64; 3]> = line
-        .points
-        .iter()
-        .map(|p| {
-            let p = placement.apply(*p);
-            array(p)
-        })
-        .collect();
-    if edge.orientation() == Orientation::Reversed {
-        points.reverse();
     }
-    Ok(points)
+    Ok(points.into_iter().map(array).collect())
 }
 
 fn is_line(model: &Model, edge: &Shape) -> bool {

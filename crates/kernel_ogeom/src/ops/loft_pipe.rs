@@ -106,7 +106,7 @@ fn face_section(
         .into_iter()
         .filter(|c| model.kind_of(c) == Ok(ogeom::topo::ShapeType::Wire))
         .map(|w| {
-            let size = crate::tess::robust_bounds(model, &w)
+            let size = crate::tess::guaranteed_bounds(model, &w)
                 .map(|(lo, hi)| (hi - lo).magnitude())
                 .unwrap_or(0.0);
             (size, w)

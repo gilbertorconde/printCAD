@@ -506,7 +506,8 @@ pub fn law_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp, at: usi
     else {
         return None;
     };
-    let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
+    let span =
+        crate::tess::guaranteed_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
     let run = variable_run(&mut model.clone(), solid, variable, edges, *follow_tangent).ok()?;
     let law = radius_law(*radius, variable);
     let sizing = BlendSizing::RoundLaw {
@@ -740,7 +741,8 @@ const SLIVER: f64 = 1e-5;
 /// seats alone, building nothing. `None` where it runs on past the solid's
 /// size or the kernel cannot read it.
 fn sides_reach(model: &Model, solid: &Shape, sizings: [BlendSizing<'_>; 2]) -> [Option<f64>; 2] {
-    let Some(span) = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())
+    let Some(span) =
+        crate::tess::guaranteed_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())
     else {
         return [None, None];
     };
@@ -1781,7 +1783,8 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Lim
 /// under its own holds there. `None` where every size short of the
 /// solid's diagonal builds, where none does, or for any other op.
 fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Option<f64> {
-    let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
+    let span =
+        crate::tess::guaranteed_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
     let mut model = model.clone();
     let below_span = |size: f64| (size < span * (1.0 - 1e-9)).then_some(size);
     match op {
