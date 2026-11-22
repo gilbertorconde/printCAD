@@ -74,7 +74,7 @@ impl OgeomKernel {
         face_colors: &[[f32; 3]],
         detail: &TessellationSettings,
     ) -> KernelResult<TriMesh> {
-        tess::tessellate_blob(brep_blob, face_colors, detail, tess::Faces::Wide)
+        tess::tessellate_blob(brep_blob, face_colors, detail)
     }
 
     /// Tessellate many snapshots at once, spreading the *bodies* across
@@ -91,9 +91,7 @@ impl OgeomKernel {
     ) -> KernelResult<Vec<KernelResult<TriMesh>>> {
         Ok(ogeom::core::parallel::map_ordered(
             jobs,
-            |_, (blob, face_colors)| {
-                tess::tessellate_blob(blob, face_colors, detail, tess::Faces::Inline)
-            },
+            |_, (blob, face_colors)| tess::tessellate_blob(blob, face_colors, detail),
         ))
     }
 

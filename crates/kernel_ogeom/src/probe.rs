@@ -3,9 +3,7 @@
 //! part way through a chain).
 
 use kernel_api::{FaceProbe, ProbeAnswer, ProbedCircle, ShapeProbe};
-use ogeom::algo::{
-    distance_between_shapes, project_on_curve, project_on_surface, volume_properties,
-};
+use ogeom::algo::{PointDistance, project_on_curve, project_on_surface, volume_properties};
 use ogeom::geom::{Curve, Curve3d as _, Surface as _, Transformable as _};
 use ogeom::math::{Point, Vector};
 use ogeom::mesh::Deflection;
@@ -64,25 +62,14 @@ fn face(model: &mut Model, root: &Shape, probe: &FaceProbe) -> Result<ProbeAnswe
 /// The point of `face` nearest `near`, and the face's outward normal there
 /// (its surface's normal, turned where the face is reversed).
 pub(crate) fn outward_at(
-    model: &mut Model,
+    model: &Model,
     face: &Shape,
     near: Point,
 ) -> Result<(Point, Vector), String> {
     let tol = tess::tolerances();
-    let vertex = model.add_vertex(ogeom::topo::VertexData::new(near));
-    let nearest = distance_between_shapes(
-        model,
-        &vertex,
-        face,
-        ogeom::intersect::ExtremaOptions::default(),
-        tol,
-    )
-    .map_err(|e| format!("measuring to the face failed: {e}"))?;
-    let on_face = nearest
-        .pairs
-        .first()
-        .map(|pair| pair.point_b)
-        .ok_or("the face has no nearest point")?;
+    let (_, on_face) = PointDistance::of(model, face, tol)
+        .and_then(|d| d.nearest(near, tol))
+        .map_err(|e| format!("measuring to the face failed: {e}"))?;
     let Some(NodeData::Face(data)) = model.node(face).map(|n| n.data()) else {
         return Err("the face holds no face data".into());
     };
@@ -151,7 +138,7 @@ impl Reach {
     /// The distance in millimetres this reach allows on `root`.
     pub(crate) fn limit(self, model: &Model, root: &Shape) -> f64 {
         match self {
-            Reach::Pick => tess::robust_bounds(model, root)
+            Reach::Pick => tess::guaranteed_bounds(model, root)
                 .map(|(lo, hi)| (hi - lo).magnitude() * 0.1)
                 .unwrap_or(f64::INFINITY),
             Reach::Within(mm) => mm,
@@ -173,27 +160,21 @@ pub(crate) fn at_point(point: Point, name: kernel_api::TopoName) -> FaceProbe {
 /// The sub-shapes of `root` of type `want`, nearest `point` first, each with
 /// its distance.
 pub(crate) fn by_distance(
-    model: &mut Model,
+    model: &Model,
     root: &Shape,
     want: ShapeType,
     point: Point,
 ) -> Result<Vec<(f64, Shape)>, String> {
     let tol = tess::tolerances();
-    let vertex = model.add_vertex(ogeom::topo::VertexData::new(point));
     let shapes = explore_unique(model, root, want)
         .map_err(|e| format!("exploring the solid failed: {e}"))?;
     let mut near: Vec<(f64, Shape)> = shapes
         .into_iter()
         .filter_map(|shape| {
-            distance_between_shapes(
-                model,
-                &vertex,
-                &shape,
-                ogeom::intersect::ExtremaOptions::default(),
-                tol,
-            )
-            .ok()
-            .map(|d| (d.distance, shape))
+            PointDistance::of(model, &shape, tol)
+                .and_then(|d| d.nearest(point, tol))
+                .ok()
+                .map(|(d, _)| (d, shape))
         })
         .collect();
     near.sort_by(|a, b| a.0.total_cmp(&b.0));

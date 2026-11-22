@@ -444,9 +444,9 @@ fn export_mesh(
                             .map_err(|e| {
                                 KernelError::Other(anyhow::anyhow!("{}: {e}", body.name))
                             })?;
-                        tess::mesh_shape_with(&model, &shape, &[], detail, tess::Faces::Wide)?
+                        tess::mesh_shape(&model, &shape, &[], detail)?
                     }
-                    None => tess::tessellate_blob(blob, &[], detail, tess::Faces::Wide)?,
+                    None => tess::tessellate_blob(blob, &[], detail)?,
                 };
                 let mut mesh = match body.finish {
                     Some(finish) => finish(mesh),

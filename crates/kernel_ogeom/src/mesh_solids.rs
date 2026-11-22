@@ -7,7 +7,7 @@ use kernel_api::{
     TrimAnswer, TrimRequest,
 };
 use ogeom::algo::distance::{self, DistanceOptions};
-use ogeom::mesh::{Bvh, Deflection, Editable, Grid, Side, Thicken};
+use ogeom::mesh::{Deflection, Editable, Grid, Side, Thicken};
 use ogeom::topo::{Model, Shape, Triangulation};
 
 use crate::tess;
@@ -30,17 +30,6 @@ fn operand(value: &MeshOperand) -> Result<(Model, Shape), String> {
             Ok((model, shape))
         }
     }
-}
-
-/// The volume a closed mesh bounds, by its triangles' signed tetrahedra.
-pub(crate) fn volume(mesh: &Triangulation) -> f64 {
-    mesh.triangles
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.map(|v| mesh.positions[v as usize]);
-            a.to_vector().dot(b.to_vector().cross(c.to_vector())) / 6.0
-        })
-        .sum()
 }
 
 pub(crate) fn boolean(
@@ -73,7 +62,7 @@ pub(crate) fn boolean(
     }
     let report = MeshStepReport::Boolean {
         cut_triangles: result.cut.iter().filter(|v| **v).count(),
-        volume: volume(&result.mesh),
+        volume: result.mesh.volume(),
     };
     Ok((result.mesh, report))
 }
@@ -101,7 +90,7 @@ pub(crate) fn shell(
     };
     let report = MeshStepReport::Shell {
         hollow,
-        volume: volume(&result),
+        volume: result.volume(),
     };
     Ok((result, report))
 }
@@ -150,23 +139,15 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
     let (mut model, shape) = tess::read_blob(&request.solid)?;
     let tol = tess::tolerances();
     let scan = crate::mesh_intake::welded(&request.scan)?;
-    let (low, high) = tess::robust_bounds(&model, &shape)
+    let (low, high) = tess::guaranteed_bounds(&model, &shape)
         .ok_or_else(|| KernelError::InvalidInput("the solid has no extent".into()))?;
     let chord = low.distance(high) / 2000.0;
-    let solid = ogeom::mesh::triangulate(
-        &model,
-        &shape,
-        Deflection::with_chord(chord).map_err(invalid)?,
-        tol,
-    )
-    .map_err(invalid)?;
-    let solid_index = Bvh::build(&solid).map_err(invalid)?;
     let signed = DistanceOptions {
         max: f64::INFINITY,
         facing_limit: None,
         signed: true,
     };
-    let depth: Vec<f64> = distance::to_mesh(&solid_index, &scan.positions, None, &signed)
+    let depth: Vec<f64> = distance::to_shape(&model, &shape, &scan.positions, None, &signed, tol)
         .map_err(invalid)?
         .into_iter()
         .map(|c| c.map_or(f64::INFINITY, |c| c.distance))
@@ -207,12 +188,17 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
     // The break's points measure the gap to the piece; its triangles whose
     // corners all lie within reach of the piece are where the two mate.
     let reach = request.gap * 1.5 + chord;
-    let piece_index = Bvh::build(&piece).map_err(invalid)?;
-    let gap_at: Vec<Option<f64>> = piece_index
-        .nearest_many(&scan.positions, reach)
-        .into_iter()
-        .map(|hit| hit.map(|h| h.distance))
-        .collect();
+    let unsigned = DistanceOptions {
+        max: reach,
+        facing_limit: None,
+        signed: false,
+    };
+    let gap_at: Vec<Option<f64>> =
+        distance::to_shape(&model, &built.shape, &scan.positions, None, &unsigned, tol)
+            .map_err(invalid)?
+            .into_iter()
+            .map(|hit| hit.map(|h| h.distance))
+            .collect();
     let mut mating_area = 0.0;
     let mut mated = std::collections::BTreeSet::new();
     for (t, _) in scan.triangles.iter().zip(&region).filter(|(_, r)| **r) {
@@ -240,7 +226,7 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
         .into_bytes();
     Ok(TrimAnswer {
         brep,
-        volume: volume(&piece),
+        volume: piece.volume(),
         mating_area,
         gap_median,
         gap_range,

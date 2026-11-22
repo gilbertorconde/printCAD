@@ -6,38 +6,17 @@ use std::collections::HashMap;
 use kernel_api::{
     FaceSurface, KernelError, KernelResult, LinearDeflectionMode, TessellationSettings, TriMesh,
 };
-use ogeom::algo::{shape_bounds, vertex_bounds};
+use ogeom::algo::shape_bounds;
 use ogeom::core::Tolerances;
 use ogeom::core::parallel::map_ordered;
 use ogeom::geom::SurfaceGeometry;
 use ogeom::math::Point;
-use ogeom::mesh::{Deflection, edge_chords_for, polyline_of_edge, triangulate_face_with};
+use ogeom::mesh::{Deflection, face_meshes_for, polyline_of_edge};
 use ogeom::topo::NodeData;
 use ogeom::topo::{Filter, Model, Shape, ShapeType, explore, explore_unique};
 use tracing::warn;
 
 pub const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
-
-/// Whether a mesh may spread its faces across threads.
-///
-/// `Inline` when the caller is already inside a parallel loop: nesting two
-/// `map_ordered` passes would multiply the thread count instead of sharing it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Faces {
-    Wide,
-    Inline,
-}
-
-/// What triangulating one face produced. Kept as data rather than handled on
-/// the spot so the parallel pass stays pure and every message is reported in
-/// face order.
-enum FaceWork {
-    Meshed(std::sync::Arc<crate::reuse::FaceDrawn>),
-    /// This face alone could not be triangulated; the rest still mesh.
-    Failed(String),
-    /// The whole job was cancelled.
-    Cancelled(String),
-}
 
 pub fn tolerances() -> Tolerances {
     Tolerances::millimetres()
@@ -48,10 +27,9 @@ pub fn tessellate_blob(
     brep_blob: &[u8],
     face_colors: &[[f32; 3]],
     detail: &TessellationSettings,
-    faces: Faces,
 ) -> KernelResult<TriMesh> {
     let (model, root) = read_blob(brep_blob)?;
-    mesh_shape_with(&model, &root, face_colors, detail, faces)
+    mesh_shape(&model, &root, face_colors, detail)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))
 }
 
@@ -78,26 +56,11 @@ pub fn write_blob(model: &Model, root: &Shape) -> KernelResult<Vec<u8>> {
     Ok(text.into_bytes())
 }
 
-/// A finite bounding box for a shape.
-///
-/// `shape_bounds` bounds each face's *carrier* surface, and a STEP-imported
-/// face can sit on an unbounded plane, so the result balloons to ±1e9. When the
-/// carrier bound is absurd (or empty), fall back to the vertex bound, which
-/// is finite and only underestimates curved bulges.
-pub fn robust_bounds(model: &Model, shape: &Shape) -> Option<(Point, Point)> {
-    const SANE: f64 = 1.0e7;
-    let carrier = shape_bounds(model, shape, tolerances())
-        .ok()
-        .and_then(|b| Some((b.low()?, b.high()?)));
-    if let Some((lo, hi)) = carrier {
-        let sane = [lo.x, lo.y, lo.z, hi.x, hi.y, hi.z]
-            .iter()
-            .all(|v| v.is_finite() && v.abs() < SANE);
-        if sane {
-            return Some((lo, hi));
-        }
-    }
-    vertex_bounds(model, shape, tolerances())
+/// A box surely holding a shape: a trimmed face adds only its surface's
+/// bulge past its boundary, so a curved face's box may stand a little past
+/// it (see [`solid_bounds`] for the smallest).
+pub fn guaranteed_bounds(model: &Model, shape: &Shape) -> Option<(Point, Point)> {
+    shape_bounds(model, shape, tolerances())
         .ok()
         .and_then(|b| Some((b.low()?, b.high()?)))
 }
@@ -125,7 +88,7 @@ pub fn chord_for(model: &Model, shape: &Shape, detail: &TessellationSettings) ->
         LinearDeflectionMode::AbsoluteMm => f64::from(detail.chord_tolerance.max(0.001)),
         LinearDeflectionMode::BboxScaled => {
             let mult = f64::from(detail.mesh_deviation.max(0.001));
-            let extent_sum = robust_bounds(model, shape)
+            let extent_sum = guaranteed_bounds(model, shape)
                 .map(|(lo, hi)| (hi.x - lo.x) + (hi.y - lo.y) + (hi.z - lo.z))
                 .unwrap_or(0.0);
             if extent_sum <= 0.0 {
@@ -153,32 +116,17 @@ pub(crate) fn deflection_for(
 
 /// Mesh a shape into a `TriMesh`, coloring vertices per face in exploration
 /// order from `face_colors` (white when the table is empty or short).
+///
+/// The faces go wide across threads, or stay on the calling thread when it
+/// is already one of the kernel's workers (an import meshing its bodies
+/// side by side).
 pub fn mesh_shape(
     model: &Model,
     root: &Shape,
     face_colors: &[[f32; 3]],
     detail: &TessellationSettings,
 ) -> KernelResult<TriMesh> {
-    mesh_shape_with(model, root, face_colors, detail, Faces::Wide)
-}
-
-/// As [`mesh_shape`], saying whether the face pass may go wide.
-pub fn mesh_shape_with(
-    model: &Model,
-    root: &Shape,
-    face_colors: &[[f32; 3]],
-    detail: &TessellationSettings,
-    faces_threading: Faces,
-) -> KernelResult<TriMesh> {
-    mesh_faces(
-        model,
-        root,
-        face_colors,
-        detail,
-        faces_threading,
-        None,
-        None,
-    )
+    mesh_faces(model, root, face_colors, detail, None, None)
 }
 
 /// As [`mesh_shape`], each face carrying its name from `names` and each
@@ -190,7 +138,7 @@ pub(crate) fn mesh_named(
     names: &crate::naming::NameMap,
     reuse: Option<&mut crate::reuse::FaceMeshes>,
 ) -> KernelResult<TriMesh> {
-    mesh_faces(model, root, &[], detail, Faces::Wide, Some(names), reuse)
+    mesh_faces(model, root, &[], detail, Some(names), reuse)
 }
 
 fn mesh_faces(
@@ -198,83 +146,65 @@ fn mesh_faces(
     root: &Shape,
     face_colors: &[[f32; 3]],
     detail: &TessellationSettings,
-    faces_threading: Faces,
     names: Option<&crate::naming::NameMap>,
     mut reuse: Option<&mut crate::reuse::FaceMeshes>,
 ) -> KernelResult<TriMesh> {
     let tol = tolerances();
     let deflection = deflection_for(model, root, detail);
-    let faces = explore(model, root, Filter::OfType(ShapeType::Face))
-        .map_err(|e| KernelError::Other(anyhow::anyhow!("face exploration failed: {e}")))?;
-    // The chords the faces agree to draw their shared edges to: a face
-    // narrower than a few chords draws its edges finer, and the faces across
-    // those edges must draw them the same or the weld finds nothing to join.
-    let chords = edge_chords_for(model, root, deflection, tol)
-        .map_err(|e| KernelError::Other(anyhow::anyhow!("edge chords failed: {e}")))?;
 
     // A detail, not a context: this runs once per body, from every worker
     // thread during an import, and a context would reset the status display
     // hundreds of times a second.
-    crate::progress::detail(format_args!("Meshing {} faces", faces.len()));
+    let face_count = explore(model, root, Filter::OfType(ShapeType::Face)).map_or(0, |f| f.len());
+    crate::progress::detail(format_args!("Meshing {face_count} faces"));
 
-    // A face the build before drew as it is now keeps its mesh.
-    let mut keys_of = reuse.as_ref().map(|_| crate::reuse::Keys::new(model));
-    let keys: Vec<Option<u64>> = match keys_of.as_mut() {
-        Some(keys_of) => faces
-            .iter()
-            .map(|face| keys_of.face(face, deflection, &chords))
-            .collect(),
-        None => vec![None; faces.len()],
-    };
-    let kept: Vec<Option<std::sync::Arc<crate::reuse::FaceDrawn>>> = keys
-        .iter()
-        .map(|key| key.and_then(|k| reuse.as_ref().and_then(|meshes| meshes.face(k))))
-        .collect();
+    // Every face drawn to the chords the faces agree to draw their shared
+    // edges to (a face narrower than a few chords draws its edges finer,
+    // and the faces across must draw them the same or the weld finds
+    // nothing to join), in face order, at any thread count. A face the
+    // build before drew as it is now is taken from what that build kept.
+    let kept = reuse.as_deref().map(crate::reuse::FaceMeshes::meshes);
+    let (computed, chords) = face_meshes_for(model, root, deflection, kept, tol).map_err(|e| {
+        if matches!(e, ogeom::core::OgeomError::Cancelled) {
+            KernelError::Other(anyhow::anyhow!("meshing stopped: {e}"))
+        } else {
+            KernelError::Other(anyhow::anyhow!("meshing failed: {e}"))
+        }
+    })?;
+    // A cancelled mesh is not a partial mesh: say so and hand back nothing
+    // rather than half a body.
+    if let Some(e) = computed.iter().find_map(|(_, m)| {
+        m.as_ref()
+            .err()
+            .filter(|e| matches!(e, ogeom::core::OgeomError::Cancelled))
+    }) {
+        return Err(KernelError::Other(anyhow::anyhow!("meshing stopped: {e}")));
+    }
+    let faces: Vec<Shape> = computed.iter().map(|(face, _)| face.clone()).collect();
 
-    // Triangulating a face only reads the model, so the faces go wide; the
-    // buffers are then filled in face order, which is what keeps the output
-    // identical at any thread count.
-    let one_face = |i: usize, face: &Shape| -> FaceWork {
-        if let Some(tri) = &kept[i] {
-            return FaceWork::Meshed(std::sync::Arc::clone(tri));
-        }
-        if let Err(e) = crate::progress::checkpoint() {
-            return FaceWork::Cancelled(e);
-        }
-        match triangulate_face_with(model, face, deflection, &chords, tol) {
-            Ok(triangles) => {
-                // Kept for the next build, the face's box comes with it.
-                let bounds = reuse
-                    .is_some()
-                    .then(|| ogeom::algo::tight_bounds(model, face, tol).ok())
-                    .flatten()
-                    .and_then(|b| Some((b.low()?, b.high()?)));
-                FaceWork::Meshed(std::sync::Arc::new(crate::reuse::FaceDrawn {
-                    triangles,
-                    bounds,
-                }))
-            }
-            Err(e) => FaceWork::Failed(e.to_string()),
-        }
-    };
-    let computed: Vec<FaceWork> = match faces_threading {
-        Faces::Wide => map_ordered(&faces, |i, face| one_face(i, face)),
-        Faces::Inline => faces
-            .iter()
-            .enumerate()
-            .map(|(i, f)| one_face(i, f))
-            .collect(),
-    };
-    if let Some(meshes) = reuse.as_mut() {
-        // The shape's box, the union of its faces'.
+    let keys = reuse
+        .as_ref()
+        .map(|_| crate::reuse::FaceKeys::new(model, &faces, deflection));
+    if let (Some(meshes), Some(keys)) = (reuse.as_deref_mut(), keys.as_ref()) {
+        meshes.drew(keys);
+        // The shape's box, the union of its faces': a face's box kept from
+        // the build before where it is the same face, measured where not.
+        let boxes: Vec<Option<(Point, Point)>> = map_ordered(&faces, |i, face| {
+            keys.faces[i]
+                .and_then(|k| meshes.face_box(k))
+                .unwrap_or_else(|| {
+                    ogeom::algo::tight_bounds(model, face, tol)
+                        .ok()
+                        .and_then(|b| Some((b.low()?, b.high()?)))
+                })
+        });
         let mut bounds: Option<(Point, Point)> = None;
         let mut whole = true;
-        for work in &computed {
-            match work {
-                FaceWork::Meshed(drawn) if drawn.bounds.is_some() => {
-                    let (lo, hi) = drawn.bounds.expect("checked");
+        for ((_, mesh), drawn) in computed.iter().zip(&boxes) {
+            match (mesh, drawn) {
+                (Ok(_), Some((lo, hi))) => {
                     bounds = Some(match bounds {
-                        None => (lo, hi),
+                        None => (*lo, *hi),
                         Some((a, b)) => (
                             Point::new(a.x.min(lo.x), a.y.min(lo.y), a.z.min(lo.z)),
                             Point::new(b.x.max(hi.x), b.y.max(hi.y), b.z.max(hi.z)),
@@ -285,21 +215,19 @@ fn mesh_faces(
             }
         }
         meshes.set_bounds(bounds.filter(|_| whole));
-        let drawn = computed
-            .iter()
-            .zip(&keys)
-            .filter_map(|(work, key)| match (work, key) {
-                (FaceWork::Meshed(tri), Some(key)) => Some((*key, std::sync::Arc::clone(tri))),
-                _ => None,
-            })
-            .collect();
-        let reused = kept.iter().filter(|k| k.is_some()).count();
+        meshes.replace_boxes(
+            keys.faces
+                .iter()
+                .zip(boxes)
+                .filter_map(|(key, drawn)| Some(((*key)?, drawn)))
+                .collect(),
+        );
         tracing::debug!(
             target: "printcad.chain",
-            "meshing kept {reused} of {} faces",
+            "meshing keeps {} faces for {}",
+            meshes.len(),
             faces.len()
         );
-        meshes.replace_faces(drawn);
     }
 
     let mut mesh = TriMesh::default();
@@ -315,24 +243,17 @@ fn mesh_faces(
     let mut folds: Vec<(usize, Point)> = Vec::new();
     let mut capped: Vec<(usize, Point)> = Vec::new();
 
-    for (i, work) in computed.into_iter().enumerate() {
-        let face_shape = &faces[i];
-        let drawn = match work {
-            FaceWork::Meshed(drawn) => drawn,
-            FaceWork::Failed(e) => {
+    for (i, (face_shape, work)) in computed.iter().enumerate() {
+        let tri = match work {
+            Ok(tri) => tri,
+            Err(e) => {
                 if skipped == 0 {
                     warn!(target: "printcad.kernel", face = i, "face failed to triangulate: {e}");
                 }
                 skipped += 1;
                 continue;
             }
-            // A cancelled mesh is not a partial mesh: say so and hand back
-            // nothing rather than half a body.
-            FaceWork::Cancelled(e) => {
-                return Err(KernelError::Other(anyhow::anyhow!("meshing stopped: {e}")));
-            }
         };
-        let tri = &drawn.triangles;
         for finding in &tri.findings {
             match finding {
                 ogeom::topo::MeshFinding::SurfaceFolds { point, .. } => folds.push((i, *point)),
@@ -473,7 +394,7 @@ fn mesh_faces(
     // the edges does the outline fall back to the triangle boundaries,
     // which name nothing.
     if detail.generate_boundary_edges {
-        let outlines = keys_of.as_mut().zip(reuse);
+        let outlines = keys.as_ref().zip(reuse);
         match kernel_edge_outline(model, root, &chords, deflection, tol, outlines) {
             Ok(outline) if !outline.positions.is_empty() => {
                 let base = mesh.positions.len() as u32;
@@ -487,7 +408,7 @@ fn mesh_faces(
                 mesh.edges = outline.segments.iter().map(|i| base + i).collect();
                 mesh.edge_ids = outline.edge_ids;
                 if let Ok(edges) = explore_unique(model, root, ShapeType::Edge) {
-                    mesh.edge_curves = edge_curves(model, &edges, faces_threading, tol);
+                    mesh.edge_curves = edge_curves(model, &edges, tol);
                     if let Some(names) = names {
                         mesh.edge_faces = crate::naming::edge_faces(model, names, &edges);
                     }
@@ -525,7 +446,7 @@ fn kernel_edge_outline(
     chords: &ogeom::mesh::EdgeChords,
     deflection: Deflection,
     tol: Tolerances,
-    mut reuse: Option<(&mut crate::reuse::Keys<'_>, &mut crate::reuse::FaceMeshes)>,
+    reuse: Option<(&crate::reuse::FaceKeys, &mut crate::reuse::FaceMeshes)>,
 ) -> KernelResult<EdgeOutline> {
     let mut drawn = std::collections::HashMap::new();
     let edges = explore_unique(model, root, ShapeType::Edge)
@@ -545,8 +466,8 @@ fn kernel_edge_outline(
             ..deflection
         };
         let key = reuse
-            .as_mut()
-            .and_then(|(keys, _)| keys.edge(edge, drawn_to));
+            .as_ref()
+            .and_then(|(keys, _)| keys.edge(model, edge, drawn_to));
         let kept = key.and_then(|k| reuse.as_ref().and_then(|(_, m)| m.edge(k)));
         let points = match kept {
             Some(points) => points,
@@ -581,19 +502,11 @@ fn kernel_edge_outline(
 }
 
 /// Each of `edges`' curves and lengths, in their order, placed as the
-/// edges are. They go wide when the faces did: a length off a spline is
-/// an integral.
-fn edge_curves(
-    model: &Model,
-    edges: &[Shape],
-    threading: Faces,
-    tol: Tolerances,
-) -> Vec<kernel_api::EdgeCurve> {
-    let one = |edge: &Shape| edge_curve(model, edge, tol);
-    match threading {
-        Faces::Wide => map_ordered(edges, |_, edge| one(edge)),
-        Faces::Inline => edges.iter().map(one).collect(),
-    }
+/// edges are. They go wide, a length off a spline being an integral, or
+/// stay on the calling thread when it is already one of the kernel's
+/// workers.
+fn edge_curves(model: &Model, edges: &[Shape], tol: Tolerances) -> Vec<kernel_api::EdgeCurve> {
+    map_ordered(edges, |_, edge| edge_curve(model, edge, tol))
 }
 
 /// What `edge`'s curve is, in the shape's frame, and its arc length. An

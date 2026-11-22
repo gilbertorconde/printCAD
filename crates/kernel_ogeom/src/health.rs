@@ -90,7 +90,7 @@ pub fn repair_blob(
     // named as one (a bore then brings its axis, and measures exactly),
     // faces too small to matter collapse, and specks of solid go. Sizes
     // are relative to the part; a pass the kernel refuses is left out.
-    let diagonal = tess::robust_bounds(&model, &shape)
+    let diagonal = tess::guaranteed_bounds(&model, &shape)
         .map(|(lo, hi)| (hi - lo).magnitude())
         .unwrap_or(0.0);
     let mut changed = false;
@@ -134,9 +134,9 @@ pub fn repair_blob(
     };
 
     crate::progress::context("Meshing the repaired shape");
-    let mesh = tess::mesh_shape_with(&model, &shape, &face_colors, detail, tess::Faces::Wide)
+    let mesh = tess::mesh_shape(&model, &shape, &face_colors, detail)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
-    let bounds_mm = tess::robust_bounds(&model, &shape).map(|(lo, hi)| {
+    let bounds_mm = tess::guaranteed_bounds(&model, &shape).map(|(lo, hi)| {
         (
             [lo.x as f32, lo.y as f32, lo.z as f32],
             [hi.x as f32, hi.y as f32, hi.z as f32],
