@@ -6383,6 +6383,7 @@ dependencies = [
  "bench_panel",
  "core_document",
  "egui",
+ "kernel_ogeom",
  "metrology",
  "printcad-bench-api",
  "printcad-kernel-api",

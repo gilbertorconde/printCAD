@@ -71,5 +71,10 @@ off the start). The tool shows it as a map, added surface grey.
 
 ## mesh.inspect
 
-Of the mesh the body draws now, its history applied. A closed mesh has no open
-edges; its volume is positive when its faces point out.
+Of the mesh the body draws now, its history applied, copies of one corner
+taken as one. `open_edges` counts triangle sides joined to no other (no
+triangle shares them, or the one that does runs the same way along them) and
+`holes` the loops they make; a mesh is `closed` when it has none.
+`non_manifold` counts corners where the mesh is not a surface: fans meeting at
+one point, or an edge more than two triangles use. The volume is positive
+when the faces point out. `pieces` counts what Split into bodies makes.

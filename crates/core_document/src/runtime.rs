@@ -211,6 +211,23 @@ pub struct EdgeCircle {
 }
 
 impl EdgeCircle {
+    /// The circle an exact edge curve runs round, when it is a circle or
+    /// an arc of one.
+    pub fn of_curve(curve: &kernel_api::EdgeCurve) -> Option<EdgeCircle> {
+        match curve.kind {
+            kernel_api::EdgeKind::Circle {
+                center,
+                normal,
+                radius,
+            } => Some(EdgeCircle {
+                center,
+                normal,
+                radius,
+            }),
+            _ => None,
+        }
+    }
+
     /// The circle through every one of `points`, when they lie on one (to
     /// a thousandth of its radius): an edge's outline, drawn with its
     /// vertices on the curve. A straight edge has none.

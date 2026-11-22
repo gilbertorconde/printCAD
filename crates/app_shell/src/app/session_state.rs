@@ -328,6 +328,11 @@ pub(crate) struct HostTools {
     /// The last token a least distance was asked under, by the measure
     /// tool or the quick measure.
     pub gap_token: u64,
+    /// The faces' areas the kernel integrated, by body, mesh revision and
+    /// face of the mesh, each asked once: the quick measure reads its
+    /// faces every frame.
+    pub face_areas:
+        std::cell::RefCell<std::collections::HashMap<(uuid::Uuid, u64, u32), Option<f64>>>,
     /// The note tool is armed: a click on a part puts a note there.
     pub note_tool: bool,
     /// The note card, open on a new note or one in the document.

@@ -637,6 +637,8 @@ impl KernelQueries for OgeomQueries {
                 walked.push(kernel_api::LoopEdge {
                     points,
                     seam: edges.iter().filter(|e| e.is_same(edge)).count() > 1,
+                    curve: Some(tess::edge_curve(&model, edge, tol))
+                        .filter(|c| c.length.is_finite()),
                 });
             }
             if !walked.is_empty() {
@@ -790,6 +792,39 @@ impl KernelQueries for OgeomQueries {
     fn probe(&self, brep: &[u8], probe: &ShapeProbe) -> KernelResult<ProbeAnswer> {
         let (mut model, root) = tess::read_blob(brep)?;
         crate::probe::answer(&mut model, &root, probe).map_err(other)
+    }
+
+    fn face_area(&self, brep: &[u8], face: &FaceProbe) -> KernelResult<f64> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        let found = crate::probe::face_for(&mut model, &root, face, Reach::Pick).map_err(other)?;
+        let props = ogeom::algo::surface_properties(
+            &model,
+            &found,
+            Deflection::default(),
+            tess::tolerances(),
+        )
+        .map_err(other)?;
+        Ok(props.mass)
+    }
+
+    fn tangent_chain(&self, brep: &[u8], edge: u32) -> KernelResult<Vec<u32>> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        let edges = explore_unique(&model, &root, ShapeType::Edge).map_err(other)?;
+        let start = edges
+            .get(edge as usize)
+            .ok_or_else(|| other(format!("the shape has no edge {edge}")))?
+            .clone();
+        let chain =
+            crate::ops::dressup::tangent_chain(&mut model, &root, vec![start]).map_err(other)?;
+        Ok(chain
+            .iter()
+            .filter_map(|e| edges.iter().position(|f| f.is_same(e)))
+            .map(|i| i as u32)
+            .collect())
+    }
+
+    fn mesh_health(&self, mesh: &TriMesh) -> KernelResult<kernel_api::MeshHealth> {
+        crate::mesh_edit::health(mesh)
     }
 }
 

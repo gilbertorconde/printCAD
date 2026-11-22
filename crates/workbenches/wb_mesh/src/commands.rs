@@ -136,7 +136,10 @@ fn clean_up(t: &mut CommandTable<MeshWorkbench>) {
     on_scan(
         t,
         scan(CommandSpec::new(INSPECT, "Topology and volume"))
-            .returns("{triangles, open_edges, volume, pieces, bounds = {min, max}}")
+            .returns(
+                "{triangles, open_edges, holes, closed, non_manifold, volume, pieces, \
+                 bounds = {min, max}}",
+            )
             .read_only(),
         topology,
     );
@@ -272,5 +275,8 @@ fn topology(
         .derived()
         .local_geometry(body)
         .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-    Ok(inspect(&drawn))
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to read the mesh with"))?;
+    inspect(kernel, &drawn).map_err(CommandError::failed)
 }

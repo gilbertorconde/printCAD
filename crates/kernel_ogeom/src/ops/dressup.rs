@@ -1490,7 +1490,7 @@ fn parallel(a: Vector, b: Vector) -> bool {
 /// faces turning tangent there, as the seam between two equal drums does
 /// at its poles), the chain runs on through it too, whatever the angle
 /// between the creases.
-fn tangent_chain(
+pub(crate) fn tangent_chain(
     model: &mut Model,
     solid: &Shape,
     chain: Vec<Shape>,

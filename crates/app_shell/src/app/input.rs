@@ -854,6 +854,10 @@ impl PrintCadApp {
                 edge,
                 mesh.map(|geometry| &*geometry.mesh),
                 self.session.hover.world_pos,
+                |face| {
+                    let body = self.session.hover.body?;
+                    self.solid_face_area(core_document::BodyId(body), face)
+                },
             )
         });
         let unit = self.measure_unit();
@@ -936,6 +940,7 @@ impl PrintCadApp {
     /// edges.
     fn selection_picks(&self) -> Vec<crate::app::measure::MeasurePick> {
         use crate::app::measure::{MeasurePick, mesh_area};
+        let body_id = core_document::BodyId;
         let mut picks = Vec::new();
         if let Some((body, _)) = self
             .session
@@ -958,11 +963,15 @@ impl PrintCadApp {
                 .map(|p| (p.face, &p.highlight))
                 .chain(last);
             for (face, highlight) in faces {
+                let area = highlight
+                    .face
+                    .and_then(|id| self.solid_face_area(body_id(highlight.body), id))
+                    .unwrap_or_else(|| mesh_area(&highlight.mesh));
                 picks.push(MeasurePick::Face {
                     point: face.point,
                     normal: face.normal,
                     surface: face.surface,
-                    area: mesh_area(&highlight.mesh),
+                    area,
                     body: Some(core_document::BodyId(body)),
                 });
             }
@@ -977,6 +986,24 @@ impl PrintCadApp {
             });
         }
         picks
+    }
+
+    /// The area of face `face` of `body`'s drawn mesh, integrated by the
+    /// kernel on the body's solid and kept for the mesh it was asked of;
+    /// `None` for a body with no solid, whose faces are their triangles.
+    pub(crate) fn solid_face_area(&self, body: core_document::BodyId, face: u32) -> Option<f64> {
+        let document = &self.session.document;
+        let geometry = document.derived().imported_geometry(body)?;
+        let key = (body.0, geometry.revision, face);
+        if let Some(known) = self.session.tools.face_areas.borrow().get(&key) {
+            return *known;
+        }
+        let area = crate::app::measure::solid_face_area(document, body, face);
+        let mut known = self.session.tools.face_areas.borrow_mut();
+        // Faces of meshes since replaced are asked no more.
+        known.retain(|(b, revision, _), _| *b != body.0 || *revision == geometry.revision);
+        known.insert(key, area);
+        area
     }
 
     /// With the last two of `picks` faces or edges of solids, ask the
@@ -1259,8 +1286,9 @@ impl PrintCadApp {
         // them.
         if let Some(hit) = self.session.hover.edge {
             let ctrl = self.input.modifiers.control_key();
-            // A double click on an edge takes every edge that runs on from
-            // it smoothly: a fillet's or chamfer's round outline in one go.
+            // A double click on an edge takes the edges a fillet or chamfer
+            // following tangent edges runs on to from it: a round outline
+            // in one go.
             let now = Instant::now();
             let double = self
                 .session
@@ -1279,7 +1307,7 @@ impl PrintCadApp {
             {
                 let mesh = &geometry.mesh;
                 let chain: Vec<crate::app::edges::EdgeHit> =
-                    crate::app::edges::tangent_chain(mesh, hit.edge)
+                    crate::app::edges::tangent_chain(&self.session.document, hit.body, hit.edge)
                         .into_iter()
                         .filter_map(|edge| crate::app::edges::edge_hit(mesh, hit.body, edge))
                         .collect();

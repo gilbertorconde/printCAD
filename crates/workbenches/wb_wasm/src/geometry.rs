@@ -130,12 +130,26 @@ pub(crate) fn call(
                         .into_iter()
                         .map(|e| {
                             let points = world_points(&placement, &e.points);
+                            let curve = e.curve.map(|c| {
+                                c.moved(|p| placement.point(p), |d| placement.direction(d))
+                            });
+                            let (length, circle) = match curve {
+                                Some(curve) => {
+                                    (f64::from(curve.length), EdgeCircle::of_curve(&curve))
+                                }
+                                None => (
+                                    points
+                                        .windows(2)
+                                        .map(|w| {
+                                            f64::from(Vec3::from(w[0]).distance(Vec3::from(w[1])))
+                                        })
+                                        .sum(),
+                                    EdgeCircle::fit(&points),
+                                ),
+                            };
                             bench_api::LoopEdge {
-                                length: points
-                                    .windows(2)
-                                    .map(|w| f64::from(Vec3::from(w[0]).distance(Vec3::from(w[1]))))
-                                    .sum(),
-                                circle: EdgeCircle::fit(&points).map(|c| bench_api::EdgeCircle {
+                                length,
+                                circle: circle.map(|c| bench_api::EdgeCircle {
                                     center: c.center,
                                     normal: c.normal,
                                     radius: c.radius,

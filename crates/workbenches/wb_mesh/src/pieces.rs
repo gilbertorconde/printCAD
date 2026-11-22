@@ -5,11 +5,13 @@
 
 use super::*;
 
-/// The pieces of `mesh`, in the order of their first triangles, each a
-/// mesh of its own: triangles joined where they share a corner, corners
-/// at one point taken as one, as `inspect` counts them. Normals and
-/// colours go with their vertices.
-pub fn pieces(mesh: &TriMesh) -> Vec<TriMesh> {
+/// The pieces of `mesh`, in the order of their first triangles, each its
+/// triangles by their numbers in the mesh: triangles joined where they
+/// share a corner, corners at one point taken as one. A piece is what
+/// holds together whichever way its triangles wind: the kernel's own
+/// pieces part across an edge two triangles run the same way along, which
+/// would split off every patch of a scan's faces turned the wrong way.
+pub fn piece_triangles(mesh: &TriMesh) -> Vec<Vec<u32>> {
     let mut first: std::collections::HashMap<[u32; 3], usize> = Default::default();
     let welded: Vec<usize> = mesh
         .positions
@@ -33,32 +35,48 @@ pub fn pieces(mesh: &TriMesh) -> Vec<TriMesh> {
             parent[ra] = ro;
         }
     }
-    let normals = mesh.normals.len() == mesh.positions.len();
-    let colors = mesh.colors.len() == mesh.positions.len();
     let mut piece_of_root: std::collections::HashMap<usize, usize> = Default::default();
-    let mut out: Vec<(TriMesh, std::collections::HashMap<u32, u32>)> = Vec::new();
-    for t in triangles {
+    let mut out: Vec<Vec<u32>> = Vec::new();
+    for (k, t) in triangles.iter().enumerate() {
         let r = root(&mut parent, welded[t[0] as usize]);
-        let k = *piece_of_root.entry(r).or_insert_with(|| {
-            out.push(Default::default());
+        let piece = *piece_of_root.entry(r).or_insert_with(|| {
+            out.push(Vec::new());
             out.len() - 1
         });
-        let (piece, renumbered) = &mut out[k];
-        for v in t {
-            let at = *renumbered.entry(*v).or_insert_with(|| {
-                piece.positions.push(mesh.positions[*v as usize]);
-                if normals {
-                    piece.normals.push(mesh.normals[*v as usize]);
-                }
-                if colors {
-                    piece.colors.push(mesh.colors[*v as usize]);
-                }
-                (piece.positions.len() - 1) as u32
-            });
-            piece.indices.push(at);
-        }
+        out[piece].push(k as u32);
     }
-    out.into_iter().map(|(piece, _)| piece).collect()
+    out
+}
+
+/// The pieces of `mesh` ([`piece_triangles`]), each a mesh of its own.
+/// Normals and colours go with their vertices.
+pub fn pieces(mesh: &TriMesh) -> Vec<TriMesh> {
+    let normals = mesh.normals.len() == mesh.positions.len();
+    let colors = mesh.colors.len() == mesh.positions.len();
+    let triangles = mesh.indices.as_chunks::<3>().0;
+    piece_triangles(mesh)
+        .into_iter()
+        .map(|members| {
+            let mut piece = TriMesh::default();
+            let mut renumbered: std::collections::HashMap<u32, u32> = Default::default();
+            for t in members {
+                for v in triangles[t as usize] {
+                    let at = *renumbered.entry(v).or_insert_with(|| {
+                        piece.positions.push(mesh.positions[v as usize]);
+                        if normals {
+                            piece.normals.push(mesh.normals[v as usize]);
+                        }
+                        if colors {
+                            piece.colors.push(mesh.colors[v as usize]);
+                        }
+                        (piece.positions.len() - 1) as u32
+                    });
+                    piece.indices.push(at);
+                }
+            }
+            piece
+        })
+        .collect()
 }
 
 /// Split `body`'s mesh as it is drawn now, its history applied, into one

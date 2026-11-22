@@ -318,6 +318,9 @@ impl MirrorPlane {
         for surface in &mut out.face_surfaces {
             *surface = surface.moved(|p| self.point_of(p), |d| self.direction_of(d));
         }
+        for curve in &mut out.edge_curves {
+            *curve = curve.moved(|p| self.point_of(p), |d| self.direction_of(d));
+        }
         out
     }
 }

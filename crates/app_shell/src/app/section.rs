@@ -262,6 +262,7 @@ impl PrintCadApp {
                 None,
                 mesh.map(|geometry| &*geometry.mesh),
                 self.session.hover.world_pos,
+                |_| None,
             )
         };
         match pick {
