@@ -533,7 +533,7 @@ fn up_to_shape(
         if face_plane(model, face).is_some_and(|(_, n)| n.dot(dir).abs() <= 1e-9) {
             continue;
         }
-        let ahead = tess::robust_bounds(model, face).is_some_and(|(lo, hi)| {
+        let ahead = tess::guaranteed_bounds(model, face).is_some_and(|(lo, hi)| {
             [lo.x, hi.x].iter().any(|&x| {
                 [lo.y, hi.y].iter().any(|&y| {
                     [lo.z, hi.z]
@@ -580,7 +580,7 @@ fn starting_at_profile(
     let starting: Vec<Shape> = super::solids_of(model, &trimmed)
         .into_iter()
         .filter(|piece| {
-            tess::robust_bounds(model, piece).is_some_and(|(lo, hi)| {
+            tess::guaranteed_bounds(model, piece).is_some_and(|(lo, hi)| {
                 // The piece's nearest corner along the sweep: at the profile
                 // for a piece the profile starts.
                 let mut nearest = f64::MAX;
@@ -640,19 +640,11 @@ pub(crate) fn face_by_name(
 }
 
 /// The point of `face` nearest `point`.
-fn nearest_point_on(model: &mut Model, face: &Shape, point: Point) -> Option<Point> {
-    let probe = model.add_vertex(ogeom::topo::VertexData::new(point));
-    ogeom::algo::distance_between_shapes(
-        model,
-        &probe,
-        face,
-        ogeom::intersect::ExtremaOptions::default(),
-        tol(),
-    )
-    .ok()?
-    .pairs
-    .first()
-    .map(|pair| pair.point_b)
+fn nearest_point_on(model: &Model, face: &Shape, point: Point) -> Option<Point> {
+    ogeom::algo::PointDistance::of(model, face, tol())
+        .and_then(|d| d.nearest(point, tol()))
+        .ok()
+        .map(|(_, p)| p)
 }
 
 /// The face of `base` nearest `point`, when one comes within reach of it.
@@ -823,7 +815,7 @@ fn through_all_length(
     from: Point,
     dir: Direction,
 ) -> Result<f64, String> {
-    let (lo, hi) = tess::robust_bounds(model, base)
+    let (lo, hi) = tess::guaranteed_bounds(model, base)
         .ok_or_else(|| "the base solid has no bounds".to_string())?;
     let mut furthest = 0.0f64;
     for &x in &[lo.x, hi.x] {
@@ -844,7 +836,7 @@ fn reach_along(model: &Model, base: &Shape, from: Point, dir: Direction) -> Resu
     let (lo, hi) = ogeom::algo::tight_bounds(model, base, tess::tolerances())
         .ok()
         .and_then(|b| Some((b.low()?, b.high()?)))
-        .or_else(|| tess::robust_bounds(model, base))
+        .or_else(|| tess::guaranteed_bounds(model, base))
         .ok_or_else(|| "the base solid has no bounds".to_string())?;
     let mut furthest = 0.0f64;
     for &x in &[lo.x, hi.x] {
@@ -861,7 +853,7 @@ fn profile_diagonal(model: &Model, built: &BuiltProfile) -> f64 {
     built
         .faces
         .iter()
-        .filter_map(|f| tess::robust_bounds(model, f))
+        .filter_map(|f| tess::guaranteed_bounds(model, f))
         .map(|(lo, hi)| (hi - lo).magnitude())
         .fold(1.0, f64::max)
 }

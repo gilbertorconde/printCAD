@@ -254,7 +254,7 @@ pub fn tool(
     let normal = normal / normal.magnitude().max(1e-300);
 
     // Far enough that a slab's far side lies well clear of the solid.
-    let (lo, hi) = tess::robust_bounds(model, base).ok_or("the solid has no bounds")?;
+    let (lo, hi) = tess::guaranteed_bounds(model, base).ok_or("the solid has no bounds")?;
     let centre = Point::new(
         (lo.x + hi.x) * 0.5,
         (lo.y + hi.y) * 0.5,
@@ -391,7 +391,7 @@ pub fn tool(
             else {
                 break;
             };
-            let Some((plo, phi)) = tess::robust_bounds(model, &piece) else {
+            let Some((plo, phi)) = tess::guaranteed_bounds(model, &piece) else {
                 break;
             };
             if gap >= 1e-3 {

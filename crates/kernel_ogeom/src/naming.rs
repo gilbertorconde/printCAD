@@ -119,7 +119,7 @@ impl Print {
 /// The chord `face` is drawn to: [`CHORD_PART`] of its size, within
 /// [`FINEST`, `COARSEST`].
 fn chord_of(model: &Model, face: &Shape) -> f64 {
-    tess::robust_bounds(model, face)
+    tess::guaranteed_bounds(model, face)
         .map_or(COARSEST, |(lo, hi)| (hi - lo).magnitude() * CHORD_PART)
         .clamp(FINEST, COARSEST)
 }
