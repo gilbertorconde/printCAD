@@ -137,7 +137,11 @@ pub fn chord_for(model: &Model, shape: &Shape, detail: &TessellationSettings) ->
     }
 }
 
-fn deflection_for(model: &Model, shape: &Shape, detail: &TessellationSettings) -> Deflection {
+pub(crate) fn deflection_for(
+    model: &Model,
+    shape: &Shape,
+    detail: &TessellationSettings,
+) -> Deflection {
     let chord = chord_for(model, shape, detail).max(1e-6);
     let angular = f64::from(detail.angular_tolerance_deg.max(0.5)).to_radians();
     Deflection {
