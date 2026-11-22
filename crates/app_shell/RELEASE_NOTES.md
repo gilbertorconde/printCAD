@@ -4,6 +4,53 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.19.0
+
+### Design
+- Fillets and chamfers choose what happens where they run into other faces: blend into a round they meet, hold an edge, trim through, or round through a narrow passage. A boss's foot round now blends into the edge round beside it.
+- A round or bevel previews at once; its drag limit arrives when it has been read, and every limit is the largest size that builds.
+- Chamfers on every edge of a step close its inside corner, and more rounds and bevels build.
+- Thread on a shaft's or bore's face, through all if asked; Rib from an open sketch line.
+- Fill pattern: a grid or honeycomb over a region.
+- Holes for printing: teardrop, flat top and a bridge layer, sized from the sketch or placed on a face. Countersinks and counterdrills given no angle take the usual one.
+- Features that change nothing warn; Thickness with no open face seals a hollow.
+- Project follows its faces; mirror, split, draft and wrapped text follow the model; pattern spans always hold.
+- Drag handles are arrows, and the edited handle stays lit.
+- Fillet and Chamfer use the sketch's corner icons.
+
+### Sketcher
+- Edits, drags and hovers on large sketches are many times faster, and the solver finds free points and conflicts far sooner.
+- Offset several curves or chains at once.
+- Collinear, concentric by Coincident, and polygons sized across flats.
+- Clicks snap once and land where shown; coincident corners close loops; slots, polygons and arc ends reuse points.
+- Leaving a sketch puts the view back where it was.
+
+### Mesh
+- Remesh to an edge length, subdivide flat or smooth, and find and repair self-intersections.
+- Split loose pieces into bodies, and cut meshes at an angle.
+
+### Files, export and printing
+- 3MF carries each body's colour and its faces' colours.
+- Print layout chooses the face a part rests on; export a file per body; send only the selection to the slicer.
+- Save all, Revert and Close other tabs. Save, close, quit and export never lose work, and exports wait for the rebuild.
+- Linked files survive a moved folder.
+- The document server keeps one order of edits for every client: a lost connection rejoins without losing edits or undo, and an unsaved or crashed session's edits come back.
+- Undo history takes far less memory, and undoing a feature delete restores it exactly.
+
+### View and interface
+- Wireframe draws a solid's edges.
+- Clip planes take in previews and what the bench draws.
+- Side and bottom panels keep the size given them.
+- Start page examples open as documents.
+
+### Scripts, agents and packages
+- Agent scripts run sandboxed, and every script has a memory cap.
+- doc.undo and doc.redo for scripts and agents; agents see every field of a feature.
+- Compiled packages are cached: warm loads are many times faster.
+
+### Kernel
+- Built on ogeom 0.21.0.
+
 ## 0.18.0
 
 ### Design
