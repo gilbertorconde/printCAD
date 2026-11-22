@@ -192,11 +192,7 @@ pub(super) fn dressup_editor(
                 if !two && !variable {
                     changed |= pick(f, "Corners", &FILLET_CORNERS, corner, fillet_corner_label);
                 }
-                // The kernel takes the behaviours on rounds of one radius
-                // between setback corners alone.
-                if !two && !variable && *corner == FilletCorner::Setback {
-                    changed |= overflow_editor(f, overflow, true);
-                }
+                changed |= overflow_editor(f, overflow, true);
             }
         }
         DesignFeature::Chamfer {

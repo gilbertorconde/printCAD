@@ -158,7 +158,6 @@ fn a_boss_s_foot_round_blends_into_the_edge_round_it_reaches() {
 /// Rolling-ball corners take the switches too: the foot round with blend
 /// into round off is refused as it is with setback corners.
 #[test]
-#[ignore = "kernel: rolling-ball corners take no overflow options (ogeom-rs#1222)"]
 fn a_rolling_ball_foot_round_takes_the_overflow_switches() {
     let mut op = fillet(3.0, &[FOOT], with(|o| o.blend_into_round = false));
     if let SolidOp::Fillet { corner, .. } = &mut op {
@@ -166,6 +165,57 @@ fn a_rolling_ball_foot_round_takes_the_overflow_switches() {
     }
     let why = refused(&[bossed(), vec![op]].concat());
     assert!(why.contains("does not reach so far"), "{why}");
+}
+
+/// A variable round holding one radius and a round of two equal distances
+/// are the round of that radius, and take its switches: by default each
+/// blends the foot into the edge round as the round of 3 does, and with
+/// blend into round off each is refused.
+#[test]
+fn one_radius_rounds_of_a_law_or_two_distances_take_the_overflow_switches() {
+    let base = bossed();
+    let round = built(
+        &[
+            base.clone(),
+            vec![fillet(3.0, &[FOOT], Overflow::default())],
+        ]
+        .concat(),
+    );
+    let law = |overflow| {
+        let mut op = fillet(3.0, &[FOOT], overflow);
+        if let SolidOp::Fillet { variable, .. } = &mut op {
+            *variable = Some(kernel_api::VariableRadius {
+                end: 3.0,
+                between: Vec::new(),
+                reversed: false,
+            });
+        }
+        op
+    };
+    let distances = |overflow| {
+        let mut op = fillet(3.0, &[FOOT], overflow);
+        if let SolidOp::Fillet { distances, .. } = &mut op {
+            *distances = Some(kernel_api::RoundDistances {
+                other: 3.0,
+                flip: false,
+                profile: kernel_api::RoundProfile::Elliptical,
+            });
+        }
+        op
+    };
+    let off = with(|o| o.blend_into_round = false);
+    for (what, op) in [
+        ("law", law as fn(Overflow) -> SolidOp),
+        ("distances", distances),
+    ] {
+        let blended = built(&[base.clone(), vec![op(Overflow::default())]].concat());
+        assert!(
+            (blended - round).abs() < 1e-6,
+            "{what}: {blended} against {round}"
+        );
+        let why = refused(&[base.clone(), vec![op(off)]].concat());
+        assert!(why.contains("does not reach so far"), "{what}: {why}");
+    }
 }
 
 /// A chamfer takes blend into round too: the boss's foot bevel of 3 runs
@@ -282,7 +332,6 @@ fn trim_through_rounds_on_through_another_face() {
 /// With trim through off the rim's round reaching the pocket is refused
 /// by name at its op.
 #[test]
-#[ignore = "kernel: a round on a model left by a refused request panics, so the refusal's edges cannot be tried apart (ogeom-rs#1220)"]
 fn trim_through_off_refuses_a_round_reaching_another_face() {
     let rim = [
         pocketed_boss(),
@@ -382,9 +431,9 @@ mod heavy {
     }
 
     /// The limit under options other than the default is the kernel's
-    /// reading: the build holds at it and is refused just above it.
+    /// reading: the build holds at it and is refused a ten-thousandth
+    /// above it.
     #[test]
-    #[ignore = "kernel: largest-size readings take no overflow options, so the limit under them is bisected to 0.4 % only (ogeom-rs#1221)"]
     fn the_drag_limit_under_overflow_options_is_exact() {
         let base = bossed();
         let off = with(|o| o.blend_into_round = false);
@@ -392,6 +441,73 @@ mod heavy {
             |radius, overflow| [base.clone(), vec![fillet(radius, &[FOOT], overflow)]].concat();
         let limit = foot_limit(off);
         built(&at(limit, off));
-        refused(&at(limit * (1.0 + 1e-3), off));
+        refused(&at(limit * (1.0 + 1e-4), off));
+    }
+
+    /// The same for rolling-ball corners, whose rounds take the options:
+    /// with blend into round off the foot round's limit is the largest
+    /// radius that builds under them.
+    #[test]
+    #[ignore = "kernel: no limit reading takes the overflow options of rolling-ball corners (ogeom-rs#1236)"]
+    fn the_rolling_ball_drag_limit_under_overflow_options_is_exact() {
+        let base = bossed();
+        let off = with(|o| o.blend_into_round = false);
+        let rolling = |radius, overflow| {
+            let mut op = fillet(radius, &[FOOT], overflow);
+            if let SolidOp::Fillet { corner, .. } = &mut op {
+                *corner = kernel_api::FilletCorner::RollingBall;
+            }
+            [base.clone(), vec![op]].concat()
+        };
+        let detail = kernel_api::TessellationSettings::default();
+        let ops = rolling(0.5, off);
+        let limit = super::super::common::new_kernel()
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(3..4)))
+            .expect("half a millimetre builds")
+            .size_limit
+            .and_then(|limit| limit.largest)
+            .expect("a radius that fails");
+        assert!(limit < 3.0, "{limit}");
+        built(&rolling(limit, off));
+        refused(&rolling(limit * (1.0 + 1e-4), off));
+    }
+
+    /// The same for a variable round holding one radius, which takes every
+    /// switch as the round of that radius does: with blend into round off
+    /// its radius, the closed rim's start and end at once, stops at the
+    /// largest that builds under them.
+    #[test]
+    #[ignore = "kernel: no limit reading of a radius law takes the overflow options (ogeom-rs#1236)"]
+    fn a_variable_round_s_drag_limit_under_overflow_options_is_exact() {
+        let base = bossed();
+        let off = with(|o| o.blend_into_round = false);
+        let law = |start, end| {
+            let mut op = fillet(start, &[FOOT], off);
+            if let SolidOp::Fillet { variable, .. } = &mut op {
+                *variable = Some(kernel_api::VariableRadius {
+                    end,
+                    between: Vec::new(),
+                    reversed: false,
+                });
+            }
+            [base.clone(), vec![op]].concat()
+        };
+        let detail = kernel_api::TessellationSettings::default();
+        let ops = law(0.5, 0.5);
+        let limit = super::super::common::new_kernel()
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(3..4)))
+            .expect("half a millimetre builds")
+            .size_limit
+            .expect("the preview's limit");
+        let start = limit
+            .law
+            .first()
+            .and_then(|law| law.largest)
+            .expect("a start radius that fails");
+        assert!(start < 3.0, "{start}");
+        // The rim is closed: its law's start and end are one point.
+        built(&law(start, start));
+        let past = start * (1.0 + 1e-4);
+        refused(&law(past, past));
     }
 }

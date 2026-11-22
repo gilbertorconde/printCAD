@@ -659,8 +659,11 @@ round's own shape and cuts back or extends the faces it reaches, and
 rounds on through a gap tighter than the radius made of rounds alone, also
 taking in one whole face, or also part of one. The first that builds is
 used; with none, the fillet is refused. A table given is the whole set,
-switches left out of it on. Only a round of one radius (Auto or Radius)
-with Setback corners takes them.
+switches left out of it on. A round of one radius takes every switch,
+with either corner, as do a Variable law holding one radius and two equal
+distances of the Elliptical profile; a radius that varies, two different
+distances, the Conic profile and a RollingBall corner joining convex and
+concave rounds take `trim_through` alone.
 
 See also: `design.chamfer`
 
