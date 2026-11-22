@@ -1,13 +1,24 @@
 //! Threads cut into a cylindrical face, measured against the volume
 //! their groove's section takes turned round the face's axis.
 
-use std::f64::consts::{PI, TAU};
+#[cfg(feature = "heavy-tests")]
+use std::f64::consts::TAU;
 
-use kernel_api::{BooleanOp, FaceProbe, FaceThread, Placement, PrimitiveKind, SolidOp};
+use kernel_api::{FaceProbe, FaceThread, PrimitiveKind, SolidOp};
 
-use super::common::{chain, is_sound, primitive, primitive_feature, try_chain, volume};
+use super::common::{primitive, primitive_feature, try_chain};
+
+#[cfg(feature = "heavy-tests")]
+use std::f64::consts::PI;
+
+#[cfg(feature = "heavy-tests")]
+use kernel_api::{BooleanOp, Placement};
+
+#[cfg(feature = "heavy-tests")]
+use super::common::{chain, is_sound, volume};
 
 /// A shaft `radius` across and `height` tall on the XY plane, its axis Z.
+#[cfg(feature = "heavy-tests")]
 fn shaft(radius: f64, height: f64) -> SolidOp {
     primitive(PrimitiveKind::Cylinder {
         radius,
@@ -18,6 +29,7 @@ fn shaft(radius: f64, height: f64) -> SolidOp {
 
 /// A point of the side of a shaft or bore of `radius` about Z at height
 /// `z`, facing out of the material.
+#[cfg(feature = "heavy-tests")]
 fn side_at(radius: f64, z: f64, external: bool) -> FaceProbe {
     FaceProbe {
         point: [radius, 0.0, z],
@@ -46,6 +58,7 @@ fn metric(pitch: f64) -> FaceThread {
 /// and the groove's root, takes the groove's share of that annulus turned
 /// once a pitch, so the volume is the groove's section in the material
 /// turned round the axis, once per pitch of length.
+#[cfg(feature = "heavy-tests")]
 fn groove_volume(radius: f64, form: &FaceThread, external: bool, length: f64) -> f64 {
     let (p, h) = (form.pitch, form.depth);
     let tan = (form.flank_deg * 0.5).to_radians().tan();
@@ -70,65 +83,6 @@ fn groove_volume(radius: f64, form: &FaceThread, external: bool, length: f64) ->
 
 fn thread(face: FaceProbe, form: FaceThread) -> SolidOp {
     SolidOp::Thread { face, form }
-}
-
-/// An M6 thread down the whole of a 3 mm shaft takes the groove's share
-/// of the ring between the major and minor diameters, its length's worth.
-#[test]
-fn an_external_thread_takes_its_groove_out_of_the_shaft() {
-    let (r, h) = (3.0, 4.0);
-    let form = metric(1.0);
-    let built = chain(&[shaft(r, h), thread(side_at(r, 1.0, true), form)]);
-    assert!(is_sound(&built.brep_blob), "a closed solid");
-    let removed = PI * r * r * h - volume(&built.brep_blob);
-    let want = groove_volume(r, &form, true, h);
-    assert!(
-        (removed - want).abs() < want * 0.01,
-        "removed {removed}, the groove's {want}"
-    );
-    let ring = PI * (r * r - (r - form.depth).powi(2)) * h;
-    assert!(
-        removed < ring * 0.7 && removed > ring * 0.3,
-        "{removed} of {ring}"
-    );
-}
-
-/// A bore through a block threaded its whole length takes the internal
-/// groove's share of the ring out past the bore.
-#[test]
-fn an_internal_thread_cuts_out_into_a_bore() {
-    let (r, h) = (2.5, 4.0);
-    let block = SolidOp::Primitive {
-        kind: PrimitiveKind::Box {
-            length: 12.0,
-            width: 12.0,
-            height: h,
-        },
-        placement: Placement {
-            origin: [-6.0, -6.0, 0.0],
-            ..Placement::default()
-        },
-        op: BooleanOp::NewSolid,
-    };
-    let bore = SolidOp::Primitive {
-        kind: PrimitiveKind::Cylinder {
-            radius: r,
-            height: h,
-            angle_deg: 360.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::Cut,
-    };
-    let form = metric(1.0);
-    let drilled = volume(&chain(&[block.clone(), bore.clone()]).brep_blob);
-    let built = chain(&[block, bore, thread(side_at(r, 1.0, false), form)]);
-    assert!(is_sound(&built.brep_blob), "a closed solid");
-    let removed = drilled - volume(&built.brep_blob);
-    let want = groove_volume(r, &form, false, h);
-    assert!(
-        (removed - want).abs() < want * 0.01,
-        "removed {removed}, the groove's {want}"
-    );
 }
 
 /// A thread wants a cylindrical face: on a box's face it fails, saying
@@ -244,6 +198,65 @@ fn a_patterned_cosmetic_thread_is_called_out_on_every_copy() {
 #[cfg(feature = "heavy-tests")]
 mod heavy {
     use super::*;
+
+    /// An M6 thread down the whole of a 3 mm shaft takes the groove's share
+    /// of the ring between the major and minor diameters, its length's worth.
+    #[test]
+    fn an_external_thread_takes_its_groove_out_of_the_shaft() {
+        let (r, h) = (3.0, 4.0);
+        let form = metric(1.0);
+        let built = chain(&[shaft(r, h), thread(side_at(r, 1.0, true), form)]);
+        assert!(is_sound(&built.brep_blob), "a closed solid");
+        let removed = PI * r * r * h - volume(&built.brep_blob);
+        let want = groove_volume(r, &form, true, h);
+        assert!(
+            (removed - want).abs() < want * 0.01,
+            "removed {removed}, the groove's {want}"
+        );
+        let ring = PI * (r * r - (r - form.depth).powi(2)) * h;
+        assert!(
+            removed < ring * 0.7 && removed > ring * 0.3,
+            "{removed} of {ring}"
+        );
+    }
+
+    /// A bore through a block threaded its whole length takes the internal
+    /// groove's share of the ring out past the bore.
+    #[test]
+    fn an_internal_thread_cuts_out_into_a_bore() {
+        let (r, h) = (2.5, 4.0);
+        let block = SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: 12.0,
+                width: 12.0,
+                height: h,
+            },
+            placement: Placement {
+                origin: [-6.0, -6.0, 0.0],
+                ..Placement::default()
+            },
+            op: BooleanOp::NewSolid,
+        };
+        let bore = SolidOp::Primitive {
+            kind: PrimitiveKind::Cylinder {
+                radius: r,
+                height: h,
+                angle_deg: 360.0,
+            },
+            placement: Placement::default(),
+            op: BooleanOp::Cut,
+        };
+        let form = metric(1.0);
+        let drilled = volume(&chain(&[block.clone(), bore.clone()]).brep_blob);
+        let built = chain(&[block, bore, thread(side_at(r, 1.0, false), form)]);
+        assert!(is_sound(&built.brep_blob), "a closed solid");
+        let removed = drilled - volume(&built.brep_blob);
+        let want = groove_volume(r, &form, false, h);
+        assert!(
+            (removed - want).abs() < want * 0.01,
+            "removed {removed}, the groove's {want}"
+        );
+    }
 
     /// A thread given a length stops there, from the end of the face nearer
     /// where it was picked, or from the other end when told.
