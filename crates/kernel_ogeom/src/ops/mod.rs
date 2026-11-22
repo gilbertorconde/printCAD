@@ -52,9 +52,10 @@ impl Drop for ToleranceScope {
 
 /// Whether two shapes' bounding boxes come anywhere near each other.
 pub fn bounds_overlap(model: &Model, a: &Shape, b: &Shape) -> bool {
-    let (Some((alo, ahi)), Some((blo, bhi))) =
-        (tess::robust_bounds(model, a), tess::robust_bounds(model, b))
-    else {
+    let (Some((alo, ahi)), Some((blo, bhi))) = (
+        tess::guaranteed_bounds(model, a),
+        tess::guaranteed_bounds(model, b),
+    ) else {
         return true;
     };
     // Shapes a stated tolerance would join count as meeting.

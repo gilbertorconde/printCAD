@@ -92,13 +92,12 @@ pub fn import_step(
         // Meshed here, from the model already in memory. Deferring it would
         // mean parsing every snapshot back afterwards, and re-parsing costs
         // several times what the meshing itself does.
-        let mesh = tess::mesh_shape_with(model, shape, &face_colors, detail, tess::Faces::Inline)
-            .unwrap_or_else(|e| {
-                warn!(target: "printcad.kernel", body = i, "inline mesh failed: {e}");
-                TriMesh::default()
-            });
+        let mesh = tess::mesh_shape(model, shape, &face_colors, detail).unwrap_or_else(|e| {
+            warn!(target: "printcad.kernel", body = i, "inline mesh failed: {e}");
+            TriMesh::default()
+        });
 
-        let bounds_mm = tess::robust_bounds(model, shape).map(|(lo, hi)| {
+        let bounds_mm = tess::guaranteed_bounds(model, shape).map(|(lo, hi)| {
             (
                 [lo.x as f32, lo.y as f32, lo.z as f32],
                 [hi.x as f32, hi.y as f32, hi.z as f32],
@@ -642,7 +641,7 @@ pub fn read_brep(
         _ => root,
     };
     let brep_blob = tess::write_blob(&model, &shape)?;
-    let mesh = tess::mesh_shape_with(&model, &shape, &[], detail, tess::Faces::Wide)
+    let mesh = tess::mesh_shape(&model, &shape, &[], detail)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
     Ok(kernel_api::MeshSolidResult {
         brep_blob,

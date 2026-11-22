@@ -528,6 +528,7 @@ fn points_read_their_signed_distance_to_a_reference() {
             [10.5, 0.0, 15.0],
             [0.0, -9.5, 15.0],
             [0.0, 0.0, 31.0],
+            [10.5 * 0.3f64.cos(), 10.5 * 0.3f64.sin(), 15.0],
             [80.0, 0.0, 0.0],
         ],
         max: Some(5.0),
@@ -540,15 +541,15 @@ fn points_read_their_signed_distance_to_a_reference() {
     })]);
     for (target, slack) in [
         (DistanceTarget::Mesh(&mesh), 0.02),
-        (DistanceTarget::Shape(&solid.brep_blob), 1e-3),
+        (DistanceTarget::Shape(&solid.brep_blob), 1e-9),
     ] {
         let d = QUERIES
             .signed_distance(target, &request)
             .expect("distances");
-        for (got, want) in d.iter().zip([0.5, -0.5, 1.0]) {
+        for (got, want) in d.iter().zip([0.5, -0.5, 1.0, 0.5]) {
             assert!((got - want).abs() < slack, "{got} for {want}");
         }
-        assert!(d[3].is_nan(), "out of reach");
+        assert!(d[4].is_nan(), "out of reach");
     }
 }
 
