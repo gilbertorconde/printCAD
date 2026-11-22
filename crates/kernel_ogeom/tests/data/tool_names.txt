@@ -149,8 +149,8 @@ revolve two ways: 94 0 -25 37f2acbe1d1ecfa0
 revolve two ways: 94 200 -25 26e5a14a09626fb1
 revolve two ways: 130 100 -35 022a157393cbbf77
 revolve a circle: 0 0 0 95f36565a15afb6b
-helix: -108 35 0 0005421e01077a3f
-helix: -108 85 0 05a01964d2ddc282
+helix: -108 35 0 05a01964d2ddc282
+helix: -108 85 0 0005421e01077a3f
 helix: -99 25 0 4ee1d7947f6379e3
 helix: -99 45 0 9b07d6512cc0e0a8
 helix: -99 75 0 64e223dcdf365428
