@@ -346,53 +346,24 @@ fn add_step(
     Ok(json!({"feature": id.0.to_string(), "name": feature.name}))
 }
 
-/// Triangles, open edges, signed volume and pieces of a mesh, its
-/// coincident vertices taken as one.
-pub fn inspect(mesh: &TriMesh) -> Value {
-    let mut first: std::collections::HashMap<[u32; 3], usize> = Default::default();
-    let welded: Vec<usize> = mesh
-        .positions
-        .iter()
-        .enumerate()
-        .map(|(i, p)| *first.entry(p.map(f32::to_bits)).or_insert(i))
-        .collect();
-    let mut parent: Vec<usize> = (0..mesh.positions.len()).collect();
-    fn root(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
-    let mut edges: std::collections::HashMap<(usize, usize), u32> = Default::default();
-    let mut volume = 0.0;
-    let triangles = mesh.indices.as_chunks::<3>().0;
-    for t in triangles {
-        let [a, b, c] = t.map(|v| welded[v as usize]);
-        for (u, v) in [(a, b), (b, c), (c, a)] {
-            *edges.entry((u.min(v), u.max(v))).or_default() += 1;
-            let (ru, rv) = (root(&mut parent, u), root(&mut parent, v));
-            parent[ru] = rv;
-        }
-        let [p, q, r] = t.map(|v| mesh.positions[v as usize].map(f64::from));
-        volume += (p[0] * (q[1] * r[2] - q[2] * r[1]) - p[1] * (q[0] * r[2] - q[2] * r[0])
-            + p[2] * (q[0] * r[1] - q[1] * r[0]))
-            / 6.0;
-    }
-    let pieces: std::collections::HashSet<usize> = triangles
-        .iter()
-        .map(|t| root(&mut parent, welded[t[0] as usize]))
-        .collect();
+/// How a mesh holds together, as the kernel reads it (triangles, open
+/// edges, holes, whether it is closed, corners where it is no surface,
+/// volume), with its pieces as Split into bodies takes them and its box.
+pub fn inspect(kernel: &dyn kernel_api::KernelQueries, mesh: &TriMesh) -> Result<Value, String> {
+    let health = kernel.mesh_health(mesh).map_err(|e| e.to_string())?;
     let bounds = mesh
         .bounds()
         .map(|(lo, hi)| json!({"min": lo.map(f64::from), "max": hi.map(f64::from)}));
-    json!({
-        "triangles": triangles.len(),
-        "open_edges": edges.values().filter(|n| **n == 1).count(),
-        "volume": volume,
-        "pieces": pieces.len(),
+    Ok(json!({
+        "triangles": health.triangles,
+        "open_edges": health.open_edges,
+        "holes": health.holes,
+        "closed": health.closed,
+        "non_manifold": health.non_manifold,
+        "volume": health.volume,
+        "pieces": pieces::piece_triangles(mesh).len(),
         "bounds": bounds,
-    })
+    }))
 }
 
 impl core_document::Workbench for MeshWorkbench {
@@ -1020,7 +991,7 @@ mod tests {
             indices: vec![0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2],
             ..TriMesh::default()
         };
-        let read = inspect(&start);
+        let read = inspect(&kernel_ogeom::QUERIES, &start).unwrap();
         assert_eq!(
             (read["open_edges"].clone(), read["pieces"].clone()),
             (json!(0), json!(1))
@@ -1218,7 +1189,14 @@ mod tests {
                 .map(|i| i + both.positions.len() as u32),
         );
         both.positions.extend(small.positions);
-        assert!((inspect(&both)["volume"].as_f64().unwrap() - 1125.0).abs() < 1e-6);
+        assert!(
+            (inspect(&kernel_ogeom::QUERIES, &both).unwrap()["volume"]
+                .as_f64()
+                .unwrap()
+                - 1125.0)
+                .abs()
+                < 1e-6
+        );
         let mut doc = Document::new("split");
         let body = mesh_body(&mut doc, both);
         let placement = core_document::BodyPlacement {
@@ -1254,7 +1232,7 @@ mod tests {
                     assert_eq!(entry.shading, core_document::Shading::Sharp);
                     assert!(entry.scan.is_some());
                     let (mesh, _) = doc.derived().local_geometry(*b).expect("the piece's mesh");
-                    let read = inspect(&mesh);
+                    let read = inspect(&kernel_ogeom::QUERIES, &mesh).unwrap();
                     assert_eq!(
                         (read["pieces"].clone(), read["open_edges"].clone()),
                         (json!(1), json!(0))

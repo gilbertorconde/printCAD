@@ -94,6 +94,9 @@ pub struct LoopEdge {
     /// its loop, once each way.
     #[serde(default)]
     pub seam: bool,
+    /// Its exact curve and length, in the shape's own frame.
+    #[serde(default)]
+    pub curve: Option<EdgeCurve>,
 }
 
 /// The curves and texts of a 2D drawing file, in the drawing's own

@@ -5,7 +5,7 @@ use ogeom::algo::transformed;
 use ogeom::geom::Curve3d;
 use ogeom::math::{Axis, Direction, Point, Transform, Vector};
 use ogeom::offset::{
-    PipeCorners, PipeLaw, make_loft, make_loft_skinned, make_loft_skinned_closed,
+    PipeCorners, PipeLaw, make_loft, make_loft_skinned, make_loft_skinned_closed, make_loft_solid,
     make_pipe_sections, make_pipe_shell_with,
 };
 use ogeom::topo::{Model, NodeData, Shape};
@@ -164,25 +164,36 @@ fn loft_wires(
             .map_err(|e| format!("closed loft failed: {e}"));
     }
     // Two sections, one a point: the smooth loft is the ruled one, a cone
-    // or a pyramid, built exactly.
+    // or a pyramid, built exactly. A point is only ever the last section.
     let to_point = wires
-        .iter()
-        .any(|w| model.kind_of(w) == Ok(ogeom::topo::ShapeType::Vertex));
+        .last()
+        .is_some_and(|w| model.kind_of(w) == Ok(ogeom::topo::ShapeType::Vertex));
     if ruled || (to_point && wires.len() == 2) {
-        // Chain of two-section ruled lofts, fused. The ruled construction
-        // takes circles on one axis and polygons of one corner count;
-        // between other sections (a square and a circle) the skinned loft,
-        // which through two sections is the ruled one, builds the pair.
-        let mut parts = Vec::with_capacity(wires.len() - 1);
-        for pair in wires.windows(2) {
-            let part = match make_loft(model, &pair[0], &pair[1], tol()) {
-                Ok(part) => part,
-                Err(ruled) => make_loft_skinned(model, pair, SKIN_TOLERANCE, tol())
-                    .map_err(|e| format!("ruled loft failed: {ruled}; skinned: {e}"))?,
-            };
-            parts.push(part.shape);
+        if !to_point {
+            return make_loft_solid(model, wires, &[], true, tol())
+                .map(|b| b.shape)
+                .map_err(|e| format!("ruled loft failed: {e}"));
         }
-        fuse_all(model, parts)
+        // Ruled through the closed sections, then to the point.
+        let (apex, rings) = wires.split_last().ok_or("a loft needs sections")?;
+        let last = rings.last().ok_or("a loft needs sections")?;
+        // The cone takes a circle and a polygon; the skinned loft through
+        // the two, ruled through two sections, takes any other.
+        let cone = match make_loft(model, last, apex, tol()) {
+            Ok(cone) => cone.shape,
+            Err(ruled) => {
+                make_loft_skinned(model, &[last.clone(), apex.clone()], SKIN_TOLERANCE, tol())
+                    .map_err(|e| format!("ruled loft failed: {ruled}; skinned: {e}"))?
+                    .shape
+            }
+        };
+        if rings.len() < 2 {
+            return Ok(cone);
+        }
+        let walls = make_loft_solid(model, rings, &[], true, tol())
+            .map_err(|e| format!("ruled loft failed: {e}"))?
+            .shape;
+        fuse_all(model, vec![walls, cone])
     } else {
         make_loft_skinned(model, wires, SKIN_TOLERANCE, tol())
             .map(|b| b.shape)

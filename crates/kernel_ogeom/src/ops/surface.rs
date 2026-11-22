@@ -1078,19 +1078,24 @@ const NETWORK_MARGIN: f64 = 0.05;
 /// The patch network fitted to its points: the shell of its faces.
 fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result<Shape, String> {
     use ogeom::algo::{ChainedPatch, CurveDef, NetworkOptions, PatchDef, PatchSide};
+    // Each curve's points, for the box the scan's points are taken from,
+    // and the curve the fit holds to: a curve of one edge exactly, one of
+    // several as the polyline through its edges' points.
     let mut lines = Vec::new();
+    let mut curves = Vec::new();
     if !net.curves.is_empty() {
         for (i, shape) in shapes_of(model, base, net.curves)?.into_iter().enumerate() {
-            lines.push(
-                chain_points(model, &shape).map_err(|why| format!("curve {}: {why}", i + 1))?,
-            );
+            let (line, exact) =
+                network_curve(model, &shape).map_err(|why| format!("curve {}: {why}", i + 1))?;
+            curves.push(exact.unwrap_or_else(|| CurveDef::Polyline(line.clone())));
+            lines.push(line);
         }
     }
-    lines.extend(
-        net.polylines
-            .iter()
-            .map(|line| line.iter().map(|p| point(*p)).collect::<Vec<_>>()),
-    );
+    for line in net.polylines {
+        let line: Vec<Point> = line.iter().map(|p| point(*p)).collect();
+        curves.push(CurveDef::Polyline(line.clone()));
+        lines.push(line);
+    }
     if lines.is_empty() {
         return Err("the network has no curves".into());
     }
@@ -1153,7 +1158,6 @@ fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result
         .collect();
     let index = ogeom::mesh::PointIndex::build(&inside)
         .map_err(|e| format!("indexing the scan's points failed: {e}"))?;
-    let curves: Vec<CurveDef> = lines.into_iter().map(CurveDef::Polyline).collect();
     let options = NetworkOptions {
         tolerance: net.tolerance,
         smoothing: net.smoothing,
@@ -1176,15 +1180,41 @@ fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result
     .map_err(|e| format!("fitting the patch network failed: {e}"))
 }
 
-/// The points along a curve's edges, joined end to end in one run.
-fn chain_points(model: &Model, shape: &Shape) -> Result<Vec<Point>, String> {
+/// The points along a curve's edges, joined end to end in one run, and
+/// where the curve is one edge, that edge's curve over its range, placed
+/// and running the way the edge does.
+fn network_curve(
+    model: &Model,
+    shape: &Shape,
+) -> Result<(Vec<Point>, Option<ogeom::algo::CurveDef>), String> {
     let edges = match model.kind_of(shape) {
         Ok(ShapeType::Edge) => vec![shape.clone()],
         _ => explore_unique(model, shape, ShapeType::Edge)
             .map_err(|e| format!("reading its edges failed: {e}"))?,
     };
+    let line = chain_points(model, &edges)?;
+    let [edge] = edges.as_slice() else {
+        return Ok((line, None));
+    };
+    let Some((curve, range)) =
+        ogeom::algo::placed_edge_curve(model, edge, tol()).map_err(|e| e.to_string())?
+    else {
+        return Ok((line, None));
+    };
+    let (curve, range) = if edge.orientation() == ogeom::topo::Orientation::Reversed {
+        use ogeom::geom::{Curve3d as _, Reversible as _};
+        let (a, b) = curve.domain();
+        (curve.reversed(), (a + b - range.1, a + b - range.0))
+    } else {
+        (curve, range)
+    };
+    Ok((line, Some(ogeom::algo::CurveDef::Curve { curve, range })))
+}
+
+/// The points along `edges`, joined end to end in one run.
+fn chain_points(model: &Model, edges: &[Shape]) -> Result<Vec<Point>, String> {
     let mut runs = Vec::with_capacity(edges.len());
-    for edge in &edges {
+    for edge in edges {
         let run =
             crate::queries::edge_points(model, edge, ogeom::mesh::Deflection::default(), tol())
                 .map_err(|e| e.to_string())?;

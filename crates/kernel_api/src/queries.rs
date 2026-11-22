@@ -63,6 +63,12 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("build_mesh_chain".into()))
     }
 
+    /// How `mesh` holds together: its open edges and holes, where it is
+    /// not a surface, and the volume it encloses.
+    fn mesh_health(&self, _mesh: &TriMesh) -> KernelResult<MeshHealth> {
+        Err(KernelError::Unsupported("mesh_health".into()))
+    }
+
     /// Every pair of `mesh`'s triangles that meet anywhere but at the
     /// corners they share, by triangle number, lower first.
     fn self_intersections(&self, _mesh: &TriMesh) -> KernelResult<Vec<[u32; 2]>> {
@@ -326,6 +332,14 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("face section".into()))
     }
 
+    /// The edges of `brep` a fillet or chamfer following tangent edges
+    /// takes from edge `edge`: it first, then those running on from it
+    /// smoothly. Edges are numbered in the shape's own order, as
+    /// [`TriMesh::edge_ids`] numbers a mesh drawn from it.
+    fn tangent_chain(&self, _brep: &[u8], _edge: u32) -> KernelResult<Vec<u32>> {
+        Err(KernelError::Unsupported("tangent chain".into()))
+    }
+
     /// A point on each solid of `brep`, one per solid in the order the
     /// shape holds them, in its own frame: where each piece of a shape of
     /// several stands.
@@ -380,6 +394,13 @@ pub trait KernelQueries: Send + Sync {
         _tolerance: f64,
     ) -> KernelResult<CentreLine> {
         Err(KernelError::Unsupported("centre line".into()))
+    }
+
+    /// The area of the face of `brep` that `face` names (mm²), integrated
+    /// on its surface where the kernel can, else on its triangles. The
+    /// probe is in the shape's own frame.
+    fn face_area(&self, _brep: &[u8], _face: &FaceProbe) -> KernelResult<f64> {
+        Err(KernelError::Unsupported("face area".into()))
     }
 
     /// What the shape in `brep` answers to `probe`, in the shape's own

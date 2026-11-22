@@ -1732,9 +1732,6 @@ fn combine(
         BooleanOp::Fuse => {
             let base =
                 base.ok_or_else(|| "fuse requires existing material in the body".to_string())?;
-            if !ops::bounds_overlap(model, base, &tool) {
-                return ops::fuse_or_compound(model, base, &tool);
-            }
             ops::combine_solids(model, base, &tool, BoolKind::Fuse)
         }
         BooleanOp::Cut => {

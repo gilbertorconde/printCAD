@@ -150,6 +150,62 @@ pub struct TriMesh {
     /// like [`Self::edge_ids`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_faces: Vec<[TopoName; 2]>,
+    /// The exact curve of each kernel edge and its length, indexed by the
+    /// edge numbers [`Self::edge_ids`] holds, as [`Self::edge_faces`] is:
+    /// what a picked edge is, beyond the segments drawn for it. Empty when
+    /// the outline names no kernel edges (a mesh body).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_curves: Vec<EdgeCurve>,
+}
+
+/// A kernel edge's curve, in the mesh's frame, and its length along it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct EdgeCurve {
+    pub kind: EdgeKind,
+    /// The arc length of the edge (mm), integrated on its curve.
+    pub length: f32,
+}
+
+/// What a kernel edge's curve is.
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub enum EdgeKind {
+    /// A straight line.
+    Line,
+    /// A circle, or an arc of one: its centre, the unit normal of its
+    /// plane and its radius.
+    Circle {
+        center: [f32; 3],
+        normal: [f32; 3],
+        radius: f32,
+    },
+    /// Any other curve: an ellipse, a spline.
+    #[default]
+    Other,
+}
+
+impl EdgeCurve {
+    /// The same curve moved: `point` maps points, `direction` maps
+    /// directions (a rigid motion or a mirror, so lengths stay).
+    pub fn moved(
+        &self,
+        point: impl Fn([f32; 3]) -> [f32; 3],
+        direction: impl Fn([f32; 3]) -> [f32; 3],
+    ) -> Self {
+        let kind = match self.kind {
+            EdgeKind::Circle {
+                center,
+                normal,
+                radius,
+            } => EdgeKind::Circle {
+                center: point(center),
+                normal: direction(normal),
+                radius,
+            },
+            other => other,
+        };
+        Self { kind, ..*self }
+    }
 }
 
 /// The kind and placement of a kernel face's surface, in the mesh's frame.
@@ -255,6 +311,15 @@ impl TriMesh {
     /// Compute axis-aligned bounding box `(min, max)` of the mesh, if non-empty.
     pub fn bounds(&self) -> Option<([f32; 3], [f32; 3])> {
         self.aabb().map(Into::into)
+    }
+
+    /// The exact curve of kernel edge `edge`, when the mesh carries one
+    /// whose length the kernel could measure.
+    pub fn edge_curve(&self, edge: u32) -> Option<EdgeCurve> {
+        self.edge_curves
+            .get(edge as usize)
+            .copied()
+            .filter(|curve| curve.length.is_finite())
     }
 
     /// The box around the mesh's points; `None` for a mesh with none.

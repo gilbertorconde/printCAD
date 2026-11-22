@@ -55,6 +55,21 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
     Ok(answer)
 }
 
+/// How `mesh` holds together, its corners at one spot taken as one.
+pub(crate) fn health(mesh: &TriMesh) -> KernelResult<kernel_api::MeshHealth> {
+    let tri = intake(mesh, Weld::InPlace(HISTORY_POINT), Degenerate::Keep)?.tri;
+    let edit = Editable::from(&tri, 0.0).map_err(|e| KernelError::InvalidInput(e.to_string()))?;
+    let rims = edit.rims();
+    Ok(kernel_api::MeshHealth {
+        triangles: tri.triangles.len(),
+        open_edges: rims.iter().map(|r| r.edges.len()).sum(),
+        holes: rims.len(),
+        closed: edit.is_closed(),
+        non_manifold: edit.non_manifold().len(),
+        volume: tri.volume(),
+    })
+}
+
 pub(crate) fn triangulation(mesh: &TriMesh) -> Result<Triangulation, String> {
     let tri = intake(mesh, Weld::InPlace(HISTORY_POINT), Degenerate::Drop)
         .map_err(|e| e.to_string())?

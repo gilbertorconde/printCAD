@@ -211,9 +211,10 @@ print(pc.mesh.result{feature = reduced.feature}.report.Reduce.p999)
 print(pc.mesh.inspect{scan = s}.volume)
 ```
 
-`pc.mesh.inspect` counts the triangles, open edges and pieces of the
-mesh the scan draws now, with its volume and bounds. A closed mesh has
-no open edges, and its volume is positive when its faces point out.
+`pc.mesh.inspect` counts the triangles, open edges, holes, pieces and
+corners where it is not a surface of the mesh the scan draws now, with
+its volume and bounds. A closed mesh has no open edges, and its volume is
+positive when its faces point out.
 `delete`, `flip`, `smooth` and `offset` take a `box = {min = {…}, max = {…}}` or a
 `ball = {centre = {…}, radius = r}` in the scan's own frame; without
 either they use the scan's marking (or the whole mesh if empty, except

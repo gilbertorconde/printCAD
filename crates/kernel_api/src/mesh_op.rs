@@ -272,3 +272,25 @@ pub struct MeshChainAnswer {
     pub steps: Vec<MeshStep>,
     pub failed: Option<(usize, String)>,
 }
+
+/// How a mesh holds together, its corners at one point taken as one: its
+/// triangles joined across the edges they share and wind opposite ways
+/// along.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MeshHealth {
+    pub triangles: usize,
+    /// Triangle sides joined to no other: none shares them, or the one
+    /// that does runs the same way along them.
+    pub open_edges: usize,
+    /// The loops those sides run round: the holes, each counted once.
+    pub holes: usize,
+    /// Whether there are triangles and none has an open side.
+    pub closed: bool,
+    /// Corners where the mesh is not a surface: several fans meeting at a
+    /// point, or an edge more than two triangles use or two run the same
+    /// way.
+    pub non_manifold: usize,
+    /// The volume enclosed (mm³), negative for a mesh wound inward; of no
+    /// meaning for an open one.
+    pub volume: f64,
+}
