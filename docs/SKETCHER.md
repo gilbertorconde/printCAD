@@ -435,7 +435,9 @@ Rotate:
 Offset copies the selected curves to the side of its click. Several
 curves or chains (circles, or an outline and the holes in it) are copied
 each on its own in one step: the closed ones all grow or all shrink as the
-one nearest the click does, and an open one goes to the click's side. The
+one nearest the click does, and an open one goes to the click's side. A
+closed chain of lines and arcs shrunk past a narrow part splits there into
+the loops that keep the whole distance from it. The
 copies wait in the Tool section, whose distance, Round, Both sides and other
 switches change them in the view; as with a shape, only Cancel drops
 them, and OK and everything else copy at what the section shows, carried

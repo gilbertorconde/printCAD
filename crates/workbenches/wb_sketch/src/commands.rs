@@ -653,6 +653,7 @@ fn draw(
     sketch: &mut Sketch,
     a: &Args,
     args: &CommandArgs,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
 ) -> Result<(Vec<String>, Vec<String>), CommandError> {
     use crate::step;
     let name = a.string("tool")?;
@@ -673,6 +674,7 @@ fn draw(
         remove_redundant: a.opt_bool("remove_redundant")?.unwrap_or(false),
         reuse_lines: a.opt_bool("reuse_lines")?.unwrap_or(false),
         snapped: None,
+        kernel,
     };
     let selected: std::collections::HashSet<Uuid> = match args.get("selection") {
         Some(v) if !v.is_null() => ids(Some(v), "selection", sketch)?.into_iter().collect(),

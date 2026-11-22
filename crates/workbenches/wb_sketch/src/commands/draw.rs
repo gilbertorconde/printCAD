@@ -305,11 +305,11 @@ fn draw_command(
     a: &Args,
     _sketch_id: FeatureId,
     feature: &mut SketchFeature,
-    _ctx: &mut WorkbenchRuntimeContext,
+    ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
     let args = a.0;
     let sketch = &mut feature.sketch;
-    let (elements, constraints) = draw(sketch, a, args)?;
+    let (elements, constraints) = draw(sketch, a, args, ctx.kernel)?;
     Ok(json!({"elements": elements, "constraints": constraints}))
 }
 

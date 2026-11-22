@@ -42,6 +42,22 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("fit_chain_2d".into()))
     }
 
+    /// A closed wire of lines and arcs, its segments end to end, offset by
+    /// `distance`: out of the area it encloses when positive, into it when
+    /// negative. Where a corner opens a gap the two sides meet in an arc
+    /// about the corner (`round`) or run on until they meet; where they
+    /// overlap they are trimmed to their crossing. An offset that crosses
+    /// itself is split there into the loops that stand the whole distance
+    /// off the wire, each loop's pieces in order, end to start.
+    fn offset_wire_2d(
+        &self,
+        _wire: &ProfileWire,
+        _distance: f64,
+        _round: bool,
+    ) -> KernelResult<Vec<Vec<OffsetPiece>>> {
+        Err(KernelError::Unsupported("offset_wire_2d".into()))
+    }
+
     /// `start` with `ops` applied in turn: a mesh body's history.
     fn build_mesh_chain(&self, _start: &TriMesh, _ops: &[MeshOp]) -> KernelResult<MeshChainAnswer> {
         Err(KernelError::Unsupported("build_mesh_chain".into()))

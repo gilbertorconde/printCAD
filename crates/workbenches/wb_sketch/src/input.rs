@@ -415,6 +415,7 @@ impl SketchWorkbench {
             // An arc snaps as the polyline's arc it becomes, not as the
             // line the landing saw, and a steered cursor from where it is.
             snapped: snapped.filter(|_| !arc && cursor == landed),
+            kernel: ctx.kernel,
         };
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
         let card = !arc
@@ -576,6 +577,7 @@ impl SketchWorkbench {
             remove_redundant: self.options.auto_remove_redundant,
             reuse_lines: self.options.reuse_lines,
             snapped: None,
+            kernel: ctx.kernel,
         };
         self.open_text_task(ctx, feature, at, &settings);
         InputResult::consumed()

@@ -96,6 +96,15 @@ impl KernelQueries for OgeomQueries {
         crate::orient::fit_chain(points, fit)
     }
 
+    fn offset_wire_2d(
+        &self,
+        wire: &kernel_api::ProfileWire,
+        distance: f64,
+        round: bool,
+    ) -> KernelResult<Vec<Vec<kernel_api::OffsetPiece>>> {
+        crate::wire_offset::offset_wire_2d(wire, distance, round)
+    }
+
     fn build_mesh_chain(
         &self,
         start: &TriMesh,

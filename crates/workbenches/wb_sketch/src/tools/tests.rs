@@ -39,11 +39,12 @@ fn params(f: impl FnOnce(&mut ToolParams)) -> ToolParams {
 }
 
 /// What a test's clicks carry besides where they land: the tool's
-/// parameters, the selection and the snap tolerance.
+/// parameters, the selection, the snap tolerance and the kernel.
 struct With {
     params: ToolParams,
     selected: HashSet<Uuid>,
     tol: f64,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
 impl With {
@@ -52,6 +53,7 @@ impl With {
             params: *params,
             selected: selected.clone(),
             tol,
+            kernel: None,
         }
     }
 
@@ -72,6 +74,7 @@ impl With {
             None,
             &self.params,
             &self.selected,
+            self.kernel,
         )
     }
 
@@ -2397,110 +2400,239 @@ fn selected_rectangle(sketch: &mut Sketch) -> HashSet<Uuid> {
         .collect()
 }
 
+/// The offset tool alone, and with the kernel offsetting closed chains:
+/// a rectangle's copies come out the same either way.
+const KERNELS: [Option<&'static dyn kernel_api::KernelQueries>; 2] =
+    [None, Some(&kernel_ogeom::QUERIES)];
+
 #[test]
 fn an_offset_outward_can_round_its_corners() {
-    let (mut sketch, mut state) = fresh();
-    let selected = selected_rectangle(&mut sketch);
-    let w = With::new(&offset_params(|p| p.offset_round = true), &selected, 0.5);
-    let fx = w.click(&mut state, &mut sketch, "sketch.offset", (5.0, -3.0));
-    assert!(fx.changed);
-    // Four copies and four quarter arcs about the original corners.
-    assert_eq!((lines(&sketch), arcs(&sketch)), (8, 4));
-    for g in &sketch.geometry {
-        if let GeometryElement::Arc(a) = g {
-            assert!((a.radius - 1.0).abs() < 1e-5);
-            let c = sketch.point_position(a.center).unwrap().to_glam();
-            assert!(
-                [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)]
-                    .iter()
-                    .any(|&(x, y)| (c - glam::DVec2::new(x, y)).length() < 1e-5)
-            );
+    for kernel in KERNELS {
+        let (mut sketch, mut state) = fresh();
+        let selected = selected_rectangle(&mut sketch);
+        let w = With {
+            kernel,
+            ..With::new(&offset_params(|p| p.offset_round = true), &selected, 0.5)
+        };
+        let fx = w.click(&mut state, &mut sketch, "sketch.offset", (5.0, -3.0));
+        assert!(fx.changed);
+        // Four copies and four quarter arcs about the original corners.
+        assert_eq!((lines(&sketch), arcs(&sketch)), (8, 4));
+        for g in &sketch.geometry {
+            if let GeometryElement::Arc(a) = g {
+                assert!((a.radius - 1.0).abs() < 1e-5);
+                let c = sketch.point_position(a.center).unwrap().to_glam();
+                assert!(
+                    [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)]
+                        .iter()
+                        .any(|&(x, y)| (c - glam::DVec2::new(x, y)).length() < 1e-5)
+                );
+            }
         }
+        let wires = crate::profile::extract_wires(&sketch).unwrap();
+        assert_eq!(wires.len(), 2);
+        converged(&mut sketch);
     }
-    let wires = crate::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 2);
-    converged(&mut sketch);
 }
 
 #[test]
 fn an_inward_offset_does_not_round_its_corners() {
-    let (mut sketch, mut state) = fresh();
-    let selected = selected_rectangle(&mut sketch);
-    let w = With::new(&offset_params(|p| p.offset_round = true), &selected, 0.5);
-    w.click(&mut state, &mut sketch, "sketch.offset", (5.0, 2.5));
-    assert_eq!((lines(&sketch), arcs(&sketch)), (8, 0));
+    for kernel in KERNELS {
+        let (mut sketch, mut state) = fresh();
+        let selected = selected_rectangle(&mut sketch);
+        let w = With {
+            kernel,
+            ..With::new(&offset_params(|p| p.offset_round = true), &selected, 0.5)
+        };
+        w.click(&mut state, &mut sketch, "sketch.offset", (5.0, 2.5));
+        assert_eq!((lines(&sketch), arcs(&sketch)), (8, 0));
+    }
 }
 
 #[test]
 fn an_offset_to_both_sides_replacing_the_original() {
-    let (mut sketch, mut state) = fresh();
-    let selected = selected_rectangle(&mut sketch);
-    let w = With {
-        params: offset_params(|p| {
-            p.offset_both = true;
-            p.offset_delete = true;
-        }),
-        selected: selected.clone(),
-        tol: 0.5,
-    };
-    w.click(&mut state, &mut sketch, "sketch.offset", (5.0, 2.5));
-    assert_eq!(lines(&sketch), 8);
-    assert!(selected.iter().all(|id| sketch.get_geometry(*id).is_none()));
-    let xs: Vec<f64> = all_points(&sketch)
-        .into_iter()
-        .map(|p| p.position.x)
-        .collect();
-    assert!(xs.iter().any(|x| (x - 1.0).abs() < 1e-4));
-    assert!(xs.iter().any(|x| (x + 1.0).abs() < 1e-4));
-    assert!(
-        !xs.iter().any(|x| x.abs() < 1e-4),
-        "the original corners are gone"
-    );
+    for kernel in KERNELS {
+        let (mut sketch, mut state) = fresh();
+        let selected = selected_rectangle(&mut sketch);
+        let w = With {
+            params: offset_params(|p| {
+                p.offset_both = true;
+                p.offset_delete = true;
+            }),
+            selected: selected.clone(),
+            tol: 0.5,
+            kernel,
+        };
+        w.click(&mut state, &mut sketch, "sketch.offset", (5.0, 2.5));
+        assert_eq!(lines(&sketch), 8);
+        assert!(selected.iter().all(|id| sketch.get_geometry(*id).is_none()));
+        let xs: Vec<f64> = all_points(&sketch)
+            .into_iter()
+            .map(|p| p.position.x)
+            .collect();
+        assert!(xs.iter().any(|x| (x - 1.0).abs() < 1e-4));
+        assert!(xs.iter().any(|x| (x + 1.0).abs() < 1e-4));
+        assert!(
+            !xs.iter().any(|x| x.abs() < 1e-4),
+            "the original corners are gone"
+        );
+    }
 }
 
 #[test]
 fn a_linked_offset_follows_its_dimension() {
-    let (mut sketch, mut state) = fresh();
-    let selected = selected_rectangle(&mut sketch);
-    for g in sketch.geometry.clone() {
-        if let GeometryElement::Point(p) = g {
-            pin(&mut sketch, p.id);
+    for kernel in KERNELS {
+        let (mut sketch, mut state) = fresh();
+        let selected = selected_rectangle(&mut sketch);
+        for g in sketch.geometry.clone() {
+            if let GeometryElement::Point(p) = g {
+                pin(&mut sketch, p.id);
+            }
+        }
+        let w = With {
+            params: offset_params(|p| {
+                p.offset_linked = true;
+                p.offset_round = true;
+            }),
+            selected: selected.clone(),
+            tol: 0.5,
+            kernel,
+        };
+        w.click(&mut state, &mut sketch, "sketch.offset", (5.0, -3.0));
+        let offset = sketch
+            .constraints
+            .iter()
+            .position(|c| matches!(c.kind, ConstraintKind::Offset { .. }))
+            .expect("one offset dimension");
+        let ConstraintKind::Offset { pairs, .. } = &sketch.constraints[offset].kind else {
+            unreachable!()
+        };
+        assert_eq!(pairs.len(), 4);
+        let kind = crate::sketch::with_dimension_value(&sketch.constraints[offset].kind, 2.5);
+        sketch.constraints[offset].kind = kind;
+        converged(&mut sketch);
+        // Every copy stands 2.5 out, the corners round with radius 2.5.
+        let lowest = all_points(&sketch)
+            .into_iter()
+            .map(|p| p.position.y)
+            .fold(f64::MAX, f64::min);
+        assert!((lowest + 2.5).abs() < 1e-3, "{lowest}");
+        for g in &sketch.geometry {
+            if let GeometryElement::Arc(a) = g {
+                let c = sketch.point_position(a.center).unwrap();
+                let s = sketch.point_position(a.start).unwrap();
+                assert!(((s - c).to_glam().length() - 2.5).abs() < 1e-3);
+            }
         }
     }
+}
+
+/// Two blocks joined by a neck 2 high, its lines selected.
+fn selected_neck(sketch: &mut Sketch) -> HashSet<Uuid> {
+    let corners = [
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 4.0),
+        (14.0, 4.0),
+        (14.0, 0.0),
+        (24.0, 0.0),
+        (24.0, 10.0),
+        (13.0, 10.0),
+        (13.0, 6.0),
+        (11.0, 6.0),
+        (11.0, 10.0),
+        (0.0, 10.0),
+    ];
+    let ids: Vec<Uuid> = corners.iter().map(|&(x, y)| pt(sketch, x, y)).collect();
+    (0..ids.len())
+        .map(|k| line_between(sketch, ids[k], ids[(k + 1) % ids.len()]))
+        .collect()
+}
+
+/// Shrunk by more than half its neck, the outline's copy is the two
+/// blocks' outlines, every copied side held to its original.
+#[test]
+fn a_closed_offset_that_closes_a_neck_splits_into_two_loops() {
+    let (mut sketch, mut state) = fresh();
+    let selected = selected_neck(&mut sketch);
     let w = With {
-        params: offset_params(|p| {
-            p.offset_linked = true;
-            p.offset_round = true;
-        }),
-        selected: selected.clone(),
-        tol: 0.5,
+        kernel: KERNELS[1],
+        ..With::new(
+            &offset_params(|p| {
+                p.offset_distance = 1.5;
+                p.offset_linked = true;
+            }),
+            &selected,
+            0.5,
+        )
     };
-    w.click(&mut state, &mut sketch, "sketch.offset", (5.0, -3.0));
-    let offset = sketch
+    let fx = w.click(&mut state, &mut sketch, "sketch.offset", (5.0, 5.0));
+    assert!(fx.changed, "{:?}", fx.log);
+    let wires = crate::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 3, "the outline and one loop in each block");
+    // Each block's loop 1.5 in, stepped where the neck's walls do not
+    // line up: six sides each.
+    assert_eq!(lines(&sketch), 12 + 12);
+    for (x, y) in [
+        (1.5, 1.5),
+        (8.5, 5.5),
+        (9.5, 5.5),
+        (14.5, 5.5),
+        (15.5, 5.5),
+        (22.5, 8.5),
+    ] {
+        assert!(has_point(&sketch, x, y), "no corner at ({x}, {y})");
+    }
+    let pairs = sketch
         .constraints
         .iter()
-        .position(|c| matches!(c.kind, ConstraintKind::Offset { .. }))
+        .find_map(|c| match &c.kind {
+            ConstraintKind::Offset { pairs, .. } => Some(pairs.len()),
+            _ => None,
+        })
         .expect("one offset dimension");
-    let ConstraintKind::Offset { pairs, .. } = &sketch.constraints[offset].kind else {
-        unreachable!()
-    };
-    assert_eq!(pairs.len(), 4);
-    let kind = crate::sketch::with_dimension_value(&sketch.constraints[offset].kind, 2.5);
-    sketch.constraints[offset].kind = kind;
+    assert_eq!(pairs, 12);
     converged(&mut sketch);
-    // Every copy stands 2.5 out, the corners round with radius 2.5.
-    let lowest = all_points(&sketch)
+}
+
+/// A sharp corner between a line and an arc, where the copies part: the
+/// kernel meets only straight sides there, and the copy is worked out as
+/// it is without one.
+#[test]
+fn a_sharp_offset_past_an_arc_corner_is_the_same_with_the_kernel() {
+    let copy = |kernel| {
+        let (mut sketch, mut state) = fresh();
+        let [a, b, c, d] =
+            [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)].map(|(x, y)| pt(&mut sketch, x, y));
+        let centre = pt(&mut sketch, 5.0, 0.0);
+        let radius = (25.0f64 + 25.0).sqrt();
+        let selected: HashSet<Uuid> = [
+            line_between(&mut sketch, a, b),
+            line_between(&mut sketch, b, c),
+            sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, c, d, radius))),
+            line_between(&mut sketch, d, a),
+        ]
         .into_iter()
-        .map(|p| p.position.y)
-        .fold(f64::MAX, f64::min);
-    assert!((lowest + 2.5).abs() < 1e-3, "{lowest}");
-    for g in &sketch.geometry {
-        if let GeometryElement::Arc(a) = g {
-            let c = sketch.point_position(a.center).unwrap();
-            let s = sketch.point_position(a.start).unwrap();
-            assert!(((s - c).to_glam().length() - 2.5).abs() < 1e-3);
-        }
-    }
+        .collect();
+        let w = With {
+            kernel,
+            ..With::new(&offset_params(|_| ()), &selected, 0.5)
+        };
+        let fx = w.click(&mut state, &mut sketch, "sketch.offset", (5.0, -3.0));
+        assert!(fx.changed, "{:?}", fx.log);
+        let mut at: Vec<(i64, i64)> = all_points(&sketch)
+            .into_iter()
+            .map(|p| {
+                (
+                    (p.position.x * 1e6).round() as i64,
+                    (p.position.y * 1e6).round() as i64,
+                )
+            })
+            .collect();
+        at.sort_unstable();
+        (lines(&sketch), arcs(&sketch), at)
+    };
+    assert_eq!(copy(KERNELS[0]), copy(KERNELS[1]));
 }
 
 /// Distance from `p` to the ellipse of radii `a` and `b/a = 0.5` about the

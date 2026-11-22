@@ -31,3 +31,4 @@ image = { workspace = true, features = ["png", "jpeg"] }
 core_document = { path = "../../core_document", features = ["test-support"] }
 sketch_solver = { path = "../../sketch_solver", features = ["serde"] }
 scripting = { path = "../../scripting" }
+kernel_ogeom = { path = "../../kernel_ogeom" }
