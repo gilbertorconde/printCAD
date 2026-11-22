@@ -819,10 +819,12 @@ fn a_one_edge_chamfer_stops_at_the_largest_size_that_builds() {
 }
 
 /// Bevels on the top and bottom front edges of a plate 2 mm thick, which
-/// meet across its front at 1 mm each: the limit is read for both edges
-/// together, overlap included, and builds.
+/// meet across its front at 1 mm each and run on past it along the ridge
+/// their planes share, `d - 1` back from the front: the limit is read for
+/// both edges built together, short of 21, where the ridge reaches the
+/// plate's back. It builds, and a ten-thousandth more is refused.
 #[test]
-fn a_chamfer_of_two_edges_stops_where_their_bevels_meet() {
+fn a_chamfer_of_two_edges_runs_on_along_their_ridge_to_its_limit() {
     let plate = box_of(20.0, 20.0, 2.0);
     for corner in [
         kernel_api::ChamferCorner::Facet,
@@ -830,24 +832,15 @@ fn a_chamfer_of_two_edges_stops_where_their_bevels_meet() {
     ] {
         let largest = previewed_limit(&plate, front_pair(0.5, corner))
             .largest
-            .expect("the front stops them");
-        assert!((largest - 1.0).abs() < 1e-4, "{corner:?}: {largest}");
+            .expect("the back stops them");
+        assert!(largest > 20.9 && largest < 21.0, "{corner:?}: {largest}");
         try_chain(&[plate.clone(), front_pair(largest, corner)])
             .unwrap_or_else(|e| panic!("{corner:?}: {largest} builds: {}", e.message));
+        assert!(
+            try_chain(&[plate.clone(), front_pair(largest * PAST_LIMIT, corner)]).is_err(),
+            "{corner:?}: {largest} is the largest"
+        );
     }
-}
-
-/// [`a_chamfer_of_two_edges_stops_where_their_bevels_meet`]'s limit is the
-/// largest size that builds: a ten-thousandth more is refused.
-#[test]
-#[ignore = "kernel: largest_chamfer_distance_all is a seat reading, not confirmed by building the request; the bevels build past it along a ridge (ogeom-rs#1223)"]
-fn a_chamfer_of_two_edges_refuses_past_its_limit() {
-    let plate = box_of(20.0, 20.0, 2.0);
-    let corner = kernel_api::ChamferCorner::Facet;
-    let largest = previewed_limit(&plate, front_pair(0.5, corner))
-        .largest
-        .expect("the front stops them");
-    assert!(try_chain(&[plate.clone(), front_pair(largest * PAST_LIMIT, corner)]).is_err());
 }
 
 /// Equal bevels on the top and bottom front edges of a 20 x 20 x 2 plate.

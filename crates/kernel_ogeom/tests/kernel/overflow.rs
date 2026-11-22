@@ -282,7 +282,6 @@ fn trim_through_rounds_on_through_another_face() {
 /// With trim through off the rim's round reaching the pocket is refused
 /// by name at its op.
 #[test]
-#[ignore = "kernel: a round on a model left by a refused request panics, so the refusal's edges cannot be tried apart (ogeom-rs#1220)"]
 fn trim_through_off_refuses_a_round_reaching_another_face() {
     let rim = [
         pocketed_boss(),
