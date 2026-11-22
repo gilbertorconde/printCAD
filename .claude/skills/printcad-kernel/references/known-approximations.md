@@ -7,7 +7,11 @@
   the hit. References find their faces by name (`kernel_api::naming`):
   the chain names every face as it builds (`kernel_ogeom::naming`: a
   feature's walls after the sketch elements they were swept from, which
-  the sketcher's profiles carry as `ProfileWire::names`; its ends after
+  the sketcher's profiles carry as `ProfileWire::names`, traced through
+  the kernel's record of the tool's build (`naming::ToolBuild`) where it
+  has one (prisms, tapered prisms, revolutions) and by the segment's
+  middle lying on the wall where it does not (lofts, helices, revolutions
+  up to a face, spline segments); its ends after
   where they stand; other new faces by surface kind and facing; a face a
   later op splits, trims or merges after the faces the kernel's history
   says it came from (every `Built.history` an op's kernel calls return

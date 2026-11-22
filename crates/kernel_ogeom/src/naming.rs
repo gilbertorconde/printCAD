@@ -2,8 +2,9 @@
 //! op (see `kernel_api::naming`).
 //!
 //! A feature's tool names its faces by what made them: the wall a profile
-//! segment sweeps by the segment's name, the ends by where they stand
-//! along the profile's normal. Any other face a feature adds is named by
+//! segment sweeps by the segment's name (the kernel's record of the sweep
+//! says which segment that is, else the wall holds the segment's middle),
+//! the ends by where they stand along the profile's normal. Any other face a feature adds is named by
 //! its kind of surface and which way it faces, ties broken by where it
 //! is, so a box keeps its names when it grows. After an op, each face of
 //! the result takes the names of every face it came from: the faces of the
@@ -25,7 +26,8 @@ use ogeom::math::{Point, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::topo::{Model, NodeData, SameKey, Shape, ShapeType, explore_unique};
 
-use crate::convert::array;
+use crate::convert::{array, point, vector};
+use crate::profile::BuiltProfile;
 use crate::tess;
 
 /// How fine a face is drawn to tell which faces lie on which: this part of
@@ -114,12 +116,18 @@ impl Print {
     }
 }
 
+/// The chord `face` is drawn to: [`CHORD_PART`] of its size, within
+/// [`FINEST`, `COARSEST`].
+fn chord_of(model: &Model, face: &Shape) -> f64 {
+    tess::guaranteed_bounds(model, face)
+        .map_or(COARSEST, |(lo, hi)| (hi - lo).magnitude() * CHORD_PART)
+        .clamp(FINEST, COARSEST)
+}
+
 impl Drawing {
     fn of(model: &Model, face: &Shape) -> Self {
         let tol = tess::tolerances();
-        let chord = tess::guaranteed_bounds(model, face)
-            .map_or(COARSEST, |(lo, hi)| (hi - lo).magnitude() * CHORD_PART)
-            .clamp(FINEST, COARSEST);
+        let chord = chord_of(model, face);
         let triangles: Vec<[Point; 3]> = Deflection::with_chord(chord)
             .ok()
             .and_then(|d| triangulate_face(model, face, d, tol).ok())
@@ -474,9 +482,15 @@ impl NameMap {
     /// Names the faces still without one: by kind of surface and the way
     /// the face looks, ties broken by where it is.
     fn name_the_rest(&mut self, model: &Model, fresh: TopoName) {
+        self.name_ranked(model, fresh, &[]);
+    }
+
+    /// [`Self::name_the_rest`], the faces at `alike` ranking among them
+    /// as if they had no name either, keeping the names they have.
+    fn name_ranked(&mut self, model: &Model, fresh: TopoName, alike: &[usize]) {
         let mut keyed: Vec<(TopoName, [i64; 3], usize)> = Vec::new();
         for (index, f) in self.faces.iter().enumerate() {
-            if !f.names.is_empty() {
+            if !f.names.is_empty() && !alike.contains(&index) {
                 continue;
             }
             let (kind, facing, at) = match f.drawing(model).sample {
@@ -499,6 +513,9 @@ impl NameMap {
         for (key, _, index) in keyed {
             rank = if previous == Some(key) { rank + 1 } else { 0 };
             previous = Some(key);
+            if !self.faces[index].names.is_empty() {
+                continue;
+            }
             let name = if rank == 0 {
                 key
             } else {
@@ -529,87 +546,145 @@ pub(crate) fn surface_kind(model: &Model, face: &Shape) -> u8 {
     naming::name_of(word.as_bytes()).to_le_bytes()[0]
 }
 
-/// The names of a feature's tool: each wall after the profile segment it
-/// was swept from (`segments`: the segments' names and a point inside
-/// each, in the tool's frame), the ends after where they stand along
-/// `normal` from `origin`, the rest afresh.
+/// The names of a feature's tool, which sweeps `profile`: each wall after
+/// the profile segment it was swept from, as the kernel's record of the
+/// tool's build says (`built`), the ends (flat faces square to the
+/// profile's normal) after where they stand along it, the rest afresh.
+/// A face the record does not trace to a segment is named by where it
+/// lies: after every segment whose middle lies on it.
 pub(crate) fn tool_names(
     model: &Model,
     tool: &Shape,
     feature: TopoName,
-    segments: &[(TopoName, Point)],
-    origin: Point,
-    normal: Vector,
+    profile: &Profile,
+    built: &ToolRecord,
 ) -> NameMap {
-    let mut ends: Vec<(f64, usize)> = Vec::new();
-    let mut map = NameMap::assign(model, tool, feature, |_| Vec::new());
-    // The walls' and ends' names replace the fresh ones `assign` gave.
-    for (index, f) in map.faces.iter_mut().enumerate() {
-        // An end lies square to the sweep: a segment's middle is on its
-        // rim, not on it.
-        let drawn = f.drawing(model);
-        let end = drawn
-            .sample
-            .is_some_and(|(_, n)| n.cross(normal).magnitude() < 1e-3);
-        if end {
-            if let Some((p, _)) = drawn.sample {
-                ends.push(((p - origin).dot(normal), index));
-            }
-            f.names = Vec::new();
-            continue;
-        }
-        let walls: Vec<TopoName> = segments
-            .iter()
-            .filter(|(_, p)| drawn.holds(*p, 0.0))
-            .map(|(name, _)| naming::child(feature, &name.to_le_bytes()))
-            .collect();
-        if !walls.is_empty() {
-            f.names = walls;
-        }
-    }
-    for (along, index) in ends {
-        let end: &[u8] = if along.abs() <= 2.0 * map.faces[index].drawing(model).chord + SLACK {
+    let origin = point(profile.plane.origin);
+    let normal = vector(profile.plane.normal);
+    let segments = profile_segments(profile);
+    let by_edge: HashMap<SameKey, (usize, usize)> = built
+        .edges
+        .iter()
+        .map(|(edge, w, s)| (SameKey(edge.clone()), (*w, *s)))
+        .collect();
+    let histories: Vec<Sources> = built.histories.iter().map(sources_of).collect();
+    let wall = |name: TopoName| naming::child(feature, &name.to_le_bytes());
+    let end = |along: f64, chord: f64| {
+        let end: &[u8] = if along.abs() <= 2.0 * chord + SLACK {
             b"start"
         } else if along > 0.0 {
             b"end"
         } else {
             b"back"
         };
-        map.faces[index].names = vec![naming::child(feature, end)];
+        naming::child(feature, end)
+    };
+    let name_face = |f: &mut NamedFace| -> Vec<TopoName> {
+        if let Some((at, n)) = crate::ops::sweep::face_plane(model, &f.face)
+            && n.vector().cross(normal).magnitude() < 1e-3
+        {
+            return vec![end((at - origin).dot(normal), chord_of(model, &f.face))];
+        }
+        let mut swept: Vec<(usize, usize)> = if histories.is_empty() {
+            Vec::new()
+        } else {
+            ancestors(&f.face, &histories)
+                .iter()
+                .filter_map(|shape| by_edge.get(&SameKey(shape.clone())).copied())
+                .collect()
+        };
+        swept.sort_unstable();
+        swept.dedup();
+        let walls: Vec<TopoName> = swept
+            .iter()
+            .filter_map(|&(w, s)| segments.get(w)?.get(s))
+            .filter(|(_, at)| at.is_some())
+            .map(|(name, _)| wall(*name))
+            .collect();
+        if !walls.is_empty() {
+            return walls;
+        }
+        // Where the record is silent: an end lies square to the sweep (a
+        // segment's middle is on its rim, not on it), a wall holds the
+        // middle of its segment.
+        let drawn = f.drawing(model);
+        match drawn.sample {
+            Some((p, n)) if n.cross(normal).magnitude() < 1e-3 => {
+                vec![end((p - origin).dot(normal), drawn.chord)]
+            }
+            _ => segments
+                .iter()
+                .flatten()
+                .filter_map(|(name, at)| at.filter(|p| drawn.holds(*p, 0.0)).map(|_| *name))
+                .map(wall)
+                .collect(),
+        }
+    };
+    let faces = explore_unique(model, tool, ShapeType::Face).unwrap_or_default();
+    let mut map = NameMap {
+        faces: Vec::with_capacity(faces.len()),
+        index: HashMap::with_capacity(faces.len()),
+    };
+    for face in faces {
+        let mut named = NamedFace::new(face.clone());
+        named.names = name_face(&mut named);
+        named.names.retain(|n| *n != 0);
+        map.index.entry(SameKey(face)).or_insert(map.faces.len());
+        map.faces.push(named);
     }
-    for f in &mut map.faces {
-        f.names.retain(|n| *n != 0);
-    }
+    // A face named afresh ranks among every face of its kind, named or not.
+    let left: HashSet<u8> = map
+        .faces
+        .iter()
+        .filter(|f| f.names.is_empty())
+        .map(|f| surface_kind(model, &f.face))
+        .collect();
+    let alike: Vec<usize> = if left.is_empty() {
+        Vec::new()
+    } else {
+        (0..map.faces.len())
+            .filter(|&i| {
+                !map.faces[i].names.is_empty()
+                    && left.contains(&surface_kind(model, &map.faces[i].face))
+            })
+            .collect()
+    };
+    map.name_ranked(model, feature, &alike);
+    map.give_makers(&[], feature);
     map
 }
 
-/// The name of every segment of `profile` and a point inside it, in the
-/// profile's plane in the world; segments without a name are named by
-/// where they stand in the profile.
-pub(crate) fn profile_segments(profile: &Profile) -> Vec<(TopoName, Point)> {
+/// The name of every segment of `profile`, wire by wire, and a point
+/// inside it in the profile's plane in the world (none for a spline);
+/// segments without a name are named by where they stand in the profile.
+fn profile_segments(profile: &Profile) -> Vec<Vec<(TopoName, Option<Point>)>> {
     let plane = &profile.plane;
-    let at = |u: f64, v: f64| {
+    let at = |[u, v]: [f64; 2]| {
         Point::new(
             plane.origin[0] + plane.x_axis[0] * u + plane.y_axis[0] * v,
             plane.origin[1] + plane.x_axis[1] * u + plane.y_axis[1] * v,
             plane.origin[2] + plane.x_axis[2] * u + plane.y_axis[2] * v,
         )
     };
-    let mut out = Vec::new();
-    for (w, wire) in profile.wires.iter().enumerate() {
-        for (s, segment) in wire.segments.iter().enumerate() {
-            let Some([u, v]) = segment_point(segment) else {
-                continue;
-            };
-            let name = wire.name_of(s).unwrap_or_else(|| {
-                let mut bytes = (w as u32).to_le_bytes().to_vec();
-                bytes.extend_from_slice(&(s as u32).to_le_bytes());
-                naming::name_of(&bytes)
-            });
-            out.push((name, at(u, v)));
-        }
-    }
-    out
+    profile
+        .wires
+        .iter()
+        .enumerate()
+        .map(|(w, wire)| {
+            wire.segments
+                .iter()
+                .enumerate()
+                .map(|(s, segment)| {
+                    let name = wire.name_of(s).unwrap_or_else(|| {
+                        let mut bytes = (w as u32).to_le_bytes().to_vec();
+                        bytes.extend_from_slice(&(s as u32).to_le_bytes());
+                        naming::name_of(&bytes)
+                    });
+                    (name, segment_point(segment).map(at))
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// A point on `segment`, well away from its ends.
@@ -647,7 +722,71 @@ fn point_triangle_distance(p: Point, t: &[Point; 3]) -> f64 {
     (p - Point::new(x, y, z)).magnitude()
 }
 
+/// What the kernel's operations building a feature's tool did, oldest
+/// first, and the edges of the profile it sweeps: each with the wire and
+/// segment of the profile it was built from.
+#[derive(Default)]
+pub(crate) struct ToolRecord {
+    histories: Vec<History>,
+    edges: Vec<(Shape, usize, usize)>,
+}
+
+/// While this lives, what the kernel's operations on this thread do is
+/// kept for the tool they build ([`record_tool`], [`record_profile`]),
+/// given back by [`ToolBuild::take`].
+#[must_use]
+pub(crate) struct ToolBuild;
+
+impl ToolBuild {
+    pub fn start() -> Self {
+        TOOL.with(|t| *t.borrow_mut() = Some(ToolRecord::default()));
+        ToolBuild
+    }
+
+    /// What was kept.
+    pub fn take(self) -> ToolRecord {
+        TOOL.with(|t| t.borrow_mut().take()).unwrap_or_default()
+    }
+}
+
+impl Drop for ToolBuild {
+    fn drop(&mut self) {
+        TOOL.with(|t| t.borrow_mut().take());
+    }
+}
+
+/// Keep what a kernel operation building a feature's tool did, while a
+/// [`ToolBuild`] lives.
+pub(crate) fn record_tool(history: &History) {
+    TOOL.with(|t| {
+        if let Some(record) = t.borrow_mut().as_mut() {
+            record.histories.push(history.clone());
+        }
+    });
+}
+
+/// Keep the edges of `built`, the profile a feature's tool sweeps, while
+/// a [`ToolBuild`] lives.
+pub(crate) fn record_profile(built: &BuiltProfile) {
+    TOOL.with(|t| {
+        let mut t = t.borrow_mut();
+        let Some(record) = t.as_mut() else {
+            return;
+        };
+        for group in &built.groups {
+            let wires = std::iter::once(&group.outer).chain(&group.holes);
+            for (wire, &w) in wires.zip(&group.wire_indices) {
+                for (s, edge) in wire.edges.iter().enumerate() {
+                    record.edges.push((edge.clone(), w, s));
+                }
+            }
+        }
+    });
+}
+
 thread_local! {
+    /// What the tool being built on this thread was built by.
+    static TOOL: RefCell<Option<ToolRecord>> = const { RefCell::new(None) };
     /// The names of the solid the op running on this thread works on.
     static CURRENT: RefCell<Option<NameMap>> = const { RefCell::new(None) };
     /// What the kernel said the op running on this thread did, one record
@@ -656,9 +795,11 @@ thread_local! {
 }
 
 /// Keep what a kernel operation of the op running on this thread did:
-/// the result's faces are named from it (see [`NameMap::carry`]).
+/// the result's faces are named from it (see [`NameMap::carry`]), and,
+/// while a [`ToolBuild`] lives, the tool's (see [`tool_names`]).
 pub(crate) fn record(history: &History) {
     HISTORIES.with(|h| h.borrow_mut().push(history.clone()));
+    record_tool(history);
 }
 
 /// The names of the solid the ops on this thread work on, while this

@@ -1255,6 +1255,46 @@ mod tests {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
+    /// `tests/data/named_references.prtcad`, saved by 0.19.0: rounds and
+    /// bevels on edges of a pad, a tapered pocket, a quarter turn and a
+    /// tapered pad both ways, each edge picked by the names of its two
+    /// faces. Rebuilt, every pick is found by those names (none is warned
+    /// of as found by where it was picked) and the bodies measure as they
+    /// did then: the faces of every kind of sweep are named as before.
+    #[test]
+    fn a_saved_document_finds_its_edges_by_the_names_it_kept() {
+        const CHECK: &str = r#"
+            assert(#pc.doc.rebuild() == 0, "every feature builds")
+            local lost = {}
+            for _, f in ipairs(pc.doc.features()) do
+                if f.warning then lost[#lost + 1] = f.name .. ": " .. f.warning end
+            end
+            assert(#lost == 0, table.concat(lost, "; "))
+            local volumes = {}
+            for _, b in ipairs(pc.doc.bodies()) do
+                volumes[b.name] = pc.doc.measure{body = b.id}.volume
+            end
+            return volumes
+        "#;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data/named_references.prtcad");
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let document = crate::app::doc_io::opened(
+            &registry,
+            core_document::Document::load_from_file(&path).unwrap(),
+        );
+        let (_, got) =
+            crate::headless::run_in_document(&mut registry, document, CHECK, "named references");
+        let got = got.unwrap().unwrap();
+        let want = json!({
+            "body": 10791.406660486,
+            "body_1": 8164.1315116742,
+            "body_2": 1369.8774716006,
+        });
+        assert_eq!(differs(&want, &got, String::new()), None);
+    }
+
     /// Where two measures part: a number off by more than a ten-thousandth
     /// of its size (or of a millimetre), or anything else unequal.
     fn differs(want: &Value, got: &Value, at: String) -> Option<String> {
