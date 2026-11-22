@@ -630,19 +630,11 @@ pub(crate) fn face_by_name(
 }
 
 /// The point of `face` nearest `point`.
-fn nearest_point_on(model: &mut Model, face: &Shape, point: Point) -> Option<Point> {
-    let probe = model.add_vertex(ogeom::topo::VertexData::new(point));
-    ogeom::algo::distance_between_shapes(
-        model,
-        &probe,
-        face,
-        ogeom::intersect::ExtremaOptions::default(),
-        tol(),
-    )
-    .ok()?
-    .pairs
-    .first()
-    .map(|pair| pair.point_b)
+fn nearest_point_on(model: &Model, face: &Shape, point: Point) -> Option<Point> {
+    ogeom::algo::PointDistance::of(model, face, tol())
+        .and_then(|d| d.nearest(point, tol()))
+        .ok()
+        .map(|(_, p)| p)
 }
 
 /// The face of `base` nearest `point`, when one comes within reach of it.

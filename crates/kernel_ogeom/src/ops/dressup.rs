@@ -10,7 +10,6 @@ use kernel_api::{
     ChamferCorner, ChamferSpec, EdgeSelection, FilletCorner, Overflow, RoundDistances,
     RoundProfile, ThicknessJoin,
 };
-use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
     Blend, BlendRefusal, BlendSizing, Chamfer, LawSize, LawStation, blend_edges_overflow,
     blend_limit, blend_seat, chamfer_edges_checked, chamfer_edges_overflow,
@@ -168,17 +167,11 @@ fn seam_edges(model: &Model, solid: &Shape) -> Result<Vec<Shape>, String> {
 }
 
 /// How far `point` is from `shape`.
-fn distance_to(model: &mut Model, point: Point, shape: &Shape) -> Option<f64> {
-    let vertex = model.add_vertex(ogeom::topo::VertexData::new(point));
-    distance_between_shapes(
-        model,
-        &vertex,
-        shape,
-        ogeom::intersect::ExtremaOptions::default(),
-        tol(),
-    )
-    .ok()
-    .map(|d| d.distance)
+fn distance_to(model: &Model, point: Point, shape: &Shape) -> Option<f64> {
+    ogeom::algo::PointDistance::of(model, shape, tol())
+        .and_then(|d| d.nearest(point, tol()))
+        .ok()
+        .map(|(d, _)| d)
 }
 
 /// Whether `edge`, `distance` from `point`, runs along `along` where it
@@ -813,7 +806,7 @@ fn edge_sides(
         }
         let across = across * (1.0 / length);
         // Of the two ways square to the edge, the one staying on the face.
-        let mut off = |sign: f64| {
+        let off = |sign: f64| {
             distance_to(model, at + across * (0.01 * sign), side).unwrap_or(f64::INFINITY)
         };
         let direction = if off(1.0) <= off(-1.0) {
