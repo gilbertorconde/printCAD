@@ -1659,21 +1659,26 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             );
-            let out = answers(worker, 1);
+            // A quick reading can land in the same drain as its build:
+            // what came after the build is handed on to `read`.
+            let mut out = answers(worker, 1);
             let Some(KernelResponse::SolidBuilt { result, .. }) = out.first() else {
                 panic!("the preview builds");
             };
             assert!(result.preview.is_some() && result.size_limit.is_none());
             assert_eq!(worker.in_flight(), 0, "the build is answered");
-            result
+            let reading = result
                 .size_limit_to_come
                 .expect("its limit to come")
-                .reading
+                .reading;
+            out.remove(0);
+            (reading, out)
         };
-        let read = |worker: &mut KernelWorker, reading: u64| {
+        let read = |worker: &mut KernelWorker, (reading, early): (u64, Vec<KernelResponse>)| {
             let deadline = Instant::now() + Duration::from_secs(120);
+            let mut arrived = early;
             while Instant::now() < deadline {
-                for answer in worker.drain() {
+                for answer in arrived {
                     if let KernelResponse::SizeLimitRead {
                         reading: arrived,
                         feature,
@@ -1687,17 +1692,19 @@ mod tests {
                     }
                 }
                 std::thread::sleep(Duration::from_millis(5));
+                arrived = worker.drain();
             }
             panic!("the limit never arrived");
         };
         let first = preview(&mut worker, 10.0);
+        let first_reading = first.0;
         let limit = read(&mut worker, first);
         let largest = limit.largest.expect("the wall stops it");
         assert!(largest > 9.99 && largest <= 10.0, "{largest}");
         assert_eq!(worker.in_flight(), 0);
 
         let taller = preview(&mut worker, 12.0);
-        assert_ne!(taller, first);
+        assert_ne!(taller.0, first_reading);
         let largest = read(&mut worker, taller)
             .largest
             .expect("the wall stops it");
