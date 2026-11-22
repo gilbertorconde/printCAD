@@ -13,9 +13,9 @@ use kernel_api::{
 use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{
     Blend, BlendRefusal, BlendSizing, Chamfer, LawSize, LawStation, blend_edges_overflow,
-    blend_limit, chamfer_edges_checked, chamfer_edges_overflow, fillet_edge_distances_overflow,
-    fillet_edges_corner_checked, fillet_edges_corner_overflow, fillet_edges_variable_overflow,
-    largest_chamfer_distance_all,
+    blend_limit, blend_seat, chamfer_edges_checked, chamfer_edges_overflow,
+    fillet_edge_distances_overflow, fillet_edges_corner_checked, fillet_edges_corner_overflow,
+    fillet_edges_variable_overflow,
 };
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
@@ -653,16 +653,6 @@ fn bevel(
     )
 }
 
-/// `reading` as the request reads under `overflow`: the kernel confirms
-/// its readings with every behaviour on, so under other options one only
-/// seats the request, a build under them confirming it.
-fn under(reading: Reading, overflow: Overflow) -> Reading {
-    match reading {
-        Reading::Built(read) if !overflow.is_default() => Reading::Seated(read),
-        reading => reading,
-    }
-}
-
 /// An automatic round of one edge too wide for a face beside it: each
 /// contact `radius` from the edge, or as far as its face goes, the round
 /// elliptical between them. `None` where the round fits both faces or
@@ -746,19 +736,18 @@ const SLIVER: f64 = 1e-5;
 /// first leaves its face (the seat the kernel's limit reading starts
 /// from, not the size that builds: a bevel past its face rolls over as a
 /// notch and builds), `sizings` the two read with the other face's
-/// distance kept at a sliver, so only its own face stops it. `None` where
-/// it runs on past the solid's size or the kernel cannot read it. The
-/// kernel gives the seat only with the confirmed size, so each reach costs
-/// that reading's builds.
+/// distance kept at a sliver, so only its own face stops it. Read from the
+/// seats alone, building nothing. `None` where it runs on past the solid's
+/// size or the kernel cannot read it.
 fn sides_reach(model: &Model, solid: &Shape, sizings: [BlendSizing<'_>; 2]) -> [Option<f64>; 2] {
     let Some(span) = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())
     else {
         return [None, None];
     };
     sizings.map(|sizing| {
-        blend_limit(model, solid, &sizing, span, tol())
+        blend_seat(model, solid, &sizing, span, tol())
             .ok()
-            .and_then(|limit| limit.seat)
+            .flatten()
             .filter(|scale| *scale < span * (1.0 - 1e-9))
     })
 }
@@ -931,8 +920,8 @@ fn profile(profile: RoundProfile) -> ogeom::fillet::RoundProfile {
 /// group's reason. Then the largest share of the size at which the whole
 /// request builds, and each edge failing alone on its own: the share
 /// `largest` reads from the kernel, taken as it is where the kernel's own
-/// builds confirmed it, else once a build at it holds; found by halving
-/// where that build fails or the kernel cannot read it. The whole
+/// builds of the request confirmed it, else only where a build at it
+/// holds, and not told where the kernel cannot read it. The whole
 /// request's is the least of its failing edges' (alone, or together
 /// where none fails alone) where it builds there, and is read for the
 /// whole request only where it does not. Every try runs on its own copy
@@ -1002,18 +991,14 @@ fn refusal(
         alone.push(0);
     }
     let sized = |picked: &[usize]| -> Result<Option<f64>, String> {
-        let builds = |share| Ok(attempt(picked, share)?.is_none());
         match largest(model, picked) {
-            Some(Reading::Built(None) | Reading::Seated(None)) => Ok(None),
             Some(Reading::Built(Some(share))) if share < 1.0 => Ok(Some(share)),
             Some(Reading::Seated(Some(share))) if share < 1.0 => {
-                if attempt(picked, share)?.is_none() {
-                    return Ok(Some(share));
-                }
-                largest_share(share, builds)
+                Ok(attempt(picked, share)?.is_none().then_some(share))
             }
-            // A reading that the asked size builds, which it did not.
-            _ => largest_share(1.0, builds),
+            // None fits, the kernel cannot read it, or it reads that the
+            // asked size builds, which it did not.
+            _ => Ok(None),
         }
     };
     let every: Vec<usize> = (0..chain.len()).collect();
@@ -1084,39 +1069,8 @@ fn refusal(
     })
 }
 
-/// The fewest share of the bound a halving search goes down to: a request
-/// that fails there is not for its size.
-const LEAST_SHARE: f64 = 1.0 / 64.0;
-
-/// How close a halving search finds the largest share that fits, as a
-/// share of its bound.
-const SHARE_PRECISION: f64 = 0.004;
-
 /// The most failing edges each sized down on their own.
 const SIZED_ALONE: usize = 8;
-
-/// The largest share below `bound` at which `builds` holds, found by
-/// halving between [`LEAST_SHARE`] of the bound and the bound; `None`
-/// where even the least does not.
-fn largest_share(
-    bound: f64,
-    mut builds: impl FnMut(f64) -> Result<bool, String>,
-) -> Result<Option<f64>, String> {
-    let least = LEAST_SHARE * bound;
-    if !builds(least)? {
-        return Ok(None);
-    }
-    let (mut lo, mut hi) = (least, bound);
-    while hi - lo > SHARE_PRECISION * bound {
-        let mid = (lo + hi) / 2.0;
-        if builds(mid)? {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    Ok(Some(lo))
-}
 
 /// "edge 3 of 12: why", the edges one reason refuses listed together:
 /// "edges 1, 2 of 12: why".
@@ -1251,11 +1205,10 @@ enum Reading {
     /// probed up to this one builds, and one a ten-thousandth above it is
     /// refused. `None` where none builds.
     Built(Option<f64>),
-    /// Read from the seats without building, which a build has to
-    /// confirm: bevels on several edges, which the kernel holds clear of
-    /// their faces' far sides and of each other but does not build
-    /// together, so a corner where they meet goes unseen. `None` where
-    /// none fits.
+    /// Confirmed by the kernel's builds under every overflow behaviour,
+    /// where the request asks other options the kernel reads no limit
+    /// under (rolling-ball corners), which a build under them has to
+    /// confirm. `None` where none builds.
     Seated(Option<f64>),
 }
 
@@ -1270,8 +1223,8 @@ impl Reading {
 }
 
 /// The largest radius up to `up_to` at which a round of `edges` closed as
-/// `corner` says builds, read by the kernel; `None` where it cannot read
-/// it.
+/// `corner` says and reaching other geometry as `overflow` says builds,
+/// read by the kernel; `None` where it cannot read it.
 fn fillet_reading(
     model: &Model,
     solid: &Shape,
@@ -1280,17 +1233,29 @@ fn fillet_reading(
     overflow: Overflow,
     up_to: f64,
 ) -> Option<Reading> {
-    let sizing = BlendSizing::Rounds { edges, corner };
+    let (sizing, confirmed) = match corner {
+        ogeom::fillet::FilletCorner::Setback => (
+            BlendSizing::RoundsOverflow {
+                edges,
+                overflow: kernel_overflow(overflow),
+            },
+            true,
+        ),
+        _ => (BlendSizing::Rounds { edges, corner }, overflow.is_default()),
+    };
     let limit = blend_limit(model, solid, &sizing, up_to, tol()).ok()?;
-    Some(under(Reading::Built(limit.size), overflow))
+    Some(if confirmed {
+        Reading::Built(limit.size)
+    } else {
+        Reading::Seated(limit.size)
+    })
 }
 
 /// The largest share up to `up_to` of the bevels `specs` asks, each taken
-/// that share of the way, at which they build closed as `corner` says,
-/// read by the kernel: one edge's confirmed by its builds; several edges'
-/// read from their seats together (overlaps across a face they share
-/// included) where one measure scales them all, else the least of each
-/// edge's own. `None` where the kernel cannot read it.
+/// that share of the way, at which they build together closed as `corner`
+/// says and reaching other geometry as `overflow` says: the kernel's
+/// reading, confirmed by its builds of the whole request. `None` where the
+/// kernel cannot read it.
 fn chamfer_reading(
     model: &Model,
     solid: &Shape,
@@ -1299,69 +1264,57 @@ fn chamfer_reading(
     overflow: Overflow,
     up_to: f64,
 ) -> Option<Reading> {
-    seated_chamfer_reading(model, solid, specs, corner, up_to).map(|r| under(r, overflow))
+    let (specs, per) = one_measure(model, solid, specs)?;
+    let sizing = BlendSizing::Chamfers {
+        specs: &specs,
+        corner,
+        overflow: kernel_overflow(overflow),
+    };
+    let limit = blend_limit(model, solid, &sizing, up_to * per, tol()).ok()?;
+    Some(Reading::Built(limit.size.map(|m| m / per)))
 }
 
-/// [`chamfer_reading`] with every overflow behaviour on.
-fn seated_chamfer_reading(
+/// `specs` spelled so that one measure scales them all, as the kernel
+/// reads several bevels, with that measure at a share of one. Bevels of
+/// one spelling share it (the distance, or the scale of two distances);
+/// an automatic chamfer mixing equal bevels with bevels of two distances
+/// takes each equal one as two equal distances. `None` where the
+/// spellings cannot share one (an angle among others).
+fn one_measure(
     model: &Model,
     solid: &Shape,
     specs: &[(Shape, Chamfer)],
-    corner: ogeom::fillet::ChamferCorner,
-    up_to: f64,
-) -> Option<Reading> {
-    // The measure the kernel reads each bevel by, at a share of one.
+) -> Option<(Vec<(Shape, Chamfer)>, f64)> {
     let measure = |spec: &Chamfer| match spec {
         Chamfer::Symmetric(d) => *d,
         Chamfer::Distances { .. } => 1.0,
         Chamfer::Angle { distance, .. } => *distance,
     };
-    let alone = |edge: &Shape, spec: &Chamfer| -> Option<Option<f64>> {
-        let per = measure(spec);
-        let sizing = BlendSizing::Chamfer { edge, spec, corner };
-        let limit = blend_limit(model, solid, &sizing, up_to * per, tol()).ok()?;
-        Some(limit.size.map(|m| m / per))
-    };
-    match specs {
-        [] => None,
-        [(edge, spec)] => Some(Reading::Built(alone(edge, spec)?)),
-        [(_, first), ..] => {
-            let per = measure(first);
-            if specs
-                .iter()
-                .all(|(_, spec)| (measure(spec) - per).abs() <= per * 1e-12)
-            {
-                let read = largest_chamfer_distance_all(model, solid, specs, up_to * per, tol());
-                return Some(Reading::Seated(read.ok()?.map(|m| m / per)));
-            }
-            let mut least = up_to;
-            for (edge, spec) in specs {
-                match alone(edge, spec)? {
-                    Some(share) => least = least.min(share),
-                    None => return Some(Reading::Seated(None)),
-                }
-            }
-            Some(Reading::Seated(Some(least)))
-        }
-    }
-}
-
-/// Whether the bevels `specs` asks, each taken `share` of the way, build
-/// on `solid` closed as `corner` says and reaching other geometry as
-/// `overflow` says, on a copy of `model`.
-fn chamfer_builds(
-    model: &Model,
-    solid: &Shape,
-    specs: &[(Shape, Chamfer)],
-    corner: ogeom::fillet::ChamferCorner,
-    overflow: Overflow,
-    share: f64,
-) -> bool {
-    let scaled: Vec<(Shape, Chamfer)> = specs
+    let (_, first) = specs.first()?;
+    let per = measure(first);
+    let same_kind = |spec: &Chamfer| std::mem::discriminant(spec) == std::mem::discriminant(first);
+    if specs
         .iter()
-        .map(|(edge, spec)| (edge.clone(), scaled(spec, share)))
-        .collect();
-    bevel(&mut model.clone(), solid, &scaled, corner, overflow).is_ok()
+        .all(|(_, spec)| same_kind(spec) && (measure(spec) - per).abs() <= per * 1e-12)
+    {
+        return Some((specs.to_vec(), per));
+    }
+    let scaled = specs
+        .iter()
+        .map(|(edge, spec)| {
+            let spec = match spec {
+                Chamfer::Symmetric(d) => Chamfer::Distances {
+                    face: adjacent_face(model, solid, edge, false).ok()?,
+                    on_face: *d,
+                    on_other: *d,
+                },
+                Chamfer::Distances { .. } => spec.clone(),
+                Chamfer::Angle { .. } => return None,
+            };
+            Some((edge.clone(), spec))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((scaled, 1.0))
 }
 
 /// The kernel's spelling of how a chamfer closes its corners.
@@ -1822,12 +1775,11 @@ pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Lim
 /// [`size_limit`]'s first size for an op of one size: the largest first
 /// size `op`, a fillet or chamfer of one size, builds at on `solid` (a
 /// fillet's radius, a chamfer's distance; with two distances, the first at
-/// their common scale). A fillet's and a one-edge chamfer's are the
-/// kernel's reading, confirmed by its own builds; a chamfer on several
-/// edges is read from its seats and checked by one build there, and found
-/// by halving below it where that build fails. `None` where every size
-/// short of the solid's diagonal builds, where none does, or for any other
-/// op.
+/// their common scale): the kernel's reading, confirmed by its own builds of the request under its
+/// overflow options; a rolling-ball fillet under options other than the
+/// default is read under every behaviour and holds only where a build
+/// under its own holds there. `None` where every size short of the
+/// solid's diagonal builds, where none does, or for any other op.
 fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Option<f64> {
     let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
     let mut model = model.clone();
@@ -1845,16 +1797,12 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
             let corner = kernel_corner(*corner);
             match fillet_reading(&model, solid, &chain, corner, *overflow, span)? {
                 Reading::Built(read) => below_span(read?),
-                // Read with every behaviour on: a build under the asked
-                // ones confirms it, or the halving finds theirs below.
+                // Read with every behaviour on: it holds where a build
+                // under the asked ones does.
                 Reading::Seated(read) => {
                     let read = read?;
-                    let builds = |r| round(&mut model.clone(), solid, &chain, r, corner, *overflow);
-                    if builds(read).is_ok() {
-                        below_span(read)
-                    } else {
-                        largest_share(read, |r| Ok(builds(r).is_ok())).ok()?
-                    }
+                    round(&mut model.clone(), solid, &chain, read, corner, *overflow).ok()?;
+                    below_span(read)
                 }
             }
         }
@@ -1879,20 +1827,9 @@ fn largest_size(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Optio
             }
             let corner = kernel_chamfer_corner(*corner);
             let bound = span / first;
-            let share = match chamfer_reading(&model, solid, &specs, corner, *overflow, bound)? {
-                Reading::Built(share) => share?,
-                Reading::Seated(share) => {
-                    let share = share?;
-                    let builds =
-                        |share| chamfer_builds(&model, solid, &specs, corner, *overflow, share);
-                    if share >= bound * (1.0 - 1e-9) || builds(share) {
-                        share
-                    } else {
-                        largest_share(share, |share| Ok(builds(share))).ok()??
-                    }
-                }
-            };
-            below_span(share * first)
+            let (Reading::Built(share) | Reading::Seated(share)) =
+                chamfer_reading(&model, solid, &specs, corner, *overflow, bound)?;
+            below_span(share? * first)
         }
         _ => None,
     }

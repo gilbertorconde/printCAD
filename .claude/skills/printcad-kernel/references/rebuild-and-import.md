@@ -35,33 +35,41 @@ until it lands a drag goes free and a refusal shows as it does. Headless
 `--script` and project import (`build_all`) preview nothing and read no
 limit. Design's `size_limit.rs` reads the limit while the key holds, and
 its handle (`Handle::stop`) and fields (`Quantity::drag_max`) stop a
-drag there. A slow reading (an automatic round's second face, about 18 s
-on the corpus bracket in release) never holds the preview: it shows in
-under a second and the limit follows.
+drag there. A slow reading (a round whose seat does not bracket its
+limit, tens of builds of the request) never holds the preview: it shows
+in under a second and the limit follows.
 
 **How a limit is read.** The kernel's readings (`blend_limit`, and the
-`largest_*` functions over it) are confirmed by its own builds: every size
-probed below builds and one 1e-4 above is refused. `dressup.rs` takes them
-as they are for a fillet (`BlendSizing::Rounds` with the op's corner), a
-one-edge chamfer (`BlendSizing::Chamfer`) and each radius of a variable
-fillet (`law_limit`, `LawSize::At`; `SizeLimit::law` holds one `LawLimit`
-per radius under `SolidOp::law_limit_key`, the op with that radius left
-out, so a radius's limit holds while it alone is dragged; the chain cache
-keeps them by that key). A chamfer on several edges reads
-`largest_chamfer_distance_all`, a seat reading (overlaps across shared
-faces included, not built together): one build confirms it and halving
-below it is the fallback where that build fails. It is no largest that
-builds: past it bevels still build along a ridge or as a notch, so the
-drag stops early there (ogeom-rs#1223 asks for a confirmed reading). A
-refusal's "X mm fits" is the same reading; the whole request's is the
-least of its failing edges' (alone, or together where none fails alone)
-confirmed by one build, read for the whole request only where that build
-fails. Each reading costs the kernel at least eight builds of the request
-(about twenty where the seat does not bracket the limit). Each face's
-own reach (`sides_reach`, for two distances and automatic sizes) needs
-only the seat, which the kernel gives only with a confirmed reading
-(ogeom-rs#1224); an automatic round reads it only once the plain round is
-refused, an automatic bevel on every build.
+`largest_*` functions over it) are confirmed by its own builds of the
+request: every size probed below builds and one 1e-4 above is refused.
+`dressup.rs` reads each under the op's own options: a fillet with setback
+corners `BlendSizing::RoundsOverflow` (the op's `Overflow`), with
+rolling-ball corners `BlendSizing::Rounds`; a chamfer of any number of
+edges `BlendSizing::Chamfers` (its corner and `Overflow`, every bevel
+built together, so bevels meeting along a ridge or over a face's far side
+count; `one_measure` spells an automatic chamfer's mixed bevels as two
+distances so one scale reads them); each radius of a variable fillet
+`law_limit` (`LawSize::At`; `SizeLimit::law` holds one `LawLimit` per
+radius under `SolidOp::law_limit_key`, the op with that radius left out,
+so a radius's limit holds while it alone is dragged; the chain cache
+keeps them by that key). Each reading is one exact answer; no halving
+search is left. What remains (ogeom-rs#1236): the kernel reads rolling-ball
+corners and radius laws under every overflow behaviour only, so under
+other options (`Reading::Seated`, `law_limit`, a variable fillet's "fits
+at %" note) the reading holds where one build under the op's options
+does there, and there is no limit or note where it does not. A refusal's
+"X mm fits" is the same reading; the whole request's is the least of its
+failing edges' (alone, or together where none fails alone) confirmed by
+one build, read for the whole request only where that build fails, and
+not told where the kernel cannot read it. Each reading costs the kernel
+at least eight builds of the request (about twenty where the seat does
+not bracket the limit). Each face's own reach (`sides_reach`, for two
+distances and automatic sizes) is `blend_seat`, the seat alone with no
+builds (milliseconds: the corpus bracket's automatic round's limit went
+from about 20 s to 5 ms in a debug build); an automatic round reads it
+only once the plain round is refused, an automatic bevel on every build.
+Variable, two-distance, automatic and rolling-ball rounds build through
+the kernel's `_overflow` calls with the op's options.
 
 **A feature that changes nothing.** The chain compares the solid before a
 feature's ops (one run of one tag) with the solid after them when one of
