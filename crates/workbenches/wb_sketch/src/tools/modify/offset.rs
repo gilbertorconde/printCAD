@@ -2,6 +2,7 @@
 //! distance, joined at the corners or sampled where no exact offset exists.
 
 use super::*;
+use kernel_api::KernelQueries;
 
 /// One curve of the selection, oriented along the chain walk.
 struct ChainLink {
@@ -117,11 +118,14 @@ impl OffsetGroup {
         distance: f64,
         flip: bool,
         round: bool,
+        kernel: Option<&dyn KernelQueries>,
     ) -> Option<OffsetMade> {
         match self {
             OffsetGroup::Circle(c) => offset_circle(sketch, c, side, distance, flip),
             OffsetGroup::Sampled(g) => offset_sampled(sketch, g.id(), side, distance, flip),
-            OffsetGroup::Chain(links) => offset_chain(sketch, links, side, distance, flip, round),
+            OffsetGroup::Chain(links) => {
+                offset_chain(sketch, links, side, distance, flip, round, kernel)
+            }
         }
     }
 
@@ -257,12 +261,15 @@ fn offset_groups(curves: &[GeometryElement]) -> Vec<OffsetGroup> {
 /// Copy each selected curve or chain `options.distance` off it. One goes
 /// to the side of the click; of several, the closed ones all grow or all
 /// shrink as the one nearest the click does, and one that does not close
-/// takes the click's side.
+/// takes the click's side. A closed chain is offset by `kernel` when it
+/// can, which splits a copy that would cross itself into the loops that
+/// stand the whole distance off.
 pub(crate) fn offset(
     sketch: &mut Sketch,
     cursor: Vec2D,
     selected: &HashSet<Uuid>,
     options: OffsetOptions,
+    kernel: Option<&dyn KernelQueries>,
 ) -> ToolEffect {
     let distance = options.distance;
     if distance < 1e-6 {
@@ -323,7 +330,7 @@ pub(crate) fn offset(
         let mut pairs = Vec::new();
         let mut any = false;
         for (group, side) in groups.iter().zip(&sides) {
-            match group.offset(sketch, *side, distance, flip, options.round) {
+            match group.offset(sketch, *side, distance, flip, options.round, kernel) {
                 Some(copied) => {
                     any = true;
                     pairs.extend(copied.pairs);
@@ -536,7 +543,8 @@ fn click_left_of(
     })
 }
 
-/// Copies of a chain of lines and arcs, joined where they meet.
+/// Copies of a chain of lines and arcs, joined where they meet: a closed
+/// chain's by `kernel` when it offsets it, the rest here.
 fn offset_chain(
     sketch: &mut Sketch,
     curves: &[GeometryElement],
@@ -544,6 +552,7 @@ fn offset_chain(
     distance: f64,
     flip: bool,
     round: bool,
+    kernel: Option<&dyn KernelQueries>,
 ) -> Option<OffsetMade> {
     let ends: Vec<(Uuid, (Uuid, Uuid))> = curves
         .iter()
@@ -558,6 +567,12 @@ fn offset_chain(
         Side::Outward(out) => left_is(&chain_outline(sketch, curves, &links)?, out),
     };
     let d_left = if left != flip { distance } else { -distance };
+    if closed
+        && let Some(kernel) = kernel
+        && let Some(made) = kernel_chain(sketch, curves, &links, d_left, round, kernel)
+    {
+        return Some(made);
+    }
 
     // Raw offset endpoints + carriers per link.
     let mut prims: Vec<(OffsetPrim, DVec2, DVec2)> = Vec::with_capacity(links.len());
@@ -701,6 +716,121 @@ fn offset_chain(
                     line_or_circle1: *copy,
                     item2: arc,
                 });
+            }
+        }
+    }
+    Some(OffsetMade { pairs })
+}
+
+/// A closed chain's copy as the kernel offsets it, `d_left` to the left of
+/// the way it runs: each piece a line or arc between points the pieces
+/// either side share, a copy's arc about its original's centre and a
+/// rounded corner's about the corner, tangent to the copies beside it.
+/// `None` when the kernel refuses it.
+fn kernel_chain(
+    sketch: &mut Sketch,
+    curves: &[GeometryElement],
+    links: &[ChainLink],
+    d_left: f64,
+    round: bool,
+    kernel: &dyn KernelQueries,
+) -> Option<OffsetMade> {
+    use kernel_api::{OffsetFrom, ProfileSegment, ProfileWire};
+    let elem_of = |id: Uuid| curves.iter().find(|g| g.id() == id);
+    let pos = |sketch: &Sketch, id: Uuid| sketch.point_position(id).map(Vec2D::to_glam);
+    let xy = |p: DVec2| [p.x, p.y];
+    let mut segments = Vec::with_capacity(links.len());
+    for link in links {
+        let (a, b) = (pos(sketch, link.entry)?, pos(sketch, link.exit)?);
+        segments.push(match elem_of(link.id)? {
+            GeometryElement::Line(_) => ProfileSegment::Line {
+                start: xy(a),
+                end: xy(b),
+            },
+            GeometryElement::Arc(arc) => {
+                let c = pos(sketch, arc.center)?;
+                let (from, sweep) =
+                    geom2d::arc_angles(pos(sketch, arc.start)? - c, pos(sketch, arc.end)? - c);
+                let half = from + sweep * 0.5;
+                ProfileSegment::Arc {
+                    start: xy(a),
+                    mid: xy(c + DVec2::new(half.cos(), half.sin()) * arc.radius),
+                    end: xy(b),
+                }
+            }
+            _ => return None,
+        });
+    }
+    // The kernel moves a positive distance out of the loop.
+    let left_out = left_is(&chain_outline(sketch, curves, links)?, true);
+    let outward = if left_out { d_left } else { -d_left };
+    let loops = kernel
+        .offset_wire_2d(&ProfileWire::new(segments), outward, round)
+        .ok()?;
+    let glam = |p: [f64; 2]| DVec2::new(p[0], p[1]);
+    let starts = |ring: &[kernel_api::OffsetPiece]| -> Option<Vec<DVec2>> {
+        ring.iter()
+            .map(|piece| match piece.segment {
+                ProfileSegment::Line { start, .. } | ProfileSegment::Arc { start, .. } => {
+                    Some(glam(start))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let rings: Vec<Vec<DVec2>> = loops.iter().map(|r| starts(r)).collect::<Option<_>>()?;
+    let mut pairs = Vec::new();
+    for (ring, at) in loops.iter().zip(&rings) {
+        let ends: Vec<Uuid> = at
+            .iter()
+            .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(*p)))))
+            .collect();
+        let n = ring.len();
+        let mut made: Vec<(Uuid, OffsetFrom)> = Vec::with_capacity(n);
+        for (k, piece) in ring.iter().enumerate() {
+            let (a, b) = (ends[k], ends[(k + 1) % n]);
+            let id = match (&piece.segment, piece.from) {
+                (ProfileSegment::Line { .. }, OffsetFrom::Segment(_)) => {
+                    sketch.add_geometry(GeometryElement::Line(Line::new(a, b)))
+                }
+                (ProfileSegment::Arc { start, mid, end }, from) => {
+                    let centre = match from {
+                        OffsetFrom::Segment(i) => match elem_of(links.get(i)?.id)? {
+                            GeometryElement::Arc(arc) => arc.center,
+                            _ => return None,
+                        },
+                        OffsetFrom::Corner(i) => links.get(i)?.exit,
+                    };
+                    let (s, m, e) = (glam(*start), glam(*mid), glam(*end));
+                    let radius = (s - pos(sketch, centre)?).length();
+                    let (start, end) = if (m - s).perp_dot(e - m) > 0.0 {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    };
+                    sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, radius)))
+                }
+                _ => return None,
+            };
+            if let OffsetFrom::Segment(i) = piece.from {
+                let original = links.get(i)?.id;
+                let flag = sketch.is_construction(original);
+                sketch.set_construction(id, flag);
+                pairs.push([original, id]);
+            }
+            made.push((id, piece.from));
+        }
+        for (k, &(arc, from)) in made.iter().enumerate() {
+            if !matches!(from, OffsetFrom::Corner(_)) {
+                continue;
+            }
+            for &(copy, beside) in [made[(k + n - 1) % n], made[(k + 1) % n]].iter() {
+                if matches!(beside, OffsetFrom::Segment(_)) {
+                    sketch.add_constraint(ConstraintKind::Tangent {
+                        line_or_circle1: copy,
+                        item2: arc,
+                    });
+                }
             }
         }
     }

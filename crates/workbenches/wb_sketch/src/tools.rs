@@ -744,7 +744,7 @@ pub fn snap_at(
 /// click landed by, when it was found already (the line tools read it
 /// rather than find it again); `params` carries the panel-editable tool
 /// settings; `selected` is the current selection (used by the offset and
-/// transform tools).
+/// transform tools); `kernel` offsets closed chains for the offset tool.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_click(
     state: &mut ToolState,
@@ -755,10 +755,11 @@ pub fn handle_click(
     snapped: Option<&snap::Snap>,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
+    kernel: Option<&dyn kernel_api::KernelQueries>,
 ) -> ToolEffect {
     let before = sketch.constraints.len();
     let effect = run_click(
-        state, tool, sketch, cursor, snap_tol, snapped, params, selected,
+        state, tool, sketch, cursor, snap_tol, snapped, params, selected, kernel,
     );
     if !params.auto_constraints {
         drop_extension_holds(sketch, before);
@@ -800,6 +801,7 @@ fn run_click(
     snapped: Option<&snap::Snap>,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
+    kernel: Option<&dyn kernel_api::KernelQueries>,
 ) -> ToolEffect {
     // A transform with nothing to act on says so at its first click,
     // rather than walking through its clicks to do nothing.
@@ -868,6 +870,7 @@ fn run_click(
                 delete: params.offset_delete,
                 linked: params.offset_linked,
             },
+            kernel,
         ),
         "sketch.translate" => {
             transform::translate(state, sketch, cursor, snap_tol, selected, params)

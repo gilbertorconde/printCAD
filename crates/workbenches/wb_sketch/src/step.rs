@@ -17,7 +17,7 @@ use crate::sketch::{ConstraintKind, GeometryElement, Sketch, Vec2D};
 use crate::tools::{self, ToolParams, ToolState};
 
 /// How a click behaves beyond the tool itself.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub(crate) struct StepSettings {
     /// How close, in sketch units, a click snaps onto or picks geometry.
     pub tol: f64,
@@ -37,6 +37,9 @@ pub(crate) struct StepSettings {
     /// landing's, which a drawing tool's click takes as found; `None`
     /// finds it here.
     pub snapped: Option<crate::snap::Snap>,
+    /// The kernel a tool asks what it cannot work out itself (a closed
+    /// chain's offset); without one the tool works it out alone.
+    pub kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
 /// What a click did.
@@ -85,6 +88,7 @@ pub(crate) fn click(
         snapped.as_ref(),
         &params,
         selected,
+        settings.kernel,
     );
     if let Some(before) = before.as_ref().filter(|_| settings.construction) {
         let made: Vec<Uuid> = sketch
@@ -707,6 +711,7 @@ mod tests {
                     curve: None,
                     on: None,
                 }),
+                kernel: None,
             };
             let (cursor, typed) = (Vec2D::new(0.0, 0.0), &[]);
             let mut capture = DimCapture::default();

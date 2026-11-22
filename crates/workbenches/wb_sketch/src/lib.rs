@@ -1480,6 +1480,7 @@ impl SketchWorkbench {
             remove_redundant: false,
             reuse_lines: false,
             snapped: snapped.filter(|_| cursor == landed),
+            kernel: ctx.kernel,
         };
         let (at, tol, snapped) = step::land(
             &self.tab.tool_state,

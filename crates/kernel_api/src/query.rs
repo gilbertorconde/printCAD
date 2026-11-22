@@ -497,3 +497,23 @@ pub struct IgesExport {
     pub text: String,
     pub warnings: Vec<String>,
 }
+
+/// One piece of a wire's offset: a line or an arc in the wire's own 2D
+/// coordinates, and what it was offset from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OffsetPiece {
+    /// A `Line` or an `Arc`, running the way its loop runs.
+    pub segment: ProfileSegment,
+    pub from: OffsetFrom,
+}
+
+/// Where a piece of a wire's offset comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OffsetFrom {
+    /// The offset of the wire's segment at this index (or a part of it,
+    /// where the offset crosses itself).
+    Segment(usize),
+    /// The arc that rounds the corner where the segment at this index
+    /// ends, about that corner.
+    Corner(usize),
+}
