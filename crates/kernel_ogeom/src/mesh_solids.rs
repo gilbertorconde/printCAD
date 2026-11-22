@@ -7,7 +7,7 @@ use kernel_api::{
     TrimAnswer, TrimRequest,
 };
 use ogeom::algo::distance::{self, DistanceOptions};
-use ogeom::mesh::{Bvh, Deflection, Editable, Grid, Side, Thicken};
+use ogeom::mesh::{Deflection, Editable, Grid, Side, Thicken};
 use ogeom::topo::{Model, Shape, Triangulation};
 
 use crate::tess;
@@ -153,20 +153,12 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
     let (low, high) = tess::robust_bounds(&model, &shape)
         .ok_or_else(|| KernelError::InvalidInput("the solid has no extent".into()))?;
     let chord = low.distance(high) / 2000.0;
-    let solid = ogeom::mesh::triangulate(
-        &model,
-        &shape,
-        Deflection::with_chord(chord).map_err(invalid)?,
-        tol,
-    )
-    .map_err(invalid)?;
-    let solid_index = Bvh::build(&solid).map_err(invalid)?;
     let signed = DistanceOptions {
         max: f64::INFINITY,
         facing_limit: None,
         signed: true,
     };
-    let depth: Vec<f64> = distance::to_mesh(&solid_index, &scan.positions, None, &signed)
+    let depth: Vec<f64> = distance::to_shape(&model, &shape, &scan.positions, None, &signed, tol)
         .map_err(invalid)?
         .into_iter()
         .map(|c| c.map_or(f64::INFINITY, |c| c.distance))
@@ -207,12 +199,17 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
     // The break's points measure the gap to the piece; its triangles whose
     // corners all lie within reach of the piece are where the two mate.
     let reach = request.gap * 1.5 + chord;
-    let piece_index = Bvh::build(&piece).map_err(invalid)?;
-    let gap_at: Vec<Option<f64>> = piece_index
-        .nearest_many(&scan.positions, reach)
-        .into_iter()
-        .map(|hit| hit.map(|h| h.distance))
-        .collect();
+    let unsigned = DistanceOptions {
+        max: reach,
+        facing_limit: None,
+        signed: false,
+    };
+    let gap_at: Vec<Option<f64>> =
+        distance::to_shape(&model, &built.shape, &scan.positions, None, &unsigned, tol)
+            .map_err(invalid)?
+            .into_iter()
+            .map(|hit| hit.map(|h| h.distance))
+            .collect();
     let mut mating_area = 0.0;
     let mut mated = std::collections::BTreeSet::new();
     for (t, _) in scan.triangles.iter().zip(&region).filter(|(_, r)| **r) {

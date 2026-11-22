@@ -7,7 +7,9 @@ use kernel_api::{
     ShapeProbe, TessellationSettings, TriMesh,
 };
 use ogeom::algo::{MedialGraph, linear_properties, medial_graph, volume_properties};
-use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_plane};
+use ogeom::algo::{
+    PointDistance, ProjectedCurve, distance_between_shapes, project_edge_onto_plane,
+};
 use ogeom::core::Tolerances;
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Plane, Point, Vector};
@@ -893,22 +895,14 @@ fn face_section(
         return Ok(Vec::new());
     }
     let edges = solid_section(model, &solid, plane)?;
+    let to_face = PointDistance::of(model, face, tol).map_err(other)?;
     let mut on_face = Vec::new();
     for edge in edges {
         // Along the edge, away from its ends, where an edge of the next
         // face would meet this one.
         let mut runs_on = true;
         for p in edge_samples(model, &edge, &[0.25, 0.5, 0.75])? {
-            let vertex = model.add_vertex(ogeom::topo::VertexData::new(p));
-            let gap = distance_between_shapes(
-                model,
-                &vertex,
-                face,
-                ogeom::intersect::ExtremaOptions::default(),
-                tol,
-            )
-            .map_err(other)?
-            .distance;
+            let (gap, _) = to_face.nearest(p, tol).map_err(other)?;
             runs_on &= gap <= ON_FACE_MM;
         }
         if runs_on {

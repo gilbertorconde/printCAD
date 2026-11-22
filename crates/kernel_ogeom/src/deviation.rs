@@ -1,7 +1,7 @@
 //! Signed distances from measured points to a reference surface, and the
-//! rigid motion that fits them onto it: the surface a mesh's
-//! own triangles, or a solid meshed finely enough that the meshing is far
-//! below what is measured.
+//! rigid motion that fits them onto it: the surface a mesh's own triangles,
+//! or a solid's own faces, measured exactly. The fit runs on a solid meshed
+//! finely enough that the meshing is far below what is measured.
 
 use kernel_api::{
     DistanceRequest, DistanceTarget, FreeMotion, KernelError, KernelResult, LinearDeflectionMode,
@@ -28,7 +28,6 @@ pub(crate) fn signed_distance(
     request: &DistanceRequest,
 ) -> KernelResult<Vec<f64>> {
     let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
-    let index = target_index(target)?;
     let points = points_of(&request.points);
     let normals = normals_of(&request.normals);
     let normals = (normals.len() == points.len()).then_some(normals.as_slice());
@@ -40,11 +39,26 @@ pub(crate) fn signed_distance(
             .map(f64::to_radians),
         signed: true,
     };
-    let found = distance::to_mesh(&index, &points, normals, &options).map_err(failed)?;
-    Ok(found
-        .into_iter()
-        .map(|c| c.map_or(f64::NAN, |c| c.distance))
-        .collect())
+    let found = match target {
+        DistanceTarget::Shape(blob) => {
+            let (model, shape) = tess::read_blob(blob)?;
+            let tol = tess::tolerances();
+            distance::to_shape(&model, &shape, &points, normals, &options, tol)
+                .map_err(failed)?
+                .into_iter()
+                .map(|c| c.map(|c| c.distance))
+                .collect()
+        }
+        DistanceTarget::Mesh(_) => {
+            let index = target_index(target)?;
+            distance::to_mesh(&index, &points, normals, &options)
+                .map_err(failed)?
+                .into_iter()
+                .map(|c| c.map(|c| c.distance))
+                .collect::<Vec<_>>()
+        }
+    };
+    Ok(found.into_iter().map(|d| d.unwrap_or(f64::NAN)).collect())
 }
 
 /// Where `scan` and the solid `solid` differ, in the solid's frame.
@@ -191,7 +205,7 @@ fn normals_of(normals: &[[f64; 3]]) -> Vec<Vector> {
 }
 
 /// `target`'s triangles, a solid meshed finely first, indexed for
-/// nearest-point queries.
+/// nearest-point queries: what the fit and a mesh's distances run on.
 fn target_index(target: DistanceTarget<'_>) -> KernelResult<Bvh> {
     let meshed;
     let mesh = match target {
