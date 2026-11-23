@@ -399,7 +399,11 @@ pub struct ExternalSource {
     /// The names of the two faces a projected edge runs between, when its
     /// solid names them: the edge is found by them first, so it is found
     /// wherever a rebuild moved it, and by `point` after.
-    #[serde(default, skip_serializing_if = "unnamed")]
+    #[serde(
+        default,
+        skip_serializing_if = "unnamed",
+        deserialize_with = "kernel_api::naming::names_from_numbers_or_text"
+    )]
     pub faces: [kernel_api::TopoName; 2],
 }
 
