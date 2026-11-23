@@ -240,12 +240,15 @@ impl ScriptEngine {
                     // on the commands it waits for.
                     started.set(started.get() + asked.elapsed());
                     match answer {
-                        Ok(value) => lua.to_value_with(
-                            &value,
-                            SerializeOptions::new()
-                                .serialize_none_to_null(false)
-                                .serialize_unit_to_null(false),
-                        ),
+                        Ok(mut value) => {
+                            wide_integers_as_text(&mut value);
+                            lua.to_value_with(
+                                &value,
+                                SerializeOptions::new()
+                                    .serialize_none_to_null(false)
+                                    .serialize_unit_to_null(false),
+                            )
+                        }
                         Err(error) => Err(mlua::Error::external(ScriptCommandError(format!(
                             "{id}: {error}"
                         )))),
@@ -365,6 +368,22 @@ fn lua_json(lua: &Lua, value: &mlua::Value, depth: usize) -> serde_json::Value {
             }
         }
         other => J::String(other.to_string().unwrap_or_default()),
+    }
+}
+
+/// `value` with every whole number past what a Lua integer holds (above
+/// 2^63 - 1) written as a string of its digits: as a number it would
+/// become the nearest float, its last digits lost. Commands that take
+/// such numbers (face names) take the string back.
+fn wide_integers_as_text(value: &mut serde_json::Value) {
+    use serde_json::Value as J;
+    match value {
+        J::Number(n) if n.is_u64() && n.as_i64().is_none() => {
+            *value = J::String(n.to_string());
+        }
+        J::Array(items) => items.iter_mut().for_each(wide_integers_as_text),
+        J::Object(map) => map.values_mut().for_each(wide_integers_as_text),
+        _ => {}
     }
 }
 

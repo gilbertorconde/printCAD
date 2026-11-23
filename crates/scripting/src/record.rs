@@ -96,6 +96,10 @@ impl Recorder {
         match value {
             Value::Null => "nil".to_string(),
             Value::Bool(b) => b.to_string(),
+            // A whole number is written whole; one past a Lua integer
+            // (2^63 - 1) as a string, which a float would round.
+            Value::Number(n) if n.is_i64() => n.to_string(),
+            Value::Number(n) if n.is_u64() => quoted(&n.to_string()),
             Value::Number(n) => number(n.as_f64().unwrap_or(0.0)),
             Value::String(s) => match self.names.get(s) {
                 Some(name) => name.clone(),
@@ -226,6 +230,23 @@ mod tests {
     const L2: &str = "5c0e3a44-0000-4000-8000-000000000003";
     const PAD: &str = "5c0e3a44-0000-4000-8000-000000000004";
     const OLD: &str = "5c0e3a44-0000-4000-8000-0000000000ff";
+
+    /// A whole number is recorded whole, never through a double; one past
+    /// what a Lua integer holds is recorded as a string of its digits.
+    #[test]
+    fn whole_numbers_are_recorded_exactly() {
+        let mut rec = Recorder::default();
+        rec.push(&call(
+            "design.set",
+            json!({"faces": [2_151_931_432_261_558_259_i64, 11_208_812_177_732_762_000_u64]}),
+            json!(null),
+        ));
+        let script = rec.script("");
+        assert!(
+            script.contains(r#"faces = {2151931432261558259, "11208812177732762000"}"#),
+            "{script}"
+        );
+    }
 
     #[test]
     fn ids_a_recording_made_become_names_and_the_rest_stay() {
