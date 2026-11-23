@@ -103,19 +103,37 @@ fn on_block(then: SolidOp) -> Vec<SolidOp> {
     ]
 }
 
-/// Two turns of a 2 mm square about the axis, `pitch` apart.
-fn helix(pitch: f64) -> Vec<SolidOp> {
+/// What a helix is built from: the inner radius of its 2 mm square, its
+/// pitch and height, and its turns when they are given instead of the
+/// pitch.
+#[derive(Clone, Copy)]
+struct Helix {
+    radius: f64,
+    pitch: f64,
+    height: f64,
+    turns: Option<f64>,
+}
+
+/// Two turns of a 2 mm square, 10 mm from the axis, 5 mm apart.
+const HELIX: Helix = Helix {
+    radius: 10.0,
+    pitch: 5.0,
+    height: 10.0,
+    turns: None,
+};
+
+fn helix(h: Helix) -> Vec<SolidOp> {
     new_solid(
-        profile(vec![rect(10.0, 0.0, 2.0, 2.0)]),
+        profile(vec![rect(h.radius, 0.0, 2.0, 2.0)]),
         SweepKind::Helix {
             axis_origin: [0.0, 0.0],
             axis_dir: [0.0, 1.0],
-            pitch,
-            height: 2.0 * pitch,
+            pitch: h.pitch,
+            height: h.height,
             left_handed: false,
             cone_angle_deg: 0.0,
             reversed: false,
-            turns: None,
+            turns: h.turns,
             growth: None,
             through_all: false,
         },
@@ -386,7 +404,7 @@ fn cases() -> Vec<(&'static str, Vec<SolidOp>)> {
                 revolve(360.0, false),
             ),
         ),
-        ("helix", helix(5.0)),
+        ("helix", helix(HELIX)),
     ];
     let section = |z: f64, w: f64| Profile {
         plane: plane(z),
@@ -528,14 +546,54 @@ fn every_tool_names_its_faces_as_earlier_releases_did() {
     );
 }
 
-/// A helix's faces are named by where they lie and which way they face,
-/// its walls being alike in shape turn after turn: a pitch one rounding
-/// step away, as another platform's maths may give, names them alike.
+/// A helix's walls are alike in shape turn after turn, so how they are
+/// told apart must not rest on rounding: a helix one rounding step away
+/// in any of what it is built from, as another platform's maths may give,
+/// names its faces alike.
 #[test]
 fn a_helix_names_its_faces_alike_a_rounding_step_away() {
-    let want = listed(&listing("helix", &helix(5.0)));
-    for pitch in [5.0f64.next_up(), 5.0f64.next_down()] {
-        let wrong = named_otherwise(&want, &listed(&listing("helix", &helix(pitch))));
-        assert!(wrong.is_empty(), "pitch {pitch:e}:\n{}", wrong.join("\n"));
+    let want = listed(&listing("helix", &helix(HELIX)));
+    let by_turns = Helix {
+        turns: Some(2.0),
+        ..HELIX
+    };
+    let mut wrong = Vec::new();
+    for step in [f64::next_up, f64::next_down] {
+        let varied = [
+            (
+                "pitch",
+                Helix {
+                    pitch: step(HELIX.pitch),
+                    ..HELIX
+                },
+            ),
+            (
+                "height",
+                Helix {
+                    height: step(HELIX.height),
+                    ..HELIX
+                },
+            ),
+            (
+                "radius",
+                Helix {
+                    radius: step(HELIX.radius),
+                    ..HELIX
+                },
+            ),
+            (
+                "turns",
+                Helix {
+                    turns: Some(step(2.0)),
+                    ..by_turns
+                },
+            ),
+        ];
+        for (what, h) in varied {
+            for line in named_otherwise(&want, &listed(&listing("helix", &helix(h)))) {
+                wrong.push(format!("{what} {:e}: {line}", step(1.0) - 1.0));
+            }
+        }
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
