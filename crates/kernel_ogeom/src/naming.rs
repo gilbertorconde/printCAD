@@ -4,9 +4,11 @@
 //! A feature's tool names its faces by what made them: the wall a profile
 //! segment sweeps by the segment's name (the kernel's record of the sweep
 //! says which segment that is, else the wall holds the segment's middle),
-//! the ends by where they stand along the profile's normal. Any other face a feature adds is named by
-//! its kind of surface and which way it faces, ties broken by where it
-//! is, so a box keeps its names when it grows. After an op, each face of
+//! the ends by where they stand along the profile's normal, the rest by
+//! their kind of surface and which way they face, ties broken by the
+//! order the kernel built the tool's faces in. Any other face an op adds
+//! is named the same way, ties broken by where it is, so a box keeps its
+//! names when it grows. After an op, each face of
 //! the result takes the names of every face it came from: the faces of the
 //! solid before and of the tool that it shares ground with (a piece a
 //! boolean cut from a face lies on that face; a face refine merged covers
@@ -42,6 +44,35 @@ const SLACK: f64 = 1e-4;
 /// triangle may be and still count as alike in size: far above rounding,
 /// far below the steps a mesh's sizes take.
 const AREA_TIE: f64 = 1e-9;
+/// Which triangle a face is sampled on: of every triangle within `tie`
+/// of the largest, as a part of it, the `nth` from the last (wrapping).
+#[derive(Clone, Copy)]
+struct Pick {
+    tie: f64,
+    nth: usize,
+}
+
+const PICK: Pick = Pick {
+    tie: AREA_TIE,
+    nth: 0,
+};
+
+#[cfg(not(test))]
+fn pick() -> Pick {
+    PICK
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The pick a test sets, on its thread.
+    static TEST_PICK: std::cell::Cell<Pick> = const { std::cell::Cell::new(PICK) };
+}
+
+#[cfg(test)]
+fn pick() -> Pick {
+    TEST_PICK.get()
+}
+
 /// How near, in mm, two faces' samples are along an axis to count as
 /// level on it when faces alike are put in order.
 const LEVEL: f64 = 1e-3;
@@ -154,9 +185,14 @@ impl Drawing {
             .map(|[a, b, c]| ((*b - *a).cross(*c - *a)).magnitude())
             .collect();
         let largest = areas.iter().copied().fold(0.0, f64::max);
-        let sample = areas
-            .iter()
-            .rposition(|area| *area >= largest * (1.0 - AREA_TIE))
+        let pick = pick();
+        let alike: Vec<usize> = (0..areas.len())
+            .rev()
+            .filter(|&i| areas[i] >= largest * (1.0 - pick.tie))
+            .collect();
+        let sample = alike
+            .get(pick.nth % alike.len().max(1))
+            .copied()
             .filter(|_| largest > 0.0)
             .map(|i| {
                 let [a, b, c] = triangles[i];
@@ -498,12 +534,13 @@ impl NameMap {
     /// Names the faces still without one: by kind of surface and the way
     /// the face looks, ties broken by where it is.
     fn name_the_rest(&mut self, model: &Model, fresh: TopoName) {
-        self.name_ranked(model, fresh, &[]);
+        self.name_ranked(model, fresh, &[], Rank::Where);
     }
 
     /// [`Self::name_the_rest`], the faces at `alike` ranking among them
-    /// as if they had no name either, keeping the names they have.
-    fn name_ranked(&mut self, model: &Model, fresh: TopoName, alike: &[usize]) {
+    /// as if they had no name either, keeping the names they have, faces
+    /// alike ranked by `rank_by`.
+    fn name_ranked(&mut self, model: &Model, fresh: TopoName, alike: &[usize], rank_by: Rank) {
         let mut keyed: Vec<(TopoName, [f64; 3], usize)> = Vec::new();
         for (index, f) in self.faces.iter().enumerate() {
             if !f.names.is_empty() && !alike.contains(&index) {
@@ -523,13 +560,20 @@ impl NameMap {
             }
             keyed.push((naming::child(fresh, &bytes), at, index));
         }
-        let levels = levels(&keyed.iter().map(|k| k.1).collect::<Vec<_>>());
+        let levels = match rank_by {
+            Rank::Where => levels(&keyed.iter().map(|k| k.1).collect::<Vec<_>>()),
+            Rank::Built => vec![[0; 3]; keyed.len()],
+        };
         let mut keyed: Vec<(TopoName, [usize; 3], usize)> = keyed
             .into_iter()
             .zip(levels)
             .map(|((key, _, index), level)| (key, level, index))
             .collect();
         keyed.sort();
+        let mut alike_count: HashMap<TopoName, usize> = HashMap::new();
+        for (key, _, _) in &keyed {
+            *alike_count.entry(*key).or_default() += 1;
+        }
         let mut previous: Option<TopoName> = None;
         let mut rank = 0u32;
         for (key, _, index) in keyed {
@@ -538,7 +582,11 @@ impl NameMap {
             if !self.faces[index].names.is_empty() {
                 continue;
             }
-            let name = if rank == 0 {
+            // Faces alike ranked as built take names of their own, so no
+            // name a ranking by where they lie gave finds another of them.
+            let name = if matches!(rank_by, Rank::Built) && alike_count[&key] > 1 {
+                naming::child(key, &[&b"built"[..], &rank.to_le_bytes()].concat())
+            } else if rank == 0 {
                 key
             } else {
                 naming::child(key, &rank.to_le_bytes())
@@ -551,6 +599,19 @@ impl NameMap {
     pub fn faces(&self) -> impl Iterator<Item = (&Shape, &[TopoName])> {
         self.faces.iter().map(|f| (&f.face, f.names.as_slice()))
     }
+}
+
+/// How faces whose kind of surface and facing are alike are put in order
+/// to be told apart.
+#[derive(Clone, Copy)]
+enum Rank {
+    /// By where they lie.
+    Where,
+    /// In the order the kernel built them, the order of the solid's
+    /// faces: the same on every platform, where faces built alike (the
+    /// walls of a helix, turn after turn) lie wherever rounding puts
+    /// their samples.
+    Built,
 }
 
 /// Where each of `points` stands along each axis among the others, as
@@ -591,7 +652,8 @@ pub(crate) fn surface_kind(model: &Model, face: &Shape) -> u8 {
 /// The names of a feature's tool, which sweeps `profile`: each wall after
 /// the profile segment it was swept from, as the kernel's record of the
 /// tool's build says (`built`), the ends (flat faces square to the
-/// profile's normal) after where they stand along it, the rest afresh.
+/// profile's normal) after where they stand along it, the rest afresh
+/// (faces alike told apart by the order the kernel built them in).
 /// A face the record does not trace to a segment is named by where it
 /// lies: after every segment whose middle lies on it.
 pub(crate) fn tool_names(
@@ -691,7 +753,7 @@ pub(crate) fn tool_names(
             })
             .collect()
     };
-    map.name_ranked(model, feature, &alike);
+    map.name_ranked(model, feature, &alike, Rank::Built);
     map.give_makers(&[], feature);
     map
 }
@@ -1120,4 +1182,80 @@ pub(crate) fn current_edge_faces(model: &Model, edges: &[Shape]) -> Vec<[TopoNam
         Some(names) => edge_faces(model, names, edges),
         None => vec![[0, 0]; edges.len()],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernel_api::{
+        BooleanOp, ProfilePlane, ProfileWire, SolidOp, SweepKind, TessellationSettings,
+    };
+
+    /// The names of a helix's faces, in the order the kernel built them,
+    /// each face sampled by `pick`.
+    fn helix_names(pick: Pick) -> Vec<TopoName> {
+        let corners = [[10.0, 0.0], [12.0, 0.0], [12.0, 2.0], [10.0, 2.0]];
+        let profile = Profile {
+            plane: ProfilePlane {
+                origin: [0.0; 3],
+                x_axis: [1.0, 0.0, 0.0],
+                y_axis: [0.0, 1.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+            wires: vec![ProfileWire {
+                segments: (0..4)
+                    .map(|i| ProfileSegment::Line {
+                        start: corners[i],
+                        end: corners[(i + 1) % 4],
+                    })
+                    .collect(),
+                names: (1..=4u8).map(|i| naming::name_of(&[i])).collect(),
+            }],
+        };
+        let ops = [SolidOp::Sweep {
+            profile,
+            kind: SweepKind::Helix {
+                axis_origin: [0.0, 0.0],
+                axis_dir: [0.0, 1.0],
+                pitch: 5.0,
+                height: 10.0,
+                left_handed: false,
+                cone_angle_deg: 0.0,
+                reversed: false,
+                turns: None,
+                growth: None,
+                through_all: false,
+            },
+            op: BooleanOp::NewSolid,
+        }];
+        TEST_PICK.set(pick);
+        let built = crate::OgeomKernel::new().execute_solid_chain(
+            crate::ChainRequest::new(&ops, &TessellationSettings::default()).tags(&[1007]),
+        );
+        TEST_PICK.set(PICK);
+        built.unwrap().mesh.face_names
+    }
+
+    /// A helix's walls are named apart by the order the kernel built them
+    /// in, not by the triangle each is sampled on: triangles alike in
+    /// size along a helix are told apart by rounding alone, which another
+    /// platform's maths does otherwise, and any of them names the faces
+    /// alike.
+    #[test]
+    fn a_helix_names_its_faces_alike_whichever_like_triangle_it_samples() {
+        let want = helix_names(PICK);
+        assert!(want.iter().all(|n| *n != 0), "every face is named");
+        let picks = (1..8)
+            .map(|nth| Pick { tie: AREA_TIE, nth })
+            .chain([Pick { tie: 0.0, nth: 0 }]);
+        for pick in picks {
+            assert_eq!(
+                helix_names(pick),
+                want,
+                "the faces sampled on the triangle {} from the last within {:e} of the largest",
+                pick.nth,
+                pick.tie
+            );
+        }
+    }
 }

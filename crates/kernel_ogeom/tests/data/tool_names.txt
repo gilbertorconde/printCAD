@@ -149,42 +149,42 @@ revolve two ways: 94 0 -25 37f2acbe1d1ecfa0
 revolve two ways: 94 200 -25 26e5a14a09626fb1
 revolve two ways: 130 100 -35 022a157393cbbf77
 revolve a circle: 0 0 0 95f36565a15afb6b
-helix: -108 35 0 05a01964d2ddc282
-helix: -108 85 0 0005421e01077a3f
-helix: -99 25 0 4ee1d7947f6379e3
-helix: -99 45 0 9b07d6512cc0e0a8
-helix: -99 75 0 64e223dcdf365428
-helix: -99 95 0 d9cbae2964640f95
-helix: -90 35 0 998d7a936b807c70
-helix: -90 85 0 22a9362cc831fe4e
-helix: 0 13 -99 ee2fe48d79240278
-helix: 0 23 -108 e4d8bae5253723ce
-helix: 0 23 -90 47fe0942b4775ebe
-helix: 0 32 -99 dbad54a633c3f393
-helix: 0 37 99 9d86a9decfdfa24c
-helix: 0 48 90 8f737db619a0ae0b
-helix: 0 48 108 254a5c98b1148669
-helix: 0 57 99 5a2e33b7edaca807
-helix: 0 62 -99 3f15414306f258bd
-helix: 0 73 -108 84d366ed7b6ce05f
-helix: 0 73 -90 e7f8b54b0aad1b4f
-helix: 0 82 -99 da9c72ebf54cd18a
-helix: 0 87 99 9ace4d2afceecb70
-helix: 0 98 90 44de0edccf01673d
-helix: 0 98 108 a8035d3a5e41a22d
-helix: 0 107 99 525aa30634802962
+helix: -108 35 0 b25137622ec75946
+helix: -108 85 0 725bdf51825be024
+helix: -99 25 0 000c090211ce9af7
+helix: -99 45 0 462a590b1cb01d64
+helix: -99 75 0 60115cf9bb98de66
+helix: -99 95 0 e625051372e5d9f5
+helix: -90 35 0 02c2047eff49da05
+helix: -90 85 0 42b75c8fabb55327
+helix: 0 13 -99 fad208944af94fdc
+helix: 0 23 -108 ed132f9cde4ceb5c
+helix: 0 23 -90 3a6ca09bee0a2b2c
+helix: 0 32 -99 7aef6e0d4915b701
+helix: 0 37 99 b4bc75a9e653758f
+helix: 0 48 90 8d0ddba53482a7ed
+helix: 0 48 108 da674ca4443fe7bd
+helix: 0 57 99 06a0bf2ea8a44229
+helix: 0 62 -99 9accb49ca12f0c6d
+helix: 0 73 -108 2d0887ad8ab8647e
+helix: 0 73 -90 7a61f8ac9a75a44e
+helix: 0 82 -99 daf4c204f2dffa70
+helix: 0 87 99 14c1c9a1901db8fe
+helix: 0 98 90 cd0333b5e0ee210f
+helix: 0 98 108 1a5ca4b4f0ab60df
+helix: 0 107 99 66a61326526e8598
 helix: 90 13 -37 cdeeecd7da37e67d
-helix: 90 60 0 20153e04fe66448c
-helix: 90 107 37 c00fea0d549c011d
+helix: 90 60 0 524be36a84fd15d7
+helix: 90 107 37 12568b59d8919cb5
 helix: 99 3 -41 37f2acbe1d1ecfa0
 helix: 99 23 -41 26e5a14a09626fb1
-helix: 99 50 0 dd829b893606eca7
-helix: 99 70 0 e5b84e58717afc2c
-helix: 99 97 41 b160ae8e8347e212
-helix: 99 117 41 7e100b4502392184
+helix: 99 50 0 e41d097c7157a2f9
+helix: 99 70 0 1e8563f187035e23
+helix: 99 97 41 44225d741b21e668
+helix: 99 117 41 7e8ab7e930cda192
 helix: 108 13 -45 022a157393cbbf77
-helix: 108 60 0 82ae8a2471fc41bd
-helix: 108 107 45 e2b3de1c1bc6852c
+helix: 108 60 0 62c75876a9141d74
+helix: 108 107 45 a2bcb087557f9696
 helix: 110 10 0 d2ff6496fab0eb65
 helix: 110 110 0 d2ff6496fab0eb65
 loft: -78 0 44 cdeeecd7da37e67d
@@ -194,12 +194,12 @@ loft: 0 0 100 017999c66530b3fc
 loft: 0 78 44 26e5a14a09626fb1
 loft: 78 0 44 022a157393cbbf77
 loft of three: -100 0 50 cdeeecd7da37e67d
-loft of three: -100 0 150 10985e7ae890ee1d
+loft of three: -100 0 150 1f94f40c88903d4d
 loft of three: 0 -100 50 37f2acbe1d1ecfa0
-loft of three: 0 -100 150 83a316e789a43701
+loft of three: 0 -100 150 8989d195a48ae331
 loft of three: 0 0 0 d2ff6496fab0eb65
 loft of three: 0 0 200 017999c66530b3fc
 loft of three: 0 100 50 26e5a14a09626fb1
-loft of three: 0 100 150 06c9d10b2878c35d
+loft of three: 0 100 150 1b254299ac9be98d
 loft of three: 100 0 50 022a157393cbbf77
-loft of three: 100 0 150 2dce02c9111a1b3b
+loft of three: 100 0 150 1d8758fa874db7f3
