@@ -48,6 +48,7 @@ impl PrintCadApp {
             mentions,
             queued: Vec::new(),
             held: false,
+            steering: false,
             chose: true,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -94,6 +95,7 @@ impl PrintCadApp {
             mentions: Vec::new(),
             queued: Vec::new(),
             held: false,
+            steering: false,
             chose: false,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -397,12 +399,46 @@ impl PrintCadApp {
         self.send_queued(id);
     }
 
-    /// Take a queued message back; its attachments go with the next prompt
-    /// again when it is being edited (`keep`).
-    pub(crate) fn unqueue_chat(&mut self, id: &str, queued: u64, keep: bool) {
+    /// Drop a queued message.
+    pub(crate) fn unqueue_chat(&mut self, id: &str, queued: u64) {
         if let Some(chat) = self.chat_mut(id) {
-            chat.unqueue(queued, keep);
+            chat.unqueue(queued);
         }
+    }
+
+    /// Move a queued message to place `to` of its queue.
+    pub(crate) fn move_queued(&mut self, id: &str, queued: u64, to: usize) {
+        if let Some(chat) = self.chat_mut(id) {
+            chat.move_queued(queued, to);
+        }
+    }
+
+    /// Open a queued message in the panel's editor, or close it unchanged:
+    /// it does not go while it is open.
+    pub(crate) fn editing_queued(&mut self, id: &str, queued: u64, editing: bool) {
+        if let Some(chat) = self.chat_mut(id) {
+            chat.editing_queued(queued, editing);
+        }
+        self.send_queued(id);
+    }
+
+    /// Keep a queued message's edit; when it is next and the agent waits,
+    /// it goes.
+    pub(crate) fn save_queued(&mut self, id: &str, queued: u64, text: String, removed: &[usize]) {
+        if let Some(chat) = self.chat_mut(id) {
+            chat.edit_queued(queued, text, removed);
+        }
+        self.send_queued(id);
+    }
+
+    /// Send a queued message now, stopping the agent's turn for it.
+    pub(crate) fn steer_chat(&mut self, id: &str, queued: u64) {
+        self.wake_chat(id);
+        if let Some(chat) = self.chat_mut(id) {
+            chat.steer(queued);
+            chat.used = chat_store::now_ms();
+        }
+        self.send_queued(id);
     }
 
     /// Let what Stop held go on.
