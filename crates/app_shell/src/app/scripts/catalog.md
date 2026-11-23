@@ -915,6 +915,13 @@ moved body ask with frame = "body" to pass a face to a feature.
 Every rebuild numbers the faces afresh: find a face by its kind, normal and
 point in the same script rather than keep its index. `name` is a string.
 
+`name` is the least of the names the face carries. A face an op merged from
+others, or cut from one, carries the names of every face it came from, and a
+reference finds its face by any of them: after an upstream edit a reference can
+still find its face though no face here shows the name it kept. One whose names
+the solid holds none of is found by where it was picked, and its feature warns
+that it "was not found by its name".
+
 See also: `doc.measure`
 
 ### A moved block's top, where it sits and as a feature takes it
@@ -961,6 +968,9 @@ is refused ("the body has no solid yet").
 `length` is measured along the drawn outline, a little under a curved edge's
 true length (31.40 for a 5 mm circle's 31.42). The seam of a turned face is an
 edge with one face in `faces`.
+
+`faces` names each face as `doc.faces` does, by the least of its names: an
+edge pick is found by any name each of its two faces carries.
 
 Every rebuild numbers the edges afresh, as it does the faces: find an edge by
 its kind, point and faces in the same script.
