@@ -371,6 +371,58 @@ mod tests {
         assert_eq!(newest["protocolVersion"], PROTOCOL_VERSIONS[0]);
     }
 
+    /// Answers a call with its arguments as JSON text.
+    struct Echo;
+
+    impl ToolHost for Echo {
+        fn tools(&self) -> Vec<Tool> {
+            vec![Tool {
+                name: "echo".into(),
+                title: "Echo".into(),
+                description: "Echo".into(),
+                input_schema: json!({"type": "object"}),
+                read_only: true,
+                always_load: false,
+            }]
+        }
+        fn call(&mut self, _: &str, args: Value) -> ToolAnswer {
+            ToolAnswer::text(args.to_string())
+        }
+    }
+
+    /// A whole number in a call's arguments reaches the tool exactly, past
+    /// 2^53 and past 2^63; one 64 bits cannot hold is refused, never run
+    /// rounded to the nearest double.
+    #[test]
+    fn a_call_keeps_whole_numbers_exact_and_refuses_one_past_64_bits() {
+        use std::io::{BufRead, BufReader, Write};
+        let (mut ours, theirs) = UnixStream::pair().unwrap();
+        std::thread::spawn(move || serve(theirs.try_clone().unwrap(), theirs, &info(), &mut Echo));
+        let mut lines = BufReader::new(ours.try_clone().unwrap()).lines();
+        let mut ask = |id: u32, n: &str| {
+            writeln!(
+                ours,
+                r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"echo","arguments":{{"faces":[{n}]}}}}}}"#
+            )
+            .unwrap();
+            serde_json::from_str::<Value>(&lines.next().unwrap().unwrap()).unwrap()
+        };
+        for n in [
+            "2151931432261558259",
+            "11208812177732762000",
+            "-9223372036854775808",
+        ] {
+            let answer = ask(1, n);
+            let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+            assert_eq!(text, format!(r#"{{"faces":[{n}]}}"#));
+        }
+        let refused = ask(2, "18446744073709551616");
+        assert_eq!(refused["id"], 2);
+        let message = refused["error"]["message"].as_str().unwrap();
+        assert!(message.contains("18446744073709551616"), "{message}");
+        assert!(crate::rpc::inexact_integer(r#"{"a":"99999999999999999999","b":1e30}"#).is_none());
+    }
+
     /// A host with a document, a prompt and its own instructions.
     struct Library;
 

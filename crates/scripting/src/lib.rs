@@ -172,6 +172,10 @@ mod tests {
                     _ => Ok(json!("pad-1")),
                 },
                 "doc.bodies" => Ok(json!([{"name": "Body", "id": "b-1", "parent": null}])),
+                "doc.names" => Ok(json!({
+                    "small": 2_151_931_432_261_558_259_i64,
+                    "wide": 11_208_812_177_732_762_000_u64,
+                })),
                 "doc.wait" => {
                     std::thread::sleep(Duration::from_millis(40));
                     Ok(serde_json::Value::Null)
@@ -196,6 +200,29 @@ mod tests {
         assert_eq!(host.calls[0].0, "design.pad");
         assert_eq!(host.calls[0].1["length"], json!(20));
         assert_eq!(host.calls[0].1["sketch"], json!("s-1"));
+    }
+
+    /// Whole numbers stay exact through a script: one a Lua integer holds
+    /// comes in as an integer and goes back as itself; one past 2^63 - 1,
+    /// which Lua would round to a float, comes in as a string of its
+    /// digits and goes back as that.
+    #[test]
+    fn whole_numbers_cross_a_script_exactly() {
+        let mut engine = ScriptEngine::new();
+        let mut host = Recorder::default();
+        let out = engine.run_script(
+            r#"local n = pc.doc.names()
+               assert(math.type(n.small) == "integer", math.type(n.small))
+               assert(n.wide == "11208812177732762000", tostring(n.wide))
+               pc.design.pad{sketch = "s-1", items = {n.small, n.wide}}"#,
+            "test",
+            &mut host,
+        );
+        assert_eq!(out.error, None);
+        assert_eq!(
+            host.calls[1].1["items"],
+            json!([2_151_931_432_261_558_259_i64, "11208812177732762000"])
+        );
     }
 
     /// `{}` in a script's arguments is the empty list it is written for.

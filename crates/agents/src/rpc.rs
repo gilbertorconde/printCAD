@@ -92,10 +92,12 @@ impl PartialEq for Barrier {
 
 type Waiting = Arc<Mutex<HashMap<u64, Sender<Result<Value, RpcError>>>>>;
 
+type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
+
 /// One side of a JSON-RPC connection.
 #[derive(Clone)]
 pub struct Connection {
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    writer: Writer,
     next_id: Arc<AtomicU64>,
     waiting: Waiting,
     incoming: Sender<Incoming>,
@@ -110,15 +112,20 @@ impl Connection {
     ) -> (Self, Receiver<Incoming>) {
         let (incoming_tx, incoming_rx) = channel();
         let waiting: Waiting = Arc::default();
+        let writer: Writer = Arc::new(Mutex::new(Box::new(writer)));
+        // The reader answers a request it refuses itself, through a weak
+        // hold on the writer, so the stream still closes when every
+        // `Connection` is gone.
+        let refusals = Arc::downgrade(&writer);
         let connection = Self {
-            writer: Arc::new(Mutex::new(Box::new(writer))),
+            writer,
             next_id: Arc::new(AtomicU64::new(1)),
             waiting: waiting.clone(),
             incoming: incoming_tx.clone(),
         };
         std::thread::Builder::new()
             .name("printcad-rpc-reader".to_string())
-            .spawn(move || read_loop(BufReader::new(reader), waiting, incoming_tx))
+            .spawn(move || read_loop(BufReader::new(reader), waiting, incoming_tx, refusals))
             .expect("the reader thread starts");
         (connection, incoming_rx)
     }
@@ -169,18 +176,71 @@ impl Connection {
     }
 
     fn send(&self, message: &Value) -> std::io::Result<()> {
-        let mut line = serde_json::to_vec(message)?;
-        line.push(b'\n');
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| std::io::Error::other("the connection is broken"))?;
-        writer.write_all(&line)?;
-        writer.flush()
+        send_on(&self.writer, message)
     }
 }
 
-fn read_loop(mut reader: impl BufRead, waiting: Waiting, incoming: Sender<Incoming>) {
+fn send_on(writer: &Mutex<Box<dyn Write + Send>>, message: &Value) -> std::io::Result<()> {
+    let mut line = serde_json::to_vec(message)?;
+    line.push(b'\n');
+    let mut writer = writer
+        .lock()
+        .map_err(|_| std::io::Error::other("the connection is broken"))?;
+    writer.write_all(&line)?;
+    writer.flush()
+}
+
+/// The first whole number written in the JSON `text` that 64 bits do not
+/// hold (below -2^63 or above 2^64 - 1): a JSON reader takes such a
+/// number as the nearest double, which drops its last digits without a
+/// word. Numbers written with a fraction or an exponent are doubles by
+/// their writing and pass.
+pub fn inexact_integer(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut in_string = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            match b {
+                b'\\' => i += 1,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if b == b'-' || b.is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < bytes.len()
+                && matches!(bytes[i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
+            {
+                i += 1;
+            }
+            let number = &text[start..i];
+            let whole = !number.contains(['.', 'e', 'E']);
+            if whole && number.parse::<i64>().is_err() && number.parse::<u64>().is_err() {
+                return Some(number);
+            }
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn read_loop(
+    mut reader: impl BufRead,
+    waiting: Waiting,
+    incoming: Sender<Incoming>,
+    refusals: std::sync::Weak<Mutex<Box<dyn Write + Send>>>,
+) {
     let mut line = String::new();
     loop {
         line.clear();
@@ -196,7 +256,32 @@ fn read_loop(mut reader: impl BufRead, waiting: Waiting, incoming: Sender<Incomi
             continue;
         };
         let id = message.get("id").cloned().filter(|v| !v.is_null());
-        match (message.get("method").and_then(Value::as_str), id) {
+        let method = message.get("method").and_then(Value::as_str);
+        // A request carrying a number it would read rounded is refused,
+        // never run on the rounded number.
+        if method.is_some()
+            && let Some(number) = inexact_integer(text)
+        {
+            if let (Some(id), Some(writer)) = (id, refusals.upgrade()) {
+                let refusal = RpcError::new(
+                    RpcError::INVALID_PARAMS,
+                    format!(
+                        "the whole number {number} is past what 64 bits hold \
+                         (-2^63 to 2^64 - 1) and would be read rounded; write it as a string"
+                    ),
+                );
+                let _ = send_on(
+                    &writer,
+                    &json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": {"code": refusal.code, "message": refusal.message},
+                    }),
+                );
+            }
+            continue;
+        }
+        match (method, id) {
             (Some(method), Some(id)) => {
                 let _ = incoming.send(Incoming::Request {
                     id,
