@@ -520,3 +520,76 @@ fn an_upright_picked_before_its_pieces_were_joined_is_found_whole() {
     let high = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     assert!(low < 1.0 + 1e-3 && high > 20.0 - 1e-3, "{low}..{high}");
 }
+
+/// The 20 mm block with a 10 mm square pocket 3 mm deep in its top, the
+/// pocket's walls named after `seed`; then a fillet on the pocket's rim
+/// along X at y = 5, picked with `faces`.
+fn pocketed_block(seed: u8, faces: [TopoName; 2]) -> Vec<SolidOp> {
+    let pocket = SolidOp::Sweep {
+        profile: Profile {
+            plane: plane(7.0),
+            wires: vec![ProfileWire {
+                names: (1..=4).map(|i| naming::name_of(&[seed, i])).collect(),
+                ..square(5.0, 5.0, 10.0)
+            }],
+        },
+        kind: extrude(ExtrudeTermination::Blind { distance: 3.0 }),
+        op: BooleanOp::Cut,
+    };
+    let fillet = SolidOp::Fillet {
+        radius: 1.0,
+        edges: kernel_api::EdgeSelection::Picked(vec![kernel_api::EdgeProbe {
+            point: [10.0, 5.0, 10.0],
+            direction: [1.0, 0.0, 0.0],
+            faces,
+        }]),
+        follow_tangent: false,
+        corner: Default::default(),
+        distances: None,
+        auto: false,
+        variable: None,
+        overflow: Default::default(),
+    };
+    vec![block(10.0), pocket, fillet]
+}
+
+/// A rim pick keeps the names of the block's top and the pocket's wall.
+/// Once the pocket is drawn again, its walls named afresh, the top keeps
+/// its name and the wall does not: an edge is found by its names only
+/// when both are, so the rim is found by position and the fillet says so.
+#[test]
+fn a_pick_that_lost_one_of_its_faces_is_warned_of() {
+    let tags: [TopoName; 3] = [101, 202, 303];
+    let build = |ops: &[SolidOp]| {
+        OgeomKernel::new()
+            .execute_solid_chain(
+                kernel_ogeom::ChainRequest::new(ops, &TessellationSettings::default()).tags(&tags),
+            )
+            .unwrap()
+    };
+    let rim = |p: [f32; 3]| (p[2] - 10.0).abs() < 1e-3 && (p[1] - 5.0).abs() < 1e-3;
+    let picked = build(&pocketed_block(1, [0, 0])[..2]);
+    let faces = super::common::edge_names(&picked.mesh, rim);
+    assert!(faces.iter().all(|n| *n != 0), "the rim is named");
+
+    let named = build(&pocketed_block(1, faces));
+    assert!(named.warnings.is_empty(), "{:?}", named.warnings);
+
+    let redrawn = build(&pocketed_block(2, faces)[..2]);
+    let now = super::common::edge_names(&redrawn.mesh, rim);
+    let kept: Vec<TopoName> = faces.into_iter().filter(|n| now.contains(n)).collect();
+    assert_eq!(
+        kept.len(),
+        1,
+        "the top kept its name, the wall lost it: {faces:?} {now:?}"
+    );
+
+    let lost = build(&pocketed_block(2, faces));
+    let warned: Vec<_> = lost.warnings.iter().map(|w| w.op_index).collect();
+    assert_eq!(warned, [2], "{:?}", lost.warnings);
+    assert!(
+        lost.warnings[0].message.contains("not found by its name"),
+        "{}",
+        lost.warnings[0].message
+    );
+}
