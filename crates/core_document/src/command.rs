@@ -146,6 +146,48 @@ pub fn empty_lists_as_tables(value: &mut serde_json::Value) {
     }
 }
 
+/// `value` with the face names of every pick in it written as strings of
+/// their digits, as a feature is read by scripts and agents: a name is a
+/// 64-bit number, which a double (a Lua float, a number in most JSON
+/// readers) cannot hold exactly, and every name reader takes the string
+/// back (`kernel_api::naming`). A pick is an object with a `point`: its
+/// `name` (a face), or its `faces` (an edge's two); a joint's `names` are
+/// those of its two ends (`moving`, `fixed`).
+pub fn pick_names_as_text(value: &mut serde_json::Value) {
+    use serde_json::Value;
+    fn text(value: &mut Value) {
+        if let Value::Number(n) = value
+            && let Some(name) = n.as_u64()
+        {
+            *value = Value::String(name.to_string());
+        }
+    }
+    fn pair(value: Option<&mut Value>) {
+        if let Some(Value::Array(names)) = value
+            && names.len() == 2
+            && names.iter().all(|n| n.is_u64() || n.is_string())
+        {
+            names.iter_mut().for_each(text);
+        }
+    }
+    match value {
+        Value::Object(map) => {
+            if map.contains_key("point") {
+                if let Some(name) = map.get_mut("name") {
+                    text(name);
+                }
+                pair(map.get_mut("faces"));
+            }
+            if map.contains_key("moving") && map.contains_key("fixed") {
+                pair(map.get_mut("names"));
+            }
+            map.values_mut().for_each(pick_names_as_text);
+        }
+        Value::Array(items) => items.iter_mut().for_each(pick_names_as_text),
+        _ => {}
+    }
+}
+
 impl CommandSpec {
     pub fn new(id: impl Into<String>, summary: impl Into<String>) -> Self {
         Self {

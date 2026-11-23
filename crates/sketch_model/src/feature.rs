@@ -189,7 +189,10 @@ fn is_zero2(v: &[f64; 2]) -> bool {
 pub struct FaceSupport {
     pub point: [f64; 3],
     pub normal: [f64; 3],
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "kernel_api::naming::name_from_number_or_text"
+    )]
     pub name: kernel_api::TopoName,
     /// The sketch's plane when it was placed.
     pub placed: SketchPlane,
