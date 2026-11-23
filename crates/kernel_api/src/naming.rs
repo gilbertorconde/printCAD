@@ -49,33 +49,136 @@ pub fn child(parent: TopoName, part: &[u8]) -> TopoName {
 
 /// Reads a name written as a number or as a string of its digits: a
 /// script's numbers are doubles, which cannot hold every name, so names
-/// reach scripts as strings and come back as them.
+/// reach scripts as strings and come back as them. Anything else (a
+/// fraction, a negative number, a double past 2^53 that may have lost its
+/// last digits) is refused, naming the field `name`.
 pub fn name_from_number_or_text<'de, D>(deserializer: D) -> Result<TopoName, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum Written {
-        Number(u64),
-        Text(String),
-    }
-    match <Written as serde::Deserialize>::deserialize(deserializer)? {
-        Written::Number(n) => Ok(n),
-        Written::Text(t) => t.trim().parse().map_err(serde::de::Error::custom),
-    }
+    deserializer.deserialize_any(NameVisitor { field: "name" })
 }
 
 /// Reads a pair of names, each written as a number or as a string of its
-/// digits, as [`name_from_number_or_text`] reads one: an edge's two faces.
+/// digits, as [`name_from_number_or_text`] reads one: an edge's two faces,
+/// its refusal naming the field `faces`.
 pub fn names_from_numbers_or_text<'de, D>(deserializer: D) -> Result<[TopoName; 2], D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    #[derive(serde::Deserialize)]
-    struct Name(#[serde(deserialize_with = "name_from_number_or_text")] TopoName);
-    let [a, b] = <[Name; 2] as serde::Deserialize>::deserialize(deserializer)?;
-    Ok([a.0, b.0])
+    name_pair(deserializer, "faces")
+}
+
+/// Reads a pair of names as [`names_from_numbers_or_text`] does, its
+/// refusal naming `field`.
+pub fn name_pair<'de, D>(deserializer: D, field: &'static str) -> Result<[TopoName; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Pair(&'static str);
+    impl<'de> serde::de::Visitor<'de> for Pair {
+        type Value = [TopoName; 2];
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "`{}` as two face names", self.0)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut next = |i: usize| {
+                seq.next_element_seed(NameVisitor { field: self.0 })?
+                    .ok_or_else(|| serde::de::Error::invalid_length(i, &self))
+            };
+            let pair = [next(0)?, next(1)?];
+            if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::custom(format!(
+                    "`{}` holds two face names, no more",
+                    self.0
+                )));
+            }
+            Ok(pair)
+        }
+    }
+    deserializer.deserialize_seq(Pair(field))
+}
+
+/// One name of the field `field`, from a number or a string of its digits.
+#[derive(Clone, Copy)]
+struct NameVisitor {
+    field: &'static str,
+}
+
+impl NameVisitor {
+    fn refuse<E: serde::de::Error>(self, what: impl std::fmt::Display) -> E {
+        E::custom(format!(
+            "`{}` takes face names, each a whole number from 0 to 2^64 - 1, best \
+             written as a string of its digits as feature reads give them; it was given {what}",
+            self.field
+        ))
+    }
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for NameVisitor {
+    type Value = TopoName;
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<TopoName, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for NameVisitor {
+    type Value = TopoName;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "a face name in `{}`", self.field)
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, n: u64) -> Result<TopoName, E> {
+        Ok(n)
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, n: i64) -> Result<TopoName, E> {
+        u64::try_from(n).map_err(|_| self.refuse(format_args!("the negative number {n}")))
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, n: f64) -> Result<TopoName, E> {
+        // A double holds every whole number up to 2^53 exactly; past it, a
+        // name may have been rounded on the way.
+        const EXACT: f64 = 9_007_199_254_740_992.0;
+        if n.fract() == 0.0 && (0.0..=EXACT).contains(&n) {
+            Ok(n as u64)
+        } else if n.fract() == 0.0 && n > EXACT {
+            Err(self.refuse(format_args!(
+                "the floating-point number {n}, which may have lost digits past 2^53"
+            )))
+        } else {
+            Err(self.refuse(format_args!("the number {n}")))
+        }
+    }
+
+    fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<TopoName, E> {
+        text.trim()
+            .parse()
+            .map_err(|_| self.refuse(format_args!("the string {text:?}")))
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<TopoName, E> {
+        Err(self.refuse("nothing"))
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, b: bool) -> Result<TopoName, E> {
+        Err(self.refuse(format_args!("{b}")))
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, _: A) -> Result<TopoName, A::Error> {
+        Err(self.refuse("a list"))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, _: A) -> Result<TopoName, A::Error> {
+        Err(self.refuse("a table"))
+    }
 }
 
 #[cfg(test)]
@@ -108,5 +211,40 @@ mod tests {
             [u64::MAX, 7]
         );
         assert!(read(r#"{"faces": ["x", 7]}"#).is_err());
+        assert!(read(r#"{"faces": [1, 2, 3]}"#).is_err());
+    }
+
+    /// A value that is not a name is refused saying which field took it
+    /// and what it was given: a double past 2^53 may have lost digits, so
+    /// it is refused too, never rounded into a name.
+    #[test]
+    fn a_name_that_is_no_whole_number_is_refused_by_field() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Pick {
+            #[serde(default, deserialize_with = "name_from_number_or_text")]
+            #[allow(dead_code)]
+            name: TopoName,
+        }
+        let said = |text: &str| serde_json::from_str::<Pick>(text).unwrap_err().to_string();
+        let float = said(r#"{"name": 1.1208812177732762e19}"#);
+        assert!(
+            float.contains("`name`") && float.contains("floating-point"),
+            "{float}"
+        );
+        let negative = said(r#"{"name": -3}"#);
+        assert!(
+            negative.contains("`name`") && negative.contains("negative"),
+            "{negative}"
+        );
+        let read = |text: &str| serde_json::from_str::<Pick>(text).map(|p| p.name).ok();
+        assert_eq!(
+            read(r#"{"name": 7.0}"#),
+            Some(7),
+            "a whole double under 2^53"
+        );
+        assert_eq!(
+            read(r#"{"name": 9223372036854775807}"#),
+            Some(i64::MAX as u64)
+        );
     }
 }

@@ -10,8 +10,11 @@ before it.
 
 This page is the rules those names follow, so a reference that lands on
 the wrong face can be reported precisely. Scripts read names through
-`doc.faces` and `doc.edges` (as strings: a name is a 64-bit number, more
-than a script's numbers hold exactly).
+`doc.faces`, `doc.edges` and the picks in `doc.feature`'s fields (as
+strings: a name is a 64-bit number, more than a script's numbers hold
+exactly). A name is taken back as a string or a whole number; a fraction,
+a negative number or a floating-point number past 2^53 is refused, naming
+the field.
 
 ## What a name is
 

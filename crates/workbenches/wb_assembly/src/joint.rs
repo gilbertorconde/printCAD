@@ -517,7 +517,11 @@ pub struct JointFeature {
     /// The names of the faces the two ends were picked on (`moving`,
     /// `fixed`), which a rebuilt body is searched for; 0 for an end with
     /// none.
-    #[serde(default, skip_serializing_if = "unnamed")]
+    #[serde(
+        default,
+        skip_serializing_if = "unnamed",
+        deserialize_with = "names_from_numbers_or_text"
+    )]
     pub names: [kernel_api::TopoName; 2],
     /// How far each end (`moving`, `fixed`) is moved along its own
     /// direction, a flat face's normal or an axis, before the joint holds
@@ -531,6 +535,16 @@ pub struct JointFeature {
     /// A width's second face on each body (`moving`, `fixed`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub second: Option<[Anchor; 2]>,
+}
+
+/// The two ends' face names, each a number or a string of its digits.
+fn names_from_numbers_or_text<'de, D>(
+    deserializer: D,
+) -> Result<[kernel_api::TopoName; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    kernel_api::naming::name_pair(deserializer, "names")
 }
 
 fn unnamed(names: &[kernel_api::TopoName; 2]) -> bool {

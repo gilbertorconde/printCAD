@@ -277,6 +277,16 @@ pub(crate) fn document_command(
             let node = document
                 .get_feature_meta(FeatureId(a.id("id")?))
                 .ok_or_else(|| CommandError::bad("id", "is not a feature of this document"))?;
+            // Face names go out as strings: written back, they stay exact.
+            let mut fields = (*node.data).clone();
+            core_document::command::pick_names_as_text(&mut fields);
+            let mut values = document
+                .feature_values(node.id)
+                .filter(|v| **v != *node.data)
+                .cloned();
+            if let Some(values) = &mut values {
+                core_document::command::pick_names_as_text(values);
+            }
             Ok(json!({
                 "id": node.id.0.to_string(),
                 "name": node.name,
@@ -286,14 +296,11 @@ pub(crate) fn document_command(
                 "suppressed": node.suppressed,
                 "error": document.derived().error(node.id),
                 "warning": registry.feature_warning(document, None, node.id, node),
-                "fields": node.data,
+                "fields": fields,
                 "unset": unset_fields(&node.data),
                 // What it is built from now, where that is not what is kept:
                 // formulas worked out, a plane where what it stands on is.
-                "values": document
-                    .feature_values(node.id)
-                    .filter(|v| **v != *node.data)
-                    .cloned(),
+                "values": values,
             }))
         }
         "doc.suppress" => {

@@ -332,7 +332,7 @@ assert(not list[1].visible, "a pad hides its sketch")
 `pc.doc.feature`: A feature with its fields.
 
 - `id` (id)
-- Returns {id, name, kind, body, visible, suppressed, error, warning, fields, unset, values}: unset names the fields holding no value, which fields leaves out; values is the data as the feature is built now (formulas worked out, a plane following what it stands on), given when it differs from fields
+- Returns {id, name, kind, body, visible, suppressed, error, warning, fields, unset, values}: unset names the fields holding no value, which fields leaves out; values is the data as the feature is built now (formulas worked out, a plane following what it stands on), given when it differs from fields; the face names a pick keeps (a face's name, an edge's faces) are strings, which write back exactly
 
 Notes:
 
