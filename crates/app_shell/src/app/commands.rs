@@ -310,9 +310,20 @@ impl PrintCadApp {
             UiCommand::NewChat(agent) => self.new_chat(agent),
             UiCommand::SendChat { chat, text } => self.send_to_chat(&chat, text),
             UiCommand::CancelChat(chat) => self.cancel_chat(&chat),
-            UiCommand::UnqueueChat { chat, queued, keep } => {
-                self.unqueue_chat(&chat, queued, keep);
-            }
+            UiCommand::UnqueueChat { chat, queued } => self.unqueue_chat(&chat, queued),
+            UiCommand::MoveQueued { chat, queued, to } => self.move_queued(&chat, queued, to),
+            UiCommand::EditQueued {
+                chat,
+                queued,
+                editing,
+            } => self.editing_queued(&chat, queued, editing),
+            UiCommand::SaveQueued {
+                chat,
+                queued,
+                text,
+                removed,
+            } => self.save_queued(&chat, queued, text, &removed),
+            UiCommand::SteerChat { chat, queued } => self.steer_chat(&chat, queued),
             UiCommand::ResumeChatQueue(chat) => self.resume_chat_queue(&chat),
             UiCommand::WakeChat(chat) => self.wake_chat(&chat),
             UiCommand::CloseChat(chat) => self.close_chat(&chat),

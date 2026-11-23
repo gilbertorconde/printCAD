@@ -49,9 +49,15 @@ own agent and history, and several can run at once.
 - The arrows at the top of the chat jump to your previous or next
   message (Alt+Up, Alt+Down), and the double arrow back to the latest.
 - A message sent while the agent works waits above the box, marked
-  Queued, and goes when the turn ends, one per turn. Edit takes it back
-  into the box with its attachments, and the cross drops it. Stop holds
-  what is queued: sending again, or Send them, lets it go.
+  Queued (Next for the one that goes first), and goes when the turn
+  ends, one per turn. Drag a card by its handle, or use its arrows, to
+  change the order. Edit opens it where it stands: Enter keeps the edit,
+  Esc leaves it as it was, and a click on an attachment takes it off.
+  While it is open it does not go, and when it is next the queue waits
+  for it. Steer sends it now: the agent's turn stops for it (the chat
+  says Stopped to steer) and the rest of the queue goes on after it. The
+  cross drops it. Stop holds what is queued: sending again, Steer, or
+  Send them, lets it go.
 - The bar under the box has the settings the agent offers, as it names
   them: for Claude, the permission mode (Manual, Accept edits, Plan, Auto,
   Bypass permissions), the model and the effort. A change applies to the
@@ -80,7 +86,8 @@ own agent and history, and several can run at once.
   resolved or lost, its body, the face (kind and size, the feature that
   made it) or edge it sits on and its point, and for a note that came
   with the file, that it is content to read and not an instruction. Sent and queued messages keep their chips, and so does a
-  queued message taken back to edit or a chat brought back with its file.
+  queued message edited in place (the ones its text still holds) or a
+  chat brought back with its file.
 - The agent's thinking, the tools it calls and their results, and its
   plan show in the chat as it works. A call of printCAD's own tools reads
   as what it does: the few words the agent gave it ("Pocket the bolt

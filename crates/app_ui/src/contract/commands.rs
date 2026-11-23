@@ -415,12 +415,36 @@ pub enum UiCommand {
     },
     /// Ask a chat's agent to stop its turn.
     CancelChat(String),
-    /// Take a queued message of `chat` back, its attachments going with
-    /// the next prompt again when `keep` (it is being edited).
+    /// Drop a queued message of `chat`.
     UnqueueChat {
         chat: String,
         queued: u64,
-        keep: bool,
+    },
+    /// Move a queued message of `chat` to place `to` of its queue.
+    MoveQueued {
+        chat: String,
+        queued: u64,
+        to: usize,
+    },
+    /// Open a queued message in its card's editor, or close it unchanged.
+    EditQueued {
+        chat: String,
+        queued: u64,
+        editing: bool,
+    },
+    /// Keep a queued message's edit: its new text, without the
+    /// attachments at `removed`.
+    SaveQueued {
+        chat: String,
+        queued: u64,
+        text: String,
+        removed: Vec<usize>,
+    },
+    /// Send a queued message now, stopping the agent's turn for it; the
+    /// rest of the queue goes on after it.
+    SteerChat {
+        chat: String,
+        queued: u64,
     },
     /// Let the messages Stop held go on.
     ResumeChatQueue(String),

@@ -40,6 +40,9 @@ pub struct AssistantState {
     /// Chats known last frame: a new one comes to the front.
     known: usize,
     drafts: std::collections::HashMap<String, String>,
+    /// The queued messages open in their cards' editors, by chat and
+    /// queued id.
+    queued_edits: std::collections::HashMap<(String, u64), QueuedEdit>,
     /// The rules of the document on screen, while they are being edited.
     rules_draft: Option<String>,
     /// The chat being renamed, by id, the name typed so far, and whether
@@ -49,6 +52,16 @@ pub struct AssistantState {
     scroll: std::collections::HashMap<String, ChatScroll>,
     /// The history of closed chats, while it is open.
     history: Option<HistoryView>,
+}
+
+/// A queued message as its card's editor holds it: the text, the
+/// attachments taken off (by index), and whether the editor has had the
+/// keyboard yet.
+#[derive(Debug, Default)]
+struct QueuedEdit {
+    text: String,
+    removed: Vec<usize>,
+    focused: bool,
 }
 
 /// The history list's own state: the search typed and whether every
@@ -246,7 +259,7 @@ pub fn draw_assistant(
                         ..Default::default()
                     }))
                     .show(ui, |ui| {
-                        queued_list(ui, chat, draft, commands);
+                        queued_list(ui, chat, &mut state.queued_edits, commands);
                         input(ui, chat, draft, options, paste_pressed, commands);
                     });
                 let scroll = state.scroll.entry(chat.id.clone()).or_default();
@@ -1119,9 +1132,20 @@ fn input_id(chat: &Chat) -> egui::Id {
 }
 
 /// The messages waiting for the agent's turn to end, above the box to
-/// write in: each can be taken back into the box to edit, or dropped.
-/// After Stop they wait for the user to let them go.
-fn queued_list(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<UiCommand>) {
+/// write in, in the order they go. Each card drags by its handle (or
+/// moves with its arrows) to another place, opens in an editor where it
+/// stands, goes now (Steer, stopping the agent's turn for it) or is
+/// dropped. After Stop they wait for the user to let them go.
+fn queued_list(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    edits: &mut std::collections::HashMap<(String, u64), QueuedEdit>,
+    commands: &mut Vec<UiCommand>,
+) {
+    // An editor whose message went, or was closed elsewhere, is let go.
+    edits.retain(|(id, queued), _| {
+        *id != chat.id || chat.queued.iter().any(|q| q.id == *queued && q.editing)
+    });
     if chat.queued.is_empty() {
         return;
     }
@@ -1140,20 +1164,31 @@ fn queued_list(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mu
             }
         });
     }
-    for queued in &chat.queued {
-        egui::Frame::new()
+    let last = chat.queued.len() - 1;
+    for (at, queued) in chat.queued.iter().enumerate() {
+        let key = (chat.id.clone(), queued.id);
+        if queued.editing {
+            edits.entry(key.clone()).or_insert_with(|| QueuedEdit {
+                text: queued.text.clone(),
+                ..Default::default()
+            });
+        }
+        let card = egui::Frame::new()
             .fill(BG2)
             .stroke(egui::Stroke::new(1.0, BORDER))
             .corner_radius(RADIUS_MD as u8)
             .inner_margin(egui::Margin::symmetric(8, 4))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Queued")
-                            .font(sans_medium(FONT_XS))
-                            .color(TEXT3),
-                    );
-                    if !queued.attachments.is_empty() {
+                    drag_handle(ui, chat, at, queued.id);
+                    let label = match (at, queued.editing) {
+                        (0, true) if !chat.held => "Next, waits for this edit",
+                        (_, true) => "Editing",
+                        (0, false) if !chat.held => "Next",
+                        _ => "Queued",
+                    };
+                    ui.label(RichText::new(label).font(sans_medium(FONT_XS)).color(TEXT3));
+                    if !queued.attachments.is_empty() && !queued.editing {
                         let n = queued.attachments.len();
                         ui.label(
                             RichText::new(match n {
@@ -1165,55 +1200,274 @@ fn queued_list(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mu
                         );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let close = match ui_kit::icon::image(ui.ctx(), "close", 12.0, TEXT2) {
-                            Some(image) => egui::Button::image(image),
-                            None => egui::Button::new(RichText::new("×").font(sans(FONT_XS))),
-                        };
-                        if ui
-                            .add(close.frame(false))
-                            .on_hover_text("Remove it from the queue")
-                            .clicked()
-                        {
-                            commands.push(UiCommand::UnqueueChat {
-                                chat: chat.id.clone(),
-                                queued: queued.id,
-                                keep: false,
-                            });
-                        }
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new("Edit").font(sans(FONT_XS)))
-                                    .frame(false),
-                            )
-                            .on_hover_text("Take it back into the box; Enter queues it again")
-                            .clicked()
-                        {
-                            *draft = match draft.trim().is_empty() {
-                                true => queued.text.clone(),
-                                false => format!("{}\n\n{draft}", queued.text),
-                            };
-                            ui.memory_mut(|m| {
-                                m.request_focus(egui::Id::new(("assistant_input", &chat.id)))
-                            });
-                            commands.push(UiCommand::UnqueueChat {
-                                chat: chat.id.clone(),
-                                queued: queued.id,
-                                keep: true,
-                            });
-                        }
+                        queued_actions(ui, chat, queued, at, last, edits, commands);
                     });
                 });
-                ui.add(
-                    egui::Label::new(with_chips(
-                        &queued_preview(&queued.text),
-                        &tokens_of(&queued.mentions),
-                        TEXT2,
-                    ))
-                    .wrap(),
-                );
+                match edits.get_mut(&key) {
+                    Some(edit) if queued.editing => queued_editor(ui, chat, queued, edit, commands),
+                    _ => {
+                        ui.add(
+                            egui::Label::new(with_chips(
+                                &queued_preview(&queued.text),
+                                &tokens_of(&queued.mentions),
+                                TEXT2,
+                            ))
+                            .wrap(),
+                        );
+                    }
+                }
             });
+        drop_on_card(ui, chat, at, &card.response, commands);
         ui.add_space(SPACE_1);
     }
+}
+
+/// What a queued message's card can do, right to left: drop it, move it
+/// down and up, open it in the editor and send it ahead of the rest;
+/// while it is open, Cancel and Save instead.
+fn queued_actions(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    queued: &assistant::Queued,
+    at: usize,
+    last: usize,
+    edits: &std::collections::HashMap<(String, u64), QueuedEdit>,
+    commands: &mut Vec<UiCommand>,
+) {
+    let key = (chat.id.clone(), queued.id);
+    let (chat_id, id) = (chat.id.clone(), queued.id);
+    if icon_button(ui, "close", "Remove it from the queue").clicked() {
+        commands.push(UiCommand::UnqueueChat {
+            chat: chat_id.clone(),
+            queued: id,
+        });
+    }
+    let mut move_to = |ui: &mut egui::Ui, icon: &str, hint: &str, to: Option<usize>| {
+        let response = ui.add_enabled_ui(to.is_some(), |ui| icon_button(ui, icon, hint));
+        if let Some(to) = to
+            && response.inner.clicked()
+        {
+            commands.push(UiCommand::MoveQueued {
+                chat: chat_id.clone(),
+                queued: id,
+                to,
+            });
+        }
+    };
+    move_to(
+        ui,
+        "chevron-down",
+        "Move it down",
+        (at < last).then_some(at + 1),
+    );
+    move_to(ui, "chevron-up", "Move it up", at.checked_sub(1));
+    let text = |label: &str| egui::Button::new(RichText::new(label).font(sans(FONT_XS)));
+    if let Some(edit) = edits.get(&key)
+        && queued.editing
+    {
+        if ui.add(text("Cancel")).on_hover_text("Esc").clicked() {
+            commands.push(UiCommand::EditQueued {
+                chat: chat_id.clone(),
+                queued: id,
+                editing: false,
+            });
+        }
+        if ui.add(text("Save")).on_hover_text("Enter").clicked() {
+            commands.push(UiCommand::SaveQueued {
+                chat: chat_id.clone(),
+                queued: id,
+                text: edit.text.clone(),
+                removed: edit.removed.clone(),
+            });
+        }
+        return;
+    }
+    if ui
+        .add(text("Edit").frame(false))
+        .on_hover_text("Edit it here; it keeps its place")
+        .clicked()
+    {
+        commands.push(UiCommand::EditQueued {
+            chat: chat_id.clone(),
+            queued: id,
+            editing: true,
+        });
+    }
+    let hint = match chat.status {
+        ChatStatus::Busy => "Send it now: the agent's turn stops for it, the rest go on after it",
+        _ => "Send it now, ahead of the rest",
+    };
+    if ui
+        .add(text("Steer").frame(false))
+        .on_hover_text(hint)
+        .clicked()
+    {
+        commands.push(UiCommand::SteerChat {
+            chat: chat_id,
+            queued: id,
+        });
+    }
+}
+
+/// A queued message open in its card: the attachments to take off and the
+/// text, its mentions as chips. Enter keeps the edit, Shift+Enter starts a
+/// new line and Esc leaves it as it was.
+fn queued_editor(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    queued: &assistant::Queued,
+    edit: &mut QueuedEdit,
+    commands: &mut Vec<UiCommand>,
+) {
+    let id = egui::Id::new(("assistant_queued", &chat.id, queued.id));
+    if !queued.attachments.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for (index, attachment) in queued.attachments.iter().enumerate() {
+                if !edit.removed.contains(&index) && chip(ui, &attachment.name()).clicked() {
+                    edit.removed.push(index);
+                }
+            }
+        });
+    }
+    let tokens = tokens_of(&queued.mentions);
+    let mut save = false;
+    if ui.memory(|m| m.has_focus(id)) {
+        remove_whole_token(ui, id, &mut edit.text, &tokens);
+        ui.input_mut(|i| {
+            i.events.retain(|e| match e {
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.is_none() => {
+                    save = true;
+                    false
+                }
+                _ => true,
+            });
+        });
+    }
+    let mut chips = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+        let mut job = with_chips(text.as_str(), &tokens, TEXT1);
+        job.wrap.max_width = wrap;
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let response = ui.add(
+        egui::TextEdit::multiline(&mut edit.text)
+            .id(id)
+            .font(sans(FONT_SM))
+            .layouter(&mut chips)
+            .desired_rows(2)
+            .desired_width(ui.available_width()),
+    );
+    if !edit.focused {
+        edit.focused = true;
+        response.request_focus();
+    }
+    // Esc takes the keyboard away before the editor sees it.
+    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        commands.push(UiCommand::EditQueued {
+            chat: chat.id.clone(),
+            queued: queued.id,
+            editing: false,
+        });
+    } else if save {
+        commands.push(UiCommand::SaveQueued {
+            chat: chat.id.clone(),
+            queued: queued.id,
+            text: edit.text.clone(),
+            removed: edit.removed.clone(),
+        });
+    }
+}
+
+/// A queued message dragged by its card's handle.
+#[derive(Clone, Copy)]
+struct DraggedQueued {
+    chat_tab: egui::Id,
+    queued: u64,
+    from: usize,
+}
+
+/// The handle a queued message's card drags by.
+fn drag_handle(ui: &mut egui::Ui, chat: &Chat, from: usize, queued: u64) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 20.0), egui::Sense::drag());
+    let response = response.on_hover_cursor(egui::CursorIcon::Grab);
+    let lit = response.hovered() || response.dragged();
+    if let Some(image) = ui_kit::icon::image(
+        ui.ctx(),
+        "drag-handle",
+        14.0,
+        if lit { TEXT1 } else { TEXT3 },
+    ) {
+        image.paint_at(
+            ui,
+            egui::Rect::from_center_size(rect.center(), egui::vec2(14.0, 14.0)),
+        );
+    }
+    if response.drag_started() {
+        response.dnd_set_drag_payload(DraggedQueued {
+            chat_tab: egui::Id::new(&chat.id),
+            queued,
+            from,
+        });
+    }
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+}
+
+/// While a queued message is dragged over card `at`, a line shows where
+/// it goes (above the card's middle, before it; below, after it), and the
+/// drop moves it there.
+fn drop_on_card(
+    ui: &egui::Ui,
+    chat: &Chat,
+    at: usize,
+    card: &egui::Response,
+    commands: &mut Vec<UiCommand>,
+) {
+    let Some(dragged) = card.dnd_hover_payload::<DraggedQueued>() else {
+        return;
+    };
+    if dragged.chat_tab != egui::Id::new(&chat.id) {
+        return;
+    }
+    let rect = card.rect;
+    let before = ui
+        .ctx()
+        .pointer_hover_pos()
+        .is_some_and(|p| p.y < rect.center().y);
+    let slot = if before { at } else { at + 1 };
+    let to = queued_drop_place(dragged.from, slot);
+    if to != dragged.from {
+        let y = if before {
+            rect.top() - SPACE_1 / 2.0
+        } else {
+            rect.bottom() + SPACE_1 / 2.0
+        };
+        ui.painter().hline(
+            rect.left()..=rect.right(),
+            y,
+            egui::Stroke::new(2.0, ACCENT),
+        );
+    }
+    if let Some(dragged) = card.dnd_release_payload::<DraggedQueued>()
+        && to != dragged.from
+    {
+        commands.push(UiCommand::MoveQueued {
+            chat: chat.id.clone(),
+            queued: dragged.queued,
+            to,
+        });
+    }
+}
+
+/// The place a queued message dragged from `from` takes when dropped in
+/// the gap before card `slot` (the count of cards for after the last).
+fn queued_drop_place(from: usize, slot: usize) -> usize {
+    if slot > from { slot - 1 } else { slot }
 }
 
 /// A queued message as its card shows it: the first few lines.
@@ -1967,6 +2221,53 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    /// A queued message open in its card is edited where it stands: Enter
+    /// keeps the edit with its attachments, Esc leaves it as it was.
+    #[test]
+    fn a_queued_message_is_edited_in_its_card() {
+        let mut chat = Chat::for_test("c", ChatStatus::Busy, Vec::new());
+        chat.attachments
+            .push(agents::acp::Attachment::File("/x/a.png".into()));
+        for text in ["first", "second", "third"] {
+            chat.enqueue(text.into());
+        }
+        let second = chat.queued[1].id;
+        chat.editing_queued(second, true);
+        let chats = [chat];
+        let ctx = egui::Context::default();
+        ui_kit::apply_theme(&ctx);
+        let mut state = AssistantState {
+            open: true,
+            ..Default::default()
+        };
+        frame(&ctx, &mut state, &chats, &[], Vec::new());
+        frame(&ctx, &mut state, &chats, &[], Vec::new());
+        let typed = vec![egui::Event::Text(" now".into()), key(egui::Key::Enter)];
+        let saved = frame(&ctx, &mut state, &chats, &[], typed);
+        let [
+            UiCommand::SaveQueued {
+                queued,
+                text,
+                removed,
+                ..
+            },
+        ] = saved.as_slice()
+        else {
+            panic!("{saved:?}")
+        };
+        assert_eq!((*queued, text.as_str()), (second, "second now"));
+        assert!(removed.is_empty());
+
+        let left = frame(&ctx, &mut state, &chats, &[], vec![key(egui::Key::Escape)]);
+        assert!(
+            matches!(
+                left.as_slice(),
+                [UiCommand::EditQueued { editing: false, .. }]
+            ),
+            "{left:?}"
+        );
     }
 
     /// `@` lists the files and the selection; the arrows and Enter take

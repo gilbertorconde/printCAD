@@ -172,10 +172,15 @@ client that defers tools behind a search has them in its first turn;
 text as markdown, a copy button on a hovered message, the header's jumps
 between the user's messages kept in `ChatScroll` from the last frame's
 layout); a message
-sent while the agent is on a turn waits in `Chat::queued` (edited or
-dropped from the panel) and goes when the chat is ready again, one per
-turn, the rules added as it goes; Stop sets `Chat::held` until the user
-sends again or resumes; a call of
+sent while the agent is on a turn waits in `Chat::queued` and goes
+when the chat is ready again, one per turn, the rules added as it goes;
+the panel moves (`move_queued`), edits in place (`editing_queued` marks
+it open so `send_next` waits on it at the front, `edit_queued` keeps the
+text, the mentions it still holds and the attachments not taken off),
+drops (`unqueue`) and steers it (`steer`: to the front, `Cancel` while a
+turn is on with `Chat::steering` set so its end reads "Stopped to steer",
+the queue not held); Stop sets `Chat::held` until the user sends again,
+steers or resumes; a call of
 printCAD's own tools draws as `agent_context::tool_label` (the call's
 `description` argument, which the instructions ask for, else the command
 or the script it runs), from the arguments ACP sends as `rawInput`. A chat belongs

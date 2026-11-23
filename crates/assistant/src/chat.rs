@@ -109,6 +109,9 @@ pub struct Chat {
     pub queued: Vec<Queued>,
     /// Stop holds what is queued until the user sends again or lets it go.
     pub held: bool,
+    /// The turn on now was stopped to send a queued message at once: its
+    /// end says so, and what is queued goes on.
+    pub steering: bool,
     /// The agent's remembered choices have been read.
     pub chose: bool,
     /// Remembered choices not yet put to the agent, in the order it lists
@@ -159,6 +162,9 @@ pub struct Queued {
     pub text: String,
     pub attachments: Vec<Attachment>,
     pub mentions: Vec<Mention>,
+    /// Open in the panel's editor: it does not go while it is, and the
+    /// queue waits for it when it is next.
+    pub editing: bool,
 }
 
 impl Chat {
@@ -185,6 +191,7 @@ impl Chat {
             mentions: Vec::new(),
             queued: Vec::new(),
             held: false,
+            steering: false,
             chose: false,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -235,31 +242,85 @@ impl Chat {
             text,
             attachments,
             mentions,
+            editing: false,
         });
         self.held = false;
     }
 
-    /// Take queued message `id` out, its attachments and mentions back
-    /// with the next prompt when `keep`.
-    pub fn unqueue(&mut self, id: u64, keep: bool) {
-        let Some(at) = self.queued.iter().position(|q| q.id == id) else {
+    fn queued_at(&self, id: u64) -> Option<usize> {
+        self.queued.iter().position(|q| q.id == id)
+    }
+
+    /// Take queued message `id` out of the queue.
+    pub fn unqueue(&mut self, id: u64) {
+        let Some(at) = self.queued_at(id) else {
             return;
         };
-        let taken = self.queued.remove(at);
-        if keep {
-            for attachment in taken.attachments {
-                if !self.attachments.contains(&attachment) {
-                    self.attachments.push(attachment);
-                }
-            }
-            for mention in taken.mentions {
-                self.mentions.retain(|m| m.token != mention.token);
-                self.mentions.push(mention);
-            }
-        }
+        self.queued.remove(at);
         if self.queued.is_empty() {
             self.held = false;
         }
+    }
+
+    /// Move queued message `id` to place `to` of the queue (the last
+    /// place when past it).
+    pub fn move_queued(&mut self, id: u64, to: usize) {
+        let Some(at) = self.queued_at(id) else {
+            return;
+        };
+        let taken = self.queued.remove(at);
+        let to = to.min(self.queued.len());
+        self.queued.insert(to, taken);
+    }
+
+    /// Open queued message `id` in the editor, or close it unchanged.
+    pub fn editing_queued(&mut self, id: u64, editing: bool) {
+        if let Some(at) = self.queued_at(id) {
+            self.queued[at].editing = editing;
+        }
+    }
+
+    /// Give queued message `id` the edited `text`, without the attachments
+    /// at `removed`; the mentions its text still holds stay. It keeps its
+    /// place, and goes out of the queue when nothing is left of it.
+    pub fn edit_queued(&mut self, id: u64, text: String, removed: &[usize]) {
+        let Some(at) = self.queued_at(id) else {
+            return;
+        };
+        let queued = &mut self.queued[at];
+        let mut index = 0;
+        queued.attachments.retain(|_| {
+            index += 1;
+            !removed.contains(&(index - 1))
+        });
+        queued.mentions = mentions::in_text(&queued.mentions, &text);
+        queued.text = text;
+        queued.editing = false;
+        if queued.text.trim().is_empty() && queued.attachments.is_empty() {
+            self.unqueue(id);
+        }
+    }
+
+    /// Send queued message `id` next, ahead of the rest: a turn on now is
+    /// stopped for it, and the rest of the queue goes on after it in its
+    /// order. It goes at once when the agent waits (`send_next`).
+    pub fn steer(&mut self, id: u64) {
+        let Some(at) = self.queued_at(id) else {
+            return;
+        };
+        let mut taken = self.queued.remove(at);
+        taken.editing = false;
+        self.queued.insert(0, taken);
+        self.held = false;
+        if self.status == ChatStatus::Busy {
+            self.send(ChatCommand::Cancel);
+            self.steering = true;
+        }
+    }
+
+    /// The next queued message waits for its edit.
+    pub fn waits_on_edit(&self) -> bool {
+        self.queued.first().is_some_and(|q| q.editing)
     }
 
     /// Ask the agent for a title for the conversation so far; `asked` when
@@ -296,12 +357,18 @@ impl Chat {
     pub fn stop(&mut self) {
         self.send(ChatCommand::Cancel);
         self.held = !self.queued.is_empty();
+        self.steering = false;
     }
 
-    /// Send the first queued message when the agent waits for one, with
-    /// the word on where it is on the first and `rules` when they changed.
+    /// Send the first queued message when the agent waits for one and it
+    /// is not being edited, with the word on where it is on the first and
+    /// `rules` when they changed.
     pub fn send_next(&mut self, rules: String) {
-        if self.status != ChatStatus::Ready || self.held || self.queued.is_empty() {
+        if self.status != ChatStatus::Ready
+            || self.held
+            || self.queued.is_empty()
+            || self.waits_on_edit()
+        {
             return;
         }
         let Queued {
@@ -418,6 +485,7 @@ impl Chat {
             mentions: Vec::new(),
             queued: Vec::new(),
             held: false,
+            steering: false,
             chose: true,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -467,14 +535,14 @@ pub fn put_choices(chat: &mut Chat) {
 
 /// What the user is told of `event`, while away, as a summary and a body:
 /// a turn that ended (unless a queued message goes next, or the user
-/// stopped it), a question from the agent, an agent that stopped.
+/// stopped it or steered past it), a question from the agent, an agent that stopped.
 pub fn notice(chat: &Chat, event: &ChatEvent) -> Option<(String, String)> {
     let title = &chat.title;
     let stopped = |why: &str| Some((format!("{title}: the agent stopped"), why.to_string()));
     match event {
         ChatEvent::TurnEnded { stop_reason } if chat.status == ChatStatus::Busy => {
             match stop_reason.as_str() {
-                "end_turn" if chat.queued.is_empty() || chat.held => {
+                "end_turn" if chat.queued.is_empty() || chat.held || chat.waits_on_edit() => {
                     let said = chat.entries.iter().rev().find_map(|e| match e {
                         ChatEntry::Agent {
                             text,
@@ -610,8 +678,12 @@ pub fn apply(chat: &mut Chat, event: ChatEvent) {
             if chat.status == ChatStatus::Busy {
                 chat.status = ChatStatus::Ready;
             }
+            let steered = std::mem::take(&mut chat.steering);
             match stop_reason.as_str() {
                 "end_turn" => {}
+                "cancelled" if steered => chat
+                    .entries
+                    .push(ChatEntry::Note("Stopped to steer".into())),
                 "cancelled" => chat.entries.push(ChatEntry::Note("Stopped".into())),
                 "max_tokens" => chat.entries.push(ChatEntry::Note(
                     "The agent ran out of room for its answer".into(),
@@ -724,33 +796,113 @@ mod tests {
         assert!(c.queued.is_empty());
     }
 
-    /// A queued message comes back to be edited with what was attached to
-    /// it, or is dropped; the rest keep their order.
+    fn order(c: &Chat) -> Vec<&str> {
+        c.queued.iter().map(|q| q.text.as_str()).collect()
+    }
+
+    /// A queued message moves to any place of the queue, is edited where
+    /// it stands, or is dropped with what was attached to it.
     #[test]
-    fn a_queued_message_can_be_taken_back_or_dropped() {
+    fn a_queued_message_moves_is_edited_in_place_or_is_dropped() {
         let mut c = chat();
-        c.attachments.push(Attachment::File("/tmp/a.png".into()));
+        c.attachments = vec![
+            Attachment::File("/tmp/a.png".into()),
+            Attachment::File("/tmp/b.png".into()),
+        ];
         c.enqueue("first".into());
         c.enqueue("second".into());
         c.enqueue("third".into());
-        let (first, second) = (c.queued[0].id, c.queued[1].id);
+        let (first, second, third) = (c.queued[0].id, c.queued[1].id, c.queued[2].id);
 
-        c.unqueue(first, true);
-        assert_eq!(c.attachments, [Attachment::File("/tmp/a.png".into())]);
-        c.unqueue(second, false);
-        assert!(c.attachments.len() == 1, "a dropped one's files go with it");
-        let left: Vec<&str> = c.queued.iter().map(|q| q.text.as_str()).collect();
-        assert_eq!(left, ["third"]);
-        // Taken back and queued again, it goes after what was waiting.
-        c.enqueue("first, edited".into());
-        let order: Vec<&str> = c.queued.iter().map(|q| q.text.as_str()).collect();
-        assert_eq!(order, ["third", "first, edited"]);
-        assert!(c.queued[1].attachments.len() == 1);
+        c.move_queued(third, 0);
+        assert_eq!(order(&c), ["third", "first", "second"]);
+        c.move_queued(third, 9);
+        assert_eq!(order(&c), ["first", "second", "third"], "past the end");
+
+        c.edit_queued(first, "first, edited".into(), &[0]);
+        assert_eq!(order(&c), ["first, edited", "second", "third"]);
+        assert_eq!(
+            c.queued[0].attachments,
+            [Attachment::File("/tmp/b.png".into())],
+            "only the one taken off goes"
+        );
+        c.edit_queued(second, " ".into(), &[]);
+        assert_eq!(order(&c), ["first, edited", "third"], "nothing left of it");
+        c.unqueue(first);
+        assert_eq!(order(&c), ["third"]);
+        assert!(c.attachments.is_empty(), "a dropped one's files go with it");
     }
 
-    /// A mention goes with the message whose text holds its token, comes
-    /// back with a queued message taken to edit, and comes back out of a
-    /// replayed conversation.
+    /// A message being edited does not go: when it is next, the queue
+    /// waits for it, and the user is told the turn ended.
+    #[test]
+    fn the_queue_waits_for_the_message_being_edited() {
+        let mut c = chat();
+        c.enqueue("taller".into());
+        c.enqueue("and red".into());
+        let first = c.queued[0].id;
+        c.editing_queued(first, true);
+        let ended = ChatEvent::TurnEnded {
+            stop_reason: "end_turn".into(),
+        };
+        assert!(notice(&c, &ended).is_some(), "it waits on the user");
+        end_turn(&mut c, "end_turn");
+        c.send_next(String::new());
+        assert!(sent(&c).is_empty(), "waits on the edit");
+
+        c.edit_queued(first, "much taller".into(), &[]);
+        c.send_next(String::new());
+        assert_eq!(sent(&c), ["much taller"]);
+    }
+
+    /// Steering sends a queued message next: a turn on now stops for it,
+    /// unheld and untold, the stop shown as a steer, and the rest goes on
+    /// after it in its order.
+    #[test]
+    fn a_steered_message_stops_the_turn_and_goes_ahead_of_the_rest() {
+        let mut c = chat();
+        for text in ["first", "second", "third"] {
+            c.enqueue(text.into());
+        }
+        c.stop();
+        let third = c.queued[2].id;
+        c.editing_queued(third, true);
+        c.steer(third);
+        assert!(!c.held, "a steer lets a held queue go");
+        assert!(c.steering);
+        assert!(!c.queued[0].editing, "its edit is closed");
+        assert_eq!(order(&c), ["third", "first", "second"]);
+
+        let cancelled = ChatEvent::TurnEnded {
+            stop_reason: "cancelled".into(),
+        };
+        assert_eq!(notice(&c, &cancelled), None);
+        end_turn(&mut c, "cancelled");
+        assert_eq!(
+            c.entries.last(),
+            Some(&ChatEntry::Note("Stopped to steer".into()))
+        );
+        assert!(!c.steering);
+        c.send_next(String::new());
+        assert_eq!(sent(&c), ["third"]);
+        end_turn(&mut c, "end_turn");
+        c.send_next(String::new());
+        assert_eq!(sent(&c), ["third", "first"], "the rest goes on");
+
+        // With the agent waiting, it just goes next; nothing is stopped.
+        end_turn(&mut c, "end_turn");
+        c.enqueue("fourth".into());
+        let fourth = c.queued[1].id;
+        c.steer(fourth);
+        assert!(!c.steering);
+        c.send_next(String::new());
+        assert_eq!(sent(&c), ["third", "first", "fourth"]);
+        assert_eq!(order(&c), ["second"]);
+    }
+
+    /// A mention goes with the message whose text holds its token, stays
+    /// with a queued message whose edit keeps its token, and comes back
+    /// out of a replayed conversation.
     #[test]
     fn mentions_go_with_their_message_and_come_back() {
         let block = |token: &str| Mention {
@@ -762,17 +914,15 @@ mod tests {
         };
         let mut c = chat();
         c.mentions = vec![block("@selection"), block("@selection-2")];
-        c.enqueue("thicken @selection".into());
-        assert_eq!(c.queued[0].mentions, [block("@selection")]);
-        assert!(c.mentions.is_empty(), "the one taken out of the text goes");
+        c.enqueue("thicken @selection and @selection-2".into());
+        assert!(c.mentions.is_empty());
         let id = c.queued[0].id;
-        c.unqueue(id, true);
+        c.edit_queued(id, "thicken @selection by 2".into(), &[]);
         assert_eq!(
-            c.mentions,
+            c.queued[0].mentions,
             [block("@selection")],
-            "edited, it keeps its chip"
+            "the one taken out of the text goes"
         );
-        c.enqueue("thicken @selection by 2".into());
         end_turn(&mut c, "end_turn");
         c.send_next(String::new());
         let Some(ChatEntry::User { mentions, .. }) = c.entries.last() else {
