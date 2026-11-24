@@ -1068,6 +1068,74 @@ endsolid t
         run_in_empty_document(&mut registry(), script, "names").unwrap();
     }
 
+    /// A pick stored before a later pad merges its faces with others is
+    /// listed under the merged faces: `doc.faces` and `doc.edges` give
+    /// every name a face carries (`name` and `also`), so each name the pick
+    /// kept is found on the edge it still resolves to, and a fillet on it
+    /// builds unwarned. Names follow random feature ids, so only equality
+    /// between reads is asserted, never which name is least.
+    #[test]
+    fn faces_and_edges_list_every_name_a_merged_face_carries() {
+        let script = r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0, "the block builds")
+            local function front_top(edges)
+              for _, e in ipairs(edges) do
+                if math.abs(e.direction[1]) > 0.99 and math.abs(e.point[2]) < 1e-3
+                    and math.abs(e.point[3] - 5) < 1e-3 then
+                  return e
+                end
+              end
+            end
+            local picked = front_top(pc.doc.edges{body = body})
+            local kept = {picked.names[1], picked.names[2]}
+
+            local beside = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.rect{sketch = beside, x = 20, y = 0, width = 10, height = 10}
+            pc.design.pad{sketch = beside, length = 5, refine = true}
+            assert(#pc.doc.rebuild() == 0, "the second block fuses on")
+
+            local function carries(name, first, others)
+              if first == name then return true end
+              for _, n in ipairs(others or {}) do
+                if n == name then return true end
+              end
+              return false
+            end
+            local edge = front_top(pc.doc.edges{body = body})
+            assert(math.abs(edge.length - 30) < 1e-3, "one merged edge: " .. edge.length)
+            assert(edge.also and #edge.also[1] > 0 and #edge.also[2] > 0,
+              "each merged face carries both blocks' names")
+            for _, name in ipairs(kept) do
+              local found = false
+              for i = 1, 2 do
+                local also = edge.also and edge.also[i] or {}
+                found = found or carries(name, edge.names[i], also)
+              end
+              assert(found, "doc.edges lists " .. name .. " on the merged edge")
+              local on = 0
+              for _, f in ipairs(pc.doc.faces{body = body}) do
+                if carries(name, f.name, f.also) then
+                  on = on + 1
+                  assert(f.index == edge.faces[1] or f.index == edge.faces[2],
+                    "on one of the edge's faces")
+                end
+              end
+              assert(on == 1, "doc.faces lists " .. name .. " on one face, not " .. on)
+            end
+
+            local fillet = pc.design.fillet{body = body, radius = 1, edges = {Edges = {
+              {point = picked.point, direction = picked.direction, faces = kept}}}}
+            assert(#pc.doc.rebuild() == 0, "the fillet builds")
+            local read = pc.doc.feature{id = fillet}
+            assert(read.warning == nil, tostring(read.warning))
+            "#;
+        run_in_empty_document(&mut registry(), script, "merged").unwrap();
+    }
+
     /// A document read back builds its features again rather than take
     /// the solid it saved as built: a fillet too big for its edge fails
     /// again, the body is the pad before it, and the document is unedited.

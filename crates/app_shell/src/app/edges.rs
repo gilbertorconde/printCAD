@@ -415,6 +415,15 @@ fn outline_length(mesh: &TriMesh, edge: u32) -> f32 {
         .sum()
 }
 
+/// The other names face `f` of `mesh` carries, as strings, when it has
+/// any: a reference finds the face by these as by its `name`.
+pub(crate) fn also_json(mesh: &kernel_api::TriMesh, f: usize) -> Option<serde_json::Value> {
+    let others = mesh.face_other_names.get(f).filter(|o| !o.is_empty())?;
+    Some(serde_json::json!(
+        others.iter().map(|n| n.to_string()).collect::<Vec<_>>()
+    ))
+}
+
 /// `doc.edges`: each kernel edge of `mesh`, in the mesh's frame: its index,
 /// whether it is a line, a circle (or an arc of one) or another curve, a
 /// point halfway along it and its direction there (what an edge pick
@@ -520,6 +529,19 @@ pub(crate) fn edges_of(mesh: &TriMesh) -> serde_json::Value {
             if names.iter().any(|n| *n != 0) {
                 // Strings, since a script's numbers cannot hold every name.
                 out["names"] = json!(names.map(|n| n.to_string()));
+                // The other names each of those faces carries, in the same
+                // order: an edge pick is found by any of them.
+                let also = names.map(|n| {
+                    named(n)
+                        .and_then(|f| also_json(mesh, f as usize))
+                        .unwrap_or_else(|| json!([]))
+                });
+                if also
+                    .iter()
+                    .any(|a| a.as_array().is_some_and(|a| !a.is_empty()))
+                {
+                    out["also"] = json!(also);
+                }
             }
             if let Some(c) = circle {
                 out["centre"] = json!(c.center);

@@ -303,6 +303,7 @@ fn mesh_faces(
             .push(face_surface(model, face_shape, average));
         if let Some(names) = names {
             mesh.face_names.push(names.primary(face_shape));
+            mesh.face_other_names.push(names.others_of(face_shape));
             mesh.face_makers.push(names.maker_of(face_shape));
         }
 
@@ -425,6 +426,9 @@ fn mesh_faces(
     // in the body's colour rather than as white.
     if face_colors.is_empty() {
         mesh.colors.clear();
+    }
+    if mesh.face_other_names.iter().all(Vec::is_empty) {
+        mesh.face_other_names.clear();
     }
     Ok(mesh)
 }

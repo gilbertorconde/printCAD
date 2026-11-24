@@ -20,7 +20,9 @@
   the history says nothing after the faces it lies on or covers; the
   faces an op left alone recognised by a `Print`), each op under its
   feature's name (`ChainRequest::tags`, the worker's tags). The
-  mesh carries `face_names` and `edge_faces`; a pick keeps them
+  mesh carries `face_names` (each face's least name), `face_other_names`
+  (the rest, which `doc.faces` / `doc.edges` list as `also`) and
+  `edge_faces`; a pick keeps them
   (`FaceRef::name`, `EdgeRef::faces`, `FacePick`, `EdgePick`, datum
   anchors, `FaceSupport` of a sketch placed on a face), and a rebuild finds
   a named face or edge by name first (`naming::find_face`/`find_edge`,
