@@ -308,7 +308,7 @@ fn default_feature(
         body,
         crate::Given {
             scripted: true,
-            spine: None,
+            ..Default::default()
         },
     );
     ctx.active_document_object = saved.0;
@@ -871,6 +871,29 @@ mod tests {
             let sections = s.fields(&made)["Loft"]["sections"].clone();
             assert_eq!(sections, json!([a, b]), "{args}");
         }
+    }
+
+    /// Faces alone are a loft's sections: it needs no sketch, and goes in
+    /// the body given.
+    #[test]
+    fn a_loft_takes_faces_alone() {
+        let mut s = Session::new();
+        let body = s.doc.create_body(None);
+        let faces = json!([
+            {"point": [0.0, 0.0, 5.0], "normal": [0.0, 0.0, 1.0]},
+            {"point": [0.0, 0.0, 40.0], "normal": [0.0, 0.0, -1.0]},
+        ]);
+        let made = s
+            .run("design.loft", json!({"body": body, "sections": faces}))
+            .unwrap();
+        let fields = s.fields(&made);
+        assert_eq!(
+            fields["Loft"]["sections"][1]["point"],
+            json!([0.0, 0.0, 40.0])
+        );
+        assert_eq!(fields["Loft"]["sections"].as_array().map(Vec::len), Some(2));
+        let err = s.run("design.loft", json!({"body": body})).unwrap_err();
+        assert!(err.to_string().contains("give `sketch`"), "{err}");
     }
 
     /// A kind that takes values, given by its name alone, is refused with

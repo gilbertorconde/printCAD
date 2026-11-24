@@ -567,6 +567,12 @@ impl OpBuffer {
 pub struct JournalBuffer {
     pairs: Vec<(DocumentOp, DocumentOp)>,
     barrier: bool,
+    /// The pairs before this index were there when the buffer was sealed:
+    /// nothing later coalesces into them, and [`take_since_seal`]
+    /// (Self::take_since_seal) leaves them.
+    sealed: usize,
+    /// A barrier crossed since the seal.
+    crossed_since_seal: bool,
 }
 
 impl Clone for JournalBuffer {
@@ -580,8 +586,14 @@ impl JournalBuffer {
         let Some(inverse) = inverse else {
             self.barrier = true;
             self.pairs.clear();
+            self.sealed = 0;
+            self.crossed_since_seal = true;
             return;
         };
+        if self.pairs.len() <= self.sealed {
+            self.pairs.push((op.clone(), inverse));
+            return;
+        }
         if let (
             DocumentOp::PatchFeatureData { id, patch },
             DocumentOp::PatchFeatureData { patch: undo, .. },
@@ -615,8 +627,30 @@ impl JournalBuffer {
 
     /// Everything since the last take, plus whether a barrier was crossed.
     pub fn take(&mut self) -> (Vec<(DocumentOp, DocumentOp)>, bool) {
+        self.unseal();
         let barrier = std::mem::take(&mut self.barrier);
         (std::mem::take(&mut self.pairs), barrier)
+    }
+
+    /// Keep what is here from what comes after: later pairs never
+    /// coalesce into these, and [`take_since_seal`](Self::take_since_seal)
+    /// takes only the later ones.
+    pub fn seal(&mut self) {
+        self.sealed = self.pairs.len();
+        self.crossed_since_seal = false;
+    }
+
+    /// Lift the seal: the buffer is one run of pairs again.
+    pub fn unseal(&mut self) {
+        self.sealed = 0;
+        self.crossed_since_seal = false;
+    }
+
+    /// The pairs since the seal, plus whether a barrier was crossed since
+    /// it; the ones before it stay, sealed.
+    pub fn take_since_seal(&mut self) -> (Vec<(DocumentOp, DocumentOp)>, bool) {
+        let since = self.pairs.split_off(self.sealed.min(self.pairs.len()));
+        (since, std::mem::take(&mut self.crossed_since_seal))
     }
 
     pub fn is_empty(&self) -> bool {

@@ -164,13 +164,15 @@ assert(math.abs(volume - (math.pi * 100 * 20 - math.pi * (100 - 64) * 4)) < 1e-3
 
 ## design.loft, design.subtractive_loft
 
-`sections = {a, b, ...}` lists the sketches in order; given only `sketch`, the
-loft has that one section and fails at `pc.doc.rebuild()` (a loft needs at
-least two sections).
+`sections = {a, b, ...}` lists the sections in order: sketch ids, or flat
+faces of the body's solid, each `{point = {x, y, z}, normal = {x, y, z}}` in
+the body's own frame, mixed as needed. Given only `sketch`, the loft has that
+one section and fails at `pc.doc.rebuild()` (a loft needs at least two
+sections); given `sketch` and `sections`, the sketch goes first.
 
-It goes in the first section's body; later sections may be sketches of other
-bodies. A sketch of a single point as the first or last section closes the
-loft to a tip.
+It goes in the first sketch's body; with faces only, it needs `body` (or a
+selected body). Later sketches may be of other bodies. A sketch of a single
+point as the first or last section closes the loft to a tip.
 
 `ruled = true` joins the sections with straight walls; else the walls run
 smoothly through them. `closed = true` loops back to the first.
@@ -193,6 +195,28 @@ assert(#pc.doc.rebuild() == 0, "the loft builds")
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - 15 / 3 * (400 + 100 + 200)) < 1e-3, volume)
 assert(#pc.doc.faces{body = body} == 6)
+```
+
+### A loft between two flat faces of the solid, no sketch
+
+```lua
+local base = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = base, x = -10, y = -10, width = 20, height = 20}
+local body = pc.doc.feature{id = base}.body
+pc.design.pad{sketch = base, length = 5}
+local cap = pc.sketch.new{body = body, plane = "XY", offset = 40}
+pc.sketch.rect{sketch = cap, x = -5, y = -5, width = 10, height = 10}
+pc.design.pad{sketch = cap, length = 5}
+-- The tops of the two blocks, each a point on it and its outward normal.
+pc.design.loft{body = body, ruled = true, sections = {
+  {point = {0, 0, 5}, normal = {0, 0, 1}},
+  {point = {0, 0, 45}, normal = {0, 0, 1}},
+}}
+assert(#pc.doc.rebuild() == 0, "the loft builds")
+-- The lower block and a frustum up to the top of the upper block, which it
+-- holds: h / 3 * (A1 + A2 + sqrt(A1 * A2)).
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (2000 + 40 / 3 * (400 + 100 + 200))) < 1e-3, volume)
 ```
 
 ## design.subtractive_loft

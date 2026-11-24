@@ -221,6 +221,12 @@ impl Drawing {
 
     /// Whether `p`, a point drawn to `chord`, lies on the face.
     fn holds(&self, p: Point, chord: f64) -> bool {
+        self.distance_to(p, chord).is_some()
+    }
+
+    /// How far `p`, a point drawn to `chord`, lies from the face's drawing,
+    /// when near enough for the face to hold it.
+    fn distance_to(&self, p: Point, chord: f64) -> Option<f64> {
         let reach = 2.0 * (self.chord + chord) + SLACK;
         if p.x < self.min.x - reach
             || p.y < self.min.y - reach
@@ -229,11 +235,13 @@ impl Drawing {
             || p.y > self.max.y + reach
             || p.z > self.max.z + reach
         {
-            return false;
+            return None;
         }
         self.triangles
             .iter()
-            .any(|t| point_triangle_distance(p, t) <= reach)
+            .map(|t| point_triangle_distance(p, t))
+            .filter(|d| *d <= reach)
+            .min_by(f64::total_cmp)
     }
 }
 
@@ -514,25 +522,43 @@ impl NameMap {
     }
 
     /// Names every face of `self` also after each source face whose
-    /// inside it covers: what a merge of faces keeps.
+    /// inside it covers: what a merge of faces keeps. A source face's
+    /// inside is covered by the faces it lies nearest (more than one only
+    /// where it lies on their shared rim): a face's drawing reaches past
+    /// its rim by its chord, which on a wide flat face takes in the inside
+    /// of a narrow face beside it.
     fn with_covered(mut self, model: &Model, sources: &[&NameMap]) -> Self {
-        for f in &mut self.faces {
+        // How far each source face's inside lies from the faces that hold
+        // it, and from the nearest of them.
+        let mut near: Vec<Vec<((usize, usize), f64)>> = vec![Vec::new(); self.faces.len()];
+        let mut least: HashMap<(usize, usize), f64> = HashMap::new();
+        for (fi, f) in self.faces.iter().enumerate() {
             // A face the op kept as it was is drawn once, for it and for
             // the source face it is.
             let twin = sources
                 .iter()
                 .find_map(|s| s.named(&f.face).filter(|g| g.face == f.face));
-            for source in sources {
-                for g in &source.faces {
-                    if g.names.is_empty() || g.names.iter().all(|n| f.names.contains(n)) {
+            for (si, source) in sources.iter().enumerate() {
+                for (gi, g) in source.faces.iter().enumerate() {
+                    if g.names.is_empty() {
                         continue;
                     }
                     let drawn = g.drawing(model);
-                    if let Some((p, _)) = drawn.sample
-                        && f.drawing_shared(model, twin).holds(p, drawn.chord)
-                    {
-                        f.names.extend(&g.names);
-                    }
+                    let Some(d) = drawn.sample.and_then(|(p, _)| {
+                        f.drawing_shared(model, twin).distance_to(p, drawn.chord)
+                    }) else {
+                        continue;
+                    };
+                    near[fi].push(((si, gi), d));
+                    let best = least.entry((si, gi)).or_insert(f64::INFINITY);
+                    *best = best.min(d);
+                }
+            }
+        }
+        for (f, near) in self.faces.iter_mut().zip(near) {
+            for ((si, gi), d) in near {
+                if d <= least[&(si, gi)] + SLACK {
+                    f.names.extend(&sources[si].faces[gi].names);
                 }
             }
             f.names.sort_unstable();
