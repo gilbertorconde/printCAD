@@ -871,7 +871,7 @@ fn answer(input: &Sketch, held: &[Uuid]) -> Value {
     let ordinary = build_system(input);
     let held_sys = build_system_holding(input, None, held);
     let mut attempt = input.clone();
-    let held_outcome = solve_system(&mut attempt, held_sys).0;
+    let held_outcome = solve_system(&mut attempt, &held_sys, None).0;
     let mut sketch = input.clone();
     let result = solve_holding(&mut sketch, held);
     let diagnosis = diagnose(&sketch);
@@ -1378,7 +1378,7 @@ fn numerical_residual_and_stored_geometry_are_measured_separately() {
     let result = iterate(&system, input.solver);
     assert!(matches!(result.outcome, SolveOutcome::Converged { .. }));
     assert!(result.residual < result.threshold);
-    apply(&mut input, &system, &result);
+    apply(&mut input, &system, &result, None);
     let a = input.point_position(Uuid::from_u128(1)).unwrap().to_glam();
     let b = input.point_position(Uuid::from_u128(2)).unwrap().to_glam();
     assert!(a.length() < 1e-5);

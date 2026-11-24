@@ -32,7 +32,7 @@ pub fn solve_checked(
         ));
     }
     let sys = sketch_solver::compile::compile(&adapter::prepare(sketch, &[]))?;
-    Ok(solve_prepared(sketch, sys).0)
+    Ok(solve_prepared(sketch, &sys, None).0)
 }
 
 /// Solve the sketch's constraints by adjusting point positions and
@@ -63,8 +63,9 @@ pub fn solve_measuring(sketch: &mut Sketch) -> (SolveOutcome, Option<Measured>) 
     // Text outlines are made from their blocks after the solve.
     crate::text::strip(sketch);
     let (outcome, measured) = if sketch.soft.is_empty() {
-        let sys = build_system(sketch);
-        solve_prepared(sketch, sys)
+        let prepared = Prepared::of(sketch);
+        let plain = Plain::of(&prepared);
+        solve_prepared(sketch, plain.system(), Some(prepared))
     } else {
         solve_soft(sketch)
     };
@@ -130,6 +131,35 @@ impl Prepared {
     }
 }
 
+/// The system a solve of a [`Prepared`] problem iterates: shared with it
+/// as its system for rank where the two are one.
+enum Plain {
+    Shared(std::sync::Arc<sketch_solver::compile::RankSystem>),
+    Own(Box<System>),
+}
+
+impl Plain {
+    fn of(prepared: &Prepared) -> Self {
+        let (system, constrained) = sketch_solver::compile::compile_plain(&prepared.problem);
+        if !constrained {
+            return Plain::Own(Box::new(system));
+        }
+        let rank = std::sync::Arc::new(sketch_solver::compile::RankSystem {
+            system,
+            plain: true,
+        });
+        let _ = prepared.rank.set(std::sync::Arc::clone(&rank));
+        Plain::Shared(rank)
+    }
+
+    fn system(&self) -> &System {
+        match self {
+            Plain::Shared(rank) => &rank.system,
+            Plain::Own(system) => system,
+        }
+    }
+}
+
 /// [`solve`] with the sketch's measured points settling what the
 /// constraints leave free.
 fn solve_soft(sketch: &mut Sketch) -> (SolveOutcome, Option<Measured>) {
@@ -147,7 +177,7 @@ fn solve_soft(sketch: &mut Sketch) -> (SolveOutcome, Option<Measured>) {
     let problem = adapter::prepare(sketch, &[]);
     let Ok(answer) = sketch_solver::soft::solve_soft(&problem, &soft) else {
         let sys = build_system(sketch);
-        return solve_prepared(sketch, sys);
+        return solve_prepared(sketch, &sys, None);
     };
     let iteration = Iteration {
         outcome: from_core(answer.iteration.outcome),
@@ -156,14 +186,19 @@ fn solve_soft(sketch: &mut Sketch) -> (SolveOutcome, Option<Measured>) {
         threshold: answer.iteration.threshold,
         values: answer.iteration.values,
     };
-    let dof = apply(sketch, &answer.system, &iteration);
+    let dof = apply(sketch, &answer.system, &iteration, None);
     crate::spline::refit_splines(sketch);
     crate::text::refresh(sketch);
     (iteration.outcome, dof)
 }
 
-fn solve_prepared(sketch: &mut Sketch, sys: System) -> (SolveOutcome, Option<Measured>) {
-    let solved = solve_system(sketch, sys);
+/// Solve `sketch` by `sys`, compiled from `prepared` where it is given.
+fn solve_prepared(
+    sketch: &mut Sketch,
+    sys: &System,
+    prepared: Option<Prepared>,
+) -> (SolveOutcome, Option<Measured>) {
+    let solved = solve_system(sketch, sys, prepared);
     crate::spline::refit_splines(sketch);
     crate::text::refresh(sketch);
     solved
@@ -180,7 +215,7 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     crate::text::strip(sketch);
     let before = sketch.geometry.clone();
     let sys = build_system_holding(sketch, None, held);
-    match solve_system(sketch, sys).0 {
+    match solve_system(sketch, &sys, None).0 {
         SolveOutcome::NotConverged { .. } => {
             sketch.geometry = before;
             solve(sketch)
@@ -193,9 +228,13 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     }
 }
 
-fn solve_system(sketch: &mut Sketch, sys: System) -> (SolveOutcome, Option<Measured>) {
-    let iteration = iterate(&sys, sketch.solver);
-    let dof = apply(sketch, &sys, &iteration);
+fn solve_system(
+    sketch: &mut Sketch,
+    sys: &System,
+    prepared: Option<Prepared>,
+) -> (SolveOutcome, Option<Measured>) {
+    let iteration = iterate(sys, sketch.solver);
+    let dof = apply(sketch, sys, &iteration, prepared);
     (iteration.outcome, dof)
 }
 
@@ -210,10 +249,17 @@ struct Iteration {
 }
 
 /// Store the answer and measure flags on the stored geometry. Returns
-/// the freedom measured on it, when one was.
-fn apply(sketch: &mut Sketch, sys: &System, iteration: &Iteration) -> Option<Measured> {
-    let measure = |sketch: &Sketch| {
-        let prepared = Prepared::of(sketch);
+/// the freedom measured on it, when one was. `prepared` is the problem
+/// of the sketch as it was solved, which the freedom is measured on when
+/// storing the answer changes nothing.
+fn apply(
+    sketch: &mut Sketch,
+    sys: &System,
+    iteration: &Iteration,
+    prepared: Option<Prepared>,
+) -> Option<Measured> {
+    let measure = |sketch: &Sketch, kept: Option<Prepared>| {
+        let prepared = kept.unwrap_or_else(|| Prepared::of(sketch));
         Measured {
             dof: prepared.dof(),
             prepared,
@@ -225,7 +271,7 @@ fn apply(sketch: &mut Sketch, sys: &System, iteration: &Iteration) -> Option<Mea
         // move though no constraint names it.
         let measured = (sketch.geometry.iter())
             .any(|g| !sketch.is_external(g.id()))
-            .then(|| measure(sketch));
+            .then(|| measure(sketch, prepared));
         sketch.is_fully_constrained = measured.as_ref().is_some_and(|m| m.dof == 0);
         sketch.unsolved = false;
         return measured;
@@ -233,9 +279,10 @@ fn apply(sketch: &mut Sketch, sys: &System, iteration: &Iteration) -> Option<Mea
     debug_assert!(iteration.residual.is_finite());
     debug_assert!(iteration.threshold.is_finite());
     debug_assert!(iteration.iterations <= sketch.solver.max_iterations.max(1) as usize);
-    write_back(sketch, sys, &iteration.values);
+    let changed = write_back(sketch, sys, &iteration.values);
+    let kept = prepared.filter(|_| !changed);
     let measured =
-        matches!(iteration.outcome, SolveOutcome::Converged { .. }).then(|| measure(sketch));
+        matches!(iteration.outcome, SolveOutcome::Converged { .. }).then(|| measure(sketch, kept));
     sketch.is_fully_constrained = measured.as_ref().is_some_and(|m| m.dof == 0);
     sketch.unsolved = matches!(iteration.outcome, SolveOutcome::NotConverged { .. });
     measured
@@ -491,24 +538,34 @@ pub fn superseded(sketch: &Sketch, new: &[Uuid]) -> Vec<Uuid> {
     removed
 }
 
-/// Write the solved variables back into the sketch geometry.
-fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
+/// `slot` set to `value`, `changed` raised when that changes it.
+fn set<T: PartialEq>(slot: &mut T, value: T, changed: &mut bool) {
+    if *slot != value {
+        *slot = value;
+        *changed = true;
+    }
+}
+
+/// Write the solved variables back into the sketch geometry. Answers
+/// whether that changed the sketch.
+fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) -> bool {
+    let mut changed = false;
     let mut turned = std::collections::HashSet::new();
     for element in &mut sketch.geometry {
         match element {
             GeometryElement::Point(p) => {
                 if let Some(&i) = sys.point_vars.get(&adapter::point(p.id)) {
-                    p.position = Vec2D::new(x[i], x[i + 1]);
+                    set(&mut p.position, Vec2D::new(x[i], x[i + 1]), &mut changed);
                 }
             }
             GeometryElement::Circle(c) => {
                 if let Some(&i) = sys.radius_vars.get(&adapter::curve(c.id)) {
-                    c.radius = x[i];
+                    set(&mut c.radius, x[i], &mut changed);
                 }
             }
             GeometryElement::Arc(a) => {
                 if let Some(&i) = sys.radius_vars.get(&adapter::curve(a.id)) {
-                    a.radius = x[i];
+                    set(&mut a.radius, x[i], &mut changed);
                 }
             }
             // A minor radius dragged past the major one makes it the major:
@@ -523,8 +580,8 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
                         if b > a {
                             turned.insert(e.id);
                         }
-                        e.major = Vec2D::new(axis.x, axis.y);
-                        e.ratio = ratio;
+                        set(&mut e.major, Vec2D::new(axis.x, axis.y), &mut changed);
+                        set(&mut e.ratio, ratio, &mut changed);
                     }
                 }
             }
@@ -532,8 +589,8 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
                 if let Some(&k) = sys.shape_vars.get(&adapter::curve(c.id)) {
                     let axis = Vec2D::new(x[k], x[k + 1]);
                     if axis.to_glam().length() > 1e-9 {
-                        c.axis = axis;
-                        c.minor = x[k + 2].abs();
+                        set(&mut c.axis, axis, &mut changed);
+                        set(&mut c.minor, x[k + 2].abs(), &mut changed);
                     }
                 }
             }
@@ -545,6 +602,7 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
     // lines, so the next solve holds the same ellipse rather than trading
     // them back. The frame turns a quarter, so the axis that was the major
     // runs the other way as the minor: its line's ends trade too.
+    changed |= !turned.is_empty();
     let mut reversed = Vec::new();
     for c in &mut sketch.constraints {
         match &mut c.kind {
@@ -610,7 +668,7 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
         .collect();
     for (i, side) in sides {
         if let ConstraintKind::InternalAlignment { role, .. } = &mut sketch.constraints[i].kind {
-            *role = side;
+            set(role, side, &mut changed);
         }
     }
     let derived = sys
@@ -621,17 +679,19 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
             sketch_solver::problem::PointReference::Origin => crate::sketch::ORIGIN_ID,
         })
         .collect();
-    place_derived_foci(sketch, &derived);
+    place_derived_foci(sketch, &derived) || changed
 }
 
 /// The foci the solve left out, placed from their ellipse as it stands: a
 /// focus the solve placed has its partner opposite it through the centre,
 /// under the other name; otherwise the first stands `√(a² − b²)` from the
 /// centre toward the major vertex and the second as far the other way.
-fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<Uuid>) {
+/// Answers whether that moved or renamed one.
+fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<Uuid>) -> bool {
     if derived.is_empty() {
-        return;
+        return false;
     }
+    let mut changed = false;
     let foci: Vec<(usize, Uuid, InternalRole, Uuid)> = sketch
         .constraints
         .iter()
@@ -683,12 +743,13 @@ fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<U
             }
         };
         if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(element) {
-            p.position = Vec2D::from_glam(at);
+            set(&mut p.position, Vec2D::from_glam(at), &mut changed);
         }
         if let ConstraintKind::InternalAlignment { role: r, .. } = &mut sketch.constraints[i].kind {
-            *r = role;
+            set(r, role, &mut changed);
         }
     }
+    changed
 }
 /// The elements nothing left free can move: a point fixed in both
 /// coordinates, a curve whose points are all fixed and whose own size
