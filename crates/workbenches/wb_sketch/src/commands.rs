@@ -598,7 +598,7 @@ fn save(
     answer: Value,
 ) -> CommandResult {
     crate::solver::solve(&mut feature.sketch);
-    crate::placement::write_sketch_data(ctx.document, id, &mut feature, None)
+    crate::placement::store_sketch_data(ctx.document, id, feature)
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.mark_feature_dirty(id);
     Ok(answer)

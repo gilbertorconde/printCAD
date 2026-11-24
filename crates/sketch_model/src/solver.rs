@@ -84,7 +84,8 @@ fn laid_out(sketch: &Sketch) -> bool {
 /// A sketch's problem as the solver is handed it with nothing held, and
 /// its parts compiled (taken from the thread's [`PartCache`] where it
 /// holds them): one sketch's solve, freedom, settling and locked elements
-/// share them. The whole problem compiled for rank, which a diagnosis
+/// share them, and its diagnosis where the parts answer it. The whole
+/// problem compiled for rank, which a diagnosis the parts cannot answer
 /// reads, once first asked for.
 #[derive(Clone)]
 pub struct Prepared {
@@ -478,18 +479,28 @@ pub fn diagnose_with(
         owned_solved = Prepared::of(&probe);
         (outcome, &owned_solved)
     };
-    // The system the diagnosis compiles, where one is kept.
-    let full = match outcome {
-        SolveOutcome::NotConverged { .. } => prepared.plain(),
-        _ => solved.plain(),
-    };
-    let result = sketch_solver::diagnosis::diagnose_compiled(
+    // Read from the parts where they answer it, else from the whole
+    // problem's system, compiled where none is kept.
+    let by_parts = prepared.parts.diagnose(
         &prepared.problem,
         to_core(outcome),
         &solved.problem,
+        &solved.parts,
         dof,
-        full,
     );
+    let result = by_parts.unwrap_or_else(|| {
+        let full = match outcome {
+            SolveOutcome::NotConverged { .. } => prepared.plain(),
+            _ => solved.plain(),
+        };
+        sketch_solver::diagnosis::diagnose_compiled(
+            &prepared.problem,
+            to_core(outcome),
+            &solved.problem,
+            dof,
+            full,
+        )
+    });
     Diagnosis {
         dof: result.dof,
         analyzed: result.analyzed,

@@ -498,17 +498,16 @@ pub(crate) fn stored_sketch(
 /// next (the evaluation after the edit) need not decode it. A text's
 /// letters are made again when its data is read, so a sketch with texts is
 /// read afresh instead.
-pub(crate) fn keep_written(
-    document: &core_document::Document,
-    id: FeatureId,
-    feature: &SketchFeature,
-) {
-    if feature.sketch.texts.is_empty()
-        && feature.sketch.derived.is_empty()
-        && let Some(node) = document.get_feature_meta(id)
-    {
-        node.keep_read(feature.clone());
+fn keep_written(document: &core_document::Document, id: FeatureId, feature: SketchFeature) {
+    if let Some(node) = document.get_feature_meta(id) {
+        node.keep_read(feature);
     }
+}
+
+/// Whether `feature` reads back from its data as itself, so it is kept as
+/// that data's read ([`keep_written`]).
+fn reads_back(feature: &SketchFeature) -> bool {
+    feature.sketch.texts.is_empty() && feature.sketch.derived.is_empty()
 }
 
 /// Write `feature` as sketch `id`'s data, then keep it as what reading
@@ -517,6 +516,34 @@ pub(crate) fn keep_written(
 /// the stored data reads as (read from the node when `None`), or the
 /// whole sketch when a patch cannot say it (a sketch with text).
 pub(crate) fn write_sketch_data(
+    document: &mut core_document::Document,
+    id: FeatureId,
+    feature: &mut SketchFeature,
+    before: Option<&SketchFeature>,
+) -> core_document::DocumentResult<()> {
+    write_data(document, id, feature, before)?;
+    if reads_back(feature) {
+        keep_written(document, id, feature.clone());
+    }
+    Ok(())
+}
+
+/// [`write_sketch_data`] of a sketch the caller is done with, kept as its
+/// data's read without a copy; `before` read from the node.
+pub(crate) fn store_sketch_data(
+    document: &mut core_document::Document,
+    id: FeatureId,
+    mut feature: SketchFeature,
+) -> core_document::DocumentResult<()> {
+    write_data(document, id, &mut feature, None)?;
+    if reads_back(&feature) {
+        keep_written(document, id, feature);
+    }
+    Ok(())
+}
+
+/// The patch or the whole data [`write_sketch_data`] records.
+fn write_data(
     document: &mut core_document::Document,
     id: FeatureId,
     feature: &mut SketchFeature,
@@ -535,7 +562,6 @@ pub(crate) fn write_sketch_data(
     if !patched {
         document.update_feature_data(id, core_document::WorkbenchFeature::to_json(&*feature))?;
     }
-    keep_written(document, id, feature);
     Ok(())
 }
 

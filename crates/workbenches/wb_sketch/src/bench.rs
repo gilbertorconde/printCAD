@@ -606,16 +606,25 @@ impl BenchBuild for SketchWorkbench {
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
         document: &core_document::Document,
     ) -> bool {
+        let datum_plane = |feature: &SketchFeature| {
+            (feature.support.as_ref())
+                .and_then(|s| values_of(s.datum).and_then(|data| s.plane_from(&data)))
+                .filter(|plane| feature.plane != *plane || feature.sketch.plane != *plane)
+        };
+        // Nothing to follow: no copy of the sketch.
+        let still = |feature: &SketchFeature| {
+            datum_plane(feature).is_none()
+                && feature.sketch.external.is_empty()
+                && feature.sketch.texts.iter().all(|b| !b.glyphs.is_empty())
+        };
+        if borrowed_holds(node, values, still) {
+            return false;
+        }
         let Some(mut feature) = read_values(node, values) else {
             return false;
         };
         let mut moved = false;
-        if let Some(plane) = feature
-            .support
-            .as_ref()
-            .and_then(|s| values_of(s.datum).and_then(|data| s.plane_from(&data)))
-            && (feature.plane != plane || feature.sketch.plane != plane)
-        {
+        if let Some(plane) = datum_plane(&feature) {
             feature.plane = plane;
             feature.sketch.plane = plane;
             moved = true;
@@ -645,6 +654,9 @@ impl BenchBuild for SketchWorkbench {
         document: &core_document::Document,
         kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
+        if borrowed_holds(node, values, |f| f.sketch.external.is_empty()) {
+            return false;
+        }
         let Some(mut feature) = read_values(node, values) else {
             return false;
         };
@@ -805,6 +817,17 @@ impl bench_panel::BenchUi for SketchWorkbench {
 
 /// The sketch `values` holds, read once per write of the node's data
 /// while `values` is that data ([`core_document::FeatureNode::read`]).
+/// Whether `values`, where they are the node's own data, read as a sketch
+/// that `test` holds, looked at without a copy; false for values a step
+/// changed.
+fn borrowed_holds(
+    node: &core_document::FeatureNode,
+    values: &serde_json::Value,
+    test: impl FnOnce(&SketchFeature) -> bool,
+) -> bool {
+    std::ptr::eq(values, &*node.data) && node.read_with(test) == Some(true)
+}
+
 fn read_values(
     node: &core_document::FeatureNode,
     values: &serde_json::Value,

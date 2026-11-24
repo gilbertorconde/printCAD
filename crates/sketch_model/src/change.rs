@@ -27,29 +27,88 @@ pub struct ListChange {
     /// An id stands twice in one of the lists, so items cannot be told
     /// apart by id: the rest of the change is not to be trusted.
     pub repeated: bool,
+    /// Where the changed items, then the added ones, stand in the later
+    /// list, when the earlier list's items all kept their places.
+    at: Option<Vec<usize>>,
+}
+
+/// Id lists found free of repeats lately, each with its ids as a set, so
+/// a list holding one of them in order, then ids added after, is checked
+/// by those alone.
+struct Unique {
+    ids: Vec<Uuid>,
+    set: IdMap<()>,
+}
+
+/// The [`Unique`] lists kept: a sketch's elements and constraints, and
+/// another sketch's.
+const UNIQUE: usize = 4;
+
+thread_local! {
+    static KNOWN_UNIQUE: std::cell::RefCell<Vec<Unique>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Whether an id stands twice in `before` followed by `added`.
+fn repeats(before: impl ExactSizeIterator<Item = Uuid> + Clone, added: &[Uuid]) -> bool {
+    KNOWN_UNIQUE.with_borrow_mut(|known| {
+        let n = before.len();
+        let at = (known.iter())
+            .position(|k| k.ids.len() == n && k.ids.iter().copied().eq(before.clone()));
+        let mut unique = match at {
+            Some(at) => known.remove(at),
+            None => {
+                let mut unique = Unique {
+                    ids: Vec::with_capacity(n + added.len()),
+                    set: IdMap::default(),
+                };
+                unique.set.reserve(n + added.len());
+                for key in before {
+                    if unique.set.insert(key, ()).is_some() {
+                        return true;
+                    }
+                    unique.ids.push(key);
+                }
+                unique
+            }
+        };
+        for &key in added {
+            if unique.set.insert(key, ()).is_some() {
+                return true;
+            }
+            unique.ids.push(key);
+        }
+        known.insert(0, unique);
+        known.truncate(UNIQUE);
+        false
+    })
 }
 
 impl ListChange {
     fn between<T: PartialEq>(before: &[T], after: &[T], id: impl Fn(&T) -> Uuid) -> Self {
         let mut change = Self::default();
+        // Most edits keep every item where it stood and add after them.
+        let mut at = Vec::new();
+        let kept = after.len() >= before.len()
+            && (before.iter().zip(after).enumerate()).all(|(k, (a, b))| {
+                if a == b {
+                    return true;
+                }
+                at.push(k);
+                id(a) == id(b)
+            });
+        if kept {
+            change.changed = at.iter().map(|&k| id(&after[k])).collect();
+            let tail = &after[before.len()..];
+            change.added = tail.iter().map(&id).collect();
+            change.repeated = repeats(before.iter().map(&id), &change.added);
+            at.extend(before.len()..after.len());
+            change.at = Some(at);
+            return change;
+        }
         let mut was: IdMap<usize> = IdMap::default();
         was.reserve(before.len());
         for (at, item) in before.iter().enumerate() {
             change.repeated |= was.insert(id(item), at).is_some();
-        }
-        // Most edits keep every item where it stood and add after them.
-        if after.len() >= before.len() && before.iter().zip(after).all(|(a, b)| id(a) == id(b)) {
-            change.changed = (before.iter().zip(after))
-                .filter(|(a, b)| a != b)
-                .map(|(_, b)| id(b))
-                .collect();
-            let mut added: IdMap<()> = IdMap::default();
-            for item in &after[before.len()..] {
-                let key = id(item);
-                change.repeated |= was.contains_key(&key) || added.insert(key, ()).is_some();
-                change.added.push(key);
-            }
-            return change;
         }
         let mut last = None;
         let mut seen: IdMap<()> = IdMap::default();
@@ -229,6 +288,19 @@ fn write_list<T: serde::Serialize>(
     if change.changed.is_empty() && change.added.is_empty() {
         return Some(());
     }
+    if let Some(at) = &change.at {
+        let added = at.len() - change.added.len();
+        for (n, &k) in at.iter().enumerate() {
+            let written = serde_json::to_value(&items[k]).ok()?;
+            if n >= added {
+                let previous = k.checked_sub(1).map(|p| id(&items[p]).to_string());
+                patch.insert(list.clone(), previous, written);
+            } else {
+                patch.set(item(id(&items[k])), written);
+            }
+        }
+        return Some(());
+    }
     let wanted: IdMap<()> = change
         .changed
         .iter()
@@ -315,6 +387,13 @@ mod tests {
                 f.section_view = true;
                 f.sketch.is_fully_constrained = !f.sketch.is_fully_constrained;
             }),
+            ("change and append", |f| {
+                if let GeometryElement::Point(p) = &mut f.sketch.geometry[2] {
+                    p.position.y = -3.0;
+                }
+                point(&mut f.sketch, 11.0);
+                point(&mut f.sketch, 12.0);
+            }),
             ("reorder", |f| f.sketch.geometry.swap(1, 4)),
             ("constraint", |f| {
                 let a = f.sketch.geometry[1].id();
@@ -363,6 +442,38 @@ mod tests {
         assert_eq!(change.geometry.changed, [moved]);
         assert!(!change.geometry.reordered);
         assert!(change.constraints.is_empty());
+    }
+
+    /// An id standing twice is caught on a list already found free of
+    /// repeats, where only what was added is looked at: an element added
+    /// under an id the sketch holds; and on a list holding one twice, each
+    /// time it is compared.
+    #[test]
+    fn a_repeated_id_is_caught_on_a_list_seen_before() {
+        let before = feature();
+        let mut after = before.clone();
+        point(&mut after.sketch, 9.0);
+        let change = SketchChange::between(&before.sketch, &after.sketch);
+        assert!(!change.geometry.repeated);
+        let mut again = after.clone();
+        let copy = again.sketch.geometry[0].clone();
+        again.sketch.geometry.push(copy);
+        let change = SketchChange::between(&after.sketch, &again.sketch);
+        assert!(change.geometry.repeated);
+        assert!(again.patch_over(&after, &after.to_json()).is_none());
+
+        let mut twice = before.clone();
+        let copy = twice.sketch.geometry[1].clone();
+        twice.sketch.geometry.push(copy);
+        let mut more = twice.clone();
+        point(&mut more.sketch, 3.0);
+        for _ in 0..2 {
+            assert!(
+                SketchChange::between(&twice.sketch, &more.sketch)
+                    .geometry
+                    .repeated
+            );
+        }
     }
 
     /// Data that is not what the earlier sketch reads from is not patched.

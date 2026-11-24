@@ -71,6 +71,7 @@ pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settin
         iterations,
         residual,
         threshold,
+        ..
     } = solved;
     Iteration {
         values: values.pop().flatten().unwrap_or_else(|| sys.vars.clone()),
@@ -98,6 +99,10 @@ pub(crate) enum BlocksOf<'a> {
 }
 
 impl Piece<'_> {
+    fn standing(&self) -> Standing {
+        Standing::of(self.sys, self.rest)
+    }
+
     fn blocks(&self) -> &Blocks {
         match self.blocks {
             BlocksOf::Given(blocks) => blocks,
@@ -151,10 +156,91 @@ impl Rest {
     }
 }
 
+/// What [`iterate_pieces`] reads of a piece before any iterates.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Standing {
+    /// The values' largest magnitude.
+    pub size: f64,
+    /// It has an equation; a variable.
+    pub specs: bool,
+    pub vars: bool,
+    /// It starts from its own values.
+    pub at_rest: bool,
+    /// The residuals' largest magnitude there, where it does.
+    pub residual: f64,
+}
+
+impl Standing {
+    pub(crate) fn of(sys: &System, rest: &Rest) -> Self {
+        Self {
+            size: rest.size,
+            specs: !sys.specs.is_empty(),
+            vars: !sys.vars.is_empty(),
+            at_rest: rest.start.is_none(),
+            residual: rest.residual,
+        }
+    }
+}
+
+/// What [`iterate_pieces`] answers where no piece iterates: nothing to
+/// solve, or every piece within the tolerance where it stands; `None`
+/// where some piece must iterate.
+pub(crate) fn standing(
+    pieces: impl Iterator<Item = Standing> + Clone,
+    settings: Settings,
+) -> Option<PiecesIteration> {
+    let tolerance = tolerance(settings);
+    let size = pieces.clone().fold(0.0_f64, |m, p| m.max(p.size));
+    let specs = pieces.clone().any(|p| p.specs);
+    let vars = pieces.clone().any(|p| p.vars);
+    let count = pieces.clone().count();
+    let unchanged = || vec![None; count];
+    let met = || vec![false; count];
+    if !specs || !vars {
+        return Some(PiecesIteration {
+            values: unchanged(),
+            unmet: met(),
+            outcome: SolveOutcome::NothingToSolve,
+            iterations: 0,
+            residual: 0.0,
+            threshold: tolerance * size.max(1.0),
+        });
+    }
+
+    // Already within the tolerance where it stands: no block takes a
+    // step, so nothing is worth sorting into blocks.
+    if pieces.clone().all(|p| p.at_rest) {
+        let residual = pieces.fold(0.0_f64, |m, p| m.max(p.residual));
+        let threshold = tolerance * size.max(1.0);
+        if residual < threshold {
+            return Some(PiecesIteration {
+                values: unchanged(),
+                unmet: met(),
+                outcome: SolveOutcome::Converged { iterations: 0 },
+                iterations: 0,
+                residual,
+                threshold,
+            });
+        }
+    }
+    None
+}
+
+/// The convergence tolerance `settings` ask for.
+fn tolerance(settings: Settings) -> f64 {
+    if settings.tolerance > 0.0 {
+        settings.tolerance
+    } else {
+        CONVERGENCE_TOL
+    }
+}
+
 /// What [`iterate_pieces`] answers: each piece's values, `None` where
 /// they are the piece's own.
 pub(crate) struct PiecesIteration {
     pub values: Vec<Option<Vec<f64>>>,
+    /// Each piece whose residuals end at or above the threshold.
+    pub unmet: Vec<bool>,
     pub outcome: SolveOutcome,
     pub iterations: usize,
     pub residual: f64,
@@ -164,40 +250,10 @@ pub(crate) struct PiecesIteration {
 /// [`iterate`] of the pieces together. A piece whose values meet its
 /// equations where they stand takes no step and keeps them.
 pub(crate) fn iterate_pieces(pieces: &[Piece], settings: Settings) -> PiecesIteration {
-    let tolerance = if settings.tolerance > 0.0 {
-        settings.tolerance
-    } else {
-        CONVERGENCE_TOL
-    };
-    let size = pieces.iter().fold(0.0_f64, |m, p| m.max(p.rest.size));
-    let specs = pieces.iter().any(|p| !p.sys.specs.is_empty());
-    let vars = pieces.iter().any(|p| !p.sys.vars.is_empty());
-    let unchanged = || pieces.iter().map(|_| None).collect();
-    if !specs || !vars {
-        return PiecesIteration {
-            values: unchanged(),
-            outcome: SolveOutcome::NothingToSolve,
-            iterations: 0,
-            residual: 0.0,
-            threshold: tolerance * size.max(1.0),
-        };
+    if let Some(standing) = standing(pieces.iter().map(Piece::standing), settings) {
+        return standing;
     }
-
-    // Already within the tolerance where it stands: no block takes a
-    // step, so nothing is worth sorting into blocks.
-    if pieces.iter().all(|p| p.rest.start.is_none()) {
-        let residual = pieces.iter().fold(0.0_f64, |m, p| m.max(p.rest.residual));
-        let threshold = tolerance * size.max(1.0);
-        if residual < threshold {
-            return PiecesIteration {
-                values: unchanged(),
-                outcome: SolveOutcome::Converged { iterations: 0 },
-                iterations: 0,
-                residual,
-                threshold,
-            };
-        }
-    }
+    let tolerance = tolerance(settings);
     let starts =
         || -> Vec<Option<Vec<f64>>> { pieces.iter().map(|p| p.rest.start.clone()).collect() };
     let direct = descend(pieces, starts(), settings, tolerance, None);
@@ -523,6 +579,9 @@ fn descend(
     };
     PiecesIteration {
         threshold,
+        unmet: (norms.iter())
+            .map(|r| r.partial_cmp(&threshold) != Some(std::cmp::Ordering::Less))
+            .collect(),
         values: worked.into_iter().map(|w| w.map(|w| w.x)).collect(),
         outcome,
         iterations,
