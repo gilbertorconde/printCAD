@@ -405,7 +405,8 @@ fn sections_and_shadows_read_and_draw_the_scan() {
         .all_nodes()
         .find(|(f, _)| **f == sid)
         .unwrap();
-    let (node, mut values) = (node.clone(), serde_json::Value::clone(&node.data));
+    let node = node.clone();
+    let mut values = std::borrow::Cow::Borrowed(&*node.data);
     assert!(bench.derive_on_geometry(&node, &mut values, &document, Some(&UnitSphere)));
     assert!(!bench.derive_on_geometry(&node, &mut values, &document, Some(&UnitSphere)));
     let made = shadow::Shadow::from_json(&values).unwrap();

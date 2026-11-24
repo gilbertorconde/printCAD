@@ -751,14 +751,14 @@ impl BenchBuild for AssemblyWorkbench {
     fn derive_on_geometry(
         &self,
         node: &FeatureNode,
-        values: &mut serde_json::Value,
+        values: &mut std::borrow::Cow<'_, serde_json::Value>,
         document: &core_document::Document,
         _kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
         if node.workbench_id.as_str() != JOINT_KIND {
             return false;
         }
-        let Ok(mut joint) = serde_json::from_value::<JointFeature>(values.clone()) else {
+        let Ok(mut joint) = <JointFeature as serde::Deserialize>::deserialize(&**values) else {
             return false;
         };
         let mut changed = false;
@@ -803,7 +803,7 @@ impl BenchBuild for AssemblyWorkbench {
             }
         }
         if changed {
-            *values = joint.to_json();
+            *values = std::borrow::Cow::Owned(joint.to_json());
         }
         changed
     }

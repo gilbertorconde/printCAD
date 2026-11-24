@@ -378,12 +378,17 @@ pub(crate) fn settle_attached(
 }
 
 fn load(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Result<SketchFeature, CommandError> {
-    let data = ctx
+    let node = ctx
         .document
-        .get_feature_data(id)
+        .get_feature_meta(id)
         .ok_or_else(|| CommandError::bad("sketch", "is not a feature of this document"))?;
-    SketchFeature::from_json(data)
-        .map_err(|why| CommandError::bad("sketch", format!("is not a sketch: {why}")))
+    node.read().map_or_else(
+        || {
+            SketchFeature::from_json(&node.data)
+                .map_err(|why| CommandError::bad("sketch", format!("is not a sketch: {why}")))
+        },
+        Ok,
+    )
 }
 
 fn vec(x: f64, y: f64) -> Vec2D {
@@ -596,6 +601,7 @@ fn save(
     ctx.document
         .update_feature_data(id, feature.to_json())
         .map_err(|e| CommandError::failed(e.to_string()))?;
+    crate::placement::keep_written(ctx.document, id, &feature);
     ctx.document.mark_feature_dirty(id);
     Ok(answer)
 }

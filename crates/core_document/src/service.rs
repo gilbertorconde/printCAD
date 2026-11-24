@@ -384,10 +384,14 @@ impl DocumentService {
                 continue;
             };
             // Its own values are taken out while it derives (no feature reads
-            // itself) and put back after.
+            // itself) and put back after. Without them it derives from its
+            // data as stored, copied only by a step that changes it.
             let taken = evaluation.data.remove(&node.id);
             let had = taken.is_some();
-            let mut values = taken.unwrap_or_else(|| serde_json::Value::clone(&node.data));
+            let mut values = match taken {
+                Some(values) => std::borrow::Cow::Owned(values),
+                None => std::borrow::Cow::Borrowed(&*node.data),
+            };
             let values_of = |id: FeatureId| {
                 evaluation
                     .data
@@ -413,7 +417,7 @@ impl DocumentService {
                 );
             }
             if moved || had {
-                evaluation.data.insert(node.id, values);
+                evaluation.data.insert(node.id, values.into_owned());
             }
         }
         let ids: Vec<FeatureId> = evaluation.data.keys().copied().collect();
@@ -899,7 +903,11 @@ impl DocumentService {
     /// An id a command was called by before it was renamed finds it too.
     pub fn command(&self, id: &str) -> Option<(WorkbenchId, &crate::CommandSpec)> {
         let id = crate::renamed::command(id);
-        self.commands().into_iter().find(|(_, c)| c.id == *id)
+        self.ids().iter().find_map(|bench| {
+            let entry = self.workbenches.get(bench.as_str())?;
+            let spec = entry.context.commands().iter().find(|c| c.id == *id)?;
+            Some((bench.clone(), spec))
+        })
     }
 
     /// Every kind of file the workbenches import, in registration order,

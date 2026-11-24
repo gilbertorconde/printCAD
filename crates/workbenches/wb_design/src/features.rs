@@ -242,7 +242,7 @@ impl DesignWorkbench {
     pub(crate) fn follow_solid(
         &self,
         node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
+        values: &mut std::borrow::Cow<'_, serde_json::Value>,
         probed: &core_document::rebuild::ProbedReferences,
     ) -> bool {
         use core_document::WorkbenchFeature;
@@ -296,7 +296,7 @@ impl DesignWorkbench {
             if !moved {
                 return false;
             }
-            *values = feature.to_json();
+            *values = std::borrow::Cow::Owned(feature.to_json());
             return true;
         }
         let DesignFeature::Primitive {
@@ -316,14 +316,14 @@ impl DesignWorkbench {
             return false;
         }
         **attached = followed;
-        *values = feature.to_json();
+        *values = std::borrow::Cow::Owned(feature.to_json());
         true
     }
 
     pub(crate) fn derive_values(
         &self,
         node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
+        values: &mut std::borrow::Cow<'_, serde_json::Value>,
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
         _document: &core_document::Document,
     ) -> bool {
@@ -340,7 +340,7 @@ impl DesignWorkbench {
                 return false;
             };
             let mut datum = attached.datum();
-            let mut datum_values = datum.to_json();
+            let mut datum_values = std::borrow::Cow::Owned(datum.to_json());
             if !self.derive(
                 &core_document::FeatureNode {
                     workbench_id: core_document::WorkbenchId::from(core_document::DATUM_KIND),
@@ -370,7 +370,7 @@ impl DesignWorkbench {
                 return false;
             }
             **attached = followed;
-            *values = feature.to_json();
+            *values = std::borrow::Cow::Owned(feature.to_json());
             return true;
         }
         if node.workbench_id.as_str() != core_document::DATUM_KIND {
@@ -413,7 +413,7 @@ impl DesignWorkbench {
         if datum == before {
             return false;
         }
-        *values = datum.to_json();
+        *values = std::borrow::Cow::Owned(datum.to_json());
         true
     }
 }

@@ -579,7 +579,7 @@ impl BenchBuild for DesignWorkbench {
     fn derive_on_solid(
         &self,
         node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
+        values: &mut std::borrow::Cow<'_, serde_json::Value>,
         probed: &core_document::rebuild::ProbedReferences,
     ) -> bool {
         self.follow_solid(node, values, probed)
@@ -591,7 +591,7 @@ impl BenchBuild for DesignWorkbench {
     fn derive(
         &self,
         node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
+        values: &mut std::borrow::Cow<'_, serde_json::Value>,
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
         _document: &core_document::Document,
     ) -> bool {

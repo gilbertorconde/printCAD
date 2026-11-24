@@ -1387,3 +1387,42 @@ fn a_pasted_text_is_text_of_its_own() {
     let at = sketch.point_position(pasted.anchor).unwrap();
     assert!((at.x - 30.0).abs() < 1e-4 && at.y.abs() < 1e-4, "{at:?}");
 }
+
+/// What an edit keeps as the read of the sketch it stored is what reading
+/// the stored data afresh gives, solved positions and all.
+#[test]
+fn an_edited_sketch_reads_back_as_the_sketch_kept() {
+    let mut doc = Document::new("t");
+    let s = ok(&mut doc, "sketch.new", json!({}));
+    let line = ok(
+        &mut doc,
+        "sketch.line",
+        json!({"sketch": s, "x1": 1, "y1": 2, "x2": 9, "y2": 4}),
+    );
+    let edits = [
+        (
+            "sketch.circle",
+            json!({"sketch": s, "x": 3, "y": 3, "radius": 2}),
+        ),
+        (
+            "sketch.rect",
+            json!({"sketch": s, "x": 10, "y": 0, "width": 5, "height": 4}),
+        ),
+        (
+            "sketch.constrain",
+            json!({"sketch": s, "kind": "horizontal", "items": [line]}),
+        ),
+        (
+            "sketch.constrain",
+            json!({"sketch": s, "kind": "dimension", "items": [line], "value": 25}),
+        ),
+    ];
+    for (id, args) in edits {
+        ok(&mut doc, id, args);
+        let node = doc.get_feature_meta(feature_id(&s)).unwrap();
+        let kept: SketchFeature = node.read().unwrap();
+        let fresh = <SketchFeature as serde::Deserialize>::deserialize(&*node.data).unwrap();
+        assert_eq!(kept.sketch, fresh.sketch, "{id}");
+        assert_eq!(kept.to_json(), fresh.to_json(), "{id}");
+    }
+}

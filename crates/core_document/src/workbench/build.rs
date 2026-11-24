@@ -1,5 +1,7 @@
 //! How a bench's features turn into solids and meshes.
 
+use std::borrow::Cow;
+
 use crate::feature::{BodyId, FeatureNode};
 use crate::rebuild::RebuildJob;
 use crate::{Document, FeatureId};
@@ -20,10 +22,16 @@ pub trait BenchBuild {
     /// `document` the rest (where bodies sit). Answers whether it changed
     /// anything. Derived, never recorded, so it follows every change of
     /// what it follows, undo included.
+    ///
+    /// In this and the other `derive` steps `values` stays borrowed while
+    /// nothing changed it: borrowed from `node.data` itself when no formula
+    /// set a number in it ([`std::ptr::eq`] tells), so a read of it can
+    /// take what is kept of that data ([`FeatureNode::read`]). A step that
+    /// changes it makes it owned.
     fn derive(
         &self,
         _node: &FeatureNode,
-        _values: &mut serde_json::Value,
+        _values: &mut Cow<'_, serde_json::Value>,
         _values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
         _document: &Document,
     ) -> bool {
@@ -38,7 +46,7 @@ pub trait BenchBuild {
     fn derive_on_solid(
         &self,
         _node: &FeatureNode,
-        _values: &mut serde_json::Value,
+        _values: &mut Cow<'_, serde_json::Value>,
         _probed: &crate::rebuild::ProbedReferences,
     ) -> bool {
         false
@@ -54,7 +62,7 @@ pub trait BenchBuild {
     fn derive_on_geometry(
         &self,
         _node: &FeatureNode,
-        _values: &mut serde_json::Value,
+        _values: &mut Cow<'_, serde_json::Value>,
         _document: &Document,
         _kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {

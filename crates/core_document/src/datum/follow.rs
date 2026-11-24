@@ -311,7 +311,7 @@ pub(super) fn push_point<'a>(anchor: &'a mut PointAnchor, into: &mut Vec<Followe
 /// (when they answer the references it has now), and the planes of the
 /// datums it is made from. Answers whether anything changed.
 pub fn derive(
-    values: &mut serde_json::Value,
+    values: &mut std::borrow::Cow<'_, serde_json::Value>,
     probed: Option<&crate::rebuild::ProbedReferences>,
     values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
     body_plane: &dyn Fn(crate::BodyId, BasePlane) -> Option<DatumFrame>,
@@ -333,6 +333,6 @@ pub fn derive(
     if datum == before {
         return false;
     }
-    *values = datum.to_json();
+    *values = std::borrow::Cow::Owned(datum.to_json());
     true
 }

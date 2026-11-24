@@ -4,6 +4,7 @@
 //! sketcher's own state and code paths.
 
 use super::*;
+use std::borrow::Cow;
 
 impl Workbench for SketchWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
@@ -574,11 +575,11 @@ impl BenchBuild for SketchWorkbench {
     fn derive(
         &self,
         node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
+        values: &mut Cow<'_, serde_json::Value>,
         values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
         document: &core_document::Document,
     ) -> bool {
-        let Ok(mut feature) = SketchFeature::from_json(values) else {
+        let Some(mut feature) = read_values(node, values) else {
             return false;
         };
         let mut moved = false;
@@ -597,7 +598,7 @@ impl BenchBuild for SketchWorkbench {
         // keeps, reads its letters from it.
         moved |= crate::text::upgrade_stored(&mut feature.sketch, document);
         if moved {
-            *values = feature.to_json();
+            *values = Cow::Owned(feature.to_json());
         }
         moved
     }
@@ -613,11 +614,11 @@ impl BenchBuild for SketchWorkbench {
     fn derive_on_geometry(
         &self,
         node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
+        values: &mut Cow<'_, serde_json::Value>,
         document: &core_document::Document,
         kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
-        let Ok(mut feature) = SketchFeature::from_json(values) else {
+        let Some(mut feature) = read_values(node, values) else {
             return false;
         };
         let built = document.derived().projected_references(node.id);
@@ -673,18 +674,18 @@ impl BenchBuild for SketchWorkbench {
         }
         cache.insert(node.id, kept);
         if moved {
-            *values = feature.to_json();
+            *values = Cow::Owned(feature.to_json());
         }
         moved
     }
 
     fn derive_on_solid(
         &self,
-        _node: &core_document::FeatureNode,
-        values: &mut serde_json::Value,
+        node: &core_document::FeatureNode,
+        values: &mut Cow<'_, serde_json::Value>,
         probed: &core_document::ProbedReferences,
     ) -> bool {
-        let Ok(mut feature) = SketchFeature::from_json(values) else {
+        let Some(mut feature) = read_values(node, values) else {
             return false;
         };
         // Attached by a mode: the plane the attachment makes of what the
@@ -701,7 +702,7 @@ impl BenchBuild for SketchWorkbench {
             }
             feature.plane = plane;
             feature.sketch.plane = plane;
-            *values = feature.to_json();
+            *values = Cow::Owned(feature.to_json());
             return true;
         }
         let (Some(face), Some(Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }))) =
@@ -715,7 +716,7 @@ impl BenchBuild for SketchWorkbench {
         }
         feature.plane = plane;
         feature.sketch.plane = plane;
-        *values = feature.to_json();
+        *values = Cow::Owned(feature.to_json());
         true
     }
 }
@@ -772,5 +773,18 @@ impl bench_panel::BenchUi for SketchWorkbench {
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
         self.draw_task_panel(ui, ctx, request)
+    }
+}
+
+/// The sketch `values` holds, read once per write of the node's data
+/// while `values` is that data ([`core_document::FeatureNode::read`]).
+fn read_values(
+    node: &core_document::FeatureNode,
+    values: &serde_json::Value,
+) -> Option<SketchFeature> {
+    if std::ptr::eq(values, &*node.data) {
+        node.read()
+    } else {
+        SketchFeature::from_json(values).ok()
     }
 }

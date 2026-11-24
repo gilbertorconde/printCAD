@@ -180,17 +180,18 @@ impl Default for DataRevision {
     }
 }
 
+/// What [`FeatureNode::read`] keeps: each node's data read as a type, with
+/// the revision it was read from.
+type Kept = HashMap<(FeatureId, std::any::TypeId), (DataRevision, Box<dyn std::any::Any>)>;
+
+thread_local! {
+    static READ: std::cell::RefCell<Kept> = Default::default();
+}
+
 impl FeatureNode {
     /// The node's data read as `F`, decoded once per [`DataRevision`]: the
     /// tree and the toolbar ask every frame of every feature.
     pub fn read<F: WorkbenchFeature + Clone + 'static>(&self) -> Option<F> {
-        type Kept = HashMap<(FeatureId, std::any::TypeId), (DataRevision, Box<dyn std::any::Any>)>;
-        /// Entries past which the cache starts over: a run that opens many
-        /// documents does not keep each one's features for good.
-        const KEPT: usize = 8192;
-        thread_local! {
-            static READ: std::cell::RefCell<Kept> = Default::default();
-        }
         let key = (self.id, std::any::TypeId::of::<F>());
         let kept = READ.with_borrow(|kept| {
             kept.get(&key)
@@ -201,13 +202,24 @@ impl FeatureNode {
             return kept;
         }
         let read = F::from_json(&self.data).ok()?;
+        self.keep_read(read.clone());
+        Some(read)
+    }
+
+    /// Keep `read` as what [`Self::read`] gives for the node's data as it
+    /// is: for the feature that data was just written from, when it reads
+    /// back as itself, so the next read need not decode it.
+    pub fn keep_read<F: WorkbenchFeature + 'static>(&self, read: F) {
+        /// Entries past which the cache starts over: a run that opens many
+        /// documents does not keep each one's features for good.
+        const KEPT: usize = 8192;
+        let key = (self.id, std::any::TypeId::of::<F>());
         READ.with_borrow_mut(|kept| {
             if kept.len() >= KEPT {
                 kept.clear();
             }
-            kept.insert(key, (self.data_revision, Box::new(read.clone())));
+            kept.insert(key, (self.data_revision, Box::new(read)));
         });
-        Some(read)
     }
 }
 

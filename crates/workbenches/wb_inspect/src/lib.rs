@@ -342,7 +342,7 @@ impl core_document::BenchBuild for InspectionWorkbench {
     fn derive_on_geometry(
         &self,
         node: &FeatureNode,
-        values: &mut Value,
+        values: &mut std::borrow::Cow<'_, Value>,
         document: &Document,
         kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
@@ -359,7 +359,7 @@ impl core_document::BenchBuild for InspectionWorkbench {
             return false;
         }
         let made = shadow::make(document, kernel, &s);
-        values["made"] = serde_json::to_value(made).unwrap_or_default();
+        values.to_mut()["made"] = serde_json::to_value(made).unwrap_or_default();
         true
     }
 
