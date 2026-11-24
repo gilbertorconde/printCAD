@@ -8,6 +8,7 @@
 /// The feature kind sketches are stored under.
 pub const KIND: &str = "wb.sketch";
 
+pub mod adding;
 pub mod boundary;
 pub mod change;
 pub mod conic;

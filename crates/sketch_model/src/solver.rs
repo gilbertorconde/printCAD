@@ -121,6 +121,64 @@ impl Prepared {
         }
     }
 
+    /// Where the problem's split is kept, where it is.
+    pub(crate) fn base(&self) -> Option<Base> {
+        self.parts.stamp().map(Base)
+    }
+
+    /// [`Prepared::of`] `sketch`, a plain sketch
+    /// ([`crate::adding::SketchIndex::plain`]), from the problem `base`
+    /// names: that of the sketch before the elements and constraints past
+    /// `sizes` were added and the elements at `moved` changed their
+    /// values. `None` where that problem is no longer kept, or is not one
+    /// such a sketch could have had.
+    pub(crate) fn grown(
+        sketch: &Sketch,
+        base: Base,
+        sizes: (usize, usize),
+        moved: &[usize],
+    ) -> Option<Self> {
+        let none = std::collections::HashSet::new();
+        let (problem, parts) = PARTS.with_borrow_mut(|cache| {
+            Parted::edited(base.0, cache, |edit| {
+                let kept = edit.problem();
+                if kept.geometry.len() != sizes.0
+                    || !kept.held_points.is_empty()
+                    || !kept.application_held_points.is_empty()
+                    || kept.settings != adapter::settings(sketch.solver)
+                    || kept.external != adapter::external(sketch)
+                {
+                    return false;
+                }
+                for &i in moved {
+                    edit.set_geometry(i, adapter::geometry(&sketch.geometry[i], &none));
+                }
+                for element in &sketch.geometry[sizes.0..] {
+                    edit.push_geometry(adapter::geometry(element, &none));
+                }
+                for constraint in &sketch.constraints[sizes.1..] {
+                    if adapter::solved(sketch, constraint) {
+                        edit.push_constraint(adapter::constraint(sketch, constraint));
+                    }
+                }
+                true
+            })
+        })?;
+        Some(Self {
+            problem,
+            parts,
+            rank: Default::default(),
+        })
+    }
+
+    /// Each part's problem, in the order of their first elements.
+    #[cfg(test)]
+    pub(crate) fn part_problems(&self) -> Vec<sketch_solver::problem::Problem> {
+        let mut problems: Vec<_> = self.parts.systems().map(|(p, _)| p.clone()).collect();
+        problems.sort_by_key(|p| p.geometry.first().map(|g| g.id()));
+        problems
+    }
+
     #[doc(hidden)]
     pub fn problem(&self) -> &sketch_solver::problem::Problem {
         &self.problem
@@ -149,7 +207,7 @@ impl Prepared {
     }
 
     /// The parts solved, each one's values where the solve moved them.
-    fn iterate(&self, settings: SolverSettings) -> (Iteration, Vec<Option<Vec<f64>>>) {
+    fn iterate(&self, settings: SolverSettings) -> (Iteration, sketch_solver::parts::Moved) {
         let solved = self.parts.iterate(adapter::settings(settings));
         let iteration = Iteration {
             values: Vec::new(),
@@ -238,6 +296,65 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     }
 }
 
+/// Names the solver's problem of a sketch where its split is kept, so the
+/// next version of the sketch, made by adding to it, is prepared from it
+/// ([`solve_added`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Base(sketch_solver::parts::Stamp);
+
+/// What [`solve_added`] did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Added {
+    pub outcome: SolveOutcome,
+    /// The places of the elements the solve changed, ascending.
+    pub written: Vec<usize>,
+}
+
+/// [`solve`] of a sketch whose index says it is plain
+/// ([`crate::adding::SketchIndex::plain`]): no text, spline, ellipse,
+/// conic, group or measured points, so nothing is laid out after the solve
+/// and nothing but the solved values changes. `sizes` are the elements and
+/// constraints the sketch had before the edit added the rest, `index` its
+/// index, whose problem the sketch's is prepared from and which follows
+/// what the solve moved. The same answer, with the places of the elements
+/// it changed.
+pub fn solve_added(
+    sketch: &mut Sketch,
+    index: &mut crate::adding::SketchIndex,
+    sizes: (usize, usize),
+) -> Added {
+    let base = index.base.take();
+    let prepared = base
+        .and_then(|base| Prepared::grown(sketch, base, sizes, &[]))
+        .unwrap_or_else(|| Prepared::of(sketch));
+    let (iteration, values) = prepared.iterate(sketch.solver);
+    let mut written = Vec::new();
+    // With no ellipse or conic, no axes turn and no focus is placed: the
+    // answer stored is all that changes.
+    let changed = iteration.outcome != SolveOutcome::NothingToSolve
+        && store_answer(
+            sketch,
+            Answer::Parts(&prepared.parts, &values),
+            &mut Default::default(),
+            Some(&mut written),
+        )
+        .0;
+    written.sort_unstable();
+    written.dedup();
+    let base = prepared.base();
+    let measured = finish_measuring(sketch, &iteration, changed, Some(prepared), |sketch| {
+        let sizes = (sketch.geometry.len(), sketch.constraints.len());
+        base.and_then(|base| Prepared::grown(sketch, base, sizes, &written))
+            .unwrap_or_else(|| Prepared::of(sketch))
+    });
+    index.base = measured.and_then(|m| m.prepared.base());
+    index.follow(sketch, &written);
+    Added {
+        outcome: iteration.outcome,
+        written,
+    }
+}
+
 #[cfg(test)]
 fn solve_system(
     sketch: &mut Sketch,
@@ -282,8 +399,20 @@ fn finish(
     changed: bool,
     prepared: Option<Prepared>,
 ) -> Option<Measured> {
+    finish_measuring(sketch, iteration, changed, prepared, Prepared::of)
+}
+
+/// [`finish`], the stored sketch prepared by `prepare` where `prepared`
+/// is not its problem.
+fn finish_measuring(
+    sketch: &mut Sketch,
+    iteration: &Iteration,
+    changed: bool,
+    prepared: Option<Prepared>,
+    prepare: impl FnOnce(&Sketch) -> Prepared,
+) -> Option<Measured> {
     let measure = |sketch: &Sketch, kept: Option<Prepared>| {
-        let prepared = kept.unwrap_or_else(|| Prepared::of(sketch));
+        let prepared = kept.unwrap_or_else(|| prepare(sketch));
         Measured {
             dof: prepared.dof(),
             prepared,
@@ -582,38 +711,71 @@ fn set<T: PartialEq>(slot: &mut T, value: T, changed: &mut bool) {
 /// A solve's answer: one system's values, or each part's where it moved.
 enum Answer<'a> {
     Whole(&'a System, &'a [f64]),
-    Parts(&'a Parted, &'a [Option<Vec<f64>>]),
+    Parts(&'a Parted, &'a sketch_solver::parts::Moved),
 }
 
 /// Write the solved variables back into the sketch geometry. Answers
 /// whether that changed the sketch.
 fn write_back(sketch: &mut Sketch, answer: Answer) -> bool {
-    let mut changed = false;
     let mut turned = std::collections::HashSet::new();
-    let derived: std::collections::HashSet<sketch_solver::problem::PointReference> = match answer {
+    let (changed, derived) = store_answer(sketch, answer, &mut turned, None);
+    turn_and_place(sketch, &derived, turned, changed)
+}
+
+/// Store a solve's answer in the elements, the places of those it changed
+/// listed in `written` where given. Answers whether it changed any, and
+/// the foci the solve left out. An ellipse whose axes traded places goes
+/// in `turned`.
+fn store_answer(
+    sketch: &mut Sketch,
+    answer: Answer,
+    turned: &mut std::collections::HashSet<Uuid>,
+    mut written: Option<&mut Vec<usize>>,
+) -> (
+    bool,
+    std::collections::HashSet<sketch_solver::problem::PointReference>,
+) {
+    let mut changed = false;
+    let mut store = |sketch: &mut Sketch, i: usize, sys: &System, x: &[f64]| {
+        let mut this = false;
+        write_element(&mut sketch.geometry[i], sys, x, &mut this, turned);
+        if this {
+            changed = true;
+            if let Some(written) = written.as_deref_mut() {
+                written.push(i);
+            }
+        }
+    };
+    let derived = match answer {
         Answer::Whole(sys, x) => {
-            for element in &mut sketch.geometry {
-                write_element(element, sys, x, &mut changed, &mut turned);
+            for i in 0..sketch.geometry.len() {
+                store(sketch, i, sys, x);
             }
             sys.derived_foci.iter().copied().collect()
         }
         // One part is the whole problem, whose ids may repeat.
         Answer::Parts(parted, values) if parted.len() == 1 => {
-            let (_, sys) = parted.systems().next().expect("one part");
-            let x = values[0].as_deref().unwrap_or(&sys.vars);
-            for element in &mut sketch.geometry {
-                write_element(element, sys, x, &mut changed, &mut turned);
+            let (_, sys) = parted.system(0);
+            let x = values.of(0).unwrap_or(&sys.vars);
+            for i in 0..sketch.geometry.len() {
+                store(sketch, i, sys, x);
             }
             sys.derived_foci.iter().copied().collect()
         }
         // A part the solve left where it was stores nothing new, but for
         // an ellipse's or conic's shape, which is stored as it is read
-        // back from its variables.
+        // back from its variables. Where no part has one, or a focus to
+        // place, only the parts moved are looked at.
         Answer::Parts(parted, values) => {
             let mut derived = std::collections::HashSet::new();
-            for ((problem, sys), x) in parted.systems().zip(values) {
+            let parts: Vec<usize> = match parted.shaped() {
+                true => (0..parted.len()).collect(),
+                false => values.moved().map(|(k, _)| k).collect(),
+            };
+            for k in parts {
+                let (problem, sys) = parted.system(k);
                 derived.extend(sys.derived_foci.iter().copied());
-                let x = match x {
+                let x = match values.of(k) {
                     Some(x) => x,
                     None if sys.shape_vars.is_empty() => continue,
                     None => &sys.vars,
@@ -624,15 +786,15 @@ fn write_back(sketch: &mut Sketch, answer: Answer) -> bool {
                         ItemReference::Curve(CurveReference::Curve(id)) => id.0,
                         _ => continue,
                     };
-                    if let Some(element) = sketch.get_geometry_mut(Uuid::from_u128(id)) {
-                        write_element(element, sys, x, &mut changed, &mut turned);
+                    if let Some(i) = sketch.geometry_index(Uuid::from_u128(id)) {
+                        store(sketch, i, sys, x);
                     }
                 }
             }
             derived
         }
     };
-    turn_and_place(sketch, &derived, turned, changed)
+    (changed, derived)
 }
 
 /// Store `element`'s solved variables, `x` the values of `sys`. An

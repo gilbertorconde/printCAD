@@ -529,13 +529,41 @@ pub(crate) fn write_sketch_data(
 }
 
 /// [`write_sketch_data`] of a sketch the caller is done with, kept as its
-/// data's read without a copy; `before` read from the node.
+/// data's read without a copy.
 pub(crate) fn store_sketch_data(
     document: &mut core_document::Document,
     id: FeatureId,
     mut feature: SketchFeature,
+    before: Option<&SketchFeature>,
 ) -> core_document::DocumentResult<()> {
-    write_data(document, id, &mut feature, None)?;
+    write_data(document, id, &mut feature, before)?;
+    if reads_back(&feature) {
+        keep_written(document, id, feature);
+    }
+    Ok(())
+}
+
+/// [`store_sketch_data`] of a sketch an edit only added to: the elements
+/// past the first `sizes.0` and the constraints past the first `sizes.1`
+/// added, then the elements at `written` changed by its solve, with no id
+/// standing twice. The patch is written from those alone.
+pub(crate) fn store_added(
+    document: &mut core_document::Document,
+    id: FeatureId,
+    mut feature: SketchFeature,
+    sizes: (usize, usize),
+    written: &[usize],
+) -> core_document::DocumentResult<()> {
+    let node = document
+        .get_feature_meta(id)
+        .ok_or(core_document::DocumentError::FeatureNotFound(id))?;
+    // An element added and then moved by the solve is written as added.
+    let kept = written.partition_point(|&k| k < sizes.0);
+    let patch = feature.patch_added(&node.data, sizes.0, sizes.1, &written[..kept]);
+    let patched = patch.is_some_and(|patch| document.patch_feature_data(id, patch).is_ok());
+    if !patched {
+        document.update_feature_data(id, core_document::WorkbenchFeature::to_json(&feature))?;
+    }
     if reads_back(&feature) {
         keep_written(document, id, feature);
     }

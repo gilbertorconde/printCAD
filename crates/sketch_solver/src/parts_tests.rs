@@ -227,8 +227,8 @@ fn solves_alike(
     let parted = Parted::of(&std::sync::Arc::new(problem.clone()), cache);
     let solved = parted.iterate(problem.settings);
     let mut got = Answer::new();
-    for ((_, sys), x) in parted.systems().zip(&solved.values) {
-        read(&mut got, sys, x.as_deref().unwrap_or(&sys.vars));
+    for (k, (_, sys)) in parted.systems().enumerate() {
+        read(&mut got, sys, solved.values.of(k).unwrap_or(&sys.vars));
     }
     assert_eq!(got, expected, "{what}: values");
     let outcome = |o: SolveOutcome| match o {
@@ -459,6 +459,132 @@ fn edited_parts_are_compiled_again_and_untouched_ones_kept() {
         }
         let _ = solves_alike(&problem, &mut cache, &format!("{what}, stored"), &|_| false);
     }
+}
+
+/// The parts of `problem` split afresh, in the order of their first
+/// elements, with what solving and measuring them answers.
+fn split_afresh(parted: &Parted) -> (Vec<Problem>, crate::freedom::Freedom) {
+    let mut problems: Vec<Problem> = parted.systems().map(|(p, _)| p.clone()).collect();
+    problems.sort_by_key(|p| p.geometry.first().map(|g| g.id()));
+    (problems, parted.estimate())
+}
+
+#[test]
+fn a_split_edited_by_a_list_of_changes_is_the_problem_split_afresh() {
+    // A kept split edited through what each step lists (points moved,
+    // elements and constraints added) holds the problem a full edit makes
+    // and splits it as a split afresh does, solving to the same answer.
+    let mut cache = PartCache::default();
+    let mut problem = std::sync::Arc::new(drawn(11, 8));
+    let mut stamp = Parted::of(&problem, &mut cache).stamp().expect("kept");
+    let mut rng = Rng(5);
+    for step in 0..48u128 {
+        let mut expect = (*problem).clone();
+        let points: Vec<usize> = (expect.geometry.iter().enumerate())
+            .filter(|(_, g)| matches!(g, Geometry::Point(_)))
+            .map(|(i, _)| i)
+            .collect();
+        let moved = points[rng.next() as usize % points.len()];
+        if let Geometry::Point(p) = &mut expect.geometry[moved] {
+            p.position.y += 0.125;
+        }
+        let pick = |rng: &mut Rng| match expect.geometry[points[rng.next() as usize % points.len()]]
+        {
+            Geometry::Point(ref p) => PointReference::from(p.id),
+            _ => unreachable!(),
+        };
+        let (a, b) = (pick(&mut rng), pick(&mut rng));
+        let base = 5_000_000 + 10 * step;
+        let mut added = vec![Geometry::Point(Point {
+            id: PointId(base),
+            position: Vector {
+                x: -30.0,
+                y: step as f64,
+            },
+        })];
+        added.push(match step % 3 {
+            0 => Geometry::Line(Line {
+                id: CurveId(base + 1),
+                start: a,
+                end: b,
+            }),
+            1 => Geometry::Line(Line {
+                id: CurveId(base + 1),
+                start: a,
+                end: PointId(base).into(),
+            }),
+            _ => Geometry::Circle(Circle {
+                id: CurveId(base + 1),
+                center: PointId(base).into(),
+                radius: Length(2.0),
+            }),
+        });
+        let constraint = Constraint {
+            id: ConstraintId(base),
+            kind: R::Distance {
+                point1: PointId(base).into(),
+                point2: b,
+                distance: Length(12.0),
+            },
+        };
+        expect.geometry.extend(added.iter().cloned());
+        expect.constraints.push(constraint.clone());
+        let (edited, parts) = Parted::edited(stamp, &mut cache, |edit| {
+            edit.set_geometry(moved, expect.geometry[moved].clone());
+            for g in &added {
+                edit.push_geometry(g.clone());
+            }
+            if step % 4 != 1 {
+                edit.push_constraint(constraint.clone());
+            }
+            true
+        })
+        .expect("the split is kept");
+        if step % 4 == 1 {
+            expect.constraints.pop();
+        }
+        assert_eq!(*edited, expect, "step {step}");
+        let alone = Parted::of(
+            &std::sync::Arc::new(expect.clone()),
+            &mut PartCache::default(),
+        );
+        assert_eq!(split_afresh(&parts), split_afresh(&alone), "step {step}");
+        let (ours, theirs) = (
+            parts.iterate(expect.settings),
+            alone.iterate(expect.settings),
+        );
+        assert_eq!(
+            (ours.outcome, ours.iterations, ours.residual.to_bits()),
+            (theirs.outcome, theirs.iterations, theirs.residual.to_bits()),
+            "step {step}"
+        );
+        // The facts kept summed block by block as parts were replaced
+        // and added are those of every part summed afresh.
+        let mut afresh = super::Summary::default();
+        for entry in parts.parts.iter() {
+            afresh.add(&entry.facts);
+        }
+        assert_eq!(parts.summary, afresh, "step {step}");
+        assert_eq!(parts.parts.summary(), afresh, "step {step}");
+        stamp = parts.stamp().expect("kept");
+        problem = edited;
+    }
+    // A stamp no longer kept, or an element set to one naming other
+    // points, answers nothing.
+    let stale = Parted::of(&problem, &mut cache).stamp().expect("kept");
+    let next = Parted::of(&problem, &mut cache).stamp().expect("kept");
+    assert_ne!(stale, next);
+    assert!(Parted::edited(stale, &mut cache, |_| true).is_none());
+    let line = (problem.geometry.iter()).position(|g| matches!(g, Geometry::Line(_)));
+    let mut other = problem.geometry[line.expect("a line")].clone();
+    if let Geometry::Line(l) = &mut other {
+        std::mem::swap(&mut l.start, &mut l.end);
+    }
+    let broken = Parted::edited(next, &mut cache, |edit| {
+        edit.set_geometry(line.expect("a line"), other.clone());
+        true
+    });
+    assert!(broken.is_none());
 }
 
 #[test]
