@@ -493,6 +493,7 @@ impl PrintCadApp {
                 let kept = args.clone();
                 let answer = self
                     .in_script_tab(|app| {
+                        app.open_call();
                         let answer = app.execute_command(&id, args, event_loop);
                         app.close_call(&id);
                         answer
@@ -509,7 +510,7 @@ impl PrintCadApp {
                     // A run that stops with an error leaves nothing behind.
                     let rolled = failed.then(|| {
                         let rolled = app.session.journal.roll_back(&mut app.session.document);
-                        if rolled.0 > 0 {
+                        if rolled.undone > 0 {
                             app.after_history_jump();
                         }
                         rolled
@@ -518,10 +519,10 @@ impl PrintCadApp {
                     app.close_gesture();
                     rolled
                 });
-                if let (Some(error), Some(Some((undone, barrier)))) = (&mut output.error, rolled)
-                    && undone > 0
+                if let (Some(error), Some(Some(rolled))) = (&mut output.error, rolled)
+                    && (rolled.undone > 0 || rolled.kept)
                 {
-                    error.push_str(&rolled_back_note(barrier));
+                    error.push_str(&rolled_back_note(rolled));
                 }
                 if let Some(run) = self.scripting.runs.pop_front()
                     && !failed
@@ -557,6 +558,12 @@ impl PrintCadApp {
                 self.redraw_needed = true;
             }
         }
+    }
+
+    /// A script's call begins: what it records is the run's, apart from
+    /// what the person does in the window between its calls.
+    fn open_call(&mut self) {
+        self.session.journal.begin_call(&mut self.session.document);
     }
 
     /// Close what a script's call did as its own step, named by the
@@ -670,6 +677,7 @@ impl PrintCadApp {
             (true, Some((id, args))) => {
                 let answer = self
                     .in_script_tab(|app| {
+                        app.open_call();
                         let answer = app.history_step(id == "doc.redo");
                         app.close_call(&id);
                         answer
@@ -905,10 +913,13 @@ pub(crate) enum RunKind {
     },
 }
 
-/// What a failed run's error adds once its changes are taken back;
-/// `barrier` when an import in it could not be.
-fn rolled_back_note(barrier: bool) -> String {
-    if barrier {
+/// What a failed run's error adds once its changes are taken back, or
+/// kept because edits made in the window since build on them.
+fn rolled_back_note(rolled: core_document::history::RolledBack) -> String {
+    if rolled.kept {
+        " (its changes were kept: edits made in the window meanwhile change what they changed)"
+            .into()
+    } else if rolled.barrier {
         " (its changes after its last import were undone; the import stays)".into()
     } else {
         " (its changes were undone)".into()
@@ -1826,8 +1837,10 @@ mod tests {
                          source: &str| {
             journal.label_next("Agent: an agent's script");
             journal.begin_run(&mut document);
+            journal.begin_call(&mut document);
             let (mut document, out) =
                 crate::headless::run_in_document(registry, document, source, "agent");
+            journal.note_call(&mut document, "design.set");
             if out.is_err() {
                 journal.roll_back(&mut document);
             }
@@ -1885,6 +1898,109 @@ mod tests {
 
     /// A command in a tab off screen runs on that tab's state and leaves
     /// its change there; the tab on screen gets its own state back.
+    /// An agent's run that began before the user opened a task, and
+    /// fails while the task is open, takes back its own calls (the one
+    /// before the task and the one in it) and leaves the feature the
+    /// task's tool made, which `doc.feature` still reads and the task's
+    /// OK still makes one step. The journal steps are `script_event`'s:
+    /// each call between `begin_call` and `note_call`, the user's tool
+    /// outside them.
+    #[test]
+    fn an_agent_run_begun_before_a_task_fails_leaving_the_task_s_feature() {
+        use core_document::history::{OpJournal, RolledBack};
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let (document, made) = crate::headless::run_in_document(
+            &mut registry,
+            core_document::Document::new("Untitled"),
+            "local a = pc.sketch.new{plane = 'XY'}\n\
+             pc.sketch.rect{sketch = a, x = -5, y = -5, width = 10, height = 10}\n\
+             local body = pc.doc.feature{id = a}.body\n\
+             local b = pc.sketch.new{body = body, plane = 'XY', offset = 10}\n\
+             pc.sketch.rect{sketch = b, x = -2, y = -2, width = 4, height = 4}\n\
+             return {a, b}",
+            "setup",
+        );
+        let sketches = made.unwrap().unwrap();
+        let mut document = document;
+        let mut journal = OpJournal::new(16);
+        journal.label_next("Setup");
+        journal.note(&mut document);
+        let bodies_before = document.bodies().len();
+
+        let call = |registry: &mut core_document::DocumentService,
+                    journal: &mut OpJournal,
+                    mut document: core_document::Document,
+                    source: &str| {
+            journal.begin_call(&mut document);
+            let (mut document, out) =
+                crate::headless::run_in_document(registry, document, source, "agent");
+            journal.note_call(&mut document, "doc.new_body");
+            (document, out)
+        };
+        journal.label_next("Agent: an agent's script");
+        journal.begin_run(&mut document);
+        let (document, out) = call(
+            &mut registry,
+            &mut journal,
+            document,
+            "pc.doc.new_body{name = 'Agent 1'}",
+        );
+        out.unwrap();
+
+        // The user's Loft tool makes the feature and opens its task.
+        journal.begin_task();
+        let source = format!(
+            "return pc.design.loft{{sections = {{'{}', '{}'}}}}",
+            sketches[0].as_str().unwrap(),
+            sketches[1].as_str().unwrap()
+        );
+        let (document, loft) =
+            crate::headless::run_in_document(&mut registry, document, &source, "tool");
+        let loft = loft.unwrap().unwrap().as_str().unwrap().to_string();
+
+        let (mut document, out) = call(
+            &mut registry,
+            &mut journal,
+            document,
+            "pc.doc.new_body{name = 'Agent 2'}\nerror('stop')",
+        );
+        assert!(out.is_err());
+        let rolled = journal.roll_back(&mut document);
+        journal.end_run(&mut document);
+        assert!(
+            matches!(
+                rolled,
+                RolledBack {
+                    undone: 1..,
+                    barrier: false,
+                    kept: false
+                }
+            ),
+            "{rolled:?}"
+        );
+        assert_eq!(
+            document.bodies().len(),
+            bodies_before,
+            "the run's bodies went"
+        );
+
+        let feature = document_command(
+            "doc.feature",
+            &json!({"id": loft}).as_object().cloned().unwrap(),
+            &mut document,
+            &registry,
+            None,
+        )
+        .unwrap()
+        .expect("the feature being edited is still there");
+        assert_eq!(feature["id"], json!(loft));
+
+        journal.accept_task(&mut document, Some("Loft".into()));
+        assert_eq!(journal.undo(&mut document).as_deref(), Some("Loft"));
+        assert_eq!(journal.undo(&mut document).as_deref(), Some("Setup"));
+    }
+
     #[test]
     fn a_bench_command_off_screen_runs_on_that_tab_s_state() {
         let mut registry = core_document::DocumentService::default();

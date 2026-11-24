@@ -328,10 +328,20 @@ keeps its edits as a step. Benches and the app's tasks restore only their
 own state on Cancel (selection, picks, the tool). A task that records
 calls mid-way (the Assembly's joint turned) asks
 `HostRequest::KeepTaskEdits` so Cancel stops there. A script's or
-agent's run inside a task is part of it (Cancel takes it back too), but
-`begin_run` seals the edits open before it (`JournalBuffer::seal`), so a
-run that fails rolls back only its own and the feature being edited
-stays.
+agent's run and the person can both edit while the run is open (a task
+opened during it, edits between its calls): each pending pair is tagged
+as the run's (recorded between `begin_run` or `begin_call` and
+`note_call`) or the person's (`JournalBuffer::take_by`), and each side
+takes back only its own. A failed run takes back its calls' edits
+beneath the person's later ones and leaves those (a task's feature
+stays); Cancel takes back the task's and leaves the run's; OK closes the
+task's as a step of the person's; a run that ends while the task is open
+takes its calls in it into its one step. Where the later side's edits
+touch what the earlier side's touched (`history/touches.rs`: the same
+feature, body, setting), they were made on them: a failed run keeps its
+edits (`RolledBack::kept`, handed to the task), and Cancel or OK takes
+the run's edits with the task's. A run opened inside a task is part of
+it (Cancel takes it back too, OK keeps it in the task's step).
 `history::assert_cancel_takes_back` is the tasks' shared test. A `TaskInfo::stepwise` task (the
 sketcher's editing session) is the exception: each edit in it is an undo
 step of its own. A tool can make its gesture one step before the pointer
