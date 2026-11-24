@@ -511,6 +511,34 @@ pub(crate) fn keep_written(
     }
 }
 
+/// Write `feature` as sketch `id`'s data, then keep it as what reading
+/// that data gives ([`keep_written`]). What is recorded is a patch of the
+/// elements, constraints and fields that differ from `before`, the sketch
+/// the stored data reads as (read from the node when `None`), or the
+/// whole sketch when a patch cannot say it (a sketch with text).
+pub(crate) fn write_sketch_data(
+    document: &mut core_document::Document,
+    id: FeatureId,
+    feature: &mut SketchFeature,
+    before: Option<&SketchFeature>,
+) -> core_document::DocumentResult<()> {
+    let node = document
+        .get_feature_meta(id)
+        .ok_or(core_document::DocumentError::FeatureNotFound(id))?;
+    let patch = match before {
+        Some(before) => feature.patch_over(before, &node.data),
+        None => node
+            .read_with(|before: &SketchFeature| feature.patch_over(before, &node.data))
+            .flatten(),
+    };
+    let patched = patch.is_some_and(|patch| document.patch_feature_data(id, patch).is_ok());
+    if !patched {
+        document.update_feature_data(id, core_document::WorkbenchFeature::to_json(&*feature))?;
+    }
+    keep_written(document, id, feature);
+    Ok(())
+}
+
 /// Where the body a sketch belongs to sits.
 pub(crate) fn sketch_placement(
     document: &core_document::Document,

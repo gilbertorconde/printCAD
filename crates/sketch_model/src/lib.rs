@@ -9,6 +9,7 @@
 pub const KIND: &str = "wb.sketch";
 
 pub mod boundary;
+pub mod change;
 pub mod conic;
 pub mod curves;
 pub mod feature;
