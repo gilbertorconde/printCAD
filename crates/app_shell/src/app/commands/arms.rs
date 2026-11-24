@@ -39,7 +39,10 @@ impl PrintCadApp {
         self.session.tools.note_tool = !self.session.tools.note_tool;
         self.session.tools.note_card = None;
         if self.session.tools.note_tool {
-            app_log::info("Note: click a face, an edge or a point of a part");
+            app_log::info(
+                "Note: click a face, an edge or a point of a part, or a sketch's element, \
+                 constraint or point",
+            );
         }
     }
 

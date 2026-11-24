@@ -42,6 +42,10 @@ static NO_REFUSAL: kernel_api::EdgeRefusal = kernel_api::EdgeRefusal {
     fits: None,
 };
 
+/// A note on a sketch placed: in its body's frame, with the sketch's
+/// plane there while the sketch is.
+pub type SketchNotePlaced = (crate::NotePlaced, Option<crate::notes::NotePlane>);
+
 /// A document's derived build state. See the module notes.
 #[derive(Debug, Clone, Default)]
 pub struct Derived {
@@ -87,6 +91,10 @@ pub struct Derived {
     /// (`BenchFeatures::feature_solid`), in the document's frame: derived at
     /// evaluation, read by mesh booleans.
     pub(crate) feature_solids: HashMap<FeatureId, kernel_api::MeshOperand>,
+    /// Where each note on a sketch stands, in its body's frame, and the
+    /// sketch's plane there (none once the sketch is gone): asked of the
+    /// sketch's bench at evaluation.
+    pub(crate) sketch_notes: HashMap<crate::NoteId, SketchNotePlaced>,
     /// The next geometry revision handed out: revisions never repeat in a
     /// document, even for a body whose geometry went and came back.
     pub(crate) next_geometry_revision: u64,
@@ -405,6 +413,17 @@ impl Derived {
     /// Take `solids` as what each feature offers a mesh boolean.
     pub fn set_feature_solids(&mut self, solids: HashMap<FeatureId, kernel_api::MeshOperand>) {
         self.feature_solids = solids;
+    }
+
+    /// Where a note on a sketch stands, in its body's frame, and the
+    /// sketch's plane, as last evaluated.
+    pub fn sketch_note_spot(&self, note: crate::NoteId) -> Option<SketchNotePlaced> {
+        self.sketch_notes.get(&note).copied()
+    }
+
+    /// Take `spots` as where the notes on sketches stand.
+    pub fn set_sketch_note_spots(&mut self, spots: HashMap<crate::NoteId, SketchNotePlaced>) {
+        self.sketch_notes = spots;
     }
 }
 

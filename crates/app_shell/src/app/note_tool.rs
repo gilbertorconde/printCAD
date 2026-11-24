@@ -2,10 +2,17 @@
 //! opens a card by the point asking for the note's text (Enter puts the
 //! note down on the edge or face there, Escape drops it); a click on a
 //! note opens the card on it, to reword it, answer its question, resolve
-//! or reopen it, or delete it. Also what the note commands and an agent's
-//! context say of a note, and whether the part hides a note's point.
+//! or reopen it, or delete it. In a sketch under edit a click puts the
+//! note on what the sketcher shows under the cursor (an element or a
+//! constraint) or else on the point of the plane there; in the view, a
+//! click off every part on a shown sketch's element puts it there. Also
+//! what the note commands and an agent's context say of a note, and
+//! whether the part hides a note's point.
 
-use core_document::{BodyId, Document, Note, NoteAuthor, NoteId, NoteWant, TriMesh};
+use core_document::{
+    BodyId, Document, FeatureId, Note, NoteAuthor, NoteId, NoteWant, SketchAnchor, SketchNotePick,
+    TriMesh,
+};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -46,8 +53,26 @@ impl PrintCadApp {
             self.open_note_card(id);
             return true;
         }
+        let pick = self.viewport_pick();
+        if let Some(feature) = self.edited_feature()
+            && let Some(pick) = pick
+            && let Some(hit) = self.registry.sketch_note_pick(
+                &self.session.document,
+                feature,
+                &pick,
+                REACH * self.pixels_per_point(),
+                true,
+            )
+        {
+            return self.new_sketch_note(feature, hit);
+        }
         let (Some(body), Some(point)) = (self.session.hover.body, self.session.hover.world_pos)
         else {
+            if let Some(pick) = pick
+                && let Some((feature, hit)) = self.shown_sketch_under(&pick)
+            {
+                return self.new_sketch_note(feature, hit);
+            }
             return self.session.tools.note_card.take().is_some();
         };
         let body = BodyId(body);
@@ -67,6 +92,79 @@ impl PrintCadApp {
             editing: NoteEditing::New(Box::new(note)),
         });
         true
+    }
+
+    /// A new note waiting on the card for its text, on sketch `feature`
+    /// where the click `hit` it. Whether to draw again.
+    fn new_sketch_note(&mut self, feature: FeatureId, hit: SketchNotePick) -> bool {
+        let Some(body) = self
+            .session
+            .document
+            .get_feature_meta(feature)
+            .and_then(|node| node.body)
+        else {
+            return self.session.tools.note_card.take().is_some();
+        };
+        let note = Note {
+            sketch: Some(SketchAnchor {
+                feature,
+                item: hit.item,
+            }),
+            ..Note::pinned(String::new(), hit.at, hit.label, None)
+        };
+        self.session.tools.note_card = Some(NoteCard {
+            body,
+            editing: NoteEditing::New(Box::new(note)),
+        });
+        true
+    }
+
+    /// The feature the active bench has under edit.
+    pub(crate) fn edited_feature(&self) -> Option<FeatureId> {
+        self.registry
+            .workbench(&self.session.active_workbench.0)
+            .ok()
+            .and_then(|wb| wb.editing_feature())
+    }
+
+    /// A shown sketch's element under the cursor, nearest the view first
+    /// among those that have one.
+    fn shown_sketch_under(
+        &self,
+        pick: &core_document::ViewportPick,
+    ) -> Option<(FeatureId, SketchNotePick)> {
+        let document = &self.session.document;
+        let reach = REACH * self.pixels_per_point();
+        let mut shown: Vec<FeatureId> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, node)| node.visible && node.body.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        shown.sort();
+        shown.into_iter().find_map(|feature| {
+            let hit = self
+                .registry
+                .sketch_note_pick(document, feature, pick, reach, false)?;
+            Some((feature, hit))
+        })
+    }
+
+    /// Whether note `id` draws: as the document shows it, or on the
+    /// sketch under edit while the note and its body show.
+    pub(crate) fn note_shown(&self, id: NoteId) -> bool {
+        let document = &self.session.document;
+        if document.note_effective_visible(id) {
+            return true;
+        }
+        let edited = self.edited_feature();
+        document.note(id).is_some_and(|(body, note)| {
+            !note.hidden
+                && document.imported_body_effective_visible(body)
+                && note
+                    .sketch
+                    .is_some_and(|anchor| Some(anchor.feature) == edited)
+        })
     }
 
     /// Open the card on note `id`.
@@ -145,7 +243,7 @@ impl PrintCadApp {
                 document.next_note_number(),
                 true,
                 note.as_ref(),
-                document.note_placed(card.body, note),
+                self.registry.note_placed(document, card.body, note),
             ),
             NoteEditing::Existing(id) => {
                 let (body, note) = document.note(*id)?;
@@ -186,7 +284,7 @@ impl PrintCadApp {
         let camera = &self.session.view.camera;
         document
             .notes()
-            .filter(|(_, note)| document.note_effective_visible(note.id))
+            .filter(|(_, note)| self.note_shown(note.id))
             .flat_map(|(body, note)| {
                 let placed = document.note_placed(body, note);
                 [placed.at, placed.label].map(|p| {
@@ -316,7 +414,9 @@ pub(crate) fn note_json(document: &Document, body: BodyId, note: &Note) -> Value
         "point": placed.at,
         "label": placed.label,
         "visible": !note.hidden,
-        "on": if note.edge.is_some() {
+        "on": if note.sketch.is_some() {
+            "sketch"
+        } else if note.edge.is_some() {
             "edge"
         } else if note.face.is_some() {
             "face"
@@ -330,6 +430,23 @@ pub(crate) fn note_json(document: &Document, body: BodyId, note: &Note) -> Value
         "done": note.resolved,
         "from_file": note.from_file,
     });
+    if let Some(anchor) = note.sketch {
+        out["sketch"] = json!(anchor.feature.0.to_string());
+        if let Some(node) = document.get_feature_meta(anchor.feature) {
+            out["sketch_name"] = json!(node.name);
+        }
+        if let Some(item) = anchor.item {
+            out["item"] = json!(item.to_string());
+        }
+        // Where it stands in the sketch's plane, as placed now.
+        let local = |p: [f32; 3]| {
+            let p = document.note_point_from(body, note, p);
+            [p[0], p[1]]
+        };
+        out["sketch_point"] = json!(local(placed.at));
+        out["sketch_label"] = json!(local(placed.label));
+        return out;
+    }
     let Some(geometry) = document
         .derived()
         .imported_geometry(body)

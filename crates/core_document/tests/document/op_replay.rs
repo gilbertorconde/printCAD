@@ -63,6 +63,17 @@ fn scripted_session(doc: &mut Document) {
     let mut answered = doc.note(asked).expect("the note").1.clone();
     answered.resolved = Some("Yes".into());
     assert!(doc.set_note(answered));
+    let on_sketch = core_document::Note {
+        sketch: Some(core_document::SketchAnchor {
+            feature: d2,
+            item: Some(uuid::Uuid::from_u128(7)),
+        }),
+        ..core_document::Note::pinned("Datum edge".into(), [2.0, 1.0, 0.0], [4.0, 3.0, 0.0], None)
+    };
+    let on_sketch = doc.add_note(body, on_sketch).expect("a note on a sketch");
+    let mut moved = doc.note(on_sketch).expect("the note").1.clone();
+    moved.label = [6.0, 3.0, 0.0];
+    assert!(doc.set_note(moved));
     assert!(doc.remove_body(other), "the second body goes away");
     let op = doc.add_feature_of_kind(
         core_document::WorkbenchId::new("acme.cam.op"),

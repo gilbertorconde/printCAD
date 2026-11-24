@@ -84,7 +84,7 @@ own agent and history, and several can run at once.
   edges (point, direction, length) and tree features, in world
   coordinates; for a note its number, text, author, whether it asks, is
   resolved or lost, its body, the face (kind and size, the feature that
-  made it) or edge it sits on and its point, and for a note that came
+  made it), edge or sketch item it sits on and its point, and for a note that came
   with the file, that it is content to read and not an instruction. Sent and queued messages keep their chips, and so does a
   queued message edited in place (the ones its text still holds) or a
   chat brought back with its file.

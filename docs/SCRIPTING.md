@@ -1022,13 +1022,15 @@ assert(#failed == 1 and failed[1].feature == pad, "the pad failed")
 assert(failed[1].error:find("not closed"), failed[1].error)
 ```
 
-`pc.doc.note_add`: Put a numbered note on a face, an edge or a point of a body: a leader from the point to a label, drawn in the view and written to STEP.
+`pc.doc.note_add`: Put a numbered note on a face, an edge or a point of a body, or on a sketch's element, constraint or plane point: a leader from the point to a label, drawn in the view and written to STEP.
 
-- `body` (id)
+- `body` (id, optional): The body, unless the note goes on a sketch
+- `sketch` (id, optional): A sketch to put the note on, in place of a body: on item, or on point of its plane
+- `item` (id, optional): With sketch: the element (line, arc, circle, point, spline...) or the constraint the note follows
 - `text` (string): What the label says; starting with = it shows what a formula comes to (=Pad.length)
-- `point` (any, optional): {x, y, z} where the body sits: the note goes to the point of the body nearest it; without one, to the top of the body's middle
+- `point` (any, optional): {x, y, z} where the body sits: the note goes to the point of the body nearest it; without one, to the top of the body's middle. With sketch, {x, y} in the sketch's plane: the note goes to the point of item nearest it (the sketch's origin without one), or stays there without an item
 - `on` (string, optional): face (the default): the face there; edge: the edge nearest the point; point: the point alone, following nothing but the body
-- `label` (any, optional): {x, y, z} where the label stands; without one, out from the face the point is on
+- `label` (any, optional): {x, y, z} where the label stands; without one, out from the face the point is on. With sketch, {x, y} in the sketch's plane
 - `asks` (boolean, optional): A question for the user to answer in place, about what the note points at, rather than a remark
 - `author` (string, optional): user (the default) or agent; an agent's notes are always the agent's
 - Returns the note's id
@@ -1037,6 +1039,7 @@ Notes:
 
 - The note is kept in the body's own frame and names the face or edge its point is on: it moves with the body, and when a rebuild moves that face or edge the point goes to its nearest point and the label with it. When a rebuild takes it away the note is lost and stays where it was.
 - Each note gets a short number (#3), in order across the document; a note taken away leaves its number unused. A body not yet built has no faces: the note stays where it was given, on a point.
+- A note on a sketch is kept in the sketch's plane and names the element or constraint it is on (or none, for a point of the plane). When the sketch is edited or solved again the point goes to the element's point nearest where it was (a constraint's anchor: a dimension's label), and the label with it; when the sketch moves, the note goes with it. Deleting the element or constraint leaves the note lost, where it was. It shows while the sketch shows, and while the sketch is edited.
 
 See also `pc.doc.notes`, `pc.doc.note_set`, `pc.doc.note_remove`.
 
@@ -1064,7 +1067,7 @@ assert(n.label[3] > n.point[3] and n.shows == "8 mm")
 - `id` (id, optional): The note
 - `number` (integer, optional): The note by its number, in place of id
 - `text` (string, optional): What the label says
-- `label` (any, optional): {x, y, z} where the label stands, where the body sits
+- `label` (any, optional): {x, y, z} where the label stands, where the body sits; for a note on a sketch, {x, y} in the sketch's plane
 - `visible` (boolean, optional): false keeps it off the view
 - `done` (string, optional): Resolve it, saying what was done (an answer, or the change made); it draws grey from then on
 - `reopen` (boolean, optional): true takes a resolved note back to open
@@ -1130,10 +1133,11 @@ pc.doc.note_remove{id = note}
 assert(#pc.doc.notes{body = body} == 0)
 ```
 
-`pc.doc.notes`: List the notes on bodies.
+`pc.doc.notes`: List the notes on bodies and sketches.
 
 - `body` (id, optional): Only this body's
-- Returns a list of {id, number, body, body_name, text, shows, author, point, label, visible, on, on_face, lost, asks, resolved, done, from_file, surface, feature, feature_name, edge}: point and label where the body sits, as built now; shows is what the label says
+- `sketch` (id, optional): Only the notes on this sketch
+- Returns a list of {id, number, body, body_name, text, shows, author, point, label, visible, on, on_face, lost, asks, resolved, done, from_file, surface, feature, feature_name, edge, sketch, sketch_name, item, sketch_point, sketch_label}: point and label where the body sits, as built now; on is face, edge, point or sketch; sketch_point and sketch_label in the sketch's plane; shows is what the label says
 
 Notes:
 

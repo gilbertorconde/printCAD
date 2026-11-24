@@ -772,6 +772,14 @@ Each note gets a short number (#3), in order across the document; a note taken
 away leaves its number unused. A body not yet built has no faces: the note
 stays where it was given, on a point.
 
+A note on a sketch is kept in the sketch's plane and names the element or
+constraint it is on (or none, for a point of the plane). When the sketch is
+edited or solved again the point goes to the element's point nearest where it
+was (a constraint's anchor: a dimension's label), and the label with it; when
+the sketch moves, the note goes with it. Deleting the element or constraint
+leaves the note lost, where it was. It shows while the sketch shows, and while
+the sketch is edited.
+
 See also: `doc.notes`, `doc.note_set`, `doc.note_remove`
 
 ### A note on a pad's top follows it as the pad grows
@@ -808,6 +816,27 @@ assert(#pc.doc.rebuild() == 0)
 local n = pc.doc.notes()[1]
 assert(n.on == "edge" and n.author == "agent" and n.asks and not n.lost)
 assert(math.abs(n.point[3] - 8) < 1e-4 and math.abs(n.edge.length - 20) < 1e-3)
+```
+
+### Notes on a sketch follow its circle, and are lost with it
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local c = pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 5}
+local d = pc.sketch.constrain{sketch = s, kind = "diameter", items = {c}}
+pc.doc.note_add{sketch = s, item = c, point = {9, 0}, text = "Bore"}
+local n = pc.doc.notes{sketch = s}[1]
+assert(n.on == "sketch" and n.item == c and n.number == 1)
+assert(math.abs(n.sketch_point[1] - 5) < 1e-4, "taken to the circle")
+pc.sketch.set_value{sketch = s, constraint = d[1], value = 20}
+n = pc.doc.notes{sketch = s}[1]
+assert(math.abs(n.sketch_point[1] - 10) < 1e-4 and not n.lost, "it follows the circle")
+pc.doc.note_add{sketch = s, item = d[1], text = "Check the fit"}
+pc.doc.note_add{sketch = s, point = {0, 0}, text = "Centre"}
+pc.sketch.delete{sketch = s, items = {c}}
+local notes = pc.doc.notes{sketch = s}
+assert(notes[1].lost and notes[2].lost, "gone with the circle and its diameter")
+assert(not notes[3].lost and notes[3].number == 3)
 ```
 
 ## doc.note_set

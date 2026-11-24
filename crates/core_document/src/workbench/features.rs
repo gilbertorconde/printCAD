@@ -129,6 +129,40 @@ pub trait BenchFeatures {
         None
     }
 
+    /// Where a note on an owned feature drawn in a plane (a sketch)
+    /// stands as the feature is now: `at` and `label`, in the feature's
+    /// plane, taken to what `item` names (its point nearest `at`, the
+    /// label moved alike; a point of the plane when `item` is `None`),
+    /// with the plane in the body's frame. Lost when `item` is gone.
+    /// `None` when the feature takes no notes.
+    fn note_spot(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _item: Option<uuid::Uuid>,
+        _at: [f32; 3],
+        _label: [f32; 3],
+    ) -> Option<crate::SketchNoteSpot> {
+        None
+    }
+
+    /// What a click with the note tool lands on in an owned feature drawn
+    /// in a plane: the element or constraint under the cursor and the
+    /// plane's point there, the point of the plane alone when nothing is
+    /// within `tolerance_px` and `plane_points` allows it. While the
+    /// feature is under edit the bench answers what it shows hovered.
+    /// `None` when the feature takes no notes or nothing is there.
+    fn note_pick(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _pick: &ViewportPick,
+        _tolerance_px: f32,
+        _plane_points: bool,
+    ) -> Option<crate::SketchNotePick> {
+        None
+    }
+
     /// How the work of a feature of a kind this bench claims stands, when
     /// the bench says.
     fn feature_status(&self, _node: &FeatureNode) -> Option<FeatureStatus> {

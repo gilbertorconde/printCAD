@@ -20,6 +20,7 @@ mod external;
 mod external_follow;
 mod external_ref;
 mod node_edit;
+mod notes;
 use external_follow::{
     Projection, follow_references, project_source_in, projection_key, solid_built_from,
 };

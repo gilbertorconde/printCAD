@@ -118,11 +118,15 @@ impl PrintCadApp {
             });
         let shown = document
             .notes()
-            .filter(|(_, note)| document.note_effective_visible(note.id));
+            .filter(|(_, note)| self.note_shown(note.id));
         let mut drawn = std::collections::HashSet::new();
         for (body, note) in shown.chain(card_new) {
             drawn.insert(note.id);
-            let placed = document.note_placed(body, note);
+            let placed = if note.number == 0 {
+                self.registry.note_placed(document, body, note)
+            } else {
+                document.note_placed(body, note)
+            };
             let color = if selected == Some(note.id) || on_card == Some(note.id) {
                 self.user_settings.rendering.selection_color
             } else if placed.lost {
