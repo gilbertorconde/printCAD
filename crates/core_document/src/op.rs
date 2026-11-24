@@ -319,6 +319,16 @@ pub enum DocumentOp {
         id: FeatureId,
         data: std::sync::Arc<serde_json::Value>,
     },
+    /// Writes into a feature's data where it stands, the rest of it left
+    /// as it is: an edit of a large payload (a sketch) that changed a few
+    /// of its parts. Its inverse is a patch too, worked out from the data
+    /// it is applied to. A patch that does not fit the data it meets (an
+    /// item it names is gone) changes nothing. Consecutive patches of one
+    /// feature join in the outbox and the journal as updates do.
+    PatchFeatureData {
+        id: FeatureId,
+        patch: crate::patch::DataPatch,
+    },
     RenameFeature {
         id: FeatureId,
         name: String,
@@ -440,6 +450,27 @@ impl OpBuffer {
     /// feature: a drag's per-frame updates collapse to the latest payload,
     /// which keeps the first one's inverse.
     pub fn record(&mut self, op: DocumentOp, inverse: Option<DocumentOp>) {
+        let (op, inverse) = match (op, self.pending.last_mut()) {
+            (
+                DocumentOp::PatchFeatureData { id, patch },
+                Some(Unconfirmed {
+                    op:
+                        DocumentOp::PatchFeatureData {
+                            id: tail,
+                            patch: joined,
+                        },
+                    inverse: Some(DocumentOp::PatchFeatureData { patch: undo, .. }),
+                }),
+            ) if *tail == id => {
+                if let Some(DocumentOp::PatchFeatureData { patch: first, .. }) = inverse {
+                    joined.then(patch);
+                    undo.after(first);
+                    return;
+                }
+                (DocumentOp::PatchFeatureData { id, patch }, inverse)
+            }
+            (op, _) => (op, inverse),
+        };
         // A colour picker drag is one look per frame; the last is the op.
         let same_target = match (&op, self.pending.last().map(|u| &u.op)) {
             (
@@ -551,6 +582,26 @@ impl JournalBuffer {
             self.pairs.clear();
             return;
         };
+        if let (
+            DocumentOp::PatchFeatureData { id, patch },
+            DocumentOp::PatchFeatureData { patch: undo, .. },
+        ) = (op, &inverse)
+            && let Some((
+                DocumentOp::PatchFeatureData {
+                    id: tail_id,
+                    patch: joined,
+                },
+                DocumentOp::PatchFeatureData {
+                    patch: joined_undo, ..
+                },
+            )) = self.pairs.last_mut()
+            && tail_id == id
+        {
+            // Every write forward, the first ones back.
+            joined.then(patch.clone());
+            joined_undo.after(undo.clone());
+            return;
+        }
         if let DocumentOp::UpdateFeatureData { id, .. } = op
             && let Some((DocumentOp::UpdateFeatureData { id: tail_id, .. }, _)) = self.pairs.last()
             && tail_id == id

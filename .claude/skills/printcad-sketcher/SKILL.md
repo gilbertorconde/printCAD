@@ -29,7 +29,12 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   (`SketchFeature`, its supports, `KIND`), `geom2d.rs`
   (intersection/sampling math), `shape.rs` (an element as a shape:
   `distance_to_element`, `distance_within`), `curves.rs`, `conic.rs`,
-  `spline.rs`, `measure.rs`, `solver.rs` (sketch_solver adapter, storage
+  `spline.rs`, `measure.rs`, `change.rs` (`SketchChange::between`: the
+  elements and constraints added, removed and changed, by id;
+  `SketchFeature::patch_over`, the patch an edit records instead of the
+  whole sketch, through `wb_sketch::placement::write_sketch_data` from
+  the bench's and the commands' stores; a sketch with text is written
+  whole), `solver.rs` (sketch_solver adapter, storage
   write-back and application diagnostics; `locked_elements`, through
   `sketch_solver::freedom::locked`, the elements nothing left free can
   move, drawn in `SketchPalette::locked` until the whole sketch is fully

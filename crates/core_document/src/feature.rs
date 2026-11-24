@@ -59,15 +59,6 @@ pub trait WorkbenchFeature: Serialize + serde::de::DeserializeOwned + Send + Syn
         serde_json::to_value(self).expect("a feature serializes to JSON")
     }
 
-    /// [`Self::to_json`] written over `spare`, a value nothing else holds
-    /// (the feature's data from an earlier write): every node whose shape
-    /// still agrees is kept, so a large feature written again after a small
-    /// change allocates and frees little.
-    fn to_json_over(&self, mut spare: serde_json::Value) -> serde_json::Value {
-        crate::json_over::write_over(&mut spare, self).expect("a feature serializes to JSON");
-        spare
-    }
-
     /// The feature read back from what the document stores.
     fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
         Self::deserialize(value).map_err(|e| {
@@ -204,6 +195,29 @@ impl FeatureNode {
         let read = F::from_json(&self.data).ok()?;
         self.keep_read(read.clone());
         Some(read)
+    }
+
+    /// `look` at the node's data read as `F`, as [`Self::read`] reads it,
+    /// without a copy of what is kept.
+    pub fn read_with<F: WorkbenchFeature + 'static, R>(
+        &self,
+        look: impl FnOnce(&F) -> R,
+    ) -> Option<R> {
+        let key = (self.id, std::any::TypeId::of::<F>());
+        let mut look = Some(look);
+        let seen = READ.with_borrow(|kept| {
+            kept.get(&key)
+                .filter(|(revision, _)| *revision == self.data_revision)
+                .and_then(|(_, read)| read.downcast_ref::<F>())
+                .map(|read| (look.take().expect("looked once"))(read))
+        });
+        if seen.is_some() {
+            return seen;
+        }
+        let read = F::from_json(&self.data).ok()?;
+        let seen = (look.take().expect("looked once"))(&read);
+        self.keep_read(read);
+        Some(seen)
     }
 
     /// Keep `read` as what [`Self::read`] gives for the node's data as it

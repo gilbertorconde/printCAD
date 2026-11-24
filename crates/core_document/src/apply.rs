@@ -10,12 +10,90 @@ impl Document {
     /// ever snapshotting the document.
     pub(crate) fn record_and_apply(&mut self, operation: op::DocumentOp) {
         debug_assert!(!self.deriving, "derived state recorded an op");
-        let inverse = self.invert_op(&operation);
+        match self.invert_and_apply(&operation) {
+            Ok(inverse) => self.record_applied(operation, inverse),
+            Err(error) => tracing::warn!("a patch of feature data did not apply: {error}"),
+        }
+    }
+
+    /// Record `operation`, applied already, with the op that undoes it,
+    /// into the journal and the outbox.
+    pub(crate) fn record_applied(
+        &mut self,
+        operation: op::DocumentOp,
+        inverse: Option<op::DocumentOp>,
+    ) {
         if !self.history_suppressed {
             self.journal_pending.record(&operation, inverse.clone());
         }
-        self.apply_op(&operation);
         self.pending_ops.record(operation, inverse);
+    }
+
+    /// Apply `operation`, answering the op that undoes it, worked out from
+    /// the state it changed ([`Self::invert_op`]), or for a patch while
+    /// applying it; or why a patch did not fit, nothing changed then.
+    pub(crate) fn invert_and_apply(
+        &mut self,
+        operation: &op::DocumentOp,
+    ) -> Result<Option<op::DocumentOp>, crate::patch::PatchError> {
+        let inverse = match operation {
+            op::DocumentOp::PatchFeatureData { .. } => None,
+            _ => self.invert_op(operation),
+        };
+        let worked = self.apply_op_inverting(operation)?;
+        Ok(inverse.or(worked))
+    }
+
+    /// [`Self::invert_and_apply`] with a peer's op's consequences here
+    /// ([`Self::apply_remote_op`]).
+    fn invert_and_apply_remote(
+        &mut self,
+        operation: &op::DocumentOp,
+    ) -> Result<Option<op::DocumentOp>, crate::patch::PatchError> {
+        let inverse = self.invert_and_apply(operation)?;
+        self.remote_consequences(operation);
+        Ok(inverse)
+    }
+
+    /// Apply this replica's unconfirmed ops again, each with its inverse
+    /// worked out anew. A sent one that no longer fits (a patch whose
+    /// item went) stays, undone by an empty patch: the server orders it
+    /// all the same and every replica passes over it. An unsent one that
+    /// no longer fits is dropped, so no later patch joins it.
+    fn reapply_unconfirmed(
+        &mut self,
+        in_flight: &mut [op::SentBatch],
+        pending: &mut Vec<op::Unconfirmed>,
+    ) {
+        for unconfirmed in in_flight.iter_mut().flat_map(|batch| batch.ops.iter_mut()) {
+            unconfirmed.inverse = match self.invert_and_apply_remote(&unconfirmed.op) {
+                Ok(inverse) => inverse,
+                Err(error) => {
+                    tracing::warn!("a sent patch of feature data no longer applies: {error}");
+                    match &unconfirmed.op {
+                        op::DocumentOp::PatchFeatureData { id, .. } => {
+                            Some(op::DocumentOp::PatchFeatureData {
+                                id: *id,
+                                patch: Default::default(),
+                            })
+                        }
+                        _ => None,
+                    }
+                }
+            };
+        }
+        pending.retain_mut(
+            |unconfirmed| match self.invert_and_apply_remote(&unconfirmed.op) {
+                Ok(inverse) => {
+                    unconfirmed.inverse = inverse;
+                    true
+                }
+                Err(error) => {
+                    tracing::warn!("an unsent patch of feature data no longer applies: {error}");
+                    false
+                }
+            },
+        );
     }
 
     /// Apply an op produced by history traversal (undo/redo): the effect,
@@ -24,9 +102,10 @@ impl Document {
     /// walked, not written.
     pub(crate) fn apply_history_op(&mut self, operation: &op::DocumentOp) {
         debug_assert!(!self.deriving, "derived state recorded an op");
-        let inverse = self.invert_op(operation);
-        self.apply_remote_op(operation);
-        self.pending_ops.record(operation.clone(), inverse);
+        match self.invert_and_apply_remote(operation) {
+            Ok(inverse) => self.pending_ops.record(operation.clone(), inverse),
+            Err(error) => tracing::warn!("a patch of feature data did not apply: {error}"),
+        }
     }
 
     /// The op that would restore the state `operation` is about to change.
@@ -160,6 +239,16 @@ impl Document {
                 id: *id,
                 data: std::sync::Arc::clone(&self.feature_tree.get_node(*id)?.data),
             },
+            // Worked out on a copy: applying the patch answers its inverse
+            // without one ([`Self::invert_and_apply`]).
+            Op::PatchFeatureData { id, patch } => Op::PatchFeatureData {
+                id: *id,
+                patch: patch
+                    .apply(&mut serde_json::Value::clone(
+                        &self.feature_tree.get_node(*id)?.data,
+                    ))
+                    .unwrap_or_default(),
+            },
             Op::RenameFeature { id, .. } => Op::RenameFeature {
                 id: *id,
                 name: self.feature_tree.get_node(*id)?.name.clone(),
@@ -268,16 +357,11 @@ impl Document {
     /// only what the user's own edits touched, stays good on it.
     pub fn carry_unconfirmed_to(&mut self, next: &mut Document) -> Vec<op::DocumentOp> {
         let (mut in_flight, mut pending) = self.pending_ops.take_unconfirmed();
-        let mut carried = Vec::new();
-        for unconfirmed in in_flight
-            .iter_mut()
-            .flat_map(|batch| batch.ops.iter_mut())
-            .chain(pending.iter_mut())
-        {
-            unconfirmed.inverse = next.invert_op(&unconfirmed.op);
-            next.apply_remote_op(&unconfirmed.op);
-            carried.push(unconfirmed.op.clone());
-        }
+        next.reapply_unconfirmed(&mut in_flight, &mut pending);
+        let carried = (in_flight.iter().flat_map(|batch| &batch.ops))
+            .chain(&pending)
+            .map(|unconfirmed| unconfirmed.op.clone())
+            .collect();
         next.pending_ops.restore(in_flight, pending);
         next.journal_pending = std::mem::take(&mut self.journal_pending);
         carried
@@ -336,14 +420,7 @@ impl Document {
             self.apply_remote_op(operation);
         }
         if exact && local {
-            for unconfirmed in in_flight
-                .iter_mut()
-                .flat_map(|batch| batch.ops.iter_mut())
-                .chain(pending.iter_mut())
-            {
-                unconfirmed.inverse = self.invert_op(&unconfirmed.op);
-                self.apply_remote_op(&unconfirmed.op);
-            }
+            self.reapply_unconfirmed(&mut in_flight, &mut pending);
         }
         self.pending_ops.restore(in_flight, pending);
         exact
@@ -373,14 +450,27 @@ impl Document {
     /// that changes build inputs marks the affected features dirty, which is
     /// what triggers this replica's own recompute.
     pub fn apply_op(&mut self, operation: &op::DocumentOp) {
-        self.apply_op_itself(operation);
+        if let Err(error) = self.apply_op_inverting(operation) {
+            tracing::warn!("a patch of feature data did not apply: {error}");
+        }
+    }
+
+    /// [`Self::apply_op`], answering the inverse a patch works out as it
+    /// applies (`None` for any other op), or why the patch did not fit:
+    /// nothing changed then.
+    fn apply_op_inverting(
+        &mut self,
+        operation: &op::DocumentOp,
+    ) -> Result<Option<op::DocumentOp>, crate::patch::PatchError> {
+        let worked = self.apply_op_itself(operation)?;
         // The bodies the configuration in effect leaves out follow its
         // table.
         let touches_table = match operation {
             op::DocumentOp::AddFeature { workbench_id, .. } => {
                 workbench_id.as_str() == configurations::CONFIGURATIONS_KIND
             }
-            op::DocumentOp::UpdateFeatureData { id, .. } => self
+            op::DocumentOp::UpdateFeatureData { id, .. }
+            | op::DocumentOp::PatchFeatureData { id, .. } => self
                 .feature_tree
                 .get_node(*id)
                 .is_some_and(|n| n.workbench_id.as_str() == configurations::CONFIGURATIONS_KIND),
@@ -390,6 +480,7 @@ impl Document {
         if touches_table {
             self.refresh_left_out();
         }
+        Ok(worked)
     }
 
     /// The bodies the configuration in effect leaves out, read again.
@@ -400,8 +491,12 @@ impl Document {
             .unwrap_or_default();
     }
 
-    fn apply_op_itself(&mut self, operation: &op::DocumentOp) {
+    fn apply_op_itself(
+        &mut self,
+        operation: &op::DocumentOp,
+    ) -> Result<Option<op::DocumentOp>, crate::patch::PatchError> {
         use op::DocumentOp as Op;
+        let mut worked = None;
         match operation {
             Op::SetDocumentName { name } => {
                 self.metadata.name.clone_from(name);
@@ -686,6 +781,18 @@ impl Document {
                     node.data_revision = Default::default();
                 }
             }
+            Op::PatchFeatureData { id, patch } => {
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    // In place: the data is copied only while something
+                    // else still holds it.
+                    let undo = patch.apply(std::sync::Arc::make_mut(&mut node.data))?;
+                    node.data_revision = Default::default();
+                    worked = Some(Op::PatchFeatureData {
+                        id: *id,
+                        patch: undo,
+                    });
+                }
+            }
             Op::RenameFeature { id, name } => {
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
                     node.name.clone_from(name);
@@ -732,7 +839,7 @@ impl Document {
                     self.feature_tree.get_node(*a).map(|n| n.seq),
                     self.feature_tree.get_node(*b).map(|n| n.seq),
                 ) else {
-                    return;
+                    return Ok(None);
                 };
                 if let Some(n) = self.feature_tree.get_node_mut(*a) {
                     n.seq = seq_b;
@@ -746,7 +853,7 @@ impl Document {
             }
             Op::SetFeatureBody { id, body, seq } => {
                 let Some(from) = self.feature_tree.get_node(*id).map(|n| n.body) else {
-                    return;
+                    return Ok(None);
                 };
                 let seq = self.feature_tree.unclaimed_seq(*id, *seq);
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
@@ -822,6 +929,7 @@ impl Document {
             }
         }
         self.mark_dirty();
+        Ok(worked)
     }
 
     /// Apply a peer's op: the effect plus this replica's own consequences.
@@ -832,11 +940,18 @@ impl Document {
     /// the peer's edit invalidated. (The peer marked its own copy dirty at
     /// capture; dirty flags are per-replica, never part of the op.)
     pub fn apply_remote_op(&mut self, operation: &op::DocumentOp) {
-        use op::DocumentOp as Op;
         self.apply_op(operation);
+        self.remote_consequences(operation);
+    }
+
+    /// What a peer's op means here, beyond its effect: the features whose
+    /// build inputs it changed are marked dirty.
+    fn remote_consequences(&mut self, operation: &op::DocumentOp) {
+        use op::DocumentOp as Op;
         match operation {
             Op::AddFeature { id, .. }
             | Op::UpdateFeatureData { id, .. }
+            | Op::PatchFeatureData { id, .. }
             | Op::SetFeatureSuppressed { id, .. } => {
                 self.mark_feature_dirty(*id);
             }

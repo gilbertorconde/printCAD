@@ -34,6 +34,14 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   is saved only as the bodies' meshes, under the JSON's `imported_meshes`
   key (`derived::saved_meshes`), the replicated projection drops that key,
   and a clone keeps all of it;
+  `patch` (`DataPatch`): writes into a feature's data, a key set or
+  taken away or an item of a list put in, replaced or taken out by its
+  id, the payload of `DocumentOp::PatchFeatureData`
+  (`Document::patch_feature_data`, beside the whole-payload
+  `UpdateFeatureData`); it applies in place, whole or not at all (a
+  missing path leaves the data untouched), its inverse worked out as it
+  applies (`invert_and_apply`), and consecutive patches of one feature
+  join in the outbox and the journal (`DataPatch::then`, `after`);
   `jobs`, the benches' work away from the window: `Keyed` (results by id
   and the key of their inputs, a newer key superseding a run still going,
   its late answer dropped: Mesh's and Design's deviation maps,
