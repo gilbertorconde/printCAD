@@ -712,7 +712,7 @@ mod tests {
             ..AttachmentOffset::default()
         });
         let values_of = |id: FeatureId| (id == other).then(|| moved.to_json());
-        let mut values = middle.to_json();
+        let mut values = std::borrow::Cow::Owned(middle.to_json());
         assert!(derive(&mut values, None, &values_of, &|_, _| None));
         let frame = DatumFeature::from_json(&values).unwrap().frame();
         assert!((frame.origin[2] - 12.0).abs() < 1e-5, "{frame:?}");
@@ -815,7 +815,7 @@ mod tests {
             surface: kernel_api::FaceSurface::Other,
         });
         let none = |_: FeatureId| None;
-        let mut values = datum.to_json();
+        let mut values = std::borrow::Cow::Owned(datum.to_json());
         let stale = crate::rebuild::ProbedReferences {
             probes: vec![ShapeProbe::Mass],
             answers: vec![answer.clone()],
@@ -851,7 +851,7 @@ mod tests {
             ..AttachmentOffset::default()
         });
         let values_of = |id: FeatureId| (id == other).then(|| moved.to_json());
-        let mut values = line.to_json();
+        let mut values = std::borrow::Cow::Owned(line.to_json());
         assert!(derive(&mut values, None, &values_of, &|_, _| None));
         let frame = DatumFeature::from_json(&values).unwrap().frame();
         assert!((frame.origin[2] - 6.0).abs() < 1e-5, "{:?}", frame.origin);
@@ -1055,7 +1055,7 @@ mod tests {
             },
         );
         let values_of = |id: FeatureId| (id == leader_id).then(|| leader.to_json());
-        let mut values = follower.to_json();
+        let mut values = std::borrow::Cow::Owned(follower.to_json());
         assert!(derive(&mut values, None, &values_of, &|_, _| None));
         let frame = DatumFeature::from_json(&values).unwrap().frame();
         assert!(close(frame.origin, [0.0, 0.0, 7.0]));
@@ -1080,7 +1080,7 @@ mod tests {
                 },
             },
         );
-        let mut values = on_other.to_json();
+        let mut values = std::borrow::Cow::Owned(on_other.to_json());
         assert!(derive(&mut values, None, &|_| None, &|b, p| {
             body_plane_in(&doc, own, b, p)
         }));
