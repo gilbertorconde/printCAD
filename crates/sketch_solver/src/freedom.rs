@@ -24,7 +24,25 @@ pub fn estimate(problem: &Problem) -> Freedom {
 /// [`estimate`] from `sys`, `problem` compiled for rank
 /// ([`crate::compile::compile_for_rank`]).
 pub fn estimate_in(problem: &Problem, sys: &crate::compile::System) -> Freedom {
-    let unsolved_shape = problem
+    let unsolved_shape = unsolved_shape(problem, sys);
+    let free_variables = sys.free.len();
+    let rank = if sys.specs.is_empty() || sys.free.is_empty() {
+        0
+    } else {
+        crate::sparse::rank(sys, problem.settings.rank_tolerance)
+    };
+    Freedom {
+        free_variables,
+        rank,
+        unsolved_shape,
+        degrees: free_variables as i32 - rank as i32 + unsolved_shape,
+    }
+}
+
+/// The freedom of the ellipses' and conics' shapes `sys` leaves out:
+/// three each (two for a parabola), none for pinned external geometry.
+pub(crate) fn unsolved_shape(problem: &Problem, sys: &crate::compile::System) -> i32 {
+    problem
         .geometry
         .iter()
         .map(|g| {
@@ -39,19 +57,7 @@ pub fn estimate_in(problem: &Problem, sys: &crate::compile::System) -> Freedom {
                 _ => 0,
             }
         })
-        .sum();
-    let free_variables = sys.free.len();
-    let rank = if sys.specs.is_empty() || sys.free.is_empty() {
-        0
-    } else {
-        crate::sparse::rank(sys, problem.settings.rank_tolerance)
-    };
-    Freedom {
-        free_variables,
-        rank,
-        unsolved_shape,
-        degrees: free_variables as i32 - rank as i32 + unsolved_shape,
-    }
+        .sum()
 }
 
 /// What no remaining motion of a problem can move, at its configuration as
@@ -76,17 +82,30 @@ pub fn locked(problem: &Problem) -> Locked {
 /// [`locked`] from `sys`, `problem` compiled for rank
 /// ([`crate::compile::compile_for_rank`]).
 pub fn locked_in(problem: &Problem, sys: &crate::compile::System) -> Locked {
+    let columns = (!sys.free.is_empty() && !sys.specs.is_empty())
+        .then(|| crate::sparse::determined(sys, problem.settings.rank_tolerance));
+    let mut out = Locked::default();
+    locked_into(problem, sys, columns.as_deref(), &mut out);
+    out
+}
+
+/// [`locked_in`] into `out`, given which of `sys`'s movable variables are
+/// determined (in `free`'s order); none is where `columns` is `None`.
+pub(crate) fn locked_into(
+    problem: &Problem,
+    sys: &crate::compile::System,
+    columns: Option<&[bool]>,
+    out: &mut Locked,
+) {
     let mut var_locked = vec![true; sys.vars.len()];
     for &j in &sys.free {
         var_locked[j] = false;
     }
-    if !sys.free.is_empty() && !sys.specs.is_empty() {
-        let columns = crate::sparse::determined(sys, problem.settings.rank_tolerance);
-        for (&j, held) in sys.free.iter().zip(columns) {
+    if let Some(columns) = columns {
+        for (&j, &held) in sys.free.iter().zip(columns) {
             var_locked[j] = held;
         }
     }
-    let mut out = Locked::default();
     for (&point, &k) in &sys.point_vars {
         if var_locked[k] && var_locked[k + 1] && !sys.derived_foci.contains(&point) {
             out.points.insert(point);
@@ -138,7 +157,6 @@ pub fn locked_in(problem: &Problem, sys: &crate::compile::System) -> Locked {
             out.points.insert(focus);
         }
     }
-    out
 }
 
 /// For each column of `m`, whether it lies outside the null space: no

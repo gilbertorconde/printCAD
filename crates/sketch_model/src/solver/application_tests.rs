@@ -1589,4 +1589,183 @@ mod tests {
         let length = sketch.length(level, 10.0);
         assert!(superseded(&sketch, &[length]).is_empty());
     }
+
+    /// The whole sketch compiled as one system and solved as the solve
+    /// entry points do, with `held` held: the oracle the parts kept
+    /// between solves are held to.
+    fn solved_whole(sketch: &Sketch, held: &[Uuid]) -> (Sketch, SolveOutcome) {
+        let mut whole = sketch.clone();
+        if !held.is_empty() {
+            let sys = build_system_holding(&whole, None, held);
+            let outcome = solve_system(&mut whole, &sys, None).0;
+            if !matches!(outcome, SolveOutcome::NotConverged { .. }) {
+                return (whole, outcome);
+            }
+            whole = sketch.clone();
+        }
+        let sys = build_system(&whole);
+        let iteration = iterate(&sys, whole.solver);
+        apply(&mut whole, &sys, &iteration, None);
+        (whole, iteration.outcome)
+    }
+
+    #[test]
+    fn edits_solved_by_kept_parts_land_where_a_whole_solve_does() {
+        // Cells of a rectangle, a circle and an arc, sized and squared,
+        // and an ellipse sized by its radii, edited one step at a time
+        // through the solve entry points, the thread's parts kept from
+        // one step to the next. After each step the stored sketch, the
+        // outcome, the freedom and the locked elements are those of the
+        // whole sketch solved afresh as one system.
+        let mut sketch = Sketch::new("cells");
+        let mut corners: Vec<Vec<Uuid>> = Vec::new();
+        let mut sides: Vec<Vec<Uuid>> = Vec::new();
+        let mut lengths = Vec::new();
+        let cell = |sketch: &mut Sketch,
+                    x: f64,
+                    corners: &mut Vec<Vec<Uuid>>,
+                    sides: &mut Vec<Vec<Uuid>>,
+                    lengths: &mut Vec<Uuid>| {
+            let c: Vec<Uuid> = [(0.0, 0.0), (4.0, 0.1), (4.1, 3.0), (0.0, 2.9)]
+                .iter()
+                .map(|(px, py)| add_point(sketch, x + px, *py))
+                .collect();
+            let l: Vec<Uuid> = (0..4)
+                .map(|k| add_line(sketch, c[k], c[(k + 1) % 4]))
+                .collect();
+            sketch.add_constraint(ConstraintKind::Horizontal { element: l[0] });
+            sketch.add_constraint(ConstraintKind::Vertical { element: l[1] });
+            sketch.add_constraint(ConstraintKind::Horizontal { element: l[2] });
+            lengths.push(sketch.length(l[0], 4.0));
+            let (_, round) = circle(sketch, x + 6.0, 1.0, 0.9);
+            sketch.add_constraint(ConstraintKind::Radius {
+                circle: round,
+                radius: 1.0,
+            });
+            let (s, e) = (add_point(sketch, x - 1.0, 0.0), add_point(sketch, x, -1.0));
+            let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c[0], s, e, 1.0)));
+            sketch.add_constraint(ConstraintKind::Radius {
+                circle: arc,
+                radius: 1.2,
+            });
+            corners.push(c);
+            sides.push(l);
+        };
+        for k in 0..5 {
+            cell(
+                &mut sketch,
+                k as f64 * 12.0,
+                &mut corners,
+                &mut sides,
+                &mut lengths,
+            );
+        }
+        pin(&mut sketch, corners[0][0]);
+        let centre = add_point(&mut sketch, 0.0, 20.0);
+        pin(&mut sketch, centre);
+        let oval = ellipse(&mut sketch, centre, (6.0, 0.0), 0.5);
+        let major = sketch.add_constraint(ConstraintKind::EllipseRadius {
+            ellipse: oval,
+            major: true,
+            radius: 7.0,
+        });
+
+        let check = |sketch: &mut Sketch, held: &[Uuid], what: &str| {
+            let (whole, outcome) = solved_whole(sketch, held);
+            let parted = if held.is_empty() {
+                solve(sketch)
+            } else {
+                solve_holding(sketch, held)
+            };
+            assert_eq!(parted, outcome, "{what}: outcome");
+            assert_eq!(
+                serde_json::to_string(sketch).unwrap(),
+                serde_json::to_string(&whole).unwrap(),
+                "{what}: stored"
+            );
+            let problem = adapter::prepare(sketch, &[]);
+            let prepared = Prepared::of(sketch);
+            assert_eq!(
+                prepared.dof(),
+                sketch_solver::freedom::estimate(&problem).degrees,
+                "{what}: freedom"
+            );
+            assert_eq!(
+                prepared.parts.locked(),
+                sketch_solver::freedom::locked(&problem),
+                "{what}: locked"
+            );
+            assert_eq!(
+                sketch.is_fully_constrained, whole.is_fully_constrained,
+                "{what}"
+            );
+            outcome
+        };
+
+        let _ = check(&mut sketch, &[], "drawn");
+        // A corner dragged, the rest giving way.
+        for step in 0..3 {
+            let corner = corners[2][2];
+            if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
+                p.position.x += 0.5;
+                p.position.y += 0.25 * step as f64;
+            }
+            let _ = check(&mut sketch, &[corner], "dragged");
+            let _ = check(&mut sketch, &[], "let go");
+        }
+        // A dimension's value changed.
+        if let Some(c) = sketch.constraints.iter_mut().find(|c| c.id == lengths[3]) {
+            c.kind = ConstraintKind::Length {
+                line: sides[3][0],
+                length: 5.0,
+            };
+        }
+        let _ = check(&mut sketch, &[], "resized");
+        // Two cells joined, and the ellipse resized.
+        sketch.add_constraint(ConstraintKind::Distance {
+            point1: corners[1][1],
+            point2: corners[3][0],
+            distance: 30.0,
+        });
+        if let Some(c) = sketch.constraints.iter_mut().find(|c| c.id == major) {
+            c.kind = ConstraintKind::EllipseRadius {
+                ellipse: oval,
+                major: true,
+                radius: 9.0,
+            };
+        }
+        let _ = check(&mut sketch, &[], "joined");
+        // A side held to a second length, which no solve meets: the
+        // conflict is reported on the two lengths alone.
+        let second = sketch.length(sides[4][0], 6.0);
+        let outcome = check(&mut sketch, &[], "conflicting");
+        assert!(matches!(outcome, SolveOutcome::NotConverged { .. }));
+        assert!(diagnosable(&sketch));
+        let mut conflicting = diagnose(&sketch).conflicting;
+        conflicting.sort();
+        let mut expected = vec![lengths[4], second];
+        expected.sort();
+        assert_eq!(conflicting, expected);
+        sketch.constraints.retain(|c| c.id != second);
+        let _ = check(&mut sketch, &[], "settled again");
+        // A constraint taken away, and a cell added.
+        sketch.constraints.retain(|c| c.id != lengths[1]);
+        let _ = check(&mut sketch, &[], "freed");
+        cell(&mut sketch, 60.0, &mut corners, &mut sides, &mut lengths);
+        let _ = check(&mut sketch, &[], "grown");
+        sketch.add_constraint(ConstraintKind::Distance {
+            point1: corners[4][1],
+            point2: corners[5][0],
+            distance: 8.0,
+        });
+        let _ = check(&mut sketch, &[], "grown and joined");
+        // The ellipse already as its radius asks, its ratio one that its
+        // minor radius does not give back to the bit: storing it again
+        // rewrites the ratio, solved or not.
+        if let Some(GeometryElement::Ellipse(e)) = sketch.get_geometry_mut(oval) {
+            e.major = Vec2D::new(9.0, 0.0);
+            e.ratio = 0.014028056112224449;
+        }
+        let _ = check(&mut sketch, &[], "ellipse at rest");
+    }
 }

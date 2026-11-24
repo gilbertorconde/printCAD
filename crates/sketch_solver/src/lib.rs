@@ -4,6 +4,7 @@ pub mod curves;
 pub mod diagnosis;
 pub mod freedom;
 pub mod input;
+pub mod parts;
 pub mod problem;
 #[cfg(feature = "serde")]
 pub mod replay;

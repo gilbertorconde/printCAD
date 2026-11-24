@@ -54,30 +54,143 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
 /// [`iterate`], given `sys`'s [`Blocks`] where the caller keeps them: they
 /// depend only on its equations and free variables, never on its values.
 pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settings) -> Iteration {
+    let owned = std::sync::OnceLock::new();
+    let rest = Rest::of(sys);
+    let piece = Piece {
+        sys,
+        blocks: match blocks {
+            Some(blocks) => BlocksOf::Given(blocks),
+            None => BlocksOf::Lazy(&owned),
+        },
+        rest: &rest,
+    };
+    let solved = iterate_pieces(&[piece], settings);
+    let PiecesIteration {
+        mut values,
+        outcome,
+        iterations,
+        residual,
+        threshold,
+    } = solved;
+    Iteration {
+        values: values.pop().flatten().unwrap_or_else(|| sys.vars.clone()),
+        outcome,
+        iterations,
+        residual,
+        threshold,
+    }
+}
+
+/// One of the systems a solve iterates together: the parts of a sketch
+/// no equation joins, each compiled on its own. They share the solve's
+/// scale, passes, continuation and outcome, so solving them together
+/// gives what solving them as one system gives, to the bit.
+pub(crate) struct Piece<'a> {
+    pub sys: &'a System,
+    pub blocks: BlocksOf<'a>,
+    pub rest: &'a Rest,
+}
+
+/// A piece's [`Blocks`]: given, or worked out when first needed.
+pub(crate) enum BlocksOf<'a> {
+    Given(&'a Blocks),
+    Lazy(&'a std::sync::OnceLock<Blocks>),
+}
+
+impl Piece<'_> {
+    fn blocks(&self) -> &Blocks {
+        match self.blocks {
+            BlocksOf::Given(blocks) => blocks,
+            BlocksOf::Lazy(cell) => cell.get_or_init(|| Blocks::of(self.sys)),
+        }
+    }
+}
+
+/// What a system's values say before it is solved, which depends on
+/// nothing else: kept with a compiled part, so an untouched part is
+/// neither evaluated nor sorted into blocks.
+#[derive(Debug, Clone)]
+pub(crate) struct Rest {
+    /// The values the solve starts from, where parting stacked points
+    /// ([`part_coincident_ends`]) changes them.
+    pub start: Option<Vec<f64>>,
+    /// The residuals' largest magnitude at the values, where they are the
+    /// start.
+    pub residual: f64,
+    /// The values' largest magnitude.
+    pub size: f64,
+    /// The box of the movable points, for [`farthest_move`].
+    bounds: std::sync::OnceLock<Bounds>,
+}
+
+/// The lower and upper corners of a box of points.
+type Bounds = ([f64; 2], [f64; 2]);
+
+impl Rest {
+    pub(crate) fn of(sys: &System) -> Self {
+        let start = part_coincident_ends(sys);
+        let (start, residual) = if start == sys.vars {
+            (None, inf_norm(&eval_residuals(sys, &sys.vars)))
+        } else {
+            (Some(start), f64::INFINITY)
+        };
+        Self {
+            start,
+            residual,
+            size: inf_norm(&sys.vars),
+            bounds: Default::default(),
+        }
+    }
+
+    fn bounds(&self, sys: &System) -> Bounds {
+        *self.bounds.get_or_init(|| {
+            let mut bounds = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+            reach(sys, &sys.vars, &sys.vars, &mut bounds);
+            bounds
+        })
+    }
+}
+
+/// What [`iterate_pieces`] answers: each piece's values, `None` where
+/// they are the piece's own.
+pub(crate) struct PiecesIteration {
+    pub values: Vec<Option<Vec<f64>>>,
+    pub outcome: SolveOutcome,
+    pub iterations: usize,
+    pub residual: f64,
+    pub threshold: f64,
+}
+
+/// [`iterate`] of the pieces together. A piece whose values meet its
+/// equations where they stand takes no step and keeps them.
+pub(crate) fn iterate_pieces(pieces: &[Piece], settings: Settings) -> PiecesIteration {
     let tolerance = if settings.tolerance > 0.0 {
         settings.tolerance
     } else {
         CONVERGENCE_TOL
     };
-    if sys.specs.is_empty() || sys.vars.is_empty() {
-        return Iteration {
-            values: sys.vars.clone(),
+    let size = pieces.iter().fold(0.0_f64, |m, p| m.max(p.rest.size));
+    let specs = pieces.iter().any(|p| !p.sys.specs.is_empty());
+    let vars = pieces.iter().any(|p| !p.sys.vars.is_empty());
+    let unchanged = || pieces.iter().map(|_| None).collect();
+    if !specs || !vars {
+        return PiecesIteration {
+            values: unchanged(),
             outcome: SolveOutcome::NothingToSolve,
             iterations: 0,
             residual: 0.0,
-            threshold: tolerance * var_scale(&sys.vars),
+            threshold: tolerance * size.max(1.0),
         };
     }
 
-    let start = part_coincident_ends(sys);
     // Already within the tolerance where it stands: no block takes a
     // step, so nothing is worth sorting into blocks.
-    if start == sys.vars {
-        let residual = inf_norm(&eval_residuals(sys, &start));
-        let threshold = tolerance * var_scale(&start);
+    if pieces.iter().all(|p| p.rest.start.is_none()) {
+        let residual = pieces.iter().fold(0.0_f64, |m, p| m.max(p.rest.residual));
+        let threshold = tolerance * size.max(1.0);
         if residual < threshold {
-            return Iteration {
-                values: start,
+            return PiecesIteration {
+                values: unchanged(),
                 outcome: SolveOutcome::Converged { iterations: 0 },
                 iterations: 0,
                 residual,
@@ -85,29 +198,23 @@ pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settin
             };
         }
     }
-    let owned;
-    let blocks = match blocks {
-        Some(blocks) => blocks,
-        None => {
-            owned = Blocks::of(sys);
-            &owned
-        }
-    };
-    let direct = descend(sys, blocks, start.clone(), settings, tolerance, None);
+    let starts =
+        || -> Vec<Option<Vec<f64>>> { pieces.iter().map(|p| p.rest.start.clone()).collect() };
+    let direct = descend(pieces, starts(), settings, tolerance, None);
     if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
-    let (moved, size) = farthest_move(sys, &sys.vars, &direct.values);
+    let (moved, size) = farthest_move(pieces, None, &direct.values);
     let steps = continuation_steps(moved, size);
     if steps <= 1 {
         return direct;
     }
-    let mut followed = follow(sys, blocks, start, settings, tolerance, steps);
+    let mut followed = follow(pieces, starts(), settings, tolerance, steps);
     if !matches!(followed.outcome, SolveOutcome::Converged { .. }) {
         return direct;
     }
     // Both ways reaching one answer keep the direct one's numbers.
-    let (apart, _) = farthest_move(sys, &direct.values, &followed.values);
+    let (apart, _) = farthest_move(pieces, Some(&direct.values), &followed.values);
     if apart <= SAME_ANSWER * size {
         return direct;
     }
@@ -139,15 +246,48 @@ fn continuation_steps(moved: f64, size: f64) -> usize {
     ((moved / (CONTINUATION_REACH * size)).ceil() as usize).clamp(1, CONTINUATION_STEPS)
 }
 
-/// The farthest any movable point lies between `from` and `to`, and the
-/// diagonal of the box holding the points in both.
-fn farthest_move(sys: &System, from: &[f64], to: &[f64]) -> (f64, f64) {
+/// The farthest any movable point lies between `from` and `to` (each
+/// piece's own values where `None`; every piece's where `from` is), and
+/// the diagonal of the box holding the points in both.
+fn farthest_move(
+    pieces: &[Piece],
+    from: Option<&[Option<Vec<f64>>]>,
+    to: &[Option<Vec<f64>>],
+) -> (f64, f64) {
+    let mut moved = 0.0_f64;
+    let mut bounds = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for (i, piece) in pieces.iter().enumerate() {
+        let vars = &piece.sys.vars;
+        let from = from.and_then(|from| from[i].as_deref());
+        let to = to[i].as_deref();
+        if from.is_none() && to.is_none() {
+            // Neither moved: its points stay in the box they stand in.
+            let (low, high) = piece.rest.bounds(piece.sys);
+            for axis in 0..2 {
+                bounds.0[axis] = bounds.0[axis].min(low[axis]);
+                bounds.1[axis] = bounds.1[axis].max(high[axis]);
+            }
+            continue;
+        }
+        let (from, to) = (from.unwrap_or(vars), to.unwrap_or(vars));
+        moved = moved.max(reach(piece.sys, from, to, &mut bounds));
+    }
+    let size = (bounds.1[0] - bounds.0[0]).hypot(bounds.1[1] - bounds.0[1]);
+    let minimum = pieces
+        .first()
+        .map_or(0.0, |p| p.sys.settings.minimum_length.0);
+    (moved, size.max(minimum))
+}
+
+/// The farthest a movable point of `sys` lies between `from` and `to`,
+/// the points in both taken into `bounds`.
+fn reach(sys: &System, from: &[f64], to: &[f64], bounds: &mut Bounds) -> f64 {
     let mut free = vec![false; sys.vars.len()];
     for &j in &sys.free {
         free[j] = true;
     }
     let mut moved = 0.0_f64;
-    let (mut low, mut high) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    let (low, high) = bounds;
     for &at in sys.point_vars.values() {
         if !free[at] && !free[at + 1] {
             continue;
@@ -161,34 +301,39 @@ fn farthest_move(sys: &System, from: &[f64], to: &[f64]) -> (f64, f64) {
             high[axis % 2] = high[axis % 2].max(value);
         }
     }
-    let size = (high[0] - low[0]).hypot(high[1] - low[1]);
-    (moved, size.max(sys.settings.minimum_length.0))
+    moved
 }
 
 /// The solve taken in `steps` steps: step k asks the residuals to fall to
 /// `(1 - k / steps)` of what they are at the start (a Newton homotopy), each
 /// step starting where the last ended, the last asking them to vanish.
 fn follow(
-    sys: &System,
-    blocks: &Blocks,
-    mut x: Vec<f64>,
+    pieces: &[Piece],
+    starts: Vec<Option<Vec<f64>>>,
     settings: Settings,
     tolerance: f64,
     steps: usize,
-) -> Iteration {
-    let start = eval_residuals(sys, &x);
+) -> PiecesIteration {
+    let mut x: Vec<Option<Vec<f64>>> = (pieces.iter().zip(starts))
+        .map(|(p, start)| Some(start.unwrap_or_else(|| p.sys.vars.clone())))
+        .collect();
+    let start: Vec<Vec<f64>> = (pieces.iter().zip(&x))
+        .map(|(p, x)| eval_residuals(p.sys, x.as_deref().unwrap_or_default()))
+        .collect();
     let mut iterations = 0;
-    let mut offset = vec![0.0; start.len()];
+    let mut offset: Vec<Vec<f64>> = start.iter().map(|r| vec![0.0; r.len()]).collect();
     for k in 1..steps {
         let left = 1.0 - k as f64 / steps as f64;
-        for (o, r) in offset.iter_mut().zip(&start) {
-            *o = left * r;
+        for (offset, start) in offset.iter_mut().zip(&start) {
+            for (o, r) in offset.iter_mut().zip(start) {
+                *o = left * r;
+            }
         }
-        let step = descend(sys, blocks, x, settings, tolerance * 1e3, Some(&offset));
+        let step = descend(pieces, x, settings, tolerance * 1e3, Some(&offset));
         iterations += step.iterations;
         x = step.values;
     }
-    let mut last = descend(sys, blocks, x, settings, tolerance, None);
+    let mut last = descend(pieces, x, settings, tolerance, None);
     last.iterations += iterations;
     last
 }
@@ -257,6 +402,14 @@ thread_local! {
 /// follows only when the geometry's scale shrank under a block's answer.
 const SCALE_PASSES: usize = 4;
 
+/// One piece's state through [`descend`], once it is worked on.
+struct Worked {
+    x: Vec<f64>,
+    probe: Vec<f64>,
+    spent: Vec<usize>,
+    stalled: Vec<bool>,
+}
+
 /// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
 /// to `offset` (zero when `None`), each Jacobian block on its own: its own
 /// damping, its own acceptance of a step by its own cost, and its own
@@ -264,76 +417,113 @@ const SCALE_PASSES: usize = 4;
 /// keeps its values exactly, and how one block converges never changes
 /// another's numbers. The whole solve converges when every residual is
 /// within the tolerance at the scale of the values it ends on, as each
-/// block's own test is.
+/// block's own test is. A piece starting from its own values (`None`) is
+/// left there while its residuals are within each pass's tolerance, as
+/// each of its blocks would be; `offset` is `None` whenever one does.
 fn descend(
-    sys: &System,
-    blocks: &Blocks,
-    mut x: Vec<f64>,
+    pieces: &[Piece],
+    x: Vec<Option<Vec<f64>>>,
     settings: Settings,
     tolerance: f64,
-    offset: Option<&[f64]>,
-) -> Iteration {
-    let residuals = |x: &[f64]| {
-        let mut r = eval_residuals(sys, x);
+    offset: Option<&[Vec<f64>]>,
+) -> PiecesIteration {
+    debug_assert!(offset.is_none() || x.iter().all(Option::is_some));
+    let norm = |i: usize, x: &[f64]| {
+        let mut r = eval_residuals(pieces[i].sys, x);
         if let Some(offset) = offset {
-            for (r, o) in r.iter_mut().zip(offset) {
+            for (r, o) in r.iter_mut().zip(&offset[i]) {
                 *r -= o;
             }
         }
-        r
+        inf_norm(&r)
     };
     let max_iterations = (settings.max_iterations as usize).max(1);
-    let mut spent = vec![0; blocks.blocks.len()];
-    let mut stalled = vec![false; blocks.blocks.len()];
-    let mut work = BlockWork {
-        probe: x.clone(),
-        ..BlockWork::default()
+    let mut worked: Vec<Option<Worked>> = x
+        .into_iter()
+        .map(|x| {
+            x.map(|x| Worked {
+                probe: x.clone(),
+                x,
+                spent: Vec::new(),
+                stalled: Vec::new(),
+            })
+        })
+        .collect();
+    let mut norms: Vec<f64> = (pieces.iter().zip(&worked).enumerate())
+        .map(|(i, (p, w))| match w {
+            Some(w) => norm(i, &w.x),
+            None => p.rest.residual,
+        })
+        .collect();
+    let scale = |worked: &[Option<Worked>]| {
+        (pieces.iter().zip(worked))
+            .fold(0.0_f64, |m, (p, w)| {
+                m.max(w.as_ref().map_or(p.rest.size, |w| inf_norm(&w.x)))
+            })
+            .max(1.0)
     };
-    let mut r = residuals(&x);
+    let mut work = BlockWork::default();
     for _ in 0..SCALE_PASSES {
-        if inf_norm(&r) < tolerance * var_scale(&x) {
+        let values = scale(&worked);
+        let threshold = tolerance * values;
+        if norms.iter().fold(0.0_f64, |m, &r| m.max(r)) < threshold {
             break;
         }
-        let scale = var_scale(&x);
         let mut stepped = false;
-        for (b, block) in blocks.blocks.iter().enumerate() {
-            if stalled[b] || spent[b] >= max_iterations {
+        for (i, piece) in pieces.iter().enumerate() {
+            if worked[i].is_none() && norms[i] < threshold {
                 continue;
             }
-            let outcome = descend_block(
-                sys,
-                block,
-                &mut x,
-                &settings,
-                Scale {
-                    values: scale,
-                    threshold: tolerance * scale,
-                },
-                offset,
-                max_iterations - spent[b],
-                &mut work,
-            );
-            spent[b] += outcome.iterations;
-            stalled[b] = !outcome.converged;
-            stepped |= outcome.iterations > 0;
+            let blocks = piece.blocks();
+            let w = worked[i].get_or_insert_with(|| Worked {
+                x: piece.sys.vars.clone(),
+                probe: piece.sys.vars.clone(),
+                spent: Vec::new(),
+                stalled: Vec::new(),
+            });
+            w.spent.resize(blocks.blocks.len(), 0);
+            w.stalled.resize(blocks.blocks.len(), false);
+            std::mem::swap(&mut work.probe, &mut w.probe);
+            for (b, block) in blocks.blocks.iter().enumerate() {
+                if w.stalled[b] || w.spent[b] >= max_iterations {
+                    continue;
+                }
+                let outcome = descend_block(
+                    piece.sys,
+                    block,
+                    &mut w.x,
+                    &settings,
+                    Scale { values, threshold },
+                    offset.map(|o| o[i].as_slice()),
+                    max_iterations - w.spent[b],
+                    &mut work,
+                );
+                w.spent[b] += outcome.iterations;
+                w.stalled[b] = !outcome.converged;
+                stepped |= outcome.iterations > 0;
+            }
+            std::mem::swap(&mut work.probe, &mut w.probe);
+            norms[i] = norm(i, &w.x);
         }
-        r = residuals(&x);
         if !stepped {
             break;
         }
     }
 
-    let residual = inf_norm(&r);
-    let threshold = tolerance * var_scale(&x);
-    let iterations = spent.iter().copied().max().unwrap_or(0);
+    let residual = norms.iter().fold(0.0_f64, |m, &r| m.max(r));
+    let threshold = tolerance * scale(&worked);
+    let iterations = (worked.iter().flatten())
+        .flat_map(|w| w.spent.iter().copied())
+        .max()
+        .unwrap_or(0);
     let outcome = if residual < threshold {
         SolveOutcome::Converged { iterations }
     } else {
         SolveOutcome::NotConverged { residual }
     };
-    Iteration {
+    PiecesIteration {
         threshold,
-        values: x,
+        values: worked.into_iter().map(|w| w.map(|w| w.x)).collect(),
         outcome,
         iterations,
         residual,
@@ -680,14 +870,27 @@ fn cap_step(step: &mut [f64], scale: f64, maximum_step_scale: f64) {
 }
 
 pub fn probe_direct(sys: &System, settings: Settings) -> Iteration {
-    descend(
+    let blocks = Blocks::of(sys);
+    let rest = Rest::of(sys);
+    let piece = Piece {
         sys,
-        &Blocks::of(sys),
-        sys.vars.clone(),
+        blocks: BlocksOf::Given(&blocks),
+        rest: &rest,
+    };
+    let mut direct = descend(
+        &[piece],
+        vec![Some(sys.vars.clone())],
         settings,
         CONVERGENCE_TOL,
         None,
-    )
+    );
+    Iteration {
+        values: direct.values.pop().flatten().unwrap_or_default(),
+        outcome: direct.outcome,
+        iterations: direct.iterations,
+        residual: direct.residual,
+        threshold: direct.threshold,
+    }
 }
 
 #[cfg(test)]

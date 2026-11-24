@@ -111,6 +111,18 @@ Internal hidden rows are counted separately below.
   every pivot held to the whole matrix's threshold (its largest entry
   times the rank tolerance). A variable no equation reads has no column
   in any block: its step is zero and it is never determined.
+- A problem may be compiled by its parts (`parts::Parted`): the geometry
+  and constraints no shared point and no constraint joins, the origin and
+  the axes joining none (they are pinned, so they join no block). Each
+  part is compiled with its arcs' own equations, and again without them
+  where it has arcs and no part's constraints bring an equation. Solved
+  together, the parts share the scale, the passes, the continuation and
+  the outcome, and their ranks are held to the largest entry of all of
+  them, so they answer what the whole system answers, to the bit. A
+  caller keeps compiled parts in a `parts::PartCache` and reuses each
+  while it is equal to the part a problem holds; the split of a problem
+  solved lately is updated when the next one changes values in place or
+  adds elements and constraints after it.
 - Solver inputs promote f32 geometry to f64. Initial ellipse minor radius
   and pitch direction normalize in f32; storage and axis/focus renaming
   also use f32. Independent f64 inputs must not imitate application
