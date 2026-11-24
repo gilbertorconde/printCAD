@@ -1,11 +1,13 @@
 use super::{PartCache, Parted};
 use crate::compile::{System, compile_system};
+use crate::diagnosis::{Diagnosis, diagnose, solved_at};
 use crate::freedom::{estimate, locked};
 use crate::problem::{
     Arc as ArcGeometry, Circle, Constraint, ConstraintId, CurveId, CurveReference, Geometry,
     Length, Line, Point, PointId, PointReference, Problem, Relation as R, Vector,
 };
-use crate::solve::{SolveOutcome, iterate};
+use crate::solve::SolveOutcome::{self, NotConverged};
+use crate::solve::iterate;
 use std::collections::BTreeMap;
 
 /// A fixed-seed generator, so every run draws the same sketches.
@@ -198,10 +200,25 @@ fn read(answer: &mut Answer, sys: &System, x: &[f64]) {
     }
 }
 
+/// What [`solves_alike`] found: the whole system's outcome and its
+/// diagnosis, and whether the parts answered the diagnosis themselves.
+struct Alike {
+    outcome: SolveOutcome,
+    diagnosis: Diagnosis,
+    by_parts: bool,
+}
+
 /// The solve of `problem` compiled as one system, and its parts' from
 /// `cache`, element by element with the outcome, iterations, residual and
-/// threshold: equal to the bit.
-fn solves_alike(problem: &Problem, cache: &mut PartCache, what: &str) -> SolveOutcome {
+/// threshold: equal to the bit. Their diagnoses too, where `diagnosed`
+/// takes the outcome: the parts' where they answer one, from the problem
+/// as each solve leaves it.
+fn solves_alike(
+    problem: &Problem,
+    cache: &mut PartCache,
+    what: &str,
+    diagnosed: &dyn Fn(SolveOutcome) -> bool,
+) -> Alike {
     let whole = compile_system(problem, None, false);
     let one = iterate(&whole, problem.settings);
     let mut expected = Answer::new();
@@ -228,20 +245,54 @@ fn solves_alike(problem: &Problem, cache: &mut PartCache, what: &str) -> SolveOu
     );
     assert_eq!(parted.estimate(), estimate(problem), "{what}: freedom");
     assert_eq!(parted.locked(), locked(problem), "{what}: locked");
-    one.outcome
+
+    if !diagnosed(one.outcome) {
+        return Alike {
+            outcome: one.outcome,
+            diagnosis: Diagnosis::default(),
+            by_parts: false,
+        };
+    }
+    let diagnosis = diagnose(problem);
+    let solved_problem = std::sync::Arc::new(solved_at(problem, &whole, &one.values));
+    let solved_parts = Parted::of(&solved_problem, cache);
+    let by_parts = parted.diagnose(
+        problem,
+        one.outcome,
+        &solved_problem,
+        &solved_parts,
+        estimate(problem).degrees,
+    );
+    if let Some(by_parts) = &by_parts {
+        assert_eq!(by_parts, &diagnosis, "{what}: diagnosis");
+    }
+    Alike {
+        outcome: one.outcome,
+        diagnosis,
+        by_parts: by_parts.is_some(),
+    }
 }
 
 #[test]
 fn parts_solve_and_measure_as_the_whole_system_does() {
     let mut cache = PartCache::default();
     let (mut parted_at_all, mut iterated, mut failed) = (0, 0, 0);
+    let (mut redundant, mut conflicting, mut by_parts) = (0, 0, 0);
     for seed in 1..60 {
         let problem = drawn(seed, 1 + (seed as usize % 7));
-        match solves_alike(&problem, &mut cache, &format!("seed {seed}")) {
+        // A failing sketch's whole diagnosis solves it once per
+        // constraint: the smaller ones are enough.
+        let few = problem.constraints.len() <= 24;
+        let diagnosed = |o: SolveOutcome| few || !matches!(o, NotConverged { .. });
+        let alike = solves_alike(&problem, &mut cache, &format!("seed {seed}"), &diagnosed);
+        match alike.outcome {
             SolveOutcome::Converged { iterations } if iterations > 0 => iterated += 1,
             SolveOutcome::NotConverged { .. } => failed += 1,
             _ => {}
         }
+        redundant += usize::from(!alike.diagnosis.redundant.is_empty());
+        conflicting += usize::from(!alike.diagnosis.conflicting.is_empty());
+        by_parts += usize::from(alike.by_parts);
         parted_at_all +=
             usize::from(Parted::of(&std::sync::Arc::new(problem.clone()), &mut cache).len() > 1);
     }
@@ -250,6 +301,12 @@ fn parts_solve_and_measure_as_the_whole_system_does() {
     assert!(
         iterated > 10 && failed > 5,
         "{iterated} solved, {failed} not"
+    );
+    // Their diagnoses name redundant and conflicting constraints, nearly
+    // all of them read from the parts.
+    assert!(
+        redundant > 3 && conflicting > 3 && by_parts > 40,
+        "{redundant} redundant, {conflicting} conflicting, {by_parts} by parts"
     );
 }
 
@@ -271,7 +328,7 @@ fn edited_parts_are_compiled_again_and_untouched_ones_kept() {
     // it answers what it answered then, and the solve tells it apart.
     let mut cache = PartCache::default();
     let mut problem = drawn(7, 8);
-    let _ = solves_alike(&problem, &mut cache, "drawn");
+    let _ = solves_alike(&problem, &mut cache, "drawn", &|_| true);
     let mut rng = Rng(99);
     for step in 0..64 {
         let what = format!("step {step}");
@@ -385,7 +442,7 @@ fn edited_parts_are_compiled_again_and_untouched_ones_kept() {
                 }
             }
         }
-        let _ = solves_alike(&problem, &mut cache, &what);
+        let _ = solves_alike(&problem, &mut cache, &what, &|_| step % 8 == 3);
         // The sketch as the solve left it, as a store writes it back: the
         // parts that moved change, the others stay.
         let whole = compile_system(&problem, None, false);
@@ -400,7 +457,7 @@ fn edited_parts_are_compiled_again_and_untouched_ones_kept() {
                 };
             }
         }
-        let _ = solves_alike(&problem, &mut cache, &format!("{what}, stored"));
+        let _ = solves_alike(&problem, &mut cache, &format!("{what}, stored"), &|_| false);
     }
 }
 
@@ -421,7 +478,7 @@ fn a_constraint_naming_no_element_joins_a_part_of_its_own() {
             line: CurveReference::YAxis,
         },
     });
-    let _ = solves_alike(&problem, &mut cache, "loose");
+    let _ = solves_alike(&problem, &mut cache, "loose", &|_| true);
     // Repeated ids keep the problem whole.
     let first = problem.constraints[0].clone();
     problem.constraints.push(first);
@@ -429,5 +486,115 @@ fn a_constraint_naming_no_element_joins_a_part_of_its_own() {
         Parted::of(&std::sync::Arc::new(problem.clone()), &mut cache).len(),
         1
     );
-    let _ = solves_alike(&problem, &mut cache, "repeated");
+    let _ = solves_alike(&problem, &mut cache, "repeated", &|_| true);
+}
+
+/// A row of rectangles, each its own part, every third with its sides
+/// held level and upright, its bottom and left sides to a length and a
+/// corner fixed, drawn a little off so its solve iterates (as many
+/// constraints as a diagnosis takes); with the bottom side of each cell in
+/// `twice` held to a second length too, which no solve meets.
+fn rectangles(cells: usize, twice: &[usize]) -> (Problem, Vec<ConstraintId>) {
+    let mut problem = Problem::default();
+    let mut next = 0u128;
+    let mut id = || {
+        next += 1;
+        next
+    };
+    let mut seconds = Vec::new();
+    for cell in 0..cells {
+        let (x, y) = (cell as f64 * 10.0, 0.0);
+        let corners: Vec<PointReference> = [(0.0, 0.0), (4.1, 0.1), (4.0, 3.2), (-0.1, 2.9)]
+            .into_iter()
+            .map(|(dx, dy)| {
+                let p = PointId(id());
+                problem.geometry.push(Geometry::Point(Point {
+                    id: p,
+                    position: Vector {
+                        x: x + dx,
+                        y: y + dy,
+                    },
+                }));
+                p.into()
+            })
+            .collect();
+        let sides: Vec<CurveReference> = (0..4)
+            .map(|k| {
+                let l = CurveId(id());
+                problem.geometry.push(Geometry::Line(Line {
+                    id: l,
+                    start: corners[k],
+                    end: corners[(k + 1) % 4],
+                }));
+                l.into()
+            })
+            .collect();
+        if cell % 3 != 0 {
+            continue;
+        }
+        let mut kinds = vec![
+            R::Horizontal { element: sides[0] },
+            R::Horizontal { element: sides[2] },
+            R::Vertical { element: sides[1] },
+            R::Vertical { element: sides[3] },
+            R::Length {
+                line: sides[0],
+                length: Length(4.0),
+            },
+            R::Length {
+                line: sides[3],
+                length: Length(3.0),
+            },
+            R::FixedPoint {
+                point: corners[0],
+                position: Vector { x, y },
+            },
+        ];
+        if twice.contains(&cell) {
+            kinds.push(R::Length {
+                line: sides[0],
+                length: Length(5.0),
+            });
+        }
+        for kind in kinds {
+            let c = ConstraintId(id());
+            if matches!(kind, R::Length { line, .. } if line == sides[0]) && twice.contains(&cell) {
+                seconds.push(c);
+            }
+            problem.constraints.push(Constraint { id: c, kind });
+        }
+    }
+    (problem, seconds)
+}
+
+/// A large sketch with one part held to two lengths: its parts name the
+/// conflict the whole problem's diagnosis names, the two lengths alone,
+/// probing that part only; with two such parts, neither is a conflict
+/// alone, as the whole diagnosis finds too.
+#[test]
+fn a_conflict_in_one_part_is_found_by_that_part_alone() {
+    let mut cache = PartCache::default();
+    for (twice, expected) in [(&[18][..], 2), (&[3, 21][..], 0)] {
+        let (problem, seconds) = rectangles(24, twice);
+        let parted = Parted::of(&std::sync::Arc::new(problem.clone()), &mut cache);
+        assert_eq!(parted.len(), 24);
+        let solved = parted.iterate(problem.settings);
+        assert!(matches!(solved.outcome, NotConverged { .. }));
+        let whole = diagnose(&problem);
+        let by_parts = parted
+            .diagnose(
+                &problem,
+                solved.outcome,
+                &problem,
+                &parted,
+                parted.estimate().degrees,
+            )
+            .expect("the parts answer");
+        assert_eq!(by_parts, whole, "{twice:?}");
+        assert!(whole.analyzed, "{twice:?}");
+        assert_eq!(whole.conflicting.len(), expected, "{twice:?}");
+        if expected > 0 {
+            assert_eq!(whole.conflicting, seconds, "{twice:?}");
+        }
+    }
 }

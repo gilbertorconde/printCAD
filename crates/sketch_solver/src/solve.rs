@@ -71,6 +71,7 @@ pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settin
         iterations,
         residual,
         threshold,
+        ..
     } = solved;
     Iteration {
         values: values.pop().flatten().unwrap_or_else(|| sys.vars.clone()),
@@ -155,6 +156,8 @@ impl Rest {
 /// they are the piece's own.
 pub(crate) struct PiecesIteration {
     pub values: Vec<Option<Vec<f64>>>,
+    /// Each piece whose residuals end at or above the threshold.
+    pub unmet: Vec<bool>,
     pub outcome: SolveOutcome,
     pub iterations: usize,
     pub residual: f64,
@@ -173,9 +176,11 @@ pub(crate) fn iterate_pieces(pieces: &[Piece], settings: Settings) -> PiecesIter
     let specs = pieces.iter().any(|p| !p.sys.specs.is_empty());
     let vars = pieces.iter().any(|p| !p.sys.vars.is_empty());
     let unchanged = || pieces.iter().map(|_| None).collect();
+    let met = || vec![false; pieces.len()];
     if !specs || !vars {
         return PiecesIteration {
             values: unchanged(),
+            unmet: met(),
             outcome: SolveOutcome::NothingToSolve,
             iterations: 0,
             residual: 0.0,
@@ -191,6 +196,7 @@ pub(crate) fn iterate_pieces(pieces: &[Piece], settings: Settings) -> PiecesIter
         if residual < threshold {
             return PiecesIteration {
                 values: unchanged(),
+                unmet: met(),
                 outcome: SolveOutcome::Converged { iterations: 0 },
                 iterations: 0,
                 residual,
@@ -523,6 +529,9 @@ fn descend(
     };
     PiecesIteration {
         threshold,
+        unmet: (norms.iter())
+            .map(|r| r.partial_cmp(&threshold) != Some(std::cmp::Ordering::Less))
+            .collect(),
         values: worked.into_iter().map(|w| w.map(|w| w.x)).collect(),
         outcome,
         iterations,

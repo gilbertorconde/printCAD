@@ -478,18 +478,28 @@ pub fn diagnose_with(
         owned_solved = Prepared::of(&probe);
         (outcome, &owned_solved)
     };
-    // The system the diagnosis compiles, where one is kept.
-    let full = match outcome {
-        SolveOutcome::NotConverged { .. } => prepared.plain(),
-        _ => solved.plain(),
-    };
-    let result = sketch_solver::diagnosis::diagnose_compiled(
+    // Read from the parts where they answer it, else from the whole
+    // problem's system, compiled where none is kept.
+    let by_parts = prepared.parts.diagnose(
         &prepared.problem,
         to_core(outcome),
         &solved.problem,
+        &solved.parts,
         dof,
-        full,
     );
+    let result = by_parts.unwrap_or_else(|| {
+        let full = match outcome {
+            SolveOutcome::NotConverged { .. } => prepared.plain(),
+            _ => solved.plain(),
+        };
+        sketch_solver::diagnosis::diagnose_compiled(
+            &prepared.problem,
+            to_core(outcome),
+            &solved.problem,
+            dof,
+            full,
+        )
+    });
     Diagnosis {
         dof: result.dof,
         analyzed: result.analyzed,

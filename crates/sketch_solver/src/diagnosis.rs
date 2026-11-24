@@ -25,42 +25,50 @@ pub fn analyze(problem: &Problem) -> Result<Diagnosis, crate::input::InputError>
 pub fn diagnose(problem: &Problem) -> Diagnosis {
     let system = compile_system(problem, None, false);
     let answer = iterate(&system, problem.settings);
+    let solved = solved_at(problem, &system, &answer.values);
+    diagnose_at(problem, answer.outcome, &solved)
+}
+
+/// `problem` with the values `answer` of its compiled `system` stored.
+pub(crate) fn solved_at(
+    problem: &Problem,
+    system: &crate::compile::System,
+    answer: &[f64],
+) -> Problem {
     let mut solved = problem.clone();
     for g in &mut solved.geometry {
         match g {
             Geometry::Point(p) => {
                 let k = system.point_vars[&p.id.into()];
                 p.position = Vector {
-                    x: answer.values[k],
-                    y: answer.values[k + 1],
+                    x: answer[k],
+                    y: answer[k + 1],
                 };
             }
-            Geometry::Circle(c) => {
-                c.radius = Length(answer.values[system.radius_vars[&c.id.into()]])
-            }
-            Geometry::Arc(a) => a.radius = Length(answer.values[system.radius_vars[&a.id.into()]]),
+            Geometry::Circle(c) => c.radius = Length(answer[system.radius_vars[&c.id.into()]]),
+            Geometry::Arc(a) => a.radius = Length(answer[system.radius_vars[&a.id.into()]]),
             Geometry::Ellipse(e) => {
                 if let Some(&k) = system.shape_vars.get(&e.id.into()) {
                     e.major = Vector {
-                        x: answer.values[k],
-                        y: answer.values[k + 1],
+                        x: answer[k],
+                        y: answer[k + 1],
                     };
-                    e.minor = Length(answer.values[k + 2]);
+                    e.minor = Length(answer[k + 2]);
                 }
             }
             Geometry::Conic(c) => {
                 if let Some(&k) = system.shape_vars.get(&c.id.into()) {
                     c.axis = Vector {
-                        x: answer.values[k],
-                        y: answer.values[k + 1],
+                        x: answer[k],
+                        y: answer[k + 1],
                     };
-                    c.minor = Length(answer.values[k + 2]);
+                    c.minor = Length(answer[k + 2]);
                 }
             }
             Geometry::Line(_) | Geometry::BSpline(_) => {}
         }
     }
-    diagnose_at(problem, answer.outcome, &solved)
+    solved
 }
 
 /// Callers with storage rounding or derived geometry may provide the
@@ -190,7 +198,7 @@ pub fn diagnose_compiled(
 /// its place, when a tangency finds its point of contact through it (a
 /// point held on a circle), or when its equations are the only ones
 /// constraints bring, which leaves the arcs' own equations out.
-struct Local {
+pub(crate) struct Local {
     /// No probe is local: the problem holds a group.
     grouped: bool,
     /// The problem holds a focus aligned to its curve.
@@ -203,15 +211,13 @@ struct Local {
 
 impl Local {
     fn of(problem: &Problem, full: &crate::compile::System) -> Self {
+        Self::counted(problem, with_rows(full))
+    }
+
+    /// The probes of `problem`, `with_rows` of whose constraints bring
+    /// equations to the full system.
+    pub(crate) fn counted(problem: &Problem, with_rows: usize) -> Self {
         use crate::problem::{InternalRole, Relation as R};
-        let constrained: std::collections::HashSet<_> = full
-            .origins
-            .iter()
-            .filter_map(|o| match o {
-                EquationSource::Constraint(id) => Some(*id),
-                _ => None,
-            })
-            .collect();
         let any = |f: &dyn Fn(&R) -> bool| problem.constraints.iter().any(|c| f(&c.kind));
         Self {
             grouped: any(&|k| matches!(k, R::Group { .. })),
@@ -225,11 +231,11 @@ impl Local {
                 )
             }),
             tangency: any(&|k| matches!(k, R::Tangent { .. })),
-            with_rows: constrained.len(),
+            with_rows,
         }
     }
 
-    fn holds(&self, c: &crate::problem::Constraint) -> bool {
+    pub(crate) fn holds(&self, c: &crate::problem::Constraint) -> bool {
         use crate::problem::{ItemReference, Relation as R};
         let structural = matches!(
             c.kind,
@@ -244,10 +250,21 @@ impl Local {
     }
 }
 
+/// How many constraints bring equations to `sys`.
+pub(crate) fn with_rows(sys: &crate::compile::System) -> usize {
+    (sys.origins.iter())
+        .filter_map(|o| match o {
+            EquationSource::Constraint(id) => Some(*id),
+            _ => None,
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
 /// `full` without the equations constraint `id` brings, for its rank: the
 /// same variables (any `id` alone read stay, read by nothing), and no
 /// maps of where each element's variables are.
-fn without(
+pub(crate) fn without(
     full: &crate::compile::System,
     id: crate::problem::ConstraintId,
 ) -> crate::compile::System {

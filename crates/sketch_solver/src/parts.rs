@@ -961,6 +961,9 @@ impl Generations {
     }
 }
 
+#[path = "parts_diagnosis.rs"]
+mod diagnosis;
+
 #[cfg(test)]
 #[path = "parts_tests.rs"]
 mod tests;
