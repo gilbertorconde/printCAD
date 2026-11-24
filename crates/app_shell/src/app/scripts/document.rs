@@ -1754,6 +1754,9 @@ pub(super) fn faces_of(mesh: &kernel_api::TriMesh) -> Value {
             if let Some(name) = mesh.face_names.get(f).filter(|n| **n != 0) {
                 out["name"] = json!(name.to_string());
             }
+            if let Some(also) = crate::app::edges::also_json(mesh, f) {
+                out["also"] = also;
+            }
             Some(out)
         })
         .collect();

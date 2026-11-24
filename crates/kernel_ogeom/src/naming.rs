@@ -315,6 +315,16 @@ impl NameMap {
         self.names_of(face).iter().copied().min().unwrap_or(0)
     }
 
+    /// The names of `face` other than [`Self::primary`], ascending.
+    pub fn others_of(&self, face: &Shape) -> Vec<TopoName> {
+        let primary = self.primary(face);
+        let mut others: Vec<TopoName> = self.names_of(face).to_vec();
+        others.retain(|n| *n != 0 && *n != primary);
+        others.sort_unstable();
+        others.dedup();
+        others
+    }
+
     /// The faces of `root`, each named by `name`; faces left without a
     /// name are named afresh under `fresh`.
     pub fn assign(

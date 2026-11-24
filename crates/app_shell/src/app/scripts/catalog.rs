@@ -508,10 +508,11 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             )
             .returns(
                 "a list of {index, kind, point, area, normal?, axis?, radius?, half_angle?, \
-                 major_radius?, minor_radius?, name?}: point lies on the face, normal is a \
-                 flat face's outward one, axis a turned face's {point, direction}, \
+                 major_radius?, minor_radius?, name?, also?}: point lies on the face, normal \
+                 is a flat face's outward one, axis a turned face's {point, direction}, \
                  half_angle a cone's wall off its axis in degrees, major_radius and \
-                 minor_radius a torus's",
+                 minor_radius a torus's; name is the least name the face carries and also \
+                 its others, all strings",
             )
             .read_only(),
         CommandSpec::new("doc.edges", "The edges of a body's solid, where it sits")
@@ -523,12 +524,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                  as features take faces and edges",
             )
             .returns(
-                "a list of {index, kind, point, direction, length, faces, names?, centre?, \
-                 normal?, radius?}: kind is line, circle or other; point lies halfway along \
-                 the edge and direction is its way there, in world space, as an edge pick \
-                 takes them ({point = e.point, direction = e.direction}); faces are the \
-                 indices doc.faces gives the two faces it runs between, names theirs as \
-                 strings; a circle's centre, normal and radius",
+                "a list of {index, kind, point, direction, length, faces, names?, also?, \
+                 centre?, normal?, radius?}: kind is line, circle or other; point lies halfway \
+                 along the edge and direction is its way there, in world space, as an edge \
+                 pick takes them ({point = e.point, direction = e.direction}); faces are the \
+                 indices doc.faces gives the two faces it runs between, names their names as \
+                 doc.faces gives them, also each one's other names (two lists, in the order \
+                 of names); a circle's centre, normal and radius",
             )
             .read_only(),
         CommandSpec::new(

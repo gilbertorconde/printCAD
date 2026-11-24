@@ -139,6 +139,13 @@ pub struct TriMesh {
     /// none; empty when the source names none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_names: Vec<TopoName>,
+    /// The other names each kernel face carries, indexed like
+    /// [`Self::face_names`], in ascending order: a face an op merged from
+    /// others, cut from one or traced through history keeps every name it
+    /// came by, and a reference finds the face by any of them. Empty for a
+    /// face with one name, and empty altogether when no face has more.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_other_names: Vec<Vec<TopoName>>,
     /// The tag of the op that made each kernel face, indexed like
     /// [`Self::faces`]: the name of the feature a body's chain built it
     /// under (`naming::name_of_id` of its id), kept by a face a later op
