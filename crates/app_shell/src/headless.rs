@@ -333,6 +333,9 @@ impl scripting::Host for Headless {
     /// Each command, then the formulas settled: what a value moved has
     /// followed before the next command reads it.
     fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
+        if let Some(journal) = &mut self.journal {
+            journal.begin_call(&mut self.document);
+        }
         let answer = self.call_one(id, args);
         self.settle_formulas();
         if let Some(journal) = &mut self.journal {

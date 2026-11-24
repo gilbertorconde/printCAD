@@ -563,16 +563,23 @@ impl OpBuffer {
 /// Same clone-empty rule as [`OpBuffer`]: snapshots carry state, never
 /// journal material. Coalescing keeps the LAST op with the FIRST inverse:
 /// a drag undoes to where it started, not to its second-to-last frame.
+///
+/// While a script's run is open each pair says whether one of the run's
+/// calls recorded it or the person did (in a task, or between calls), so
+/// either can be taken back without the other; a write never coalesces
+/// into a pair of the other kind.
 #[derive(Debug, Default)]
 pub struct JournalBuffer {
     pairs: Vec<(DocumentOp, DocumentOp)>,
+    /// Beside each pair: whether a run's call recorded it.
+    by_run: Vec<bool>,
     barrier: bool,
-    /// The pairs before this index were there when the buffer was sealed:
-    /// nothing later coalesces into them, and [`take_since_seal`]
-    /// (Self::take_since_seal) leaves them.
-    sealed: usize,
-    /// A barrier crossed since the seal.
-    crossed_since_seal: bool,
+    /// A run is open.
+    run_open: bool,
+    /// Pairs recorded now are the run's: one of its calls is going on.
+    in_call: bool,
+    /// A barrier crossed since the run opened.
+    crossed_in_run: bool,
 }
 
 impl Clone for JournalBuffer {
@@ -581,17 +588,21 @@ impl Clone for JournalBuffer {
     }
 }
 
+/// An (op, inverse) pair and whether a script's run recorded it.
+pub type TaggedPair = (DocumentOp, DocumentOp, bool);
+
 impl JournalBuffer {
     pub fn record(&mut self, op: &DocumentOp, inverse: Option<DocumentOp>) {
         let Some(inverse) = inverse else {
             self.barrier = true;
             self.pairs.clear();
-            self.sealed = 0;
-            self.crossed_since_seal = true;
+            self.by_run.clear();
+            self.crossed_in_run |= self.run_open;
             return;
         };
-        if self.pairs.len() <= self.sealed {
-            self.pairs.push((op.clone(), inverse));
+        let by_run = self.run_open && self.in_call;
+        if self.by_run.last() != Some(&by_run) {
+            self.push(op.clone(), inverse, by_run);
             return;
         }
         if let (
@@ -622,35 +633,90 @@ impl JournalBuffer {
             self.pairs.last_mut().expect("tail exists").0 = op.clone();
             return;
         }
-        self.pairs.push((op.clone(), inverse));
+        self.push(op.clone(), inverse, by_run);
+    }
+
+    fn push(&mut self, op: DocumentOp, inverse: DocumentOp, by_run: bool) {
+        self.pairs.push((op, inverse));
+        self.by_run.push(by_run);
     }
 
     /// Everything since the last take, plus whether a barrier was crossed.
     pub fn take(&mut self) -> (Vec<(DocumentOp, DocumentOp)>, bool) {
-        self.unseal();
+        self.by_run.clear();
         let barrier = std::mem::take(&mut self.barrier);
+        self.crossed_in_run = false;
         (std::mem::take(&mut self.pairs), barrier)
     }
 
-    /// Keep what is here from what comes after: later pairs never
-    /// coalesce into these, and [`take_since_seal`](Self::take_since_seal)
-    /// takes only the later ones.
-    pub fn seal(&mut self) {
-        self.sealed = self.pairs.len();
-        self.crossed_since_seal = false;
+    /// [`Self::take`] with each pair saying whether a run recorded it.
+    pub fn take_tagged(&mut self) -> (Vec<TaggedPair>, bool) {
+        let by_run = std::mem::take(&mut self.by_run);
+        let (pairs, barrier) = self.take();
+        let tagged = pairs
+            .into_iter()
+            .zip(by_run)
+            .map(|((op, inverse), by_run)| (op, inverse, by_run))
+            .collect();
+        (tagged, barrier)
     }
 
-    /// Lift the seal: the buffer is one run of pairs again.
-    pub fn unseal(&mut self) {
-        self.sealed = 0;
-        self.crossed_since_seal = false;
+    /// The pairs here, each saying whether a run recorded it, oldest first.
+    pub fn tagged(&self) -> impl Iterator<Item = (&DocumentOp, &DocumentOp, bool)> {
+        self.pairs
+            .iter()
+            .zip(&self.by_run)
+            .map(|((op, inverse), by_run)| (op, inverse, *by_run))
     }
 
-    /// The pairs since the seal, plus whether a barrier was crossed since
-    /// it; the ones before it stay, sealed.
-    pub fn take_since_seal(&mut self) -> (Vec<(DocumentOp, DocumentOp)>, bool) {
-        let since = self.pairs.split_off(self.sealed.min(self.pairs.len()));
-        (since, std::mem::take(&mut self.crossed_since_seal))
+    /// Take out the run's pairs (`by_run`) or the person's, leaving the
+    /// others in their order. Answers whether a barrier was crossed: for
+    /// the run's, since the run opened.
+    pub fn take_by(&mut self, by_run: bool) -> (Vec<(DocumentOp, DocumentOp)>, bool) {
+        let mut taken = Vec::new();
+        let mut kept = Vec::new();
+        for (pair, tag) in std::mem::take(&mut self.pairs)
+            .into_iter()
+            .zip(&self.by_run)
+        {
+            match *tag == by_run {
+                true => taken.push(pair),
+                false => kept.push(pair),
+            }
+        }
+        self.by_run = vec![!by_run; kept.len()];
+        self.pairs = kept;
+        let barrier = match by_run {
+            true => std::mem::take(&mut self.crossed_in_run),
+            false => std::mem::take(&mut self.barrier),
+        };
+        (taken, barrier)
+    }
+
+    /// A run opened: what its calls record from here on is the run's.
+    pub fn begin_run(&mut self) {
+        self.run_open = true;
+        self.in_call = false;
+        self.crossed_in_run = false;
+    }
+
+    /// One of the open run's calls begins (`true`) or ends.
+    pub fn in_call(&mut self, on: bool) {
+        self.in_call = on && self.run_open;
+    }
+
+    /// The run's pairs here become the person's: they stay with what
+    /// holds them now (an open task).
+    pub fn hand_over(&mut self) {
+        self.by_run.iter_mut().for_each(|tag| *tag = false);
+    }
+
+    /// The run ended: the pairs left are the person's from here on.
+    pub fn end_run(&mut self) {
+        self.hand_over();
+        self.run_open = false;
+        self.in_call = false;
+        self.crossed_in_run = false;
     }
 
     pub fn is_empty(&self) -> bool {

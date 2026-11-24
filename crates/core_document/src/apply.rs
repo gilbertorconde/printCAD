@@ -433,23 +433,15 @@ impl Document {
         self.journal_pending.take()
     }
 
-    /// Seal the journal material so far: what follows can be taken alone
-    /// ([`Self::take_journal_pairs_since_seal`]).
-    pub(crate) fn seal_journal(&mut self) {
-        self.journal_pending.seal();
+    /// Journal material since the last boundary, as the journal reads it.
+    pub(crate) fn journal_pending(&self) -> &op::JournalBuffer {
+        &self.journal_pending
     }
 
-    /// Lift the seal [`Self::seal_journal`] set.
-    pub(crate) fn unseal_journal(&mut self) {
-        self.journal_pending.unseal();
-    }
-
-    /// Journal material since the seal, and whether a non-invertible op
-    /// crossed since it; what came before the seal stays.
-    pub(crate) fn take_journal_pairs_since_seal(
-        &mut self,
-    ) -> (Vec<(op::DocumentOp, op::DocumentOp)>, bool) {
-        self.journal_pending.take_since_seal()
+    /// Journal material since the last boundary, as the journal sorts it
+    /// (a run's pairs from the person's).
+    pub(crate) fn journal_pending_mut(&mut self) -> &mut op::JournalBuffer {
+        &mut self.journal_pending
     }
 
     /// Run `f` with journal capture off: history traversal and remote
