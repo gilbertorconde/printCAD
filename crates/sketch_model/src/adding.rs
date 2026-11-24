@@ -37,6 +37,8 @@ pub struct SketchIndex {
     /// by what was added and what the solve wrote alone ([`plain_element`],
     /// [`plain_constraint`]), and no id twice.
     plain: bool,
+    /// The solver's problem of the sketch, where its split is kept.
+    pub(crate) base: Option<crate::solver::Base>,
 }
 
 /// Whether an added-to solve and patch follow `element` by what was added
@@ -50,7 +52,7 @@ fn plain_element(element: &GeometryElement) -> bool {
             | GeometryElement::Line(_)
             | GeometryElement::Circle(_)
             | GeometryElement::Arc(_)
-    ) && element == element
+    ) && equal_to_itself(element)
 }
 
 /// [`plain_element`] for a constraint: no group (its shape is read from its
@@ -59,7 +61,13 @@ fn plain_constraint(constraint: &crate::sketch::Constraint) -> bool {
     !matches!(
         constraint.kind,
         ConstraintKind::Group { .. } | ConstraintKind::InternalAlignment { .. }
-    ) && constraint == constraint
+    ) && equal_to_itself(constraint)
+}
+
+/// Whether every value in `item` equals itself: none is not a number.
+fn equal_to_itself<T: PartialEq>(item: &T) -> bool {
+    let same = item;
+    item == same
 }
 
 fn cell(at: Vec2D) -> (i64, i64) {
@@ -79,6 +87,7 @@ impl SketchIndex {
             constraint_ids: IdMap::default(),
             points: Default::default(),
             plain: sketch.texts.is_empty() && sketch.derived.is_empty() && sketch.soft.is_empty(),
+            base: None,
         };
         index.element_ids.reserve(sketch.geometry.len());
         index.constraint_ids.reserve(sketch.constraints.len());
@@ -127,7 +136,7 @@ impl SketchIndex {
 
     /// Follow the elements at `written` (places in `sketch`'s list) to
     /// where a solve put them.
-    pub fn follow(&mut self, sketch: &Sketch, written: &[usize]) {
+    pub(crate) fn follow(&mut self, sketch: &Sketch, written: &[usize]) {
         for &i in written {
             if let Some(GeometryElement::Point(p)) = sketch.geometry.get(i) {
                 self.list_point(i as u32, p.position);
@@ -362,7 +371,7 @@ mod tests {
     fn what_an_edit_added_is_solved_and_stored_as_the_whole_sketch_is() {
         use crate::feature::SketchFeature;
         use core_document::WorkbenchFeature;
-        let mut moved = 0;
+        let (mut moved, mut based) = (0, 0);
         for seed in 0..8 {
             let mut draws = Draws(seed);
             let mut feature = SketchFeature::from_sketch(Sketch::new("s"));
@@ -382,7 +391,7 @@ mod tests {
                 let unsolved = feature.clone();
                 let mut whole = feature.clone();
                 let outcome = crate::solver::solve(&mut whole.sketch);
-                let added = crate::solver::solve_added(&mut feature.sketch);
+                let added = crate::solver::solve_added(&mut feature.sketch, &mut index, sizes);
                 assert_eq!(added.outcome, outcome);
                 assert_eq!(feature.to_json(), whole.to_json());
                 assert_eq!(feature.sketch, whole.sketch);
@@ -390,7 +399,27 @@ mod tests {
                     .filter(|&k| unsolved.sketch.geometry[k] != feature.sketch.geometry[k])
                     .collect();
                 assert_eq!(added.written, differ);
-                index.follow(&feature.sketch, &added.written);
+                // The problem kept for the next edit is the sketch's, split
+                // into the parts a split afresh finds.
+                let now = (
+                    feature.sketch.geometry.len(),
+                    feature.sketch.constraints.len(),
+                );
+                if let Some(base) = index.base {
+                    let kept = crate::solver::Prepared::grown(&feature.sketch, base, now, &[])
+                        .expect("the problem is kept");
+                    let afresh = crate::solver::Prepared::of(&feature.sketch);
+                    assert_eq!(kept.problem(), afresh.problem());
+                    let alone = sketch_solver::parts::Parted::of(
+                        &std::sync::Arc::new(afresh.problem().clone()),
+                        &mut Default::default(),
+                    );
+                    let mut alone: Vec<_> = alone.systems().map(|(p, _)| p.clone()).collect();
+                    alone.sort_by_key(|p| p.geometry.first().map(|g| g.id()));
+                    assert_eq!(kept.part_problems(), alone);
+                    index.base = kept.base();
+                    based += 1;
+                }
                 let kept = added.written.partition_point(|&k| k < sizes.0);
                 moved += kept;
                 let patch =
@@ -416,5 +445,6 @@ mod tests {
             moved > 20,
             "the solves moved what was there before: {moved}"
         );
+        assert!(based > 60, "the problems were kept: {based}");
     }
 }

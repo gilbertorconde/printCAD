@@ -218,8 +218,7 @@ fn adding(
             ctx.document.mark_feature_dirty(sketch_id);
             return Ok(answer);
         }
-        let solved = crate::solver::solve_added(&mut feature.sketch);
-        index.follow(&feature.sketch, &solved.written);
+        let solved = crate::solver::solve_added(&mut feature.sketch, &mut index, sizes);
         crate::placement::store_added(ctx.document, sketch_id, feature, sizes, &solved.written)
             .map_err(|e| CommandError::failed(e.to_string()))?;
         if let Some(node) = ctx.document.get_feature_meta(sketch_id) {

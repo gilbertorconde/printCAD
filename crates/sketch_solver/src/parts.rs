@@ -199,6 +199,66 @@ pub struct Parted {
     /// Some part's constraints bring an equation.
     constrained: bool,
     settings: Settings,
+    /// The split kept for the problem, where one is.
+    stamp: Option<Stamp>,
+}
+
+/// Names a problem's split kept in a [`PartCache`], so a caller that keeps
+/// the problem's source unchanged but for what it lists can have the
+/// split edited ([`Parted::edited`]) rather than the problem compared.
+/// A split edited or grown for another problem takes a new one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stamp(u64);
+
+impl Stamp {
+    fn fresh() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+/// A kept problem edited in place for [`Parted::edited`]: elements and
+/// constraints added after its own, and its own elements' values changed.
+pub struct ProblemEdit<'a> {
+    problem: &'a mut Problem,
+    /// How many elements the problem had.
+    geometry: usize,
+    /// The places of its own elements whose values changed.
+    changed: Vec<u32>,
+    /// An element was set to one with another id or other points.
+    broken: bool,
+}
+
+impl ProblemEdit<'_> {
+    pub fn problem(&self) -> &Problem {
+        self.problem
+    }
+
+    pub fn push_geometry(&mut self, geometry: crate::problem::Geometry) {
+        self.problem.geometry.push(geometry);
+    }
+
+    pub fn push_constraint(&mut self, constraint: crate::problem::Constraint) {
+        self.problem.constraints.push(constraint);
+    }
+
+    /// The problem's own element `i` set to `geometry`, the same id naming
+    /// the same points.
+    pub fn set_geometry(&mut self, i: usize, geometry: crate::problem::Geometry) {
+        match self.problem.geometry.get_mut(i) {
+            Some(was)
+                if i < self.geometry
+                    && was.id() == geometry.id()
+                    && was.point_references() == geometry.point_references() =>
+            {
+                if *was != geometry {
+                    *was = geometry;
+                    self.changed.push(i as u32);
+                }
+            }
+            _ => self.broken = true,
+        }
+    }
 }
 
 impl std::fmt::Debug for Parted {
@@ -228,6 +288,7 @@ impl Parted {
             constrained: part.constrained,
             settings: part.problem.settings,
             parts: Arc::new(vec![Entry::of(&part)]),
+            stamp: None,
         }
     }
 
@@ -238,21 +299,72 @@ impl Parted {
     /// added after, and worked out afresh otherwise.
     pub fn of(problem: &Arc<Problem>, cache: &mut PartCache) -> Self {
         cache.turn(problem.geometry.len());
-        let parts = match cache.take_kept(problem) {
+        let (parts, stamp) = match cache.take_kept(problem) {
             Some(kept) => match kept.grow(problem, &mut cache.parts) {
-                Some((kept, parts)) => {
-                    cache.keep_split(kept);
-                    parts
-                }
+                Some((kept, parts)) => (parts, cache.keep_split(kept)),
                 None => cache.split(problem),
             },
             None => cache.split(problem),
         };
+        Self::listed(parts, problem.settings, stamp)
+    }
+
+    fn listed(parts: Arc<Vec<Entry>>, settings: Settings, stamp: Option<Stamp>) -> Self {
         Self {
             constrained: parts.iter().any(|e| e.facts.constrained),
             parts,
-            settings: problem.settings,
+            settings,
+            stamp,
         }
+    }
+
+    /// The split kept for the problem in the cache it was taken from.
+    pub fn stamp(&self) -> Option<Stamp> {
+        self.stamp
+    }
+
+    /// The problem whose split `stamp` names, edited in place by `edit`,
+    /// and its parts: what [`Parted::of`] answers for the problem as
+    /// edited, the split updated by what `edit` lists rather than by
+    /// comparing every element. `None` when no split in `cache` has that
+    /// stamp, or `edit` answers `false` or sets an element to one with
+    /// another id or other points; the split is dropped then.
+    pub fn edited(
+        stamp: Stamp,
+        cache: &mut PartCache,
+        edit: impl FnOnce(&mut ProblemEdit) -> bool,
+    ) -> Option<(Arc<Problem>, Self)> {
+        let at = cache.splits.iter().position(|k| k.stamp == stamp)?;
+        let mut kept = cache.splits.remove(at);
+        let before = (
+            kept.problem.geometry.len(),
+            kept.problem.constraints.len(),
+            holds_any(&kept.problem),
+        );
+        let mut problem_edit = ProblemEdit {
+            geometry: before.0,
+            problem: Arc::make_mut(&mut kept.problem),
+            changed: Vec::new(),
+            broken: false,
+        };
+        if !edit(&mut problem_edit) || problem_edit.broken {
+            return None;
+        }
+        let changed = problem_edit.changed;
+        let problem = Arc::clone(&kept.problem);
+        cache.turn(problem.geometry.len());
+        let mut touched = vec![false; kept.parts.len()];
+        for &i in &changed {
+            touched[kept.joins.of_geometry[i as usize] as usize] = true;
+        }
+        let (parts, stamp) = match kept.grow_by(&problem, before, touched, &mut cache.parts) {
+            Some((kept, parts)) => (parts, cache.keep_split(kept)),
+            None => cache.split(&problem),
+        };
+        Some((
+            Arc::clone(&problem),
+            Self::listed(parts, problem.settings, stamp),
+        ))
     }
 
     pub fn len(&self) -> usize {
@@ -638,6 +750,7 @@ fn part_of(
 /// A problem solved lately with its parts and how its elements joined
 /// into them, so the next version of it is split by what changed.
 struct KeptSplit {
+    stamp: Stamp,
     problem: Arc<Problem>,
     joins: Joins,
     /// The parts, by number; `None` for a number no longer in use.
@@ -665,22 +778,18 @@ impl KeptSplit {
     /// an element or constraint kept its place but not its id or what it
     /// names, or what was added cannot be split by what was kept.
     fn grow(
-        mut self,
+        self,
         problem: &Arc<Problem>,
         parts: &mut Generations,
     ) -> Option<(Self, Arc<Vec<Entry>>)> {
-        let before = Arc::clone(&self.problem);
-        let (n0, m0) = (before.geometry.len(), before.constraints.len());
-        let (n1, m1) = (problem.geometry.len(), problem.constraints.len());
-        let joins = &mut self.joins;
-        let slots = self.parts.len();
-        let mut changed = vec![false; slots];
+        let before = &self.problem;
+        let mut changed = vec![false; self.parts.len()];
         for (i, (now, was)) in problem.geometry.iter().zip(&before.geometry).enumerate() {
             if now != was {
                 if now.id() != was.id() || now.point_references() != was.point_references() {
                     return None;
                 }
-                changed[joins.of_geometry[i] as usize] = true;
+                changed[self.joins.of_geometry[i] as usize] = true;
             }
         }
         for (k, (now, was)) in (problem.constraints.iter().zip(&before.constraints)).enumerate() {
@@ -688,9 +797,30 @@ impl KeptSplit {
                 if now.id != was.id || now.kind.references() != was.kind.references() {
                     return None;
                 }
-                changed[joins.of_constraint[k] as usize] = true;
+                changed[self.joins.of_constraint[k] as usize] = true;
             }
         }
+        let sizes = (
+            before.geometry.len(),
+            before.constraints.len(),
+            holds_any(before),
+        );
+        self.grow_by(problem, sizes, changed, parts)
+    }
+
+    /// [`Self::grow`], given the problem's sizes before and whether it held
+    /// anything still, and the parts (by number) holding an element or
+    /// constraint that changed in place.
+    fn grow_by(
+        mut self,
+        problem: &Arc<Problem>,
+        (n0, m0, held_before): (usize, usize, bool),
+        mut changed: Vec<bool>,
+        parts: &mut Generations,
+    ) -> Option<(Self, Arc<Vec<Entry>>)> {
+        let (n1, m1) = (problem.geometry.len(), problem.constraints.len());
+        let joins = &mut self.joins;
+        let slots = self.parts.len();
         if n1 > n0 && joins.dangling {
             return None;
         }
@@ -834,7 +964,7 @@ impl KeptSplit {
 
         // Every part made or changed, compiled or taken from what is kept;
         // a kept part whose held points changed too.
-        let holding = holds_any(problem) || holds_any(&before);
+        let holding = holds_any(problem) || held_before;
         let mut held = if holding {
             held_by_part(problem, |r| {
                 (joins.places.get(r)).map(|&i| joins.of_geometry[i as usize])
@@ -898,6 +1028,7 @@ impl KeptSplit {
             self.parts[s as usize] = Some(part_of(problem, &geometry, &constraints, held, parts));
         }
         self.problem = Arc::clone(problem);
+        self.stamp = Stamp::fresh();
         if relabelled.is_empty() {
             // Parts replaced in place and new ones after the rest: the
             // list follows, changed only there.
@@ -982,17 +1113,19 @@ impl PartCache {
 
     /// Keep `split` as the latest, unless numbers no longer in use
     /// outgrow the parts, when the next version is split afresh.
-    fn keep_split(&mut self, split: KeptSplit) {
+    fn keep_split(&mut self, split: KeptSplit) -> Option<Stamp> {
         let unused = split.parts.iter().filter(|p| p.is_none()).count();
         if unused > 64 && unused > split.parts.len() / 2 {
-            return;
+            return None;
         }
+        let stamp = split.stamp;
         self.splits.insert(0, split);
         self.splits.truncate(SPLITS);
+        Some(stamp)
     }
 
     /// `problem`'s parts, split afresh, and its split kept.
-    fn split(&mut self, problem: &Arc<Problem>) -> Arc<Vec<Entry>> {
+    fn split(&mut self, problem: &Arc<Problem>) -> (Arc<Vec<Entry>>, Option<Stamp>) {
         let split = Split::of(problem);
         let mut held = match &split.kept {
             Some(joins) => held_by_part(problem, |r| {
@@ -1022,16 +1155,17 @@ impl PartCache {
             .collect();
         let parts: Vec<Option<Arc<Part>>> = parts.into_iter().map(Some).collect();
         let (list, at) = listed(&parts);
-        if let Some(joins) = split.kept {
+        let stamp = split.kept.and_then(|joins| {
             self.keep_split(KeptSplit {
+                stamp: Stamp::fresh(),
                 problem: Arc::clone(problem),
                 joins,
                 parts,
                 list: Arc::clone(&list),
                 at,
-            });
-        }
-        list
+            })
+        });
+        (list, stamp)
     }
 }
 

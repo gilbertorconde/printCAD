@@ -121,6 +121,64 @@ impl Prepared {
         }
     }
 
+    /// Where the problem's split is kept, where it is.
+    pub(crate) fn base(&self) -> Option<Base> {
+        self.parts.stamp().map(Base)
+    }
+
+    /// [`Prepared::of`] `sketch`, a plain sketch
+    /// ([`crate::adding::SketchIndex::plain`]), from the problem `base`
+    /// names: that of the sketch before the elements and constraints past
+    /// `sizes` were added and the elements at `moved` changed their
+    /// values. `None` where that problem is no longer kept, or is not one
+    /// such a sketch could have had.
+    pub(crate) fn grown(
+        sketch: &Sketch,
+        base: Base,
+        sizes: (usize, usize),
+        moved: &[usize],
+    ) -> Option<Self> {
+        let none = std::collections::HashSet::new();
+        let (problem, parts) = PARTS.with_borrow_mut(|cache| {
+            Parted::edited(base.0, cache, |edit| {
+                let kept = edit.problem();
+                if kept.geometry.len() != sizes.0
+                    || !kept.held_points.is_empty()
+                    || !kept.application_held_points.is_empty()
+                    || kept.settings != adapter::settings(sketch.solver)
+                    || kept.external != adapter::external(sketch)
+                {
+                    return false;
+                }
+                for &i in moved {
+                    edit.set_geometry(i, adapter::geometry(&sketch.geometry[i], &none));
+                }
+                for element in &sketch.geometry[sizes.0..] {
+                    edit.push_geometry(adapter::geometry(element, &none));
+                }
+                for constraint in &sketch.constraints[sizes.1..] {
+                    if adapter::solved(sketch, constraint) {
+                        edit.push_constraint(adapter::constraint(sketch, constraint));
+                    }
+                }
+                true
+            })
+        })?;
+        Some(Self {
+            problem,
+            parts,
+            rank: Default::default(),
+        })
+    }
+
+    /// Each part's problem, in the order of their first elements.
+    #[cfg(test)]
+    pub(crate) fn part_problems(&self) -> Vec<sketch_solver::problem::Problem> {
+        let mut problems: Vec<_> = self.parts.systems().map(|(p, _)| p.clone()).collect();
+        problems.sort_by_key(|p| p.geometry.first().map(|g| g.id()));
+        problems
+    }
+
     #[doc(hidden)]
     pub fn problem(&self) -> &sketch_solver::problem::Problem {
         &self.problem
@@ -238,6 +296,12 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     }
 }
 
+/// Names the solver's problem of a sketch where its split is kept, so the
+/// next version of the sketch, made by adding to it, is prepared from it
+/// ([`solve_added`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Base(sketch_solver::parts::Stamp);
+
 /// What [`solve_added`] did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Added {
@@ -249,10 +313,20 @@ pub struct Added {
 /// [`solve`] of a sketch whose index says it is plain
 /// ([`crate::adding::SketchIndex::plain`]): no text, spline, ellipse,
 /// conic, group or measured points, so nothing is laid out after the solve
-/// and nothing but the solved values changes. The same answer, with the
-/// places of the elements it changed.
-pub fn solve_added(sketch: &mut Sketch) -> Added {
-    let prepared = Prepared::of(sketch);
+/// and nothing but the solved values changes. `sizes` are the elements and
+/// constraints the sketch had before the edit added the rest, `index` its
+/// index, whose problem the sketch's is prepared from and which follows
+/// what the solve moved. The same answer, with the places of the elements
+/// it changed.
+pub fn solve_added(
+    sketch: &mut Sketch,
+    index: &mut crate::adding::SketchIndex,
+    sizes: (usize, usize),
+) -> Added {
+    let base = index.base.take();
+    let prepared = base
+        .and_then(|base| Prepared::grown(sketch, base, sizes, &[]))
+        .unwrap_or_else(|| Prepared::of(sketch));
     let (iteration, values) = prepared.iterate(sketch.solver);
     let mut written = Vec::new();
     // With no ellipse or conic, no axes turn and no focus is placed: the
@@ -265,9 +339,16 @@ pub fn solve_added(sketch: &mut Sketch) -> Added {
             Some(&mut written),
         )
         .0;
-    finish(sketch, &iteration, changed, Some(prepared));
     written.sort_unstable();
     written.dedup();
+    let base = prepared.base();
+    let measured = finish_measuring(sketch, &iteration, changed, Some(prepared), |sketch| {
+        let sizes = (sketch.geometry.len(), sketch.constraints.len());
+        base.and_then(|base| Prepared::grown(sketch, base, sizes, &written))
+            .unwrap_or_else(|| Prepared::of(sketch))
+    });
+    index.base = measured.and_then(|m| m.prepared.base());
+    index.follow(sketch, &written);
     Added {
         outcome: iteration.outcome,
         written,
@@ -318,8 +399,20 @@ fn finish(
     changed: bool,
     prepared: Option<Prepared>,
 ) -> Option<Measured> {
+    finish_measuring(sketch, iteration, changed, prepared, Prepared::of)
+}
+
+/// [`finish`], the stored sketch prepared by `prepare` where `prepared`
+/// is not its problem.
+fn finish_measuring(
+    sketch: &mut Sketch,
+    iteration: &Iteration,
+    changed: bool,
+    prepared: Option<Prepared>,
+    prepare: impl FnOnce(&Sketch) -> Prepared,
+) -> Option<Measured> {
     let measure = |sketch: &Sketch, kept: Option<Prepared>| {
-        let prepared = kept.unwrap_or_else(|| Prepared::of(sketch));
+        let prepared = kept.unwrap_or_else(|| prepare(sketch));
         Measured {
             dof: prepared.dof(),
             prepared,
