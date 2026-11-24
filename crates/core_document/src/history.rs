@@ -115,9 +115,12 @@ impl OpJournal {
     /// Open a script's run, named by the label given last: boundaries
     /// wait until [`end_run`](Self::end_run), each call closes a step of
     /// its own ([`note_call`](Self::note_call)) that undo and redo step
-    /// through as any other, and the run ends as one step.
-    pub fn begin_run(&mut self) {
+    /// through as any other, and the run ends as one step. The edits
+    /// still open (an open task's) are sealed off: a run rolled back
+    /// takes back only its own.
+    pub fn begin_run(&mut self, document: &mut Document) {
         if self.run.is_none() {
+            document.seal_journal();
             self.run = Some(Run {
                 label: self.pending_label.take(),
                 ..Run::default()
@@ -154,6 +157,7 @@ impl OpJournal {
     /// Answers the run's step.
     pub fn end_run(&mut self, document: &mut Document) -> Option<JournalEntryId> {
         self.run.as_ref()?;
+        document.unseal_journal();
         if !self.task {
             self.close(document);
         }
@@ -276,7 +280,10 @@ impl OpJournal {
     /// followed it is taken back and the history clears as it would have
     /// on closing.
     pub fn roll_back(&mut self, document: &mut Document) -> (usize, bool) {
-        let (mut undone, mut barrier) = self.roll_back_pending(document);
+        if self.run.is_none() {
+            return self.roll_back_pending(document);
+        }
+        let (mut undone, mut barrier) = self.roll_back_since_seal(document);
         let Some(run) = self.run.take() else {
             return (undone, barrier);
         };
@@ -309,7 +316,23 @@ impl OpJournal {
 
     /// Take back the edits not yet closed, leaving no step for them.
     fn roll_back_pending(&mut self, document: &mut Document) -> (usize, bool) {
-        let (pairs, barrier) = document.take_journal_pairs();
+        let taken = document.take_journal_pairs();
+        self.take_back(document, taken)
+    }
+
+    /// Take back the edits not yet closed since the run sealed the ones
+    /// open before it, which stay open.
+    fn roll_back_since_seal(&mut self, document: &mut Document) -> (usize, bool) {
+        let taken = document.take_journal_pairs_since_seal();
+        document.unseal_journal();
+        self.take_back(document, taken)
+    }
+
+    fn take_back(
+        &mut self,
+        document: &mut Document,
+        (pairs, barrier): (Vec<(DocumentOp, DocumentOp)>, bool),
+    ) -> (usize, bool) {
         document.without_journal(|doc| {
             for (_, inverse) in pairs.iter().rev() {
                 doc.apply_history_op(inverse);
@@ -556,7 +579,7 @@ mod tests {
         let mut doc = Document::new("Script");
         let mut journal = OpJournal::new(16);
         journal.label_next("Run script");
-        journal.begin_run();
+        journal.begin_run(&mut doc);
         let body = doc.create_body(Some("A".into()));
         journal.note(&mut doc);
         doc.rename_body(body, "B");
@@ -570,6 +593,63 @@ mod tests {
         assert!(!journal.can_undo());
     }
 
+    /// A run that fails while a task is open takes back only what it did:
+    /// the feature the task made, and the task's edit of it, stay, and
+    /// accepting the task makes them one step. A run's write to the same
+    /// feature does not join the task's.
+    #[test]
+    fn a_run_rolled_back_in_an_open_task_leaves_the_task_s_edits() {
+        let mut doc = Document::new("Script");
+        let mut journal = OpJournal::new(16);
+        let body = doc.create_body(Some("A".into()));
+        journal.label_next("Create body");
+        journal.note(&mut doc);
+
+        journal.begin_task();
+        let made = doc
+            .add_feature_in_body(datum(), "D".into(), Some(body))
+            .unwrap();
+        doc.update_feature_data(made, serde_json::json!({"task": 1}))
+            .unwrap();
+        journal.label_next("Run script");
+        journal.begin_run(&mut doc);
+        doc.update_feature_data(made, serde_json::json!({"run": 2}))
+            .unwrap();
+        doc.rename_body(body, "B");
+        journal.note_call(&mut doc, "doc.rename");
+        let (undone, barrier) = journal.roll_back(&mut doc);
+        assert!(undone == 2 && !barrier, "{undone} {barrier}");
+        journal.end_run(&mut doc);
+
+        let node = doc
+            .get_feature_meta(made)
+            .expect("the task's feature stays");
+        assert_eq!(*node.data, serde_json::json!({"task": 1}));
+        assert_eq!(doc.bodies()[0].name, "A");
+        journal.accept_task(&mut doc, Some("Datum".into()));
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Datum"));
+        assert!(doc.get_feature_meta(made).is_none(), "the task's one step");
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create body"));
+    }
+
+    /// A run that ends well inside a task is part of it: Cancel takes it
+    /// back with the rest.
+    #[test]
+    fn cancelling_a_task_takes_back_a_run_inside_it() {
+        let mut doc = Document::new("Script");
+        let body = doc.create_body(Some("A".into()));
+        assert_cancel_takes_back(&mut doc, |doc| {
+            let mut journal = OpJournal::new(16);
+            journal.begin_task();
+            doc.add_feature_in_body(datum(), "D".into(), Some(body))
+                .unwrap();
+            journal.begin_run(doc);
+            doc.rename_body(body, "B");
+            journal.note_call(doc, "doc.rename");
+            journal.end_run(doc);
+        });
+    }
+
     /// A run that fails is taken back whole and leaves no step; what was
     /// undoable before it still is.
     #[test]
@@ -581,7 +661,7 @@ mod tests {
         journal.note(&mut doc);
 
         journal.label_next("Run script");
-        journal.begin_run();
+        journal.begin_run(&mut doc);
         doc.rename_body(kept, "Renamed");
         journal.note_call(&mut doc, "doc.rename");
         let body = doc.create_body(Some("A".into()));
@@ -613,7 +693,7 @@ mod tests {
         let name = |doc: &Document| doc.bodies().first().map(|b| b.name.clone());
 
         journal.label_next("Run script");
-        journal.begin_run();
+        journal.begin_run(&mut doc);
         doc.rename_body(body, "B");
         journal.note_call(&mut doc, "doc.rename");
         doc.rename_body(body, "C");
@@ -632,7 +712,7 @@ mod tests {
         assert_eq!(name(&doc).as_deref(), Some("B"));
 
         // A run that undoes what came before it, then fails.
-        journal.begin_run();
+        journal.begin_run(&mut doc);
         assert_eq!(journal.undo(&mut doc).as_deref(), Some("Run script"));
         assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create body"));
         assert!(doc.bodies().is_empty());
@@ -653,7 +733,7 @@ mod tests {
         // A run that only undoes leaves no step of its own: what it undid
         // redoes.
         journal.redo(&mut doc);
-        journal.begin_run();
+        journal.begin_run(&mut doc);
         journal.undo(&mut doc);
         assert_eq!(journal.end_run(&mut doc), None);
         assert!(!journal.can_undo());
@@ -803,7 +883,7 @@ mod tests {
 
         // Older, in a run, or overtaken by an open edit: refused, nothing moves.
         assert_eq!(journal.undo_entry(&mut doc, made), None);
-        journal.begin_run();
+        journal.begin_run(&mut doc);
         assert_eq!(journal.undo_entry(&mut doc, renamed), None);
         journal.end_run(&mut doc);
         assert_eq!(doc.bodies()[0].name, "D");

@@ -433,6 +433,25 @@ impl Document {
         self.journal_pending.take()
     }
 
+    /// Seal the journal material so far: what follows can be taken alone
+    /// ([`Self::take_journal_pairs_since_seal`]).
+    pub(crate) fn seal_journal(&mut self) {
+        self.journal_pending.seal();
+    }
+
+    /// Lift the seal [`Self::seal_journal`] set.
+    pub(crate) fn unseal_journal(&mut self) {
+        self.journal_pending.unseal();
+    }
+
+    /// Journal material since the seal, and whether a non-invertible op
+    /// crossed since it; what came before the seal stays.
+    pub(crate) fn take_journal_pairs_since_seal(
+        &mut self,
+    ) -> (Vec<(op::DocumentOp, op::DocumentOp)>, bool) {
+        self.journal_pending.take_since_seal()
+    }
+
     /// Run `f` with journal capture off: history traversal and remote
     /// application drive the document without journaling themselves.
     pub(crate) fn without_journal<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {

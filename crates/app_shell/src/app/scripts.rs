@@ -433,7 +433,7 @@ impl PrintCadApp {
                 self.in_script_tab(|app| {
                     app.close_gesture();
                     app.session.journal.label_next(step);
-                    app.session.journal.begin_run();
+                    app.session.journal.begin_run(&mut app.session.document);
                 });
             }
             Event::Printed(line) => {
@@ -1781,6 +1781,106 @@ mod tests {
             self.0 = Some(was.unwrap_or(0) + 1);
             Ok(json!(was))
         }
+    }
+
+    /// A feature open for editing (made by its tool, its task not yet
+    /// closed) survives an agent's run that fails: the run's journal steps
+    /// as `script_event` takes them roll back only what the run did, so
+    /// `doc.feature` and `doc.features` still find the feature, and a later
+    /// run can set its fields.
+    #[test]
+    fn an_agent_run_that_fails_leaves_the_feature_being_edited() {
+        use core_document::history::OpJournal;
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let (document, made) = crate::headless::run_in_document(
+            &mut registry,
+            core_document::Document::new("Untitled"),
+            "local a = pc.sketch.new{plane = 'XY'}\n\
+             pc.sketch.rect{sketch = a, x = -5, y = -5, width = 10, height = 10}\n\
+             local body = pc.doc.feature{id = a}.body\n\
+             local b = pc.sketch.new{body = body, plane = 'XY', offset = 10}\n\
+             pc.sketch.rect{sketch = b, x = -2, y = -2, width = 4, height = 4}\n\
+             return {a, b}",
+            "setup",
+        );
+        let mut document = document;
+        let sketches = made.unwrap().unwrap();
+        let mut journal = OpJournal::new(16);
+        journal.note(&mut document);
+
+        // The Loft tool makes the feature and opens its task.
+        journal.begin_task();
+        let source = format!(
+            "return pc.design.loft{{sections = {{'{}', '{}'}}}}",
+            sketches[0].as_str().unwrap(),
+            sketches[1].as_str().unwrap()
+        );
+        let (document, loft) =
+            crate::headless::run_in_document(&mut registry, document, &source, "tool");
+        let loft = loft.unwrap().unwrap().as_str().unwrap().to_string();
+
+        let agent_run = |registry: &mut core_document::DocumentService,
+                         journal: &mut OpJournal,
+                         mut document: core_document::Document,
+                         source: &str| {
+            journal.label_next("Agent: an agent's script");
+            journal.begin_run(&mut document);
+            let (mut document, out) =
+                crate::headless::run_in_document(registry, document, source, "agent");
+            if out.is_err() {
+                journal.roll_back(&mut document);
+            }
+            journal.end_run(&mut document);
+            (document, out)
+        };
+        let failing = format!("pc.design.set{{feature = '{loft}', ruled = true}}\nerror('stop')");
+        let (mut document, out) = agent_run(&mut registry, &mut journal, document, &failing);
+        assert!(out.is_err());
+
+        let args = |v: Value| v.as_object().cloned().unwrap();
+        let read = |document: &mut core_document::Document,
+                    registry: &core_document::DocumentService| {
+            document_command(
+                "doc.feature",
+                &args(json!({"id": loft})),
+                document,
+                registry,
+                None,
+            )
+            .unwrap()
+        };
+        let feature =
+            read(&mut document, &registry).expect("the feature being edited is still there");
+        assert_eq!(
+            feature["fields"]["Loft"]["ruled"],
+            json!(false),
+            "the run's write went back"
+        );
+        let listed = document_command(
+            "doc.features",
+            &CommandArgs::new(),
+            &mut document,
+            &registry,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["id"] == json!(loft))
+        );
+
+        let setting = format!("pc.design.set{{feature = '{loft}', ruled = true}}");
+        let (mut document, out) = agent_run(&mut registry, &mut journal, document, &setting);
+        out.unwrap();
+        assert_eq!(
+            read(&mut document, &registry).unwrap()["fields"]["Loft"]["ruled"],
+            json!(true)
+        );
     }
 
     /// A command in a tab off screen runs on that tab's state and leaves
