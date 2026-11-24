@@ -277,6 +277,33 @@ impl BenchFeatures for SketchWorkbench {
     /// curve: the cursor unprojected onto the sketch plane, the distance
     /// measured in sketch units, then scaled by the pixels one unit spans
     /// at the sketch origin so the answer is zoom-independent.
+    fn note_spot(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        item: Option<Uuid>,
+        at: [f32; 3],
+        label: [f32; 3],
+    ) -> Option<core_document::SketchNoteSpot> {
+        let feature = document.read_feature::<SketchFeature>(id)?;
+        Some(crate::notes::spot(&feature, item, at, label))
+    }
+
+    fn note_pick(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        pick: &core_document::ViewportPick,
+        tolerance_px: f32,
+        plane_points: bool,
+    ) -> Option<core_document::SketchNotePick> {
+        let feature = document.read_feature::<SketchFeature>(id)?;
+        let hovered = (self.tab.active_sketch_id == Some(id))
+            .then(|| self.tab.hovered_constraint.or(self.tab.hovered))
+            .flatten();
+        crate::notes::pick(&feature, pick, tolerance_px, plane_points, hovered)
+    }
+
     fn pick_feature(
         &self,
         document: &core_document::Document,

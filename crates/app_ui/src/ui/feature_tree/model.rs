@@ -473,6 +473,12 @@ pub(super) fn note_row(document: &Document, body: BodyId, note: &core_document::
     } else {
         format!("Note #{}: {}", note.number, note.text)
     };
+    if let Some(anchor) = note.sketch {
+        match document.get_feature_meta(anchor.feature) {
+            Some(node) => detail.push_str(&format!(", on {}", node.name)),
+            None => detail.push_str(", on a deleted sketch"),
+        }
+    }
     if note.author == core_document::NoteAuthor::Agent {
         detail.push_str(", by the agent");
     }
@@ -487,7 +493,9 @@ pub(super) fn note_row(document: &Document, body: BodyId, note: &core_document::
         tooltip: Some(shown),
         visible: !note.hidden,
         suppressed: note.resolved.is_some(),
-        warning: if lost {
+        warning: if lost && note.sketch.is_some() {
+            Some("Lost: what it was put on is gone from the sketch; it stays where it was".into())
+        } else if lost {
             Some("Lost: what it was put on is gone from the part; it stays where it was".into())
         } else if note.asks && note.resolved.is_none() {
             Some("A question waiting for an answer".into())

@@ -454,6 +454,125 @@ impl DocumentService {
             })
             .collect();
         document.derived_mut().set_feature_solids(solids);
+        let spots = self.sketch_note_spots(document);
+        document.derived_mut().set_sketch_note_spots(spots);
+    }
+
+    /// Where every note on a sketch stands, asked of the sketch's bench.
+    /// A note whose sketch is gone stays where it last stood, lost; one
+    /// never placed, where it was stored.
+    fn sketch_note_spots(
+        &self,
+        document: &Document,
+    ) -> HashMap<crate::NoteId, crate::derived::SketchNotePlaced> {
+        document
+            .notes()
+            .filter(|(_, note)| note.sketch.is_some())
+            .map(|(_, note)| {
+                let placed = self.sketch_note_placed(document, note).unwrap_or_else(|| {
+                    let last = document.derived().sketch_note_spot(note.id);
+                    let placed = last.map_or_else(|| note.placed(None), |(placed, _)| placed);
+                    (
+                        crate::NotePlaced {
+                            lost: true,
+                            ..placed
+                        },
+                        None,
+                    )
+                });
+                (note.id, placed)
+            })
+            .collect()
+    }
+
+    /// Where a note on a sketch stands now, in its body's own frame, and
+    /// the sketch's plane there, asked of the sketch's bench; `None` when
+    /// the note is on no sketch or its sketch is gone or takes no notes.
+    pub fn sketch_note_placed(
+        &self,
+        document: &Document,
+        note: &crate::Note,
+    ) -> Option<crate::derived::SketchNotePlaced> {
+        let anchor = note.sketch?;
+        let node = document.get_feature_meta(anchor.feature)?;
+        let spot = self.owner_of(&node.workbench_id)?.note_spot(
+            document,
+            anchor.feature,
+            anchor.item,
+            note.at,
+            note.label,
+        )?;
+        Some((
+            crate::NotePlaced {
+                at: spot.plane.point(spot.at),
+                label: spot.plane.point(spot.label),
+                lost: spot.lost,
+                face: None,
+                edge: None,
+            },
+            Some(spot.plane),
+        ))
+    }
+
+    /// Where `note` stands, given where its body sits: a note on a sketch
+    /// asked of the sketch's bench as the document is now (a note not yet
+    /// added, which evaluation has not placed), any other as
+    /// [`Document::note_placed`] has it.
+    pub fn note_placed(
+        &self,
+        document: &Document,
+        body: BodyId,
+        note: &crate::Note,
+    ) -> crate::NotePlaced {
+        match self.sketch_note_placed(document, note) {
+            Some((placed, _)) => {
+                let placement = document.body_placement(body);
+                crate::NotePlaced {
+                    at: placement.point(placed.at),
+                    label: placement.point(placed.label),
+                    ..placed
+                }
+            }
+            None => document.note_placed(body, note),
+        }
+    }
+
+    /// Where a note on sketch `id` would stand: on `item` (or the plane)
+    /// near `at`, its label `label`, both in the sketch's plane. `None`
+    /// when the feature takes no notes.
+    pub fn sketch_note_spot(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        item: Option<uuid::Uuid>,
+        at: [f32; 3],
+        label: [f32; 3],
+    ) -> Option<crate::SketchNoteSpot> {
+        let node = document.get_feature_meta(id)?;
+        self.owner_of(&node.workbench_id)?
+            .note_spot(document, id, item, at, label)
+    }
+
+    /// What a click with the note tool lands on in feature `id`, asked of
+    /// the bench that claimed its kind. The cursor's view is the
+    /// document's: it is taken into the feature's body frame first.
+    pub fn sketch_note_pick(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        pick: &ViewportPick,
+        tolerance_px: f32,
+        plane_points: bool,
+    ) -> Option<crate::SketchNotePick> {
+        let node = document.get_feature_meta(id)?;
+        let pick = placed_pick(document, node, pick);
+        self.owner_of(&node.workbench_id)?.note_pick(
+            document,
+            id,
+            &pick,
+            tolerance_px,
+            plane_points,
+        )
     }
 
     /// The cosmetic threads of every feature in its body's build, in

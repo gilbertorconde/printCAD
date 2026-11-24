@@ -89,7 +89,10 @@ pub use history::JournalEntryId;
 use imported::MeshesApart;
 pub use imported::{Annotation, ImportedGeometry, ImportedObjectNode, LocalGeometry};
 pub use kernel_api::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi, TriMesh};
-pub use notes::{EdgeKey, Note, NoteAuthor, NoteId, NotePlaced, NoteWant};
+pub use notes::{
+    EdgeKey, Note, NoteAuthor, NoteId, NotePlaced, NotePlane, NoteWant, SketchAnchor,
+    SketchNotePick, SketchNoteSpot, sketch_label_for,
+};
 pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
 pub use rebuild::{

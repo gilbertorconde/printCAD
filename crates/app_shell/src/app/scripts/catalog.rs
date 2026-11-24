@@ -414,10 +414,22 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .read_only(),
         CommandSpec::new(
             "doc.note_add",
-            "Put a numbered note on a face, an edge or a point of a body: a leader from the \
-             point to a label, drawn in the view and written to STEP",
+            "Put a numbered note on a face, an edge or a point of a body, or on a sketch's \
+             element, constraint or plane point: a leader from the point to a label, drawn in \
+             the view and written to STEP",
         )
-        .param("body", ParamKind::Id, "")
+        .optional("body", ParamKind::Id, "The body, unless the note goes on a sketch")
+        .optional(
+            "sketch",
+            ParamKind::Id,
+            "A sketch to put the note on, in place of a body: on item, or on point of its plane",
+        )
+        .optional(
+            "item",
+            ParamKind::Id,
+            "With sketch: the element (line, arc, circle, point, spline...) or the constraint \
+             the note follows",
+        )
         .param(
             "text",
             ParamKind::String,
@@ -428,7 +440,9 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "point",
             ParamKind::Any,
             "{x, y, z} where the body sits: the note goes to the point of the body nearest \
-             it; without one, to the top of the body's middle",
+             it; without one, to the top of the body's middle. With sketch, {x, y} in the \
+             sketch's plane: the note goes to the point of item nearest it (the sketch's \
+             origin without one), or stays there without an item",
         )
         .optional(
             "on",
@@ -439,7 +453,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .optional(
             "label",
             ParamKind::Any,
-            "{x, y, z} where the label stands; without one, out from the face the point is on",
+            "{x, y, z} where the label stands; without one, out from the face the point is on. \
+             With sketch, {x, y} in the sketch's plane",
         )
         .optional(
             "asks",
@@ -463,7 +478,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .optional(
             "label",
             ParamKind::Any,
-            "{x, y, z} where the label stands, where the body sits",
+            "{x, y, z} where the label stands, where the body sits; for a note on a sketch, \
+             {x, y} in the sketch's plane",
         )
         .optional("visible", ParamKind::Bool, "false keeps it off the view")
         .optional(
@@ -489,13 +505,16 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                 "a note is the user's to keep or take away; resolve it with doc.note_set \
                  instead",
             ),
-        CommandSpec::new("doc.notes", "List the notes on bodies")
+        CommandSpec::new("doc.notes", "List the notes on bodies and sketches")
             .optional("body", ParamKind::Id, "Only this body's")
+            .optional("sketch", ParamKind::Id, "Only the notes on this sketch")
             .returns(
                 "a list of {id, number, body, body_name, text, shows, author, point, label, \
                  visible, on, on_face, lost, asks, resolved, done, from_file, surface, feature, \
-                 feature_name, edge}: point and label where the body sits, as built now; shows \
-                 is what the label says",
+                 feature_name, edge, sketch, sketch_name, item, sketch_point, sketch_label}: \
+                 point and label where the body sits, as built now; on is face, edge, point or \
+                 sketch; sketch_point and sketch_label in the sketch's plane; shows is what the \
+                 label says",
             )
             .read_only(),
         CommandSpec::new("doc.faces", "The faces of a body's solid, where it sits")

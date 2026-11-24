@@ -645,6 +645,20 @@ impl PrintCadApp {
         &mut self,
         event: &WindowEvent,
     ) -> core_document::InputResult {
+        // With the note tool armed in an edit session, a left click is the
+        // note tool's, not the bench's.
+        if self.session.tools.note_tool
+            && matches!(
+                event,
+                WindowEvent::MouseInput {
+                    button: MouseButton::Left,
+                    ..
+                }
+            )
+            && self.edited_feature().is_some()
+        {
+            return core_document::InputResult::ignored();
+        }
         let wb_event = match self.convert_to_wb_event(event) {
             Some(e) => e,
             None => return core_document::InputResult::ignored(),
@@ -1549,7 +1563,7 @@ impl PrintCadApp {
     }
 
     /// The cursor and the view it sits in, for picking features.
-    fn viewport_pick(&self) -> Option<core_document::ViewportPick> {
+    pub(crate) fn viewport_pick(&self) -> Option<core_document::ViewportPick> {
         let cursor = self.input.cursor_in_viewport?;
         let vp = self.session.view.camera.viewport_info();
         Some(core_document::ViewportPick {

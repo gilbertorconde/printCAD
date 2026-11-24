@@ -540,6 +540,9 @@ pub(crate) fn document_command(
             Ok(Value::Null)
         }
         "doc.note_add" => {
+            if a.opt_id("sketch")?.is_some() {
+                return sketch_note_add(document, registry, &a);
+            }
             let body = a.body(document, "body")?;
             let text = a.string("text")?.to_string();
             let point = match a.0.get("point") {
@@ -582,8 +585,13 @@ pub(crate) fn document_command(
                 note.text = text.to_string();
             }
             if let Some(label) = a.0.get("label").filter(|v| !v.is_null()) {
-                let label = numbers_arg(label, "label", ["x", "y", "z"])?;
-                note.label = document.body_placement(body).inverse().point(label);
+                note.label = if note.sketch.is_some() {
+                    let [x, y] = numbers_arg(label, "label", ["x", "y"])?;
+                    [x, y, 0.0]
+                } else {
+                    let label = numbers_arg(label, "label", ["x", "y", "z"])?;
+                    document.body_placement(body).inverse().point(label)
+                };
             }
             if let Some(visible) = a.opt_bool("visible")? {
                 note.hidden = !visible;
@@ -605,21 +613,28 @@ pub(crate) fn document_command(
         }
         "doc.notes" => {
             let only = a.opt_id("body")?.map(BodyId);
+            let sketch = a.opt_id("sketch")?.map(FeatureId);
+            // Notes on sketches stand where evaluation places them.
+            registry.evaluate(document);
             Ok(Value::Array(
                 document
                     .notes()
                     .filter(|(body, _)| only.is_none_or(|o| o == *body))
+                    .filter(|(_, note)| {
+                        sketch.is_none_or(|s| note.sketch.is_some_and(|a| a.feature == s))
+                    })
                     .map(|(body, note)| crate::app::note_tool::note_json(document, body, note))
                     .collect(),
             ))
         }
-        "doc.notes_open" => Ok(Value::Array(
+        "doc.notes_open" => Ok(Value::Array({
+            registry.evaluate(document);
             document
                 .notes()
                 .filter(|(_, note)| note.resolved.is_none())
                 .map(|(body, note)| crate::app::note_tool::note_json(document, body, note))
-                .collect(),
-        )),
+                .collect()
+        })),
         "doc.faces" | "doc.edges" => {
             let body = a.body(document, "body")?;
             let in_body = match a.opt_string("frame")? {
@@ -1546,6 +1561,66 @@ fn array_answer(document: &core_document::Document, id: core_document::ArrayId) 
         answer["components"] = json!(groups);
     }
     answer
+}
+
+/// `doc.note_add` with a sketch: the note on the element or constraint
+/// `item` names, at its point nearest `point` (the sketch's origin without
+/// one), or on `point` of the plane without an item.
+fn sketch_note_add(
+    document: &mut core_document::Document,
+    registry: &core_document::DocumentService,
+    a: &Args,
+) -> Result<Value, CommandError> {
+    let feature = FeatureId(a.id("sketch")?);
+    let body = document
+        .get_feature_meta(feature)
+        .ok_or_else(|| CommandError::bad("sketch", "is not a feature of this document"))?
+        .body
+        .ok_or_else(|| CommandError::bad("sketch", "is in no body"))?;
+    let text = a.string("text")?.to_string();
+    let item = a.opt_id("item")?;
+    let point = match a.0.get("point") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let [x, y] = numbers_arg(v, "point", ["x", "y"])?;
+            Some([x, y, 0.0])
+        }
+    };
+    if item.is_none() && point.is_none() {
+        return Err(CommandError::bad(
+            "point",
+            "give the point of the plane, or an item of the sketch",
+        ));
+    }
+    let at = point.unwrap_or([0.0; 3]);
+    // Evaluated first, so the sketch is read as its formulas leave it.
+    registry.evaluate(document);
+    let spot = registry
+        .sketch_note_spot(document, feature, item, at, at)
+        .ok_or_else(|| CommandError::bad("sketch", "is not a feature that takes notes"))?;
+    if spot.lost {
+        return Err(CommandError::bad(
+            "item",
+            "is no element or constraint of this sketch",
+        ));
+    }
+    let label = match a.0.get("label").filter(|v| !v.is_null()) {
+        Some(v) => {
+            let [x, y] = numbers_arg(v, "label", ["x", "y"])?;
+            [x, y, 0.0]
+        }
+        None => core_document::sketch_label_for(spot.at, spot.size),
+    };
+    let note = core_document::Note {
+        sketch: Some(core_document::SketchAnchor { feature, item }),
+        author: note_author(a)?,
+        asks: a.opt_bool("asks")? == Some(true),
+        ..core_document::Note::pinned(text, spot.at, label, None)
+    };
+    let id = document
+        .add_note(body, note)
+        .ok_or_else(|| CommandError::bad("sketch", "is in no body"))?;
+    Ok(json!(id.0.to_string()))
 }
 
 /// The note a command names, by `id` or by `number`.

@@ -99,8 +99,9 @@ pub fn body_colors(
     ExportColors { body: own, faces }
 }
 
-/// The notes a body's export carries, in the body's frame: those shown,
-/// each as its label reads, on its face as the body is built now and
+/// The notes a body's export carries, in the body's frame: those shown
+/// (a note on a sketch while the sketch shows), each as its label reads,
+/// on its face as the body is built now (or its sketch as evaluated) and
 /// naming that face, then a callout of each cosmetic thread, its
 /// designation at its bore's mouth, naming the bore.
 pub fn body_notes(
@@ -112,9 +113,19 @@ pub fn body_notes(
     let notes = document
         .body_notes(body)
         .iter()
-        .filter(|note| !note.hidden)
+        .filter(|note| {
+            !note.hidden
+                && note.sketch.is_none_or(|anchor| {
+                    document
+                        .get_feature_meta(anchor.feature)
+                        .is_none_or(|node| node.visible)
+                })
+        })
         .map(|note| {
-            let placed = note.placed(mesh);
+            let placed = match note.sketch {
+                Some(_) => document.note_placed_in_body(body, note),
+                None => note.placed(mesh),
+            };
             let (at, label) = (placed.at, placed.label);
             ExportNote {
                 body: 0,

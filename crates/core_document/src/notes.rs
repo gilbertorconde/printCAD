@@ -6,7 +6,11 @@
 //! that moves the face or edge carries the note along (the point is taken
 //! to its nearest point, and the label with it); one that takes it away
 //! leaves the note lost, where it was. A text starting with `=` is a
-//! formula: the note shows what it comes to. Each note has a short number,
+//! formula: the note shows what it comes to. A note can stand on a sketch
+//! instead ([`SketchAnchor`]): on one of its elements or constraints, or on
+//! a point of its plane, its point and label kept in the sketch's plane;
+//! the bench that owns the sketch places it as the sketch is now, which
+//! evaluation keeps in the derived state. Each note has a short number,
 //! given in order across the document: a note taken away leaves its number
 //! unused, and only undoing the note's adding gives it again.
 
@@ -17,7 +21,7 @@ use uuid::Uuid;
 
 use kernel_api::naming::TopoName;
 
-use crate::{BodyId, Document, FaceKey, TriMesh, op};
+use crate::{BodyId, Document, FaceKey, FeatureId, TriMesh, op};
 
 /// Unique identifier for a note in the document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -65,6 +69,78 @@ pub struct EdgeKey {
     pub index: u32,
 }
 
+/// What a note on a sketch stands on: the sketch, and the element or
+/// constraint of it, by its id in the sketch, or none for a point of the
+/// plane. A note with one keeps `at` and `label` in the sketch's plane,
+/// `[x, y, 0]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SketchAnchor {
+    pub feature: FeatureId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<Uuid>,
+}
+
+/// A sketch's plane in its body's frame: where its origin is and its two
+/// axes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NotePlane {
+    pub origin: [f32; 3],
+    pub x_axis: [f32; 3],
+    pub y_axis: [f32; 3],
+}
+
+impl NotePlane {
+    /// The plane point `p` (`[x, y, _]`) in the body's frame.
+    pub fn point(&self, p: [f32; 3]) -> [f32; 3] {
+        (Vec3::from(self.origin) + Vec3::from(self.x_axis) * p[0] + Vec3::from(self.y_axis) * p[1])
+            .to_array()
+    }
+
+    /// The body-frame point `p` dropped onto the plane, as `[x, y, 0]`.
+    pub fn local(&self, p: [f32; 3]) -> [f32; 3] {
+        let rel = Vec3::from(p) - Vec3::from(self.origin);
+        [
+            rel.dot(Vec3::from(self.x_axis)),
+            rel.dot(Vec3::from(self.y_axis)),
+            0.0,
+        ]
+    }
+}
+
+/// Where the bench that owns a sketch puts a note on it as the sketch is
+/// now: its point taken to its element or constraint and its label moved
+/// alike, both in the plane, and the plane in the body's frame. `lost`
+/// when the element or constraint is gone, the point and label then as
+/// stored.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SketchNoteSpot {
+    pub at: [f32; 3],
+    pub label: [f32; 3],
+    pub lost: bool,
+    pub plane: NotePlane,
+    /// How far across the sketch's geometry spans, for where a label
+    /// goes when none is given.
+    pub size: f32,
+}
+
+/// What a click with the note tool finds on a sketch: the element or
+/// constraint under the cursor, if any, and the point of the plane there
+/// (on the element, where there is one), and where its label goes: a
+/// little up and to the right on screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SketchNotePick {
+    pub item: Option<Uuid>,
+    pub at: [f32; 3],
+    pub label: [f32; 3],
+}
+
+/// Where a label goes for a note at `at` in a sketch's plane, on a sketch
+/// `size` across: up and to the right, a fifth of the sketch away.
+pub fn sketch_label_for(at: [f32; 3], size: f32) -> [f32; 3] {
+    let reach = (size * 0.2).clamp(2.0, 50.0) * std::f32::consts::FRAC_1_SQRT_2;
+    [at[0] + reach, at[1] + reach, 0.0]
+}
+
 /// What a new note is put on, near the point given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteWant {
@@ -108,6 +184,10 @@ pub struct Note {
     /// The edge `at` was put on, in place of a face.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge: Option<EdgeKey>,
+    /// The sketch it stands on, in place of a face or an edge; `at` and
+    /// `label` are then in the sketch's plane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sketch: Option<SketchAnchor>,
     #[serde(default, skip_serializing_if = "NoteAuthor::is_user")]
     pub author: NoteAuthor,
     /// Milliseconds since the epoch, given when it is added.
@@ -146,6 +226,7 @@ impl PartialEq for Note {
             && self.label == other.label
             && self.face == other.face
             && self.edge == other.edge
+            && self.sketch == other.sketch
             && self.author == other.author
             && self.created_at == other.created_at
             && self.hidden == other.hidden
@@ -171,6 +252,7 @@ impl Note {
             label,
             face,
             edge: None,
+            sketch: None,
             author: NoteAuthor::User,
             created_at: 0,
             hidden: false,
@@ -457,9 +539,10 @@ impl Document {
     /// Where a note's leader starts and its label stands, in the
     /// document: on its face or edge as the body is built now, where the
     /// body sits.
+    /// A note on a sketch stands where evaluation last placed it, or as
+    /// stored before it has been.
     pub fn note_placed(&self, body: BodyId, note: &Note) -> NotePlaced {
-        let local = self.derived().local_geometry(body);
-        let placed = note.placed(local.as_ref().map(|(mesh, _)| mesh.as_ref()));
+        let placed = self.note_placed_in_body(body, note);
         let placement = self.body_placement(body);
         NotePlaced {
             at: placement.point(placed.at),
@@ -468,10 +551,51 @@ impl Document {
         }
     }
 
-    /// Whether a note shows: its body shown and the note not hidden.
+    /// [`Document::note_placed`] in the body's own frame.
+    pub fn note_placed_in_body(&self, body: BodyId, note: &Note) -> NotePlaced {
+        if note.sketch.is_some() {
+            return self
+                .derived()
+                .sketch_note_spot(note.id)
+                .map_or_else(|| note.placed(None), |spot| spot.0);
+        }
+        let local = self.derived().local_geometry(body);
+        note.placed(local.as_ref().map(|(mesh, _)| mesh.as_ref()))
+    }
+
+    /// Whether a note shows: its body shown, the note not hidden, and a
+    /// note on a sketch only while the sketch shows (or is gone, the note
+    /// lost).
     pub fn note_effective_visible(&self, id: NoteId) -> bool {
-        self.note(id)
-            .is_some_and(|(body, note)| !note.hidden && self.imported_body_effective_visible(body))
+        self.note(id).is_some_and(|(body, note)| {
+            !note.hidden
+                && self.imported_body_effective_visible(body)
+                && note.sketch.is_none_or(|anchor| {
+                    self.get_feature_meta(anchor.feature)
+                        .is_none_or(|node| node.visible)
+                })
+        })
+    }
+
+    /// The point `p`, given where the body sits, in the frame `note`
+    /// keeps its points in: the body's own, or for a note on a sketch the
+    /// sketch's plane, `p` dropped onto it.
+    pub fn note_point_from(&self, body: BodyId, note: &Note, p: [f32; 3]) -> [f32; 3] {
+        let local = self.body_placement(body).inverse().point(p);
+        match note.sketch {
+            Some(_) => self
+                .derived()
+                .sketch_note_spot(note.id)
+                .and_then(|(_, plane)| plane)
+                .map_or(local, |plane| plane.local(local)),
+            None => local,
+        }
+    }
+
+    /// The notes standing on sketch `feature`.
+    pub fn sketch_notes(&self, feature: FeatureId) -> impl Iterator<Item = (BodyId, &Note)> {
+        self.notes()
+            .filter(move |(_, n)| n.sketch.is_some_and(|a| a.feature == feature))
     }
 
     /// Set every note on `body` at once; one op when they change.

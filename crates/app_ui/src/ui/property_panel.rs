@@ -656,8 +656,14 @@ fn data_groups(
             let placed = document.note_placed(body, note);
             let point = |p: [f32; 3]| p.map(|c| format_length_mm(c, unit, 2)).join(", ");
             let formula = note.text.trim_start().starts_with('=');
-            let on = if placed.lost {
+            let on = if placed.lost && note.sketch.is_some() {
+                "Lost: it is gone from the sketch"
+            } else if placed.lost {
                 "Lost: it is gone from the part"
+            } else if note.sketch.is_some_and(|a| a.item.is_some()) {
+                "A sketch's element or constraint, followed as the sketch changes"
+            } else if note.sketch.is_some() {
+                "A point of a sketch's plane"
             } else if note.edge.is_some() {
                 "An edge, followed through rebuilds"
             } else if note.face.is_some() {

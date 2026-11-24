@@ -1426,3 +1426,159 @@ fn an_edited_sketch_reads_back_as_the_sketch_kept() {
         assert_eq!(kept.to_json(), fresh.to_json(), "{id}");
     }
 }
+
+/// Notes on a sketch through the registry, as the app and scripts place
+/// them: one on a line keeps to it as the line moves, one on its
+/// dimension to the dimension's label, one on a point of the plane stays
+/// put; all go where the body goes, and deleting the line loses the two
+/// that stood on it, where they were.
+#[test]
+fn notes_on_a_sketch_follow_its_line_its_dimension_and_its_body() {
+    use core_document::{Note, SketchAnchor};
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let s = ok(&mut doc, "sketch.new", json!({}));
+    let line = ok(
+        &mut doc,
+        "sketch.line",
+        json!({"sketch": s, "x1": 0, "y1": 0, "x2": 10, "y2": 0}),
+    );
+    let dim = ok(
+        &mut doc,
+        "sketch.constrain",
+        json!({"sketch": s, "kind": "distance", "items": [line], "value": 10}),
+    )[0]
+    .clone();
+    let sketch = feature_id(&s);
+    let body = doc
+        .get_feature_meta(sketch)
+        .unwrap()
+        .body
+        .expect("in a body");
+    let id = |v: &Value| Uuid::parse_str(v.as_str().unwrap()).unwrap();
+    let on = |item: Option<Uuid>, at: [f32; 3], label: [f32; 3]| Note {
+        sketch: Some(SketchAnchor {
+            feature: sketch,
+            item,
+        }),
+        ..Note::pinned("n".into(), at, label, None)
+    };
+    let notes = [
+        on(Some(id(&line)), [8.0, 0.0, 0.0], [8.0, 5.0, 0.0]),
+        on(Some(id(&dim)), [5.0, 0.0, 0.0], [5.0, 4.0, 0.0]),
+        on(None, [3.0, -2.0, 0.0], [3.0, -6.0, 0.0]),
+    ]
+    .map(|note| doc.add_note(body, note).unwrap());
+    let placed = |doc: &mut Document, n: usize| {
+        registry.evaluate(doc);
+        let (body, note) = doc.note(notes[n]).unwrap();
+        doc.note_placed(body, note)
+    };
+    let near = |a: [f32; 3], b: [f32; 3]| glam::Vec3::from(a).distance(glam::Vec3::from(b)) < 1e-4;
+
+    ok(
+        &mut doc,
+        "sketch.drag",
+        json!({"sketch": s, "items": [line], "by": [0, 3]}),
+    );
+    let on_line = placed(&mut doc, 0);
+    assert!(
+        !on_line.lost && near(on_line.at, [8.0, 3.0, 0.0]),
+        "{on_line:?}"
+    );
+    assert!(
+        near(on_line.label, [8.0, 8.0, 0.0]),
+        "the label moves alike"
+    );
+    let on_dim = placed(&mut doc, 1);
+    assert!(
+        !on_dim.lost && near(on_dim.at, [5.0, 3.0, 0.0]),
+        "{on_dim:?}"
+    );
+    assert!(
+        near(placed(&mut doc, 2).at, [3.0, -2.0, 0.0]),
+        "the plane's point stays"
+    );
+
+    doc.set_body_placement(
+        body,
+        core_document::BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 7.0)),
+    );
+    assert!(
+        near(placed(&mut doc, 0).at, [8.0, 3.0, 7.0]),
+        "it goes with the body"
+    );
+
+    ok(
+        &mut doc,
+        "sketch.delete",
+        json!({"sketch": s, "items": [line]}),
+    );
+    for n in [0, 1] {
+        let lost = placed(&mut doc, n);
+        let stored = doc.note(notes[n]).unwrap().1.at;
+        assert!(lost.lost, "note {n} is lost with the line");
+        assert!(near(lost.at, [stored[0], stored[1], 7.0]), "where it was");
+    }
+    assert!(!placed(&mut doc, 2).lost);
+}
+
+/// Looking down on a sketch not under edit, the note tool's click lands
+/// on the element under the cursor, at its nearest point, the end point
+/// over the line it ends; off them, on the plane's point only when asked.
+#[test]
+fn the_note_tool_lands_on_an_element_or_the_plane() {
+    use core_document::ViewportPick;
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let s = ok(&mut doc, "sketch.new", json!({}));
+    let line = ok(
+        &mut doc,
+        "sketch.line",
+        json!({"sketch": s, "x1": 0, "y1": 0, "x2": 10, "y2": 0}),
+    );
+    registry.evaluate(&mut doc);
+    let sketch = feature_id(&s);
+    // The view's own convention: its projection flips Y, the screen's down.
+    let view_proj = glam::Mat4::from_scale(glam::Vec3::new(1.0, -1.0, 1.0))
+        * glam::camera::rh::proj::directx::orthographic(-20.0, 20.0, -20.0, 20.0, -100.0, 100.0)
+        * glam::camera::rh::view::look_at_mat4(
+            glam::Vec3::Z * 50.0,
+            glam::Vec3::ZERO,
+            glam::Vec3::Y,
+        );
+    let viewport = (0, 0, 400, 400);
+    let at = |x: f32, y: f32, plane: bool| {
+        let view_proj = view_proj.to_cols_array_2d();
+        let cursor =
+            core_document::runtime::world_to_viewport(view_proj, viewport, [x, y, 0.0]).unwrap();
+        let pick = ViewportPick {
+            view_proj,
+            viewport,
+            cursor,
+        };
+        registry.sketch_note_pick(&doc, sketch, &pick, 8.0, plane)
+    };
+    let hit = at(4.0, 0.3, false).expect("the line");
+    assert_eq!(
+        hit.item.map(|i| i.to_string()),
+        line.as_str().map(String::from)
+    );
+    assert!(
+        (hit.at[0] - 4.0).abs() < 1e-3 && hit.at[1].abs() < 1e-3,
+        "{hit:?}"
+    );
+    assert!(
+        hit.label[0] > hit.at[0] && hit.label[1] > hit.at[1],
+        "up and to the right"
+    );
+    let end = at(10.0, 0.1, false).expect("the end");
+    let sketch_now = sketch_of(&doc, &s);
+    assert!(matches!(
+        end.item.and_then(|i| sketch_now.get_geometry(i)),
+        Some(crate::sketch::GeometryElement::Point(_))
+    ));
+    assert_eq!(at(5.0, 8.0, false), None);
+    let plane = at(5.0, 8.0, true).expect("the plane");
+    assert!(plane.item.is_none() && (plane.at[1] - 8.0).abs() < 1e-3);
+}

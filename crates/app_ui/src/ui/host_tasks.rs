@@ -777,10 +777,14 @@ impl NoteTask {
     /// a formula comes to.
     fn walk(&mut self, form: &mut Form, document: Option<&Document>) -> bool {
         let mut changed = false;
-        form.push(note(
+        let on_sketch = self.note.sketch.is_some();
+        form.push(note(if on_sketch {
+            "A leader from the point on the sketch to the label. It moves with the sketch, \
+             and follows its element or constraint when the sketch is edited."
+        } else {
             "A leader from the point on the body to the label. It moves with the body, \
-             and follows its face when the body is rebuilt.",
-        ));
+             and follows its face when the body is rebuilt."
+        }));
         heading_in(form, "Text");
         let shape = bench_api::Entry {
             live: true,
@@ -804,14 +808,18 @@ impl NoteTask {
             note("Start with = to show what a formula comes to, as =Pad.length does.")
         });
         heading_in(form, "Label");
-        form.push(note(
-            "Where the label stands from the point, in the body's own axes.",
-        ));
+        form.push(note(if on_sketch {
+            "Where the label stands from the point, in the sketch's own axes."
+        } else {
+            "Where the label stands from the point, in the body's own axes."
+        }));
         let note = &mut self.note;
+        // A note on a sketch keeps to the sketch's plane.
+        let axes = if on_sketch { &AXES[..2] } else { &AXES[..] };
         changed |= form.nest(
             |form| {
                 let mut changed = false;
-                for (i, axis) in AXES.iter().enumerate() {
+                for (i, axis) in axes.iter().enumerate() {
                     let mut from = note.label[i] - note.at[i];
                     let field = number(form, &mut from, offset(axis, axis, 0.0));
                     if form.put(field) {
@@ -858,7 +866,11 @@ impl NoteTask {
                     json!({
                         "id": self.note.id.0.to_string(),
                         "text": self.note.text,
-                        "label": label,
+                        // A note on a sketch takes its label in the plane.
+                        "label": match self.note.sketch {
+                            Some(_) => json!([self.note.label[0], self.note.label[1]]),
+                            None => json!(label),
+                        },
                         "visible": !self.note.hidden,
                     }),
                 )],
