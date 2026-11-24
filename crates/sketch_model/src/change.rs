@@ -175,21 +175,81 @@ impl SketchFeature {
     /// a sketch with text (its letters are not stored as they are read),
     /// one whose ids repeat, or data that is not what `before` reads from.
     pub fn patch_over(&mut self, before: &SketchFeature, stored: &Value) -> Option<DataPatch> {
-        let plain = |f: &SketchFeature| f.sketch.texts.is_empty() && f.sketch.derived.is_empty();
-        if !plain(self) || !plain(before) {
+        if !before.plain() {
             return None;
         }
-        let stored_sketch = stored.get("sketch")?.as_object()?;
         let sizes = [
             before.sketch.geometry.len(),
             before.sketch.constraints.len(),
         ];
+        let change = SketchChange::between(&before.sketch, &self.sketch);
+        self.patch_with(stored, sizes, &change)
+    }
+
+    /// [`Self::patch_over`] for an edit that only added the elements past
+    /// the first `elements` and the constraints past the first
+    /// `constraints`, and changed the elements at `changed` (places in the
+    /// list, ascending, each now unequal to what it was), with no id
+    /// standing twice.
+    pub fn patch_added(
+        &mut self,
+        stored: &Value,
+        elements: usize,
+        constraints: usize,
+        changed: &[usize],
+    ) -> Option<DataPatch> {
+        let geometry = &self.sketch.geometry;
+        let moved = ListChange {
+            changed: changed.iter().map(|&k| geometry[k].id()).collect(),
+            added: geometry[elements..]
+                .iter()
+                .map(GeometryElement::id)
+                .collect(),
+            at: Some(
+                (changed.iter().copied())
+                    .chain(elements..geometry.len())
+                    .collect(),
+            ),
+            ..ListChange::default()
+        };
+        let constraint_list = ListChange {
+            added: self.sketch.constraints[constraints..]
+                .iter()
+                .map(|c| c.id)
+                .collect(),
+            at: Some((constraints..self.sketch.constraints.len()).collect()),
+            ..ListChange::default()
+        };
+        let change = SketchChange {
+            geometry: moved,
+            constraints: constraint_list,
+        };
+        self.patch_with(stored, [elements, constraints], &change)
+    }
+
+    /// Whether a patch can say what changed in this sketch: it has no
+    /// text, whose letters are not stored as they are read.
+    fn plain(&self) -> bool {
+        self.sketch.texts.is_empty() && self.sketch.derived.is_empty()
+    }
+
+    /// The patch [`Self::patch_over`] makes of `change`, from a sketch
+    /// with `sizes` elements and constraints whose data `stored` is.
+    fn patch_with(
+        &mut self,
+        stored: &Value,
+        sizes: [usize; 2],
+        change: &SketchChange,
+    ) -> Option<DataPatch> {
+        if !self.plain() {
+            return None;
+        }
+        let stored_sketch = stored.get("sketch")?.as_object()?;
         for (key, size) in LISTS.into_iter().zip(sizes) {
             if stored_sketch.get(key)?.as_array()?.len() != size {
                 return None;
             }
         }
-        let change = SketchChange::between(&before.sketch, &self.sketch);
         if change.geometry.repeated || change.constraints.repeated {
             return None;
         }

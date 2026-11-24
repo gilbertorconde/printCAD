@@ -575,6 +575,11 @@ impl Sketch {
         self.geometry.get(i)
     }
 
+    /// Where the first element `id` names stands in `geometry`.
+    pub(crate) fn geometry_index(&self, id: Uuid) -> Option<usize> {
+        self.index.find(&self.geometry, id)
+    }
+
     /// Get a mutable reference to a geometry element by ID.
     pub fn get_geometry_mut(&mut self, id: Uuid) -> Option<&mut GeometryElement> {
         let i = self.index.find(&self.geometry, id)?;

@@ -224,16 +224,45 @@ impl FeatureNode {
     /// is: for the feature that data was just written from, when it reads
     /// back as itself, so the next read need not decode it.
     pub fn keep_read<F: WorkbenchFeature + 'static>(&self, read: F) {
+        self.keep_beside(read);
+    }
+
+    /// The node's data read as `F`, as [`Self::read`] reads it, taken out
+    /// of what is kept rather than copied: for a caller that edits it and
+    /// keeps what it writes. Decoded when nothing is kept.
+    pub fn take_read<F: WorkbenchFeature + 'static>(&self) -> Option<F> {
+        self.take_beside::<F>()
+            .or_else(|| F::from_json(&self.data).ok())
+    }
+
+    /// Keep `value` beside the node's data as it is, found again by
+    /// [`Self::take_beside`] while the data is not written again: what a
+    /// caller works out from the data and wants at its next edit.
+    pub fn keep_beside<T: 'static>(&self, value: T) {
         /// Entries past which the cache starts over: a run that opens many
         /// documents does not keep each one's features for good.
         const KEPT: usize = 8192;
-        let key = (self.id, std::any::TypeId::of::<F>());
+        let key = (self.id, std::any::TypeId::of::<T>());
         READ.with_borrow_mut(|kept| {
             if kept.len() >= KEPT {
                 kept.clear();
             }
-            kept.insert(key, (self.data_revision, Box::new(read)));
+            kept.insert(key, (self.data_revision, Box::new(value)));
         });
+    }
+
+    /// The value [`Self::keep_beside`] kept beside the node's data as it
+    /// is now, taken out; `None` once the data was written since.
+    pub fn take_beside<T: 'static>(&self) -> Option<T> {
+        let key = (self.id, std::any::TypeId::of::<T>());
+        READ.with_borrow_mut(|kept| {
+            let (revision, _) = kept.get(&key)?;
+            if *revision != self.data_revision {
+                return None;
+            }
+            let (_, value) = kept.remove(&key)?;
+            value.downcast::<T>().ok().map(|v| *v)
+        })
     }
 }
 

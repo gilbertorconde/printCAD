@@ -1582,3 +1582,89 @@ fn the_note_tool_lands_on_an_element_or_the_plane() {
     let plane = at(5.0, 8.0, true).expect("the plane");
     assert!(plane.item.is_none() && (plane.at[1] - 8.0).abs() < 1e-3);
 }
+
+/// Commands that only add store what they leave in memory: after each
+/// one, among others that edit the sketch otherwise, a refused one, and
+/// ones on a sketch an added-to solve cannot follow (an ellipse), the
+/// stored data reads as the sketch kept for it, and the index kept beside
+/// it answers as one worked out afresh from it.
+#[test]
+fn what_adding_commands_keep_is_what_they_store() {
+    use sketch_model::adding::SketchIndex;
+    let mut doc = Document::new("t");
+    let s = ok(&mut doc, "sketch.new", json!({}));
+    let id = feature_id(&s);
+    let check = |doc: &Document, step: &str| {
+        let node = doc.get_feature_meta(id).unwrap();
+        let stored = SketchFeature::from_json(&node.data).unwrap();
+        let kept: SketchFeature = node.read().unwrap();
+        assert_eq!(kept.to_json(), stored.to_json(), "{step}");
+        if let Some(index) = node.take_beside::<SketchIndex>() {
+            let afresh = SketchIndex::of(&stored.sketch);
+            assert!(index.sizes_match(&stored.sketch), "{step}");
+            assert_eq!(index.plain(), afresh.plain(), "{step}");
+            node.keep_beside(index);
+        }
+    };
+    let line = |doc: &mut Document, from: (f64, f64), to: (f64, f64)| {
+        ok(
+            doc,
+            "sketch.line",
+            json!({"sketch": s, "x1": from.0, "y1": from.1, "x2": to.0, "y2": to.1}),
+        )
+    };
+    let first = line(&mut doc, (0.0, 0.0), (10.0, 1.0));
+    check(&doc, "a line");
+    ok(
+        &mut doc,
+        "sketch.circle",
+        json!({"sketch": s, "x": 10, "y": 1, "radius": 2}),
+    );
+    check(&doc, "a circle on its end");
+    ok(
+        &mut doc,
+        "sketch.constrain",
+        json!({"sketch": s, "kind": "horizontal", "items": [first]}),
+    );
+    check(&doc, "a constraint");
+    line(&mut doc, (10.0, 0.0), (10.0, 8.0));
+    check(&doc, "a line from the moved end");
+    ok(
+        &mut doc,
+        "sketch.rect",
+        json!({"sketch": s, "x": 20, "y": 0, "width": 5, "height": 3}),
+    );
+    check(&doc, "a rectangle, held level and upright");
+    assert!(refused(
+        &mut doc,
+        "sketch.line",
+        json!({"sketch": s, "x1": 1, "y1": 1, "x2": 1, "y2": 1})
+    ));
+    check(&doc, "a refused line");
+    ok(
+        &mut doc,
+        "sketch.arc",
+        json!({"sketch": s, "x": 0, "y": 0, "radius": 4, "start": 0, "end": 90}),
+    );
+    ok(
+        &mut doc,
+        "sketch.point",
+        json!({"sketch": s, "x": 4, "y": 0}),
+    );
+    check(&doc, "an arc and a point on its end");
+    ok(
+        &mut doc,
+        "sketch.draw",
+        json!({"sketch": s, "tool": "ellipse", "points": [{"x": 40, "y": 0}, {"x": 46, "y": 0}, {"x": 40, "y": 2}]}),
+    );
+    check(&doc, "an ellipse");
+    line(&mut doc, (40.0, 0.0), (50.0, 5.0));
+    ok(
+        &mut doc,
+        "sketch.polyline",
+        json!({"sketch": s, "points": [{"x": 0, "y": 20}, {"x": 5, "y": 20}, {"x": 5, "y": 25}]}),
+    );
+    check(&doc, "lines beside an ellipse");
+    let sketch = sketch_of(&doc, &s);
+    assert!(sketch.geometry.len() > 20);
+}

@@ -382,7 +382,7 @@ fn group_reference(
 
 /// Whether `constraint` is one of the solver's: solved, and naming
 /// nothing a text's letters are made of.
-fn solved(sketch: &Sketch, constraint: &sketch::Constraint) -> bool {
+pub fn solved(sketch: &Sketch, constraint: &sketch::Constraint) -> bool {
     constraint.is_solved()
         && !sketch::constraint_refs(&constraint.kind)
             .iter()
@@ -397,6 +397,89 @@ pub fn constraint_count(sketch: &Sketch) -> usize {
         .count()
 }
 
+/// `element` as the solver is handed it, `fitted` the splines whose fit
+/// points are solved ([`crate::spline::solved_fits`]).
+pub fn geometry(element: &G, fitted: &std::collections::HashSet<Uuid>) -> core::Geometry {
+    match element {
+        G::Point(p) => core::Geometry::Point(core::Point {
+            id: core::PointId(p.id.as_u128()),
+            position: vector(p.position),
+        }),
+        G::Line(l) => core::Geometry::Line(core::Line {
+            id: core::CurveId(l.id.as_u128()),
+            start: point(l.start),
+            end: point(l.end),
+        }),
+        G::Circle(c) => core::Geometry::Circle(core::Circle {
+            id: core::CurveId(c.id.as_u128()),
+            center: point(c.center),
+            radius: length(c.radius),
+        }),
+        G::Arc(a) => core::Geometry::Arc(core::Arc {
+            id: core::CurveId(a.id.as_u128()),
+            center: point(a.center),
+            start: point(a.start),
+            end: point(a.end),
+            radius: length(a.radius),
+        }),
+        G::Ellipse(e) => core::Geometry::Ellipse(core::Ellipse {
+            id: core::CurveId(e.id.as_u128()),
+            center: point(e.center),
+            major: vector(e.major),
+            minor: length(e.major.to_glam().length() * e.ratio),
+            arc: e.arc.map(|a| core::ArcEnds {
+                start: point(a.start),
+                end: point(a.end),
+            }),
+        }),
+        G::Conic(c) => core::Geometry::Conic(core::Conic {
+            id: core::CurveId(c.id.as_u128()),
+            kind: match c.kind {
+                sketch::ConicKind::Hyperbola => core::ConicKind::Hyperbola,
+                sketch::ConicKind::Parabola => core::ConicKind::Parabola,
+            },
+            center: point(c.center),
+            axis: vector(c.axis),
+            minor: length(c.minor),
+            start: point(c.start),
+            end: point(c.end),
+        }),
+        G::BSpline(b) => core::Geometry::BSpline(core::BSpline {
+            id: core::CurveId(b.id.as_u128()),
+            degree: b.degree,
+            control_points: b.control_points.iter().copied().map(point).collect(),
+            knots: b.knots.clone(),
+            periodic: b.periodic,
+            weights: b.weights.clone(),
+            fit_points: b.fit_points.iter().copied().map(point).collect(),
+            fit_params: if fitted.contains(&b.id) {
+                b.fit_params.clone()
+            } else {
+                Vec::new()
+            },
+        }),
+    }
+}
+
+/// `constraint`, one [`solved`] in `sketch`, as the solver is handed it.
+pub fn constraint(sketch: &Sketch, constraint: &sketch::Constraint) -> core::Constraint {
+    core::Constraint {
+        id: core::ConstraintId(constraint.id.as_u128()),
+        kind: relation(sketch, &constraint.kind),
+    }
+}
+
+/// What the solver holds still as external geometry, in its order.
+pub fn external(sketch: &Sketch) -> Vec<core::ItemReference> {
+    let mut external: Vec<core::ItemReference> = sketch
+        .external_ids()
+        .into_iter()
+        .map(|id| item(sketch, id))
+        .collect();
+    external.sort();
+    external
+}
+
 pub fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
     let fitted = crate::spline::solved_fits(sketch);
     // A text's letters are made from its block where its point stands
@@ -404,87 +487,20 @@ pub fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
     let made = &sketch.derived;
     let mut geometry = Vec::with_capacity(sketch.geometry.len());
     geometry.extend(
-        sketch
-            .geometry
-            .iter()
+        (sketch.geometry.iter())
             .filter(|g| !made.contains(&g.id()))
-            .map(|g| match g {
-                G::Point(p) => core::Geometry::Point(core::Point {
-                    id: core::PointId(p.id.as_u128()),
-                    position: vector(p.position),
-                }),
-                G::Line(l) => core::Geometry::Line(core::Line {
-                    id: core::CurveId(l.id.as_u128()),
-                    start: point(l.start),
-                    end: point(l.end),
-                }),
-                G::Circle(c) => core::Geometry::Circle(core::Circle {
-                    id: core::CurveId(c.id.as_u128()),
-                    center: point(c.center),
-                    radius: length(c.radius),
-                }),
-                G::Arc(a) => core::Geometry::Arc(core::Arc {
-                    id: core::CurveId(a.id.as_u128()),
-                    center: point(a.center),
-                    start: point(a.start),
-                    end: point(a.end),
-                    radius: length(a.radius),
-                }),
-                G::Ellipse(e) => core::Geometry::Ellipse(core::Ellipse {
-                    id: core::CurveId(e.id.as_u128()),
-                    center: point(e.center),
-                    major: vector(e.major),
-                    minor: length(e.major.to_glam().length() * e.ratio),
-                    arc: e.arc.map(|a| core::ArcEnds {
-                        start: point(a.start),
-                        end: point(a.end),
-                    }),
-                }),
-                G::Conic(c) => core::Geometry::Conic(core::Conic {
-                    id: core::CurveId(c.id.as_u128()),
-                    kind: match c.kind {
-                        sketch::ConicKind::Hyperbola => core::ConicKind::Hyperbola,
-                        sketch::ConicKind::Parabola => core::ConicKind::Parabola,
-                    },
-                    center: point(c.center),
-                    axis: vector(c.axis),
-                    minor: length(c.minor),
-                    start: point(c.start),
-                    end: point(c.end),
-                }),
-                G::BSpline(b) => core::Geometry::BSpline(core::BSpline {
-                    id: core::CurveId(b.id.as_u128()),
-                    degree: b.degree,
-                    control_points: b.control_points.iter().copied().map(point).collect(),
-                    knots: b.knots.clone(),
-                    periodic: b.periodic,
-                    weights: b.weights.clone(),
-                    fit_points: b.fit_points.iter().copied().map(point).collect(),
-                    fit_params: if fitted.contains(&b.id) {
-                        b.fit_params.clone()
-                    } else {
-                        Vec::new()
-                    },
-                }),
-            }),
+            .map(|g| self::geometry(g, &fitted)),
     );
     let mut constraints = Vec::with_capacity(sketch.constraints.len());
     constraints.extend(
         (sketch.constraints.iter())
             .filter(|c| solved(sketch, c))
-            .map(|c| core::Constraint {
-                id: core::ConstraintId(c.id.as_u128()),
-                kind: relation(sketch, &c.kind),
-            }),
+            .map(|c| constraint(sketch, c)),
     );
     let mut problem = core::Problem {
         geometry,
         constraints,
-        external: sketch
-            .external_ids()
-            .into_iter()
-            .map(|id| item(sketch, id))
-            .collect(),
+        external: external(sketch),
         held_points: held.iter().copied().map(point).collect(),
         application_held_points: crate::spline::derived_points(sketch, &fitted)
             .into_iter()
@@ -501,7 +517,6 @@ pub fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
             .collect(),
         settings: settings(sketch.solver),
     };
-    problem.external.sort();
     problem.application_held_points.sort();
     problem
 }

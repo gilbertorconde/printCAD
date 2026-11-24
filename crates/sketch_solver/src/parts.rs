@@ -34,7 +34,7 @@ use crate::problem::{
     ConstraintId, CurveReference, IdHash, IdMap, ItemReference, PointReference, Problem, Relation,
     Settings,
 };
-use crate::solve::{BlocksOf, Piece, Rest, Standing, iterate_pieces, standing};
+use crate::solve::{BlocksOf, Piece, Rest, Standing, Standings, iterate_pieces, standing_of};
 use crate::sparse::{Blocks, Differenced, scale_of};
 
 /// One part, compiled.
@@ -64,6 +64,10 @@ struct Facts {
     unsolved: i32,
     /// The system for rank as a solve finds it where it stands.
     standing: Standing,
+    /// Some ellipse or conic has its shape among the variables; some
+    /// focus is left out of the solve, placed after it.
+    shaped: bool,
+    foci: bool,
 }
 
 /// A part in a problem's list, with its [`Facts`].
@@ -87,6 +91,122 @@ impl std::ops::Deref for Entry {
 
     fn deref(&self) -> &Part {
         &self.part
+    }
+}
+
+/// [`Facts`] read over many parts together: counted, summed, and the
+/// largest taken.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Summary {
+    constrained: usize,
+    arcs: usize,
+    shaped: usize,
+    foci: usize,
+    free: usize,
+    unsolved: i32,
+    specs: usize,
+    vars: usize,
+    /// Parts that do not start from their own values.
+    moving: usize,
+    /// The largest of the values' and of the residuals' magnitudes.
+    size: f64,
+    residual: f64,
+}
+
+impl Summary {
+    fn add(&mut self, facts: &Facts) {
+        let s = &facts.standing;
+        self.constrained += usize::from(facts.constrained);
+        self.arcs += usize::from(facts.arcs);
+        self.shaped += usize::from(facts.shaped);
+        self.foci += usize::from(facts.foci);
+        self.free += facts.free;
+        self.unsolved += facts.unsolved;
+        self.specs += usize::from(s.specs);
+        self.vars += usize::from(s.vars);
+        self.moving += usize::from(!s.at_rest);
+        self.size = self.size.max(s.size);
+        self.residual = self.residual.max(s.residual);
+    }
+
+    fn join(&mut self, other: &Summary) {
+        self.constrained += other.constrained;
+        self.arcs += other.arcs;
+        self.shaped += other.shaped;
+        self.foci += other.foci;
+        self.free += other.free;
+        self.unsolved += other.unsolved;
+        self.specs += other.specs;
+        self.vars += other.vars;
+        self.moving += other.moving;
+        self.size = self.size.max(other.size);
+        self.residual = self.residual.max(other.residual);
+    }
+}
+
+/// The parts a [`PartList`] sums in one block.
+const BLOCK: usize = 64;
+
+/// A problem's parts in order, their facts summed in blocks of [`BLOCK`]
+/// so the sum over all of them is kept as single parts are replaced or
+/// added. Sizes are non-negative, so the largest taken block by block is
+/// the largest of all, to the bit.
+#[derive(Clone)]
+struct PartList {
+    entries: Vec<Entry>,
+    blocks: Vec<Summary>,
+}
+
+impl PartList {
+    fn new(entries: Vec<Entry>) -> Self {
+        let mut list = Self {
+            entries,
+            blocks: Vec::new(),
+        };
+        for b in 0..list.entries.len().div_ceil(BLOCK) {
+            list.sum_block(b);
+        }
+        list
+    }
+
+    fn sum_block(&mut self, b: usize) {
+        let mut sum = Summary::default();
+        let end = ((b + 1) * BLOCK).min(self.entries.len());
+        for entry in &self.entries[b * BLOCK..end] {
+            sum.add(&entry.facts);
+        }
+        if b == self.blocks.len() {
+            self.blocks.push(sum);
+        } else {
+            self.blocks[b] = sum;
+        }
+    }
+
+    fn set(&mut self, k: usize, entry: Entry) {
+        self.entries[k] = entry;
+        self.sum_block(k / BLOCK);
+    }
+
+    fn push(&mut self, entry: Entry) {
+        self.entries.push(entry);
+        self.sum_block((self.entries.len() - 1) / BLOCK);
+    }
+
+    /// The facts of every part read together.
+    fn summary(&self) -> Summary {
+        let mut sum = Summary::default();
+        for block in &self.blocks {
+            sum.join(block);
+        }
+        sum
+    }
+}
+
+impl std::ops::Deref for PartList {
+    type Target = [Entry];
+
+    fn deref(&self) -> &[Entry] {
+        &self.entries
     }
 }
 
@@ -170,6 +290,8 @@ impl Part {
             free: rank.sys.free.len(),
             unsolved: unsolved_shape(&problem, &rank.sys),
             standing: Standing::of(&rank.sys, rank.rest()),
+            shaped: !rank.sys.shape_vars.is_empty(),
+            foci: !rank.sys.derived_foci.is_empty(),
         };
         Self {
             problem,
@@ -195,10 +317,72 @@ impl Part {
 /// A problem's parts, in the order of their first element.
 #[derive(Clone)]
 pub struct Parted {
-    parts: Arc<Vec<Entry>>,
+    parts: Arc<PartList>,
+    /// The facts of every part read together.
+    summary: Summary,
     /// Some part's constraints bring an equation.
     constrained: bool,
     settings: Settings,
+    /// The split kept for the problem, where one is.
+    stamp: Option<Stamp>,
+}
+
+/// Names a problem's split kept in a [`PartCache`], so a caller that keeps
+/// the problem's source unchanged but for what it lists can have the
+/// split edited ([`Parted::edited`]) rather than the problem compared.
+/// A split edited or grown for another problem takes a new one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stamp(u64);
+
+impl Stamp {
+    fn fresh() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+/// A kept problem edited in place for [`Parted::edited`]: elements and
+/// constraints added after its own, and its own elements' values changed.
+pub struct ProblemEdit<'a> {
+    problem: &'a mut Problem,
+    /// How many elements the problem had.
+    geometry: usize,
+    /// The places of its own elements whose values changed.
+    changed: Vec<u32>,
+    /// An element was set to one with another id or other points.
+    broken: bool,
+}
+
+impl ProblemEdit<'_> {
+    pub fn problem(&self) -> &Problem {
+        self.problem
+    }
+
+    pub fn push_geometry(&mut self, geometry: crate::problem::Geometry) {
+        self.problem.geometry.push(geometry);
+    }
+
+    pub fn push_constraint(&mut self, constraint: crate::problem::Constraint) {
+        self.problem.constraints.push(constraint);
+    }
+
+    /// The problem's own element `i` set to `geometry`, the same id naming
+    /// the same points.
+    pub fn set_geometry(&mut self, i: usize, geometry: crate::problem::Geometry) {
+        match self.problem.geometry.get_mut(i) {
+            Some(was)
+                if i < self.geometry
+                    && was.id() == geometry.id()
+                    && was.point_references() == geometry.point_references() =>
+            {
+                if *was != geometry {
+                    *was = geometry;
+                    self.changed.push(i as u32);
+                }
+            }
+            _ => self.broken = true,
+        }
+    }
 }
 
 impl std::fmt::Debug for Parted {
@@ -209,26 +393,43 @@ impl std::fmt::Debug for Parted {
     }
 }
 
-/// What [`Parted::iterate`] answers: each part's values, `None` where they
-/// are the part's own, with the outcome of all of them together.
+/// What [`Parted::iterate`] answers: the values of each part it moved,
+/// with the outcome of all of them together.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Solved {
-    pub values: Vec<Option<Vec<f64>>>,
+    pub values: Moved,
     pub outcome: crate::solve::SolveOutcome,
     pub iterations: usize,
     pub residual: f64,
     pub threshold: f64,
 }
 
+/// Each part's values where a solve moved it, by the part's place in
+/// [`Parted::systems`]. A solve that moved none holds no entry per part.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Moved(Vec<Option<Vec<f64>>>);
+
+impl Moved {
+    /// Part `k`'s values, `None` where they are its own.
+    pub fn of(&self, k: usize) -> Option<&[f64]> {
+        self.0.get(k).and_then(|v| v.as_deref())
+    }
+
+    /// The parts moved, by place, with their values.
+    pub fn moved(&self) -> impl Iterator<Item = (usize, &[f64])> {
+        (self.0.iter().enumerate()).filter_map(|(k, v)| Some((k, v.as_deref()?)))
+    }
+}
+
 impl Parted {
     /// `problem` as one part, compiled now and kept nowhere.
     pub fn whole(problem: Problem) -> Self {
         let part = Arc::new(Part::compile(problem));
-        Self {
-            constrained: part.constrained,
-            settings: part.problem.settings,
-            parts: Arc::new(vec![Entry::of(&part)]),
-        }
+        Self::listed(
+            Arc::new(PartList::new(vec![Entry::of(&part)])),
+            part.problem.settings,
+            None,
+        )
     }
 
     /// `problem` by its parts, each taken from `cache` where it holds an
@@ -238,21 +439,73 @@ impl Parted {
     /// added after, and worked out afresh otherwise.
     pub fn of(problem: &Arc<Problem>, cache: &mut PartCache) -> Self {
         cache.turn(problem.geometry.len());
-        let parts = match cache.take_kept(problem) {
+        let (parts, stamp) = match cache.take_kept(problem) {
             Some(kept) => match kept.grow(problem, &mut cache.parts) {
-                Some((kept, parts)) => {
-                    cache.keep_split(kept);
-                    parts
-                }
+                Some((kept, parts)) => (parts, cache.keep_split(kept)),
                 None => cache.split(problem),
             },
             None => cache.split(problem),
         };
+        Self::listed(parts, problem.settings, stamp)
+    }
+
+    fn listed(parts: Arc<PartList>, settings: Settings, stamp: Option<Stamp>) -> Self {
+        let summary = parts.summary();
         Self {
-            constrained: parts.iter().any(|e| e.facts.constrained),
+            constrained: summary.constrained > 0,
+            summary,
             parts,
-            settings: problem.settings,
+            settings,
+            stamp,
         }
+    }
+
+    /// The split kept for the problem in the cache it was taken from.
+    pub fn stamp(&self) -> Option<Stamp> {
+        self.stamp
+    }
+
+    /// The problem whose split `stamp` names, edited in place by `edit`,
+    /// and its parts: what [`Parted::of`] answers for the problem as
+    /// edited, the split updated by what `edit` lists rather than by
+    /// comparing every element. `None` when no split in `cache` has that
+    /// stamp, or `edit` answers `false` or sets an element to one with
+    /// another id or other points; the split is dropped then.
+    pub fn edited(
+        stamp: Stamp,
+        cache: &mut PartCache,
+        edit: impl FnOnce(&mut ProblemEdit) -> bool,
+    ) -> Option<(Arc<Problem>, Self)> {
+        let at = cache.splits.iter().position(|k| k.stamp == stamp)?;
+        let mut kept = cache.splits.remove(at);
+        let before = (
+            kept.problem.geometry.len(),
+            kept.problem.constraints.len(),
+            holds_any(&kept.problem),
+        );
+        let mut problem_edit = ProblemEdit {
+            geometry: before.0,
+            problem: Arc::make_mut(&mut kept.problem),
+            changed: Vec::new(),
+            broken: false,
+        };
+        if !edit(&mut problem_edit) || problem_edit.broken {
+            return None;
+        }
+        let changed = problem_edit.changed;
+        let problem = Arc::clone(&kept.problem);
+        cache.turn(problem.geometry.len());
+        let touched = (changed.iter())
+            .map(|&i| kept.joins.of_geometry[i as usize])
+            .collect();
+        let (parts, stamp) = match kept.grow_by(&problem, before, touched, &mut cache.parts) {
+            Some((kept, parts)) => (parts, cache.keep_split(kept)),
+            None => cache.split(&problem),
+        };
+        Some((
+            Arc::clone(&problem),
+            Self::listed(parts, problem.settings, stamp),
+        ))
     }
 
     pub fn len(&self) -> usize {
@@ -269,19 +522,44 @@ impl Parted {
         (self.parts.iter()).map(|p| (&p.problem, &p.plain(self.constrained).sys))
     }
 
+    /// Part `k`'s problem and the system its solve iterates.
+    pub fn system(&self, k: usize) -> (&Problem, &System) {
+        let part = &self.parts[k];
+        (&part.problem, &part.plain(self.constrained).sys)
+    }
+
+    /// Some part has an ellipse's or conic's shape among its variables,
+    /// or a focus its solve leaves out: what a solve that moved no part
+    /// still stores or places.
+    pub fn shaped(&self) -> bool {
+        self.summary.shaped > 0 || self.summary.foci > 0
+    }
+
     /// [`crate::solve::iterate`] of the problem's system.
     pub fn iterate(&self, settings: Settings) -> Solved {
         // Read from the parts' facts while each solves its system for rank.
-        let solved = (self.constrained || self.parts.iter().all(|e| !e.facts.arcs))
-            .then(|| standing(self.parts.iter().map(|e| e.facts.standing), settings))
+        let sum = &self.summary;
+        let standings = Standings {
+            size: sum.size,
+            specs: sum.specs > 0,
+            vars: sum.vars > 0,
+            at_rest: sum.moving == 0,
+            residual: if sum.moving == 0 {
+                sum.residual
+            } else {
+                f64::INFINITY
+            },
+        };
+        let stood = (self.constrained || sum.arcs == 0)
+            .then(|| standing_of(standings, settings))
             .flatten();
-        if let Some(solved) = solved {
+        if let Some(stood) = stood {
             return Solved {
-                values: solved.values,
-                outcome: solved.outcome,
-                iterations: solved.iterations,
-                residual: solved.residual,
-                threshold: solved.threshold,
+                values: Moved::default(),
+                outcome: stood.outcome,
+                iterations: 0,
+                residual: stood.residual,
+                threshold: stood.threshold,
             };
         }
         let pieces: Vec<Piece> = (self.parts.iter())
@@ -289,7 +567,7 @@ impl Parted {
             .collect();
         let solved = iterate_pieces(&pieces, settings);
         Solved {
-            values: solved.values,
+            values: Moved(solved.values),
             outcome: solved.outcome,
             iterations: solved.iterations,
             residual: solved.residual,
@@ -322,8 +600,7 @@ impl Parted {
     /// is no rank to read; and whether any equation reads a movable
     /// variable at all.
     fn pivots(&self) -> (bool, Option<f64>) {
-        let ranked = (self.parts.iter()).any(|e| e.facts.standing.specs)
-            && (self.parts.iter()).any(|e| e.facts.free > 0);
+        let ranked = self.summary.specs > 0 && self.summary.free > 0;
         if !ranked {
             return (false, None);
         }
@@ -336,8 +613,8 @@ impl Parted {
 
     /// [`crate::freedom::estimate`] of the problem.
     pub fn estimate(&self) -> Freedom {
-        let free_variables: usize = self.parts.iter().map(|e| e.facts.free).sum();
-        let unsolved_shape: i32 = self.parts.iter().map(|e| e.facts.unsolved).sum();
+        let free_variables = self.summary.free;
+        let unsolved_shape = self.summary.unsolved;
         let rank = match self.pivots() {
             (true, Some(tol)) => self.parts.iter().map(|p| p.rank.rank_at(tol)).sum(),
             _ => 0,
@@ -404,6 +681,30 @@ fn join(parent: &mut [u32], a: u32, b: u32) {
     let (a, b) = (root(parent, a), root(parent, b));
     let (lo, hi) = if a < b { (a, b) } else { (b, a) };
     parent[hi as usize] = lo;
+}
+
+/// [`root`] in a sparse forest, where a node it does not hold is a root.
+fn root_sparse(parent: &mut IdMap<u32, u32>, mut a: u32) -> u32 {
+    while let Some(&up) = parent.get(&a) {
+        if up == a {
+            break;
+        }
+        if let Some(&over) = parent.get(&up)
+            && over != up
+        {
+            parent.insert(a, over);
+        }
+        a = up;
+    }
+    a
+}
+
+/// [`join`] in a sparse forest: the lower root stays the root.
+fn join_sparse(parent: &mut IdMap<u32, u32>, a: u32, b: u32) {
+    let (a, b) = (root_sparse(parent, a), root_sparse(parent, b));
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    parent.entry(lo).or_insert(lo);
+    parent.insert(hi, lo);
 }
 
 /// What a problem holds still in one part: its external geometry, held
@@ -638,13 +939,16 @@ fn part_of(
 /// A problem solved lately with its parts and how its elements joined
 /// into them, so the next version of it is split by what changed.
 struct KeptSplit {
+    stamp: Stamp,
     problem: Arc<Problem>,
     joins: Joins,
     /// The parts, by number; `None` for a number no longer in use.
     parts: Vec<Option<Arc<Part>>>,
+    /// How many numbers are no longer in use.
+    unused: usize,
     /// The parts in use, in their numbers' order, and where each number's
     /// part stands in it (`u32::MAX` for none).
-    list: Arc<Vec<Entry>>,
+    list: Arc<PartList>,
     at: Vec<u32>,
 }
 
@@ -665,22 +969,18 @@ impl KeptSplit {
     /// an element or constraint kept its place but not its id or what it
     /// names, or what was added cannot be split by what was kept.
     fn grow(
-        mut self,
+        self,
         problem: &Arc<Problem>,
         parts: &mut Generations,
-    ) -> Option<(Self, Arc<Vec<Entry>>)> {
-        let before = Arc::clone(&self.problem);
-        let (n0, m0) = (before.geometry.len(), before.constraints.len());
-        let (n1, m1) = (problem.geometry.len(), problem.constraints.len());
-        let joins = &mut self.joins;
-        let slots = self.parts.len();
-        let mut changed = vec![false; slots];
+    ) -> Option<(Self, Arc<PartList>)> {
+        let before = &self.problem;
+        let mut changed = Vec::new();
         for (i, (now, was)) in problem.geometry.iter().zip(&before.geometry).enumerate() {
             if now != was {
                 if now.id() != was.id() || now.point_references() != was.point_references() {
                     return None;
                 }
-                changed[joins.of_geometry[i] as usize] = true;
+                changed.push(self.joins.of_geometry[i]);
             }
         }
         for (k, (now, was)) in (problem.constraints.iter().zip(&before.constraints)).enumerate() {
@@ -688,9 +988,32 @@ impl KeptSplit {
                 if now.id != was.id || now.kind.references() != was.kind.references() {
                     return None;
                 }
-                changed[joins.of_constraint[k] as usize] = true;
+                changed.push(self.joins.of_constraint[k]);
             }
         }
+        let sizes = (
+            before.geometry.len(),
+            before.constraints.len(),
+            holds_any(before),
+        );
+        self.grow_by(problem, sizes, changed, parts)
+    }
+
+    /// [`Self::grow`], given the problem's sizes before and whether it held
+    /// anything still, and the parts (by number) holding an element or
+    /// constraint that changed in place. It visits the parts what was
+    /// added joins and the ones changed, never every part, unless the
+    /// problem holds something still.
+    fn grow_by(
+        mut self,
+        problem: &Arc<Problem>,
+        (n0, m0, held_before): (usize, usize, bool),
+        mut changed: Vec<u32>,
+        parts: &mut Generations,
+    ) -> Option<(Self, Arc<PartList>)> {
+        let (n1, m1) = (problem.geometry.len(), problem.constraints.len());
+        let joins = &mut self.joins;
+        let slots = self.parts.len();
         if n1 > n0 && joins.dangling {
             return None;
         }
@@ -709,11 +1032,15 @@ impl KeptSplit {
                 return None;
             }
         }
-        let mut parent: Vec<u32> = (0..(slots + n1 - n0) as u32).collect();
+        // Nodes are joined in a sparse forest: a node it does not hold is
+        // a root alone.
+        let mut parent: IdMap<u32, u32> = IdMap::default();
         for (i, g) in problem.geometry.iter().enumerate().skip(n0) {
             for p in g.point_references() {
                 match joins.places.get(&p.into()) {
-                    Some(&j) => join(&mut parent, node_of(joins, i as u32), node_of(joins, j)),
+                    Some(&j) => {
+                        join_sparse(&mut parent, node_of(joins, i as u32), node_of(joins, j))
+                    }
                     None => joins.dangling |= p != PointReference::Origin,
                 }
             }
@@ -731,7 +1058,7 @@ impl KeptSplit {
                         let node = node_of(joins, j);
                         match anchor {
                             None => anchor = Some(node),
-                            Some(a) => join(&mut parent, a, node),
+                            Some(a) => join_sparse(&mut parent, a, node),
                         }
                     }
                     None => joins.dangling |= !is_reference(r),
@@ -746,40 +1073,46 @@ impl KeptSplit {
 
         // Each node's part after the additions: a kept number for a part
         // nothing joined, a new one for a part made of several or of
-        // added elements alone.
-        let nodes = parent.len();
-        let mut members = vec![0u32; nodes];
-        for a in 0..nodes as u32 {
-            if (a as usize) < slots && self.parts[a as usize].is_none() {
-                continue;
-            }
-            members[root(&mut parent, a) as usize] += 1;
+        // added elements alone. Only the nodes joined and the added
+        // elements are looked at: every other part keeps its number.
+        let in_use = |parts: &[Option<Arc<Part>>], a: u32| {
+            (a as usize) >= slots || parts[a as usize].is_some()
+        };
+        let mut touched: Vec<u32> = parent.keys().copied().collect();
+        touched.extend((slots..slots + n1 - n0).map(|a| a as u32));
+        touched.sort_unstable();
+        touched.dedup();
+        touched.retain(|&a| in_use(&self.parts, a));
+        let mut members: IdMap<u32, u32> = IdMap::default();
+        for &a in &touched {
+            *members.entry(root_sparse(&mut parent, a)).or_default() += 1;
         }
-        let mut renumbered = vec![u32::MAX; nodes];
+        let mut renumbered: IdMap<u32, u32> = IdMap::default();
         let mut joined: Vec<u32> = Vec::new();
-        for a in 0..nodes as u32 {
-            if (a as usize) < slots && self.parts[a as usize].is_none() {
+        for &a in &touched {
+            let r = root_sparse(&mut parent, a);
+            if renumbered.contains_key(&r) {
                 continue;
             }
-            let r = root(&mut parent, a) as usize;
-            if renumbered[r] != u32::MAX {
-                continue;
-            }
-            let alone = (a as usize) < slots && members[r] == 1;
-            renumbered[r] = if alone {
+            let alone = (a as usize) < slots && members[&r] == 1;
+            let number = if alone {
                 a
             } else {
                 self.parts.push(None);
                 joined.push((self.parts.len() - 1) as u32);
                 (self.parts.len() - 1) as u32
             };
+            renumbered.insert(r, number);
         }
-        let number = |parent: &mut Vec<u32>, node: u32| renumbered[root(parent, node) as usize];
+        let number = |parent: &mut IdMap<u32, u32>, node: u32| {
+            let r = root_sparse(parent, node);
+            renumbered.get(&r).copied().unwrap_or(r)
+        };
         // The constraints added naming no element join the loose part.
         let loose_number = match joins.loose {
             Some(loose) if anchors.iter().all(Option::is_some) => Some(loose),
             Some(loose) => {
-                changed[loose as usize] = true;
+                changed.push(loose);
                 Some(loose)
             }
             None if loose => {
@@ -793,15 +1126,13 @@ impl KeptSplit {
         // Move the elements and constraints of joined parts to their new
         // numbers, and add what was added.
         let mut relabelled: Vec<(u32, u32)> = Vec::new();
-        for s in 0..slots as u32 {
-            if self.parts[s as usize].is_none() {
-                continue;
-            }
+        for &s in touched.iter().take_while(|&&s| (s as usize) < slots) {
             let to = number(&mut parent, s);
             if to != s {
                 relabelled.push((s, to));
             }
         }
+        self.unused += relabelled.len();
         let mut merged: std::collections::BTreeMap<u32, Vec<Arc<Part>>> = Default::default();
         for &(from, to) in &relabelled {
             let part = self.parts[from as usize].take().expect("a part in use");
@@ -825,8 +1156,8 @@ impl KeptSplit {
                 None => loose_number.expect("a loose part"),
             };
             // A constraint added to a part nothing else joined changes it.
-            if let Some(changed) = changed.get_mut(to as usize) {
-                *changed = true;
+            if (to as usize) < slots {
+                changed.push(to);
             }
             joins.of_constraint.push(to);
         }
@@ -834,7 +1165,7 @@ impl KeptSplit {
 
         // Every part made or changed, compiled or taken from what is kept;
         // a kept part whose held points changed too.
-        let holding = holds_any(problem) || holds_any(&before);
+        let holding = holds_any(problem) || held_before;
         let mut held = if holding {
             held_by_part(problem, |r| {
                 (joins.places.get(r)).map(|&i| joins.of_geometry[i as usize])
@@ -843,15 +1174,25 @@ impl KeptSplit {
             Default::default()
         };
         let empty = Held::default();
+        changed.sort_unstable();
+        changed.dedup();
         let mut rebuild: Vec<u32> = joined;
+        // Nothing held in either problem: no kept part holds anything, and
+        // only the changed ones are looked at.
+        if !holding {
+            rebuild.extend(
+                changed
+                    .iter()
+                    .filter(|&&s| self.parts[s as usize].is_some()),
+            );
+        }
         for (s, part) in self.parts.iter().enumerate().take(slots) {
+            if !holding {
+                break;
+            }
             let Some(part) = part else { continue };
-            // Nothing held in either problem: no kept part holds anything,
-            // and none is looked at.
-            if changed[s] || !holding {
-                if changed[s] {
-                    rebuild.push(s as u32);
-                }
+            if changed.binary_search(&(s as u32)).is_ok() {
+                rebuild.push(s as u32);
                 continue;
             }
             let kept = &part.problem;
@@ -898,6 +1239,7 @@ impl KeptSplit {
             self.parts[s as usize] = Some(part_of(problem, &geometry, &constraints, held, parts));
         }
         self.problem = Arc::clone(problem);
+        self.stamp = Stamp::fresh();
         if relabelled.is_empty() {
             // Parts replaced in place and new ones after the rest: the
             // list follows, changed only there.
@@ -905,7 +1247,7 @@ impl KeptSplit {
             for &s in &rebuild {
                 let entry = Entry::of(self.parts[s as usize].as_ref().expect("rebuilt"));
                 match self.at.get(s as usize) {
-                    Some(&k) if k != u32::MAX => list[k as usize] = entry,
+                    Some(&k) if k != u32::MAX => list.set(k as usize, entry),
                     _ => {
                         debug_assert_eq!(self.at.len(), s as usize);
                         self.at.push(list.len() as u32);
@@ -923,7 +1265,7 @@ impl KeptSplit {
 
 /// The parts in use of `parts`, by number, as a problem's list, and
 /// where each number's part stands in it.
-fn listed(parts: &[Option<Arc<Part>>]) -> (Arc<Vec<Entry>>, Vec<u32>) {
+fn listed(parts: &[Option<Arc<Part>>]) -> (Arc<PartList>, Vec<u32>) {
     let mut list = Vec::with_capacity(parts.len());
     let at = (parts.iter())
         .map(|part| match part {
@@ -934,7 +1276,7 @@ fn listed(parts: &[Option<Arc<Part>>]) -> (Arc<Vec<Entry>>, Vec<u32>) {
             None => u32::MAX,
         })
         .collect();
-    (Arc::new(list), at)
+    (Arc::new(PartList::new(list)), at)
 }
 
 /// The parts and splits of the problems solved lately: each part by its
@@ -982,17 +1324,20 @@ impl PartCache {
 
     /// Keep `split` as the latest, unless numbers no longer in use
     /// outgrow the parts, when the next version is split afresh.
-    fn keep_split(&mut self, split: KeptSplit) {
-        let unused = split.parts.iter().filter(|p| p.is_none()).count();
+    fn keep_split(&mut self, split: KeptSplit) -> Option<Stamp> {
+        let unused = split.unused;
+        debug_assert_eq!(unused, split.parts.iter().filter(|p| p.is_none()).count());
         if unused > 64 && unused > split.parts.len() / 2 {
-            return;
+            return None;
         }
+        let stamp = split.stamp;
         self.splits.insert(0, split);
         self.splits.truncate(SPLITS);
+        Some(stamp)
     }
 
     /// `problem`'s parts, split afresh, and its split kept.
-    fn split(&mut self, problem: &Arc<Problem>) -> Arc<Vec<Entry>> {
+    fn split(&mut self, problem: &Arc<Problem>) -> (Arc<PartList>, Option<Stamp>) {
         let split = Split::of(problem);
         let mut held = match &split.kept {
             Some(joins) => held_by_part(problem, |r| {
@@ -1022,16 +1367,18 @@ impl PartCache {
             .collect();
         let parts: Vec<Option<Arc<Part>>> = parts.into_iter().map(Some).collect();
         let (list, at) = listed(&parts);
-        if let Some(joins) = split.kept {
+        let stamp = split.kept.and_then(|joins| {
             self.keep_split(KeptSplit {
+                stamp: Stamp::fresh(),
                 problem: Arc::clone(problem),
                 joins,
                 parts,
+                unused: 0,
                 list: Arc::clone(&list),
                 at,
-            });
-        }
-        list
+            })
+        });
+        (list, stamp)
     }
 }
 

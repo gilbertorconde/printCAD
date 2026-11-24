@@ -22,7 +22,10 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   the whole system; what crosses parts is listed in its module comment,
   and a change there needs `parts_tests` to hold, which hold the parts'
   diagnosis to the whole problem's too; a problem's list keeps each
-  part's facts beside it, so passes over every part read no part);
+  part's facts beside it, summed in blocks, so passes over every part
+  read no part; a kept split carries a `Stamp`, and `Parted::edited`
+  edits its problem in place from what a caller lists instead of
+  comparing every element);
   optional serde. Its
   complete directory can be copied to another consumer without workspace inheritance.
 - `sketch_model`: the sketch as data, no egui, in the layer beside
@@ -36,7 +39,14 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   (`SketchFeature`, its supports, `KIND`), `geom2d.rs`
   (intersection/sampling math), `shape.rs` (an element as a shape:
   `distance_to_element`, `distance_within`), `curves.rs`, `conic.rs`,
-  `spline.rs`, `measure.rs`, `change.rs` (`SketchChange::between`: the
+  `spline.rs`, `measure.rs`, `adding.rs` (edits that only add:
+  `Adding`, which `sketch.point`, `line`, `polyline`, `rect`, `circle`
+  and `arc` draw through, and the `SketchIndex` kept beside the node's
+  read at its data revision (`FeatureNode::keep_beside`): ids, points
+  by cell for `point_at`, the stamp of the problem's kept split; a
+  plain sketch is then solved, patched and prepared from what was added
+  and what the solve wrote alone, `solver::solve_added` and
+  `SketchFeature::patch_added`, anything else the whole way), `change.rs` (`SketchChange::between`: the
   elements and constraints added, removed and changed, by id;
   `SketchFeature::patch_over`, the patch an edit records instead of the
   whole sketch, through `wb_sketch::placement::write_sketch_data` from
