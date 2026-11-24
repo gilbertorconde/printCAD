@@ -84,7 +84,8 @@ fn laid_out(sketch: &Sketch) -> bool {
 /// A sketch's problem as the solver is handed it with nothing held, and
 /// its parts compiled (taken from the thread's [`PartCache`] where it
 /// holds them): one sketch's solve, freedom, settling and locked elements
-/// share them. The whole problem compiled for rank, which a diagnosis
+/// share them, and its diagnosis where the parts answer it. The whole
+/// problem compiled for rank, which a diagnosis the parts cannot answer
 /// reads, once first asked for.
 #[derive(Clone)]
 pub struct Prepared {

@@ -20,7 +20,10 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   elements no point or constraint joins, each compiled once and kept in
   a `PartCache` while equal, solved and ranked together to the bit of
   the whole system; what crosses parts is listed in its module comment,
-  and a change there needs `parts_tests` to hold); optional serde. Its
+  and a change there needs `parts_tests` to hold, which hold the parts'
+  diagnosis to the whole problem's too; a problem's list keeps each
+  part's facts beside it, so passes over every part read no part);
+  optional serde. Its
   complete directory can be copied to another consumer without workspace inheritance.
 - `sketch_model`: the sketch as data, no egui, in the layer beside
   `bench_panel`; Design, Surface, project import and the fixtures depend
@@ -41,7 +44,9 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   whole), `solver.rs` (sketch_solver adapter, storage
   write-back and application diagnostics; every solve and measure goes
   through `Prepared`, its parts from the thread's `PartCache`, a
-  diagnosis alone compiling the whole problem; `locked_elements`, through
+  diagnosis too (`Parted::diagnose`: conflicts probed in the one part
+  that fails, redundancy from the parts' ranks), the whole problem
+  compiled only where the parts cannot answer; `locked_elements`, through
   `Parted::locked` (`sketch_solver::freedom::locked` by parts), the
   elements nothing left free can move, drawn in `SketchPalette::locked` until the whole sketch is fully
   constrained, cached by the sketch it was worked out on; a text's
