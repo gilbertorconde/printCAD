@@ -32,6 +32,7 @@ mod progress;
 mod project_on_faces;
 mod queries;
 mod ribs;
+mod rounded_lofts;
 mod scripted_design;
 mod scripted_part;
 mod shape_health;
