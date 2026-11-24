@@ -402,81 +402,84 @@ pub fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
     // A text's letters are made from its block where its point stands
     // (`text::refresh` after each solve): nothing in them is the solver's.
     let made = &sketch.derived;
-    let geometry = sketch
-        .geometry
-        .iter()
-        .filter(|g| !made.contains(&g.id()))
-        .map(|g| match g {
-            G::Point(p) => core::Geometry::Point(core::Point {
-                id: core::PointId(p.id.as_u128()),
-                position: vector(p.position),
-            }),
-            G::Line(l) => core::Geometry::Line(core::Line {
-                id: core::CurveId(l.id.as_u128()),
-                start: point(l.start),
-                end: point(l.end),
-            }),
-            G::Circle(c) => core::Geometry::Circle(core::Circle {
-                id: core::CurveId(c.id.as_u128()),
-                center: point(c.center),
-                radius: length(c.radius),
-            }),
-            G::Arc(a) => core::Geometry::Arc(core::Arc {
-                id: core::CurveId(a.id.as_u128()),
-                center: point(a.center),
-                start: point(a.start),
-                end: point(a.end),
-                radius: length(a.radius),
-            }),
-            G::Ellipse(e) => core::Geometry::Ellipse(core::Ellipse {
-                id: core::CurveId(e.id.as_u128()),
-                center: point(e.center),
-                major: vector(e.major),
-                minor: length(e.major.to_glam().length() * e.ratio),
-                arc: e.arc.map(|a| core::ArcEnds {
+    let mut geometry = Vec::with_capacity(sketch.geometry.len());
+    geometry.extend(
+        sketch
+            .geometry
+            .iter()
+            .filter(|g| !made.contains(&g.id()))
+            .map(|g| match g {
+                G::Point(p) => core::Geometry::Point(core::Point {
+                    id: core::PointId(p.id.as_u128()),
+                    position: vector(p.position),
+                }),
+                G::Line(l) => core::Geometry::Line(core::Line {
+                    id: core::CurveId(l.id.as_u128()),
+                    start: point(l.start),
+                    end: point(l.end),
+                }),
+                G::Circle(c) => core::Geometry::Circle(core::Circle {
+                    id: core::CurveId(c.id.as_u128()),
+                    center: point(c.center),
+                    radius: length(c.radius),
+                }),
+                G::Arc(a) => core::Geometry::Arc(core::Arc {
+                    id: core::CurveId(a.id.as_u128()),
+                    center: point(a.center),
                     start: point(a.start),
                     end: point(a.end),
+                    radius: length(a.radius),
+                }),
+                G::Ellipse(e) => core::Geometry::Ellipse(core::Ellipse {
+                    id: core::CurveId(e.id.as_u128()),
+                    center: point(e.center),
+                    major: vector(e.major),
+                    minor: length(e.major.to_glam().length() * e.ratio),
+                    arc: e.arc.map(|a| core::ArcEnds {
+                        start: point(a.start),
+                        end: point(a.end),
+                    }),
+                }),
+                G::Conic(c) => core::Geometry::Conic(core::Conic {
+                    id: core::CurveId(c.id.as_u128()),
+                    kind: match c.kind {
+                        sketch::ConicKind::Hyperbola => core::ConicKind::Hyperbola,
+                        sketch::ConicKind::Parabola => core::ConicKind::Parabola,
+                    },
+                    center: point(c.center),
+                    axis: vector(c.axis),
+                    minor: length(c.minor),
+                    start: point(c.start),
+                    end: point(c.end),
+                }),
+                G::BSpline(b) => core::Geometry::BSpline(core::BSpline {
+                    id: core::CurveId(b.id.as_u128()),
+                    degree: b.degree,
+                    control_points: b.control_points.iter().copied().map(point).collect(),
+                    knots: b.knots.clone(),
+                    periodic: b.periodic,
+                    weights: b.weights.clone(),
+                    fit_points: b.fit_points.iter().copied().map(point).collect(),
+                    fit_params: if fitted.contains(&b.id) {
+                        b.fit_params.clone()
+                    } else {
+                        Vec::new()
+                    },
                 }),
             }),
-            G::Conic(c) => core::Geometry::Conic(core::Conic {
-                id: core::CurveId(c.id.as_u128()),
-                kind: match c.kind {
-                    sketch::ConicKind::Hyperbola => core::ConicKind::Hyperbola,
-                    sketch::ConicKind::Parabola => core::ConicKind::Parabola,
-                },
-                center: point(c.center),
-                axis: vector(c.axis),
-                minor: length(c.minor),
-                start: point(c.start),
-                end: point(c.end),
-            }),
-            G::BSpline(b) => core::Geometry::BSpline(core::BSpline {
-                id: core::CurveId(b.id.as_u128()),
-                degree: b.degree,
-                control_points: b.control_points.iter().copied().map(point).collect(),
-                knots: b.knots.clone(),
-                periodic: b.periodic,
-                weights: b.weights.clone(),
-                fit_points: b.fit_points.iter().copied().map(point).collect(),
-                fit_params: if fitted.contains(&b.id) {
-                    b.fit_params.clone()
-                } else {
-                    Vec::new()
-                },
-            }),
-        })
-        .collect();
-    let mut problem = core::Problem {
-        geometry,
-        constraints: sketch
-            .constraints
-            .iter()
+    );
+    let mut constraints = Vec::with_capacity(sketch.constraints.len());
+    constraints.extend(
+        (sketch.constraints.iter())
             .filter(|c| solved(sketch, c))
             .map(|c| core::Constraint {
                 id: core::ConstraintId(c.id.as_u128()),
                 kind: relation(sketch, &c.kind),
-            })
-            .collect(),
+            }),
+    );
+    let mut problem = core::Problem {
+        geometry,
+        constraints,
         external: sketch
             .external_ids()
             .into_iter()
