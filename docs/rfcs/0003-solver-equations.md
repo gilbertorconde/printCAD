@@ -99,9 +99,15 @@ Internal hidden rows are counted separately below.
   of those the equations join (`sparse::Blocks`), each residual naming the
   variables it reads. A column is differenced by evaluating only the
   equations that read it, which gives the same numbers as differencing
-  the whole system. The damped normal equations are solved block by block
-  (the mean diagonal taken over all free variables, the step capped as a
-  whole), and rank and determined variables are summed over the blocks,
+  the whole system. Each block is iterated on its own: its own damping
+  (the mean diagonal taken over its own columns), step cap, acceptance by
+  its own cost and convergence by its own residuals, so a block already
+  within the tolerance takes no step and keeps its values exactly. The
+  tolerance's scale is the whole system's at the start of a pass over the
+  blocks; another pass follows when the values the blocks end on hold a
+  residual above the tolerance at their own scale. A system already within
+  the tolerance where it stands is answered without sorting it into
+  blocks. Rank and determined variables are summed over the blocks,
   every pivot held to the whole matrix's threshold (its largest entry
   times the rank tolerance). A variable no equation reads has no column
   in any block: its step is zero and it is never determined.

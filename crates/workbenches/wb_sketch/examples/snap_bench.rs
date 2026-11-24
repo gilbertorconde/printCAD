@@ -13,8 +13,9 @@
 //! with a line tangent to each circle, its end held on it, and one with
 //! each cell's bottom side fitted to measured points; a point of the
 //! plain grid dragged, a solve and a store per frame, again with the
-//! host's history, outbox and formulas worked out each frame; and
-//! the points the grid leaves free selected, then the pointer moved
+//! host's history, outbox and formulas worked out each frame, and a
+//! rectangle's corner dragged on the grid with every side held level or
+//! upright; and the points the grid leaves free selected, then the pointer moved
 //! about with them selected and the panel drawn.
 //!
 //! `cargo run --release -p wb_sketch --example snap_bench -- [cells] [queries] [only]`:
@@ -386,6 +387,25 @@ fn dimensioned(mut sketch: Sketch, cells: usize) -> Sketch {
     sketch
 }
 
+/// Every cell's rectangle squared: its sides held horizontal and
+/// vertical, constraints without a label.
+fn squared(mut sketch: Sketch) -> Sketch {
+    let lines: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter(|g| matches!(g, GeometryElement::Line(_)))
+        .map(|g| g.id())
+        .collect();
+    for (k, element) in lines.into_iter().enumerate() {
+        sketch.add_constraint(if k % 2 == 0 {
+            ConstraintKind::Horizontal { element }
+        } else {
+            ConstraintKind::Vertical { element }
+        });
+    }
+    sketch
+}
+
 /// The first dimensioned side held to a second, other length as well:
 /// the constraints cannot all hold, and the diagnosis looks for those
 /// in conflict.
@@ -527,6 +547,12 @@ fn label_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], panel:
 /// this zoom, and a press on a label drags the label. With `hosted` the
 /// host's history, outbox and formulas run each frame too.
 fn point_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], hosted: bool) {
+    drag_at(label, sketch, span, queries, hosted, Vec2D::new(5.5, 7.0));
+}
+
+/// The point at `at` in the middle cell dragged about as [`point_drag`]
+/// drags it.
+fn drag_at(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], hosted: bool, at: Vec2D) {
     if !wanted(label) {
         return;
     }
@@ -538,7 +564,7 @@ fn point_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], hosted
     let tool = "sketch.select";
     s.send(Some(WorkbenchInputEvent::ToolActivated), tool);
     let mid = ((span / CELL) as usize / 2) as f64 * CELL;
-    let grab = s.px(Vec2D::new(mid + 5.5, mid + 7.0));
+    let grab = s.px(Vec2D::new(mid + at.x, mid + at.y));
     s.move_to(grab, tool);
     s.button(true, grab, tool);
     let moves: Vec<_> = (0..queries.len())
@@ -696,6 +722,17 @@ fn main() {
     edit("edit, fitted sides", &fitted(marked.clone()), span, edits);
     point_drag("point drag", &sketch, span, edits, false);
     point_drag("point drag, hosted", &sketch, span, edits, true);
+    // A rectangle's corner, its sides held square: the solve moves the
+    // corners beside it.
+    let square = squared(sketch.clone());
+    drag_at(
+        "point drag, squared grid",
+        &square,
+        span,
+        edits,
+        false,
+        Vec2D::new(1.0, 1.0),
+    );
     select_free(
         "select free points",
         &marked,

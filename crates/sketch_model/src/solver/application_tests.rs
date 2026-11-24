@@ -1231,6 +1231,63 @@ mod tests {
         converged(&mut sketch);
     }
 
+    /// The freedom a solve measures, and the problem it hands on with it,
+    /// are those of the sketch it leaves, whether storing its answer moved
+    /// something (the first solve of each) or nothing (the solves after).
+    #[test]
+    fn the_freedom_is_measured_on_the_sketch_a_solve_leaves() {
+        let mut free = Sketch::new("free");
+        let (a, b) = (
+            add_point(&mut free, 0.0, 0.0),
+            add_point(&mut free, 4.0, 1.0),
+        );
+        add_line(&mut free, a, b);
+        circle(&mut free, 7.0, 2.0, 1.5);
+        let (centre, from, to) = (
+            add_point(&mut free, 0.0, 6.0),
+            add_point(&mut free, 2.0, 6.0),
+            add_point(&mut free, -2.0, 6.0),
+        );
+        free.add_geometry(GeometryElement::Arc(Arc::new(centre, from, to, 2.0)));
+
+        // The arc's ends join the equations once anything is constrained.
+        let mut squared = free.clone();
+        squared.name = "squared".into();
+        squared.add_constraint(ConstraintKind::Horizontal {
+            element: squared.geometry[2].id(),
+        });
+        squared.length(squared.geometry[2].id(), 6.0);
+
+        let mut ellipses = Sketch::new("ellipses");
+        for (y, radii) in [(0.0, (8.0, 2.0)), (20.0, (2.0, 8.0))] {
+            let c = add_point(&mut ellipses, 0.0, y);
+            pin(&mut ellipses, c);
+            let ellipse = ellipse(&mut ellipses, c, (6.0, 0.0), 0.5);
+            for (major, radius) in [(true, radii.0), (false, radii.1)] {
+                ellipses.add_constraint(ConstraintKind::EllipseRadius {
+                    ellipse,
+                    major,
+                    radius,
+                });
+            }
+        }
+
+        for mut sketch in [free, squared, ellipses] {
+            for _ in 0..3 {
+                let (_, measured) = solve_measuring(&mut sketch);
+                let measured = measured.expect("a freedom measured");
+                let fresh = Prepared::of(&sketch);
+                assert_eq!(
+                    measured.prepared.problem(),
+                    fresh.problem(),
+                    "{}",
+                    sketch.name
+                );
+                assert_eq!(measured.dof, fresh.dof(), "{}", sketch.name);
+            }
+        }
+    }
+
     #[test]
     fn an_ellipse_takes_its_radii_and_a_spline_its_length() {
         let mut sketch = Sketch::new("t");

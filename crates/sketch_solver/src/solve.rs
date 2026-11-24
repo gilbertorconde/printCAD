@@ -1,6 +1,6 @@
 use crate::compile::System;
 use crate::problem::Settings;
-use crate::sparse::Blocks;
+use crate::sparse::{Block, Blocks};
 
 pub fn solve(problem: &crate::problem::Problem) -> Result<Iteration, crate::input::InputError> {
     let compiled = crate::compile::compile(problem)?;
@@ -69,6 +69,22 @@ pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settin
         };
     }
 
+    let start = part_coincident_ends(sys);
+    // Already within the tolerance where it stands: no block takes a
+    // step, so nothing is worth sorting into blocks.
+    if start == sys.vars {
+        let residual = inf_norm(&eval_residuals(sys, &start));
+        let threshold = tolerance * var_scale(&start);
+        if residual < threshold {
+            return Iteration {
+                values: start,
+                outcome: SolveOutcome::Converged { iterations: 0 },
+                iterations: 0,
+                residual,
+                threshold,
+            };
+        }
+    }
     let owned;
     let blocks = match blocks {
         Some(blocks) => blocks,
@@ -77,7 +93,6 @@ pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settin
             &owned
         }
     };
-    let start = part_coincident_ends(sys);
     let direct = descend(sys, blocks, start.clone(), settings, tolerance, None);
     if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
         return direct;
@@ -237,8 +252,19 @@ thread_local! {
     pub(crate) static RETRY_SATURATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The most passes [`descend`] makes over the blocks: a pass solves each
+/// block to the tolerance at the scale the pass began with, and another
+/// follows only when the geometry's scale shrank under a block's answer.
+const SCALE_PASSES: usize = 4;
+
 /// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
-/// to `offset` (zero when `None`).
+/// to `offset` (zero when `None`), each Jacobian block on its own: its own
+/// damping, its own acceptance of a step by its own cost, and its own
+/// convergence, so a block already within the tolerance takes no step and
+/// keeps its values exactly, and how one block converges never changes
+/// another's numbers. The whole solve converges when every residual is
+/// within the tolerance at the scale of the values it ends on, as each
+/// block's own test is.
 fn descend(
     sys: &System,
     blocks: &Blocks,
@@ -256,116 +282,204 @@ fn descend(
         }
         r
     };
-    let mut r = residuals(&x);
-    let mut cost = sq_norm(&r);
-    let mut lambda = settings.lambda_initial;
-    let mut iterations = 0;
     let max_iterations = (settings.max_iterations as usize).max(1);
-    let mut converged = inf_norm(&r) < tolerance * var_scale(&x);
+    let mut spent = vec![0; blocks.blocks.len()];
+    let mut stalled = vec![false; blocks.blocks.len()];
+    let mut work = BlockWork {
+        probe: x.clone(),
+        ..BlockWork::default()
+    };
+    let mut r = residuals(&x);
+    for _ in 0..SCALE_PASSES {
+        if inf_norm(&r) < tolerance * var_scale(&x) {
+            break;
+        }
+        let scale = var_scale(&x);
+        let mut stepped = false;
+        for (b, block) in blocks.blocks.iter().enumerate() {
+            if stalled[b] || spent[b] >= max_iterations {
+                continue;
+            }
+            let outcome = descend_block(
+                sys,
+                block,
+                &mut x,
+                &settings,
+                Scale {
+                    values: scale,
+                    threshold: tolerance * scale,
+                },
+                offset,
+                max_iterations - spent[b],
+                &mut work,
+            );
+            spent[b] += outcome.iterations;
+            stalled[b] = !outcome.converged;
+            stepped |= outcome.iterations > 0;
+        }
+        r = residuals(&x);
+        if !stepped {
+            break;
+        }
+    }
 
-    while !converged && iterations < max_iterations {
-        iterations += 1;
+    let residual = inf_norm(&r);
+    let threshold = tolerance * var_scale(&x);
+    let iterations = spent.iter().copied().max().unwrap_or(0);
+    let outcome = if residual < threshold {
+        SolveOutcome::Converged { iterations }
+    } else {
+        SolveOutcome::NotConverged { residual }
+    };
+    Iteration {
+        threshold,
+        values: x,
+        outcome,
+        iterations,
+        residual,
+    }
+}
 
-        // JᵀJ is block diagonal: each block's normal equations alone. A
-        // column no equation reads has none, and its step is zero.
-        let normal: Vec<_> = (blocks.blocks.iter())
-            .zip(blocks.jacobian(sys, &x))
-            .map(|(block, jac)| {
-                let r: Vec<f64> = block.rows.iter().map(|&i| r[i]).collect();
-                normal_equations(&jac, &r)
-            })
-            .collect();
+/// Buffers one block's iteration reuses from the block before. `probe`
+/// holds the values being solved between iterations, so a block's
+/// differences and trial steps are taken in place.
+#[derive(Default)]
+struct BlockWork {
+    dense: Dense,
+    r: Vec<f64>,
+    trial_r: Vec<f64>,
+    probe: Vec<f64>,
+}
 
-        // Each variable is damped by its own curvature plus the average
-        // one: with its own alone, a variable the constraints barely feel
-        // (a point sliding almost square to the only row that moves it)
-        // costs nearly nothing to move, and the step flings it far off.
-        // Summed in column order, as one matrix's diagonal would be.
-        let mut diagonal = vec![0.0; sys.free.len()];
-        for (block, (jtj, _)) in blocks.blocks.iter().zip(&normal) {
-            for (i, &column) in block.columns.iter().enumerate() {
-                diagonal[column] = jtj[i][i];
+/// A pass's scale of the values and the residual threshold at it.
+#[derive(Clone, Copy)]
+struct Scale {
+    values: f64,
+    threshold: f64,
+}
+
+/// How one block's iteration ended.
+struct BlockOutcome {
+    iterations: usize,
+    converged: bool,
+}
+
+/// One block of [`descend`]: Levenberg-Marquardt over the block's
+/// columns and rows alone, until its residuals are all below the
+/// threshold, it stalls, or it has taken `budget` iterations. A step is
+/// capped at the pass's scale of the values.
+#[allow(clippy::too_many_arguments)]
+fn descend_block(
+    sys: &System,
+    block: &Block,
+    x: &mut [f64],
+    settings: &Settings,
+    scale: Scale,
+    offset: Option<&[f64]>,
+    budget: usize,
+    work: &mut BlockWork,
+) -> BlockOutcome {
+    let BlockWork {
+        dense,
+        r,
+        trial_r,
+        probe,
+    } = work;
+    let less_offset = |r: &mut Vec<f64>| {
+        if let Some(offset) = offset {
+            for (r, &row) in r.iter_mut().zip(&block.rows) {
+                *r -= offset[row];
             }
         }
-        let mean_diag = diagonal.iter().sum::<f64>() / diagonal.len().max(1) as f64;
+    };
+    block.residuals(sys, x, r);
+    less_offset(r);
+    if inf_norm(r) < scale.threshold {
+        return BlockOutcome {
+            iterations: 0,
+            converged: true,
+        };
+    }
+    let mut cost = sq_norm(r);
+    let mut lambda = settings.lambda_initial;
+    let mut iterations = 0;
+    // The block's values and the step taken on them, by column.
+    let vars: Vec<usize> = block.columns.iter().map(|&c| sys.free[c]).collect();
+    let mut step = vec![0.0; vars.len()];
+    while iterations < budget {
+        iterations += 1;
+        let jac = block.jacobian(sys, x, probe);
+        let (jtj, jtr) = normal_equations(&jac, r);
+
+        // Each variable is damped by its own curvature plus the block's
+        // average one: with its own alone, a variable the constraints
+        // barely feel (a point sliding almost square to the only row that
+        // moves it) costs nearly nothing to move, and the step flings it
+        // far off.
+        let mean_diag = (0..jtj.len()).map(|i| jtj[i][i]).sum::<f64>() / jtj.len().max(1) as f64;
         let mut improved = false;
-        let mut dense = Dense::default();
         for _ in 0..settings.max_inner_retries {
             // Damped normal equations: (JᵀJ + λ·D) dx = -Jᵀr, with D the
             // diagonal of JᵀJ raised by its mean.
-            let mut step = vec![0.0; sys.free.len()];
-            let mut singular = false;
-            for (block, (jtj, jtr)) in blocks.blocks.iter().zip(&normal) {
-                dense.a.clear();
-                for (i, row) in jtj.iter().enumerate() {
-                    dense.a.extend_from_slice(row);
-                    let at = dense.a.len() - row.len() + i;
-                    dense.a[at] += lambda * (jtj[i][i] + mean_diag).max(settings.damping_floor);
-                }
-                dense.b.clear();
-                dense.b.extend(jtr.iter().map(|v| -v));
-                if !dense.solve() {
-                    singular = true;
-                    break;
-                }
-                for (&column, &dx) in block.columns.iter().zip(&dense.x) {
-                    step[column] = dx;
-                }
+            dense.a.clear();
+            for (i, row) in jtj.iter().enumerate() {
+                dense.a.extend_from_slice(row);
+                let at = dense.a.len() - row.len() + i;
+                dense.a[at] += lambda * (jtj[i][i] + mean_diag).max(settings.damping_floor);
             }
-            if singular {
-                match raised(lambda, &settings) {
+            dense.b.clear();
+            dense.b.extend(jtr.iter().map(|v| -v));
+            if !dense.solve() {
+                match raised(lambda, settings) {
                     Some(raised) => lambda = raised,
                     None => break,
                 }
                 continue;
             }
-            cap_step(&mut step, var_scale(&x), settings.maximum_step_scale);
+            step.copy_from_slice(&dense.x);
+            cap_step(&mut step, scale.values, settings.maximum_step_scale);
 
-            let mut trial = x.clone();
-            for (column, &j) in sys.free.iter().enumerate() {
-                trial[j] += step[column];
+            for (&j, dx) in vars.iter().zip(&step) {
+                probe[j] = x[j] + dx;
             }
-            let trial_r = residuals(&trial);
-            let trial_cost = sq_norm(&trial_r);
+            block.residuals(sys, probe, trial_r);
+            less_offset(trial_r);
+            let trial_cost = sq_norm(trial_r);
             if trial_cost.is_finite() && trial_cost < cost {
-                x = trial;
-                r = trial_r;
+                for &j in &vars {
+                    x[j] = probe[j];
+                }
+                std::mem::swap(r, trial_r);
                 cost = trial_cost;
                 lambda = (lambda / 10.0).max(settings.lambda_min);
                 improved = true;
                 break;
             }
-            match raised(lambda, &settings) {
+            for &j in &vars {
+                probe[j] = x[j];
+            }
+            match raised(lambda, settings) {
                 Some(raised) => lambda = raised,
                 None => break,
             }
         }
 
-        if inf_norm(&r) < tolerance * var_scale(&x) {
-            converged = true;
-            break;
+        if inf_norm(r) < scale.threshold {
+            return BlockOutcome {
+                iterations,
+                converged: true,
+            };
         }
         if !improved {
-            // Damping saturated without any cost reduction: the problem is
-            // contradictory or the solve sits at a (possibly non-zero) local
-            // minimum.
+            // Damping saturated without any cost reduction: the block's
+            // equations contradict each other or the solve sits at a
+            // (possibly non-zero) local minimum.
             break;
         }
     }
-
-    let outcome = if converged {
-        SolveOutcome::Converged { iterations }
-    } else {
-        SolveOutcome::NotConverged {
-            residual: inf_norm(&r),
-        }
-    };
-    Iteration {
-        threshold: tolerance * var_scale(&x),
-        values: x,
-        outcome,
+    BlockOutcome {
         iterations,
-        residual: inf_norm(&r),
+        converged: false,
     }
 }
 

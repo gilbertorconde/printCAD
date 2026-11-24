@@ -69,6 +69,86 @@ fn consumer_solves_a_pinned_horizontal_line_with_public_types() {
     );
 }
 
+/// A line from a point fixed at the origin, held level and 10 long, its
+/// far end `off` above where that puts it; ids from `first`.
+fn level_line(first: u128, off: f64, length: f64) -> Problem {
+    let (a, b, line) = (PointId(first), PointId(first + 1), CurveId(first + 2));
+    let point = |id, x, y| {
+        Geometry::Point(Point {
+            id,
+            position: Vector { x, y },
+        })
+    };
+    let constraint = |n, kind| Constraint {
+        id: ConstraintId(first + n),
+        kind,
+    };
+    Problem {
+        geometry: vec![
+            point(a, 0.0, 0.0),
+            point(b, 10.0, off),
+            Geometry::Line(Line {
+                id: line,
+                start: a.into(),
+                end: b.into(),
+            }),
+        ],
+        constraints: vec![
+            constraint(
+                0,
+                Relation::FixedPoint {
+                    point: a.into(),
+                    position: Vector { x: 0.0, y: 0.0 },
+                },
+            ),
+            constraint(
+                1,
+                Relation::Horizontal {
+                    element: line.into(),
+                },
+            ),
+            constraint(
+                2,
+                Relation::Length {
+                    line: line.into(),
+                    length: Length(length),
+                },
+            ),
+        ],
+        ..Problem::default()
+    }
+}
+
+/// The end of `first`'s line, solved.
+fn far_end(problem: &Problem, first: u128) -> (u64, u64) {
+    let compiled = compile(problem).unwrap();
+    let answer = solve(problem).unwrap();
+    assert!(matches!(answer.outcome, SolveOutcome::Converged { .. }));
+    let at = compiled
+        .point_variable(PointId(first + 1).into())
+        .unwrap()
+        .0;
+    (answer.values[at].to_bits(), answer.values[at + 1].to_bits())
+}
+
+/// Geometry no equation joins is solved apart: a cluster already in place
+/// keeps its values to the bit, and a cluster's answer is the one it gets
+/// solved alone, however far the others have to go.
+#[test]
+fn clusters_no_equation_joins_are_solved_apart() {
+    let placed = level_line(100, 0.0, 10.0);
+    let near = level_line(200, 0.2, 10.0);
+    let far = level_line(300, -0.4, 9.6);
+    let mut all = placed.clone();
+    for other in [&near, &far] {
+        all.geometry.extend(other.geometry.iter().cloned());
+        all.constraints.extend(other.constraints.iter().cloned());
+    }
+    assert_eq!(far_end(&all, 100), (10.0_f64.to_bits(), 0.0_f64.to_bits()));
+    assert_eq!(far_end(&all, 200), far_end(&near, 200));
+    assert_eq!(far_end(&all, 300), far_end(&far, 300));
+}
+
 #[test]
 fn malformed_input_is_distinct_from_numerical_failure() {
     let mut input = line_problem();

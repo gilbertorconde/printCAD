@@ -138,31 +138,8 @@ impl Blocks {
     /// differenced by evaluating only the equations that read it.
     pub fn jacobian(&self, sys: &System, x: &[f64]) -> Vec<Matrix> {
         let mut probe = x.to_vec();
-        let (mut plus, mut minus) = (Vec::new(), Vec::new());
-        let minimum = sys.settings.minimum_length.0;
-        self.blocks
-            .iter()
-            .map(|block| {
-                let mut m = vec![vec![0.0; block.columns.len()]; block.rows.len()];
-                for eq in &block.equations {
-                    let spec = &sys.specs[eq.spec];
-                    for &(j, column) in &eq.reads {
-                        let eps = sys.settings.finite_difference_step * x[j].abs().max(1.0);
-                        let original = probe[j];
-                        probe[j] = original + eps;
-                        plus.clear();
-                        spec.eval_with_minimum(&probe, &mut plus, minimum);
-                        probe[j] = original - eps;
-                        minus.clear();
-                        spec.eval_with_minimum(&probe, &mut minus, minimum);
-                        probe[j] = original;
-                        for (k, (rp, rm)) in plus.iter().zip(&minus).enumerate() {
-                            m[eq.row + k][column] = (rp - rm) / (2.0 * eps);
-                        }
-                    }
-                }
-                m
-            })
+        (self.blocks.iter())
+            .map(|block| block.jacobian(sys, x, &mut probe))
             .collect()
     }
 
@@ -177,6 +154,44 @@ impl Blocks {
             }
         }
         out
+    }
+}
+
+impl Block {
+    /// The block's central-difference Jacobian at `x`, its columns
+    /// differenced by evaluating only the equations that read them.
+    /// `probe` holds `x` on entry and is left so.
+    pub(crate) fn jacobian(&self, sys: &System, x: &[f64], probe: &mut [f64]) -> Matrix {
+        let (mut plus, mut minus) = (Vec::new(), Vec::new());
+        let minimum = sys.settings.minimum_length.0;
+        let mut m = vec![vec![0.0; self.columns.len()]; self.rows.len()];
+        for eq in &self.equations {
+            let spec = &sys.specs[eq.spec];
+            for &(j, column) in &eq.reads {
+                let eps = sys.settings.finite_difference_step * x[j].abs().max(1.0);
+                let original = probe[j];
+                probe[j] = original + eps;
+                plus.clear();
+                spec.eval_with_minimum(probe, &mut plus, minimum);
+                probe[j] = original - eps;
+                minus.clear();
+                spec.eval_with_minimum(probe, &mut minus, minimum);
+                probe[j] = original;
+                for (k, (rp, rm)) in plus.iter().zip(&minus).enumerate() {
+                    m[eq.row + k][column] = (rp - rm) / (2.0 * eps);
+                }
+            }
+        }
+        m
+    }
+
+    /// The block's residuals at `x`, in its rows' order.
+    pub(crate) fn residuals(&self, sys: &System, x: &[f64], out: &mut Vec<f64>) {
+        out.clear();
+        let minimum = sys.settings.minimum_length.0;
+        for eq in &self.equations {
+            sys.specs[eq.spec].eval_with_minimum(x, out, minimum);
+        }
     }
 }
 

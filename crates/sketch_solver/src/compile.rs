@@ -159,6 +159,14 @@ pub fn compile_for_rank(problem: &Problem) -> RankSystem {
     }
 }
 
+/// [`compile_system`] of `problem` as a solve of it reads it (nothing
+/// excluded, no arcs added for rank alone), and whether it is also the
+/// system [`compile_for_rank`] makes: some constraint brings an equation.
+#[doc(hidden)]
+pub fn compile_plain(problem: &Problem) -> (System, bool) {
+    compile_counting(problem, None, false)
+}
+
 /// [`compile_system`], and whether the constraints brought any equation
 /// before the arcs' own: when they did, `arcs_always` changes nothing.
 fn compile_counting(
