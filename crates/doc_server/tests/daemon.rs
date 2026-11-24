@@ -1640,7 +1640,8 @@ fn editors_rejoining_a_restarted_daemon_lose_no_edit() {
     bob.doc.rename_body(body, "b1");
     bob.send();
     alice.catch_up(bob.settle());
-    // Logged, its answer never taken in.
+    // Logged, its answer never taken in. Looked for as a JSON string: the
+    // log's ids are hexadecimal, and a bare `a2` turns up in them.
     alice.doc.create_body(Some("a2".into()));
     journal.note(&mut alice.doc);
     alice.send();
@@ -1648,7 +1649,7 @@ fn editors_rejoining_a_restarted_daemon_lose_no_edit() {
     let deadline = Instant::now() + PATIENCE;
     while !std::fs::read_to_string(&log)
         .unwrap_or_default()
-        .contains("a2")
+        .contains("\"a2\"")
     {
         assert!(Instant::now() < deadline, "a2 never reached the log");
         std::thread::sleep(Duration::from_millis(10));
@@ -1780,4 +1781,44 @@ fn a_client_too_far_behind_is_dropped_and_rejoins() {
     drop(again);
     drop(alice);
     wait_for_exit(&mut daemon, "with its last client");
+}
+
+/// Editors that reach a document at the same moment, none of them finding
+/// a daemon, end up on one: every one of them counts all the others, and an
+/// edit from the first reaches the last.
+#[test]
+fn editors_arriving_at_once_share_one_daemon() {
+    daemon_env();
+    let home = TestHome::new("arrive_at_once");
+    let editors = 6;
+    let start = std::sync::Arc::new(std::sync::Barrier::new(editors));
+    let socket = home.socket();
+    let mut replicas: Vec<Replica> = (0..editors)
+        .map(|_| {
+            let start = std::sync::Arc::clone(&start);
+            let socket = socket.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                Replica::join_at(&socket, Document::new("Together"))
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|joining| joining.join().expect("joined"))
+        .collect();
+    let others = u32::try_from(editors - 1).expect("a handful");
+    for replica in &mut replicas {
+        replica.take_until("every other editor", |r| r.peers == Some(others));
+    }
+    replicas[0].doc.create_body(Some("first".into()));
+    replicas[0].send();
+    let seq = replicas[0].settle();
+    for replica in &mut replicas[1..] {
+        replica.catch_up(seq);
+        assert_eq!(bodies_named(&replica.doc, "first"), 1);
+    }
+    for replica in replicas {
+        replica.leave();
+    }
+    wait_for_socket_gone(&home);
 }

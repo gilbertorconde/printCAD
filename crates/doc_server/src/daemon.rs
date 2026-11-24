@@ -1594,6 +1594,28 @@ impl Default for Limits {
     }
 }
 
+/// Make `socket` this daemon's alone for as long as it runs: an exclusive
+/// lock on `<socket>.lock`, which the system lets go however the daemon
+/// ends. `None` when another daemon holds it. Clients that find no daemon
+/// listening each start one, and a socket's file appears before it takes
+/// connections, so two daemons can start for one document at once; without
+/// this, the later would take the socket's path from the earlier and the
+/// clients would be split between two orders that never meet. The lock's
+/// file stays: removing it would let a daemon starting then lock a file no
+/// longer at the path while another locks the new one.
+fn claim_socket(socket: &Path) -> std::io::Result<Option<std::fs::File>> {
+    let claim = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(socket.with_extension("lock"))?;
+    match claim.try_lock() {
+        Ok(()) => Ok(Some(claim)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(err)) => Err(err),
+    }
+}
+
 /// Run the daemon on `socket` with the default limits.
 pub fn run(socket: &Path) -> std::io::Result<()> {
     run_with(socket, Limits::default())
@@ -1607,6 +1629,10 @@ pub fn run_with(socket: &Path, limits: Limits) -> std::io::Result<()> {
     if let Some(parent) = socket.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let Some(_claim) = claim_socket(socket)? else {
+        tracing::info!(socket = %socket.display(), "another printcad-serverd serves this socket");
+        return Ok(());
+    };
     claim_unhomed_oplog(socket);
     let note = socket.with_extension("home");
     let mut state = State::default();
