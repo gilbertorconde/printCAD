@@ -114,6 +114,33 @@ impl Shape {
         }
     }
 
+    /// The point of the shape nearest `p`.
+    pub fn nearest(&self, p: DVec2) -> DVec2 {
+        match *self {
+            Shape::Point(q) => q,
+            Shape::Prim(Prim::Seg { a, b }) => nearest_on_segment(p, a, b),
+            Shape::Prim(Prim::Circle { c, r }) => {
+                let dir = p - c;
+                c + if dir.length() < 1e-12 {
+                    DVec2::new(r, 0.0)
+                } else {
+                    dir.normalize() * r
+                }
+            }
+            Shape::Prim(Prim::Arc { c, r, s, e }) => {
+                let dir = p - c;
+                if dir.length() >= 1e-12 && on_sweep(c, s, e, p) {
+                    c + dir.normalize() * r
+                } else if (p - s).length() <= (p - e).length() {
+                    s
+                } else {
+                    e
+                }
+            }
+            Shape::Curve(ref curve) => curve.at(curve.nearest(p, curve.span)),
+        }
+    }
+
     /// No further from `p` than the shape is: zero, or for a curve the
     /// distance to a circle it lies within, so most curves away from the
     /// cursor are passed over without working out their nearest point.

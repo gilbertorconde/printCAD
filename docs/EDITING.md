@@ -791,6 +791,17 @@ Round this edge`). There are two ways to make one:
   the **Label** from the point in the body's own axes, and shows or
   hides it.
 
+A note can also go on a sketch. With a sketch open in the sketcher, the
+note tool's click lands on the element (line, arc, circle, point,
+spline) or the constraint under the cursor, or else on that point of the
+sketch's plane; in the view, a click off the part on a shown sketch's
+element lands on that element. Its label stands from the point in the
+sketch's own axes. A note on a sketch follows its element or constraint
+(a dimension's label) as the sketch is edited and solved, and the sketch
+wherever it is placed. Deleting the element leaves the note lost. It
+shows while the sketch shows and while the sketch is open, and is listed
+with the body's other notes.
+
 A note moves with its body and follows its face or edge when the body is
 rebuilt. When an edit takes that face or edge away, the note is lost: it
 stays where it was, drawn red, and its tree row says Lost. A note on a

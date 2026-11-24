@@ -106,6 +106,16 @@ their text, each naming the face it was put on, so a reader reads it as
 a note on that face of that part. Every change is one `SetBodyNotes` op holding all of the
 body's notes.
 
+A note on a sketch (`sketch`: the sketch feature and the element or
+constraint id it is on, none for a point of the plane) keeps its point
+and label in the sketch's plane. The bench that owns the sketch places it
+as the sketch is now (`BenchFeatures::note_spot`): the element's point
+nearest where it was put, a constraint's anchor, the label moved alike.
+Evaluation keeps that placement in the derived state, in the body's
+frame; an item gone leaves the note lost where it was, a sketch gone
+where it last stood. It is listed, numbered and stored with the body's
+other notes.
+
 A note can ask (`asks`): a question pinned to the geometry, which an
 agent leaves for the user to answer in place. It draws in the warning
 colour behind a `?` while open. Resolving a note (`doc.note_set{done =

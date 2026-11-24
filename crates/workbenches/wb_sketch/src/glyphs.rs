@@ -457,7 +457,7 @@ impl<'s> Shapes<'s> {
 }
 
 /// Representative sketch-space anchor of an element (glyph placement).
-fn element_anchor(sketch: &Sketch, id: Uuid) -> Option<Vec2D> {
+pub(crate) fn element_anchor(sketch: &Sketch, id: Uuid) -> Option<Vec2D> {
     let mid = |a: Vec2D, b: Vec2D| Vec2D::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y));
     match sketch.get_geometry(id)? {
         GeometryElement::Point(p) => Some(p.position),

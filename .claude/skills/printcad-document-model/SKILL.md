@@ -232,7 +232,17 @@ index) or neither for a point, `author`, `asks`, `resolved`, `hidden`,
 number given, so a note taken away leaves its number unused and undoing
 an add takes it back; a file whose notes have no numbers is numbered on
 reading). `Note::placed` finds the face or edge again on the body's mesh
-as built and takes the point and label to it, or says it is lost. The
+as built and takes the point and label to it, or says it is lost. A note
+on a sketch carries `sketch` (`SketchAnchor`: the feature, the element or
+constraint id, none for a plane point), `at` and `label` then in the
+sketch's plane; the owning bench places it (`BenchFeatures::note_spot`,
+the sketcher's `wb_sketch/src/notes.rs`), which `DocumentService::evaluate`
+keeps in the derived state (`Derived::sketch_note_spot`, body frame plus
+the plane) and `Document::note_placed` reads; a note not yet added is
+placed live (`DocumentService::note_placed`). The note tool asks
+`note_pick` (the sketcher's hovered item while editing, else the nearest
+element, else the plane point), and with it armed a left click in an
+edit session is the tool's, not the bench's. The
 view toolbar's Note (`view.note`) arms `app/note_tool.rs` (`note_click`,
 the card's state `NoteCard`, `note_json`, `hidden_by_part`: a ray from the
 view to the point against the body's mesh, so a note the part hides
