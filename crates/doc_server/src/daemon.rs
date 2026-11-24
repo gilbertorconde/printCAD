@@ -912,10 +912,10 @@ fn append_ops(
         rotate(&path);
     }
     let blob_dir = path.with_extension("blobs");
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    // The batch goes in one write: a daemon killed partway leaves either
+    // all of its lines or none, never half a batch or a line without its
+    // end, onto which the next line would run.
+    let mut lines = String::new();
     for op in ops {
         let mut value = serde_json::to_value(op)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -928,9 +928,14 @@ fn append_ops(
         });
         let line = serde_json::to_string(&envelope)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        writeln!(file, "{line}")?;
+        lines.push_str(&line);
+        lines.push('\n');
     }
-    Ok(())
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?
+        .write_all(lines.as_bytes())
 }
 
 /// Pull large payload strings out of an op's JSON into the blob store,
@@ -1057,7 +1062,7 @@ fn append_mark(path: &Path, unsaved: &[uuid::Uuid], document: Option<&Path>) {
         .create(true)
         .append(true)
         .open(path)
-        .and_then(|mut file| writeln!(file, "{mark}"));
+        .and_then(|mut file| file.write_all(format!("{mark}\n").as_bytes()));
     match written {
         Ok(()) if unsaved.is_empty() => {
             if drop_generations(path) {
@@ -1487,7 +1492,7 @@ fn note_adopt(socket: &Path) {
                 .append(true)
                 .open(&path)
         })
-        .and_then(|mut file| writeln!(file, "{line}"));
+        .and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()));
     if let Err(err) = written {
         tracing::warn!("the untitled log a save takes up was not noted: {err}");
     }

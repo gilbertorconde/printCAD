@@ -136,8 +136,8 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. The
   another daemon or `untitled_logs`) does not end it. A daemon first
   takes an exclusive lock on `<socket>.lock` (`claim_socket`, a file
   that stays) and exits at once when another holds it, so clients that
-  each start one for the same document all reach the same daemon. An
-  untitled tab's
+  each start one for the same document all reach the same daemon. Log
+  lines go in one write per batch or mark, whole or not at all. An untitled tab's
   first save moves it to its file's daemon without a `Leave`
   (`DocumentSession::move_to_server`, `Connection::untitled_log`) and
   sends `AdoptLog { socket }` at once on the move (and on a Save As or a
