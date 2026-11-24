@@ -21,12 +21,12 @@ pub mod history;
 mod imported;
 pub mod inertia;
 pub mod jobs;
-pub mod json_over;
 mod mesh_entry;
 pub mod mesh_query;
 pub mod notes;
 pub mod op;
 pub mod palette;
+pub mod patch;
 pub mod placement;
 pub mod rebuild;
 pub mod registration;
@@ -843,6 +843,31 @@ impl Document {
             id,
             data: data.into(),
         });
+        Ok(())
+    }
+
+    /// Write `patch` into feature `id`'s data in place: what an edit that
+    /// changed a few parts of a large payload records instead of the whole
+    /// payload ([`op::DocumentOp::PatchFeatureData`]). A patch that does
+    /// not fit the data (a path it names is missing) is refused, leaving the
+    /// data untouched; an empty one records nothing.
+    pub fn patch_feature_data(
+        &mut self,
+        id: FeatureId,
+        patch: patch::DataPatch,
+    ) -> DocumentResult<()> {
+        if self.feature_tree.get_node(id).is_none() {
+            return Err(DocumentError::FeatureNotFound(id));
+        }
+        if patch.is_empty() {
+            return Ok(());
+        }
+        debug_assert!(!self.deriving, "derived state recorded an op");
+        let operation = op::DocumentOp::PatchFeatureData { id, patch };
+        let inverse = self
+            .invert_and_apply(&operation)
+            .map_err(|e| DocumentError::Refused(format!("the feature's data: {e}")))?;
+        self.record_applied(operation, inverse);
         Ok(())
     }
 
