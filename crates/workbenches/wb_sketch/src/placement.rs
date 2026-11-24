@@ -493,6 +493,24 @@ pub(crate) fn stored_sketch(
     document.read_feature::<SketchFeature>(id)
 }
 
+/// Keep `feature`, just written as sketch `id`'s data, as what reading that
+/// data gives ([`core_document::FeatureNode::keep_read`]), so what reads it
+/// next (the evaluation after the edit) need not decode it. A text's
+/// letters are made again when its data is read, so a sketch with texts is
+/// read afresh instead.
+pub(crate) fn keep_written(
+    document: &core_document::Document,
+    id: FeatureId,
+    feature: &SketchFeature,
+) {
+    if feature.sketch.texts.is_empty()
+        && feature.sketch.derived.is_empty()
+        && let Some(node) = document.get_feature_meta(id)
+    {
+        node.keep_read(feature.clone());
+    }
+}
+
 /// Where the body a sketch belongs to sits.
 pub(crate) fn sketch_placement(
     document: &core_document::Document,

@@ -601,6 +601,7 @@ fn save(
     ctx.document
         .update_feature_data(id, feature.to_json())
         .map_err(|e| CommandError::failed(e.to_string()))?;
+    crate::placement::keep_written(ctx.document, id, &feature);
     ctx.document.mark_feature_dirty(id);
     Ok(answer)
 }

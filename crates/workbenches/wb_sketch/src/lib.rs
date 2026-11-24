@@ -972,6 +972,7 @@ impl SketchWorkbench {
             ctx.log_error(format!("Failed to update sketch: {e}"));
             return None;
         }
+        crate::placement::keep_written(ctx.document, id, &feature);
         self.tab.own_seq.store(
             ctx.document.mutation_seq(),
             std::sync::atomic::Ordering::Relaxed,

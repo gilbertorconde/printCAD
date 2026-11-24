@@ -12,7 +12,8 @@
 //! the same with one side held to two lengths, which it cannot meet; one
 //! with a line tangent to each circle, its end held on it, and one with
 //! each cell's bottom side fitted to measured points; a point of the
-//! plain grid dragged, a solve and a store per frame; and
+//! plain grid dragged, a solve and a store per frame, again with the
+//! host's history, outbox and formulas worked out each frame; and
 //! the points the grid leaves free selected, then the pointer moved
 //! about with them selected and the panel drawn.
 //!
@@ -156,13 +157,15 @@ struct Session {
     /// With the host's history: each gesture a bench closes is closed
     /// into an undo step, every frame with no button held closes what is
     /// open, and the outbox goes to a server that confirms it at once, as
-    /// the app does between a person's clicks.
+    /// the app does between a person's clicks; and the document's formulas
+    /// worked out each frame, as the app works them out.
     host: Option<Host>,
 }
 
 struct Host {
     journal: core_document::history::OpJournal,
     held: bool,
+    registry: core_document::DocumentService,
 }
 
 impl Session {
@@ -210,10 +213,15 @@ impl Session {
 
     /// [`Self::new`] with the host's history and outbox.
     fn hosted(sketch: &Sketch, span: f64, panel: bool) -> Self {
+        let mut registry = core_document::DocumentService::default();
+        registry
+            .register_workbench(Box::new(SketchWorkbench::default()))
+            .expect("the sketcher registers");
         Self {
             host: Some(Host {
                 journal: core_document::history::OpJournal::new(100),
                 held: false,
+                registry,
             }),
             ..Self::new(sketch, span, panel)
         }
@@ -285,6 +293,7 @@ impl Session {
             let (wb, mut ctx) = self.split();
             wb.tool_history(&mut ctx, reply);
         }
+        host.registry.evaluate(&mut self.doc);
         if !host.held {
             host.journal.note(&mut self.doc);
             if self.doc.take_pending_batch().is_some() {
@@ -515,12 +524,17 @@ fn label_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], panel:
 /// The end of the middle cell's arc dragged about with the select tool,
 /// a pointer move per frame, each one solved and stored as one gesture.
 /// The grid has no dimensions here: their labels cover every point at
-/// this zoom, and a press on a label drags the label.
-fn point_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D]) {
+/// this zoom, and a press on a label drags the label. With `hosted` the
+/// host's history, outbox and formulas run each frame too.
+fn point_drag(label: &str, sketch: &Sketch, span: f64, queries: &[Vec2D], hosted: bool) {
     if !wanted(label) {
         return;
     }
-    let mut s = Session::new(sketch, span, false);
+    let mut s = if hosted {
+        Session::hosted(sketch, span, false)
+    } else {
+        Session::new(sketch, span, false)
+    };
     let tool = "sketch.select";
     s.send(Some(WorkbenchInputEvent::ToolActivated), tool);
     let mid = ((span / CELL) as usize / 2) as f64 * CELL;
@@ -680,7 +694,8 @@ fn main() {
         edits,
     );
     edit("edit, fitted sides", &fitted(marked.clone()), span, edits);
-    point_drag("point drag", &sketch, span, edits);
+    point_drag("point drag", &sketch, span, edits, false);
+    point_drag("point drag, hosted", &sketch, span, edits, true);
     select_free(
         "select free points",
         &marked,
