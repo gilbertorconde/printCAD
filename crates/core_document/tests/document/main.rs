@@ -13,6 +13,7 @@ mod history_position;
 mod json_over;
 mod notes;
 mod op_replay;
+mod patches;
 mod placement;
 mod seam;
 mod step_persistence;
