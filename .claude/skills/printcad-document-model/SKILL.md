@@ -327,7 +327,11 @@ log); a task gone without closing, or a non-confirmable panel's close,
 keeps its edits as a step. Benches and the app's tasks restore only their
 own state on Cancel (selection, picks, the tool). A task that records
 calls mid-way (the Assembly's joint turned) asks
-`HostRequest::KeepTaskEdits` so Cancel stops there.
+`HostRequest::KeepTaskEdits` so Cancel stops there. A script's or
+agent's run inside a task is part of it (Cancel takes it back too), but
+`begin_run` seals the edits open before it (`JournalBuffer::seal`), so a
+run that fails rolls back only its own and the feature being edited
+stays.
 `history::assert_cancel_takes_back` is the tasks' shared test. A `TaskInfo::stepwise` task (the
 sketcher's editing session) is the exception: each edit in it is an undo
 step of its own. A tool can make its gesture one step before the pointer

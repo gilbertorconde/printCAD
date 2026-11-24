@@ -162,7 +162,7 @@ pub(crate) fn run_in_document(
 #[cfg(test)]
 pub(crate) fn run_journaled(
     registry: &mut DocumentService,
-    document: Document,
+    mut document: Document,
     source: &str,
     name: &str,
 ) -> (
@@ -171,7 +171,7 @@ pub(crate) fn run_journaled(
     Result<Option<Value>, String>,
 ) {
     let mut journal = core_document::history::OpJournal::new(crate::app::session::JOURNAL_LIMIT);
-    journal.begin_run();
+    journal.begin_run(&mut document);
     let (mut document, journal, answer) =
         run_sandboxed(registry, document, source, name, Some(journal));
     let journal = journal.filter(|j| !j.run_crossed_barrier()).map(|mut j| {
