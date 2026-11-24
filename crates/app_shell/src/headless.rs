@@ -343,6 +343,23 @@ impl scripting::Host for Headless {
 }
 
 impl Headless {
+    /// The spec of command `id`, found as in [`scripting::Host::commands`]
+    /// without making the whole list.
+    fn spec(&self, id: &str) -> Option<std::borrow::Cow<'_, CommandSpec>> {
+        let windowless = DOC_COMMANDS.contains(&id).then(doc_commands);
+        windowless
+            .into_iter()
+            .flatten()
+            .chain(file_commands())
+            .find(|c| c.id == id)
+            .map(std::borrow::Cow::Owned)
+            .or_else(|| {
+                self.registry
+                    .command(id)
+                    .map(|(_, spec)| std::borrow::Cow::Borrowed(spec))
+            })
+    }
+
     fn settle_formulas(&mut self) {
         self.registry.evaluate(&mut self.document);
         let moved = self.document.take_moved_values();
@@ -359,9 +376,7 @@ impl Headless {
     fn call_one(&mut self, id: &str, args: CommandArgs) -> CommandResult {
         // A script may use a command's former name.
         let id = &*core_document::renamed::command(id);
-        let spec = scripting::Host::commands(self)
-            .into_iter()
-            .find(|c| c.id == id)
+        self.spec(id)
             .ok_or_else(|| match doc_commands().iter().any(|c| c.id == id) {
                 true => CommandError::failed("not available without a window"),
                 false => CommandError::unknown_among(
@@ -370,8 +385,8 @@ impl Headless {
                         .iter()
                         .map(|c| c.id.as_str()),
                 ),
-            })?;
-        spec.check(&args)?;
+            })?
+            .check(&args)?;
         if let Some(answer) = document_command(
             id,
             &args,

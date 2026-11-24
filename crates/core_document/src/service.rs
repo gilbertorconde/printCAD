@@ -903,7 +903,11 @@ impl DocumentService {
     /// An id a command was called by before it was renamed finds it too.
     pub fn command(&self, id: &str) -> Option<(WorkbenchId, &crate::CommandSpec)> {
         let id = crate::renamed::command(id);
-        self.commands().into_iter().find(|(_, c)| c.id == *id)
+        self.ids().iter().find_map(|bench| {
+            let entry = self.workbenches.get(bench.as_str())?;
+            let spec = entry.context.commands().iter().find(|c| c.id == *id)?;
+            Some((bench.clone(), spec))
+        })
     }
 
     /// Every kind of file the workbenches import, in registration order,
