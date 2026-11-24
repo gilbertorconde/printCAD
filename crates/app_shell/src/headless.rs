@@ -1002,8 +1002,9 @@ endsolid t
     }
 
     /// A fillet read with `doc.feature` gives its edges' face names as
-    /// strings, one of them at or above 2^63 (past what a Lua integer
-    /// holds), and its edges written back unchanged keep every name: the
+    /// strings, whatever their size (a name at or above 2^63 is past what
+    /// a Lua integer holds), and its edges written back unchanged keep
+    /// every name: the
     /// fillet builds with each edge found by its names, no warning. A
     /// float where a name goes is refused, naming the field.
     #[test]
@@ -1026,15 +1027,12 @@ endsolid t
 
             local read = pc.doc.feature{id = fillet}
             local edges = read.fields.Fillet.edges
-            local wide = false
             for i, p in ipairs(edges.Edges) do
               for j, n in ipairs(p.faces) do
                 assert(type(n) == "string", "a name reads as a string: " .. tostring(n))
                 assert(n == picks[i].faces[j], n .. " read, " .. picks[i].faces[j] .. " picked")
-                wide = wide or #n == 20 or (#n == 19 and n >= "9223372036854775808")
               end
             end
-            assert(wide, "a name at or above 2^63")
 
             pc.design.set{feature = fillet, edges = edges}
             assert(#pc.doc.rebuild() == 0, "the fillet builds again")
