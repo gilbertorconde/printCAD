@@ -159,15 +159,6 @@ pub fn compile_for_rank(problem: &Problem) -> RankSystem {
     }
 }
 
-/// [`compile_system`] of `problem` as a solve of it reads it (nothing
-/// excluded, no arcs added for rank alone), and whether it is also the
-/// system [`compile_for_rank`] makes: some constraint brings an equation.
-#[doc(hidden)]
-pub fn compile_plain(problem: &Problem) -> (System, bool) {
-    let counted = compile_counting(problem, None, false);
-    (counted.system, counted.constrained)
-}
-
 /// A compiled system and what decided its arcs' own equations.
 pub(crate) struct Counted {
     pub system: System,

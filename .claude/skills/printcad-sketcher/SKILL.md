@@ -16,8 +16,12 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   and held variables all worked out per block, so a residual kind must
   list every variable it reads, which `sparse`'s tests check per kind),
   rank/DoF `freedom` and `diagnosis`, `soft` (measured points settling
-  what the constraints leave free); optional serde. Its complete directory
-  can be copied to another consumer without workspace inheritance.
+  what the constraints leave free), `parts` (a problem by its parts, the
+  elements no point or constraint joins, each compiled once and kept in
+  a `PartCache` while equal, solved and ranked together to the bit of
+  the whole system; what crosses parts is listed in its module comment,
+  and a change there needs `parts_tests` to hold); optional serde. Its
+  complete directory can be copied to another consumer without workspace inheritance.
 - `sketch_model`: the sketch as data, no egui, in the layer beside
   `bench_panel`; Design, Surface, project import and the fixtures depend
   on it rather than on `wb_sketch`, and `check-workbench-seam.mjs` keeps
@@ -35,9 +39,11 @@ The invariants in `CLAUDE.md` still bind here; this skill never weakens one. Ske
   whole sketch, through `wb_sketch::placement::write_sketch_data` from
   the bench's and the commands' stores; a sketch with text is written
   whole), `solver.rs` (sketch_solver adapter, storage
-  write-back and application diagnostics; `locked_elements`, through
-  `sketch_solver::freedom::locked`, the elements nothing left free can
-  move, drawn in `SketchPalette::locked` until the whole sketch is fully
+  write-back and application diagnostics; every solve and measure goes
+  through `Prepared`, its parts from the thread's `PartCache`, a
+  diagnosis alone compiling the whole problem; `locked_elements`, through
+  `Parted::locked` (`sketch_solver::freedom::locked` by parts), the
+  elements nothing left free can move, drawn in `SketchPalette::locked` until the whole sketch is fully
   constrained, cached by the sketch it was worked out on; a text's
   letters, a derived focus and a refitted spline's controls follow what
   they are laid out from; `free_points`, Select degrees of freedom, is
