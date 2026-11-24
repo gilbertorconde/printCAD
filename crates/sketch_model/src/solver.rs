@@ -207,7 +207,7 @@ impl Prepared {
     }
 
     /// The parts solved, each one's values where the solve moved them.
-    fn iterate(&self, settings: SolverSettings) -> (Iteration, Vec<Option<Vec<f64>>>) {
+    fn iterate(&self, settings: SolverSettings) -> (Iteration, sketch_solver::parts::Moved) {
         let solved = self.parts.iterate(adapter::settings(settings));
         let iteration = Iteration {
             values: Vec::new(),
@@ -711,7 +711,7 @@ fn set<T: PartialEq>(slot: &mut T, value: T, changed: &mut bool) {
 /// A solve's answer: one system's values, or each part's where it moved.
 enum Answer<'a> {
     Whole(&'a System, &'a [f64]),
-    Parts(&'a Parted, &'a [Option<Vec<f64>>]),
+    Parts(&'a Parted, &'a sketch_solver::parts::Moved),
 }
 
 /// Write the solved variables back into the sketch geometry. Answers
@@ -755,8 +755,8 @@ fn store_answer(
         }
         // One part is the whole problem, whose ids may repeat.
         Answer::Parts(parted, values) if parted.len() == 1 => {
-            let (_, sys) = parted.systems().next().expect("one part");
-            let x = values[0].as_deref().unwrap_or(&sys.vars);
+            let (_, sys) = parted.system(0);
+            let x = values.of(0).unwrap_or(&sys.vars);
             for i in 0..sketch.geometry.len() {
                 store(sketch, i, sys, x);
             }
@@ -764,12 +764,18 @@ fn store_answer(
         }
         // A part the solve left where it was stores nothing new, but for
         // an ellipse's or conic's shape, which is stored as it is read
-        // back from its variables.
+        // back from its variables. Where no part has one, or a focus to
+        // place, only the parts moved are looked at.
         Answer::Parts(parted, values) => {
             let mut derived = std::collections::HashSet::new();
-            for ((problem, sys), x) in parted.systems().zip(values) {
+            let parts: Vec<usize> = match parted.shaped() {
+                true => (0..parted.len()).collect(),
+                false => values.moved().map(|(k, _)| k).collect(),
+            };
+            for k in parts {
+                let (problem, sys) = parted.system(k);
                 derived.extend(sys.derived_foci.iter().copied());
-                let x = match x {
+                let x = match values.of(k) {
                     Some(x) => x,
                     None if sys.shape_vars.is_empty() => continue,
                     None => &sys.vars,

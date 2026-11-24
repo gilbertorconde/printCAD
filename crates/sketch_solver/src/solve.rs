@@ -182,6 +182,70 @@ impl Standing {
     }
 }
 
+/// What [`standing`] reads of the pieces together.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Standings {
+    /// The values' largest magnitude over every piece.
+    pub size: f64,
+    /// Some piece has an equation; a variable.
+    pub specs: bool,
+    pub vars: bool,
+    /// Every piece starts from its own values.
+    pub at_rest: bool,
+    /// The residuals' largest magnitude over every piece, where every
+    /// piece is at rest.
+    pub residual: f64,
+}
+
+impl Standings {
+    pub(crate) fn of(pieces: impl Iterator<Item = Standing> + Clone) -> Self {
+        let at_rest = pieces.clone().all(|p| p.at_rest);
+        Self {
+            size: pieces.clone().fold(0.0_f64, |m, p| m.max(p.size)),
+            specs: pieces.clone().any(|p| p.specs),
+            vars: pieces.clone().any(|p| p.vars),
+            at_rest,
+            residual: if at_rest {
+                pieces.fold(0.0_f64, |m, p| m.max(p.residual))
+            } else {
+                f64::INFINITY
+            },
+        }
+    }
+}
+
+/// What [`standing`] answers, without the pieces' values, which are all
+/// their own.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Stood {
+    pub outcome: SolveOutcome,
+    pub residual: f64,
+    pub threshold: f64,
+}
+
+/// [`standing`] of pieces read together as `standings`.
+pub(crate) fn standing_of(standings: Standings, settings: Settings) -> Option<Stood> {
+    let tolerance = tolerance(settings);
+    let threshold = tolerance * standings.size.max(1.0);
+    if !standings.specs || !standings.vars {
+        return Some(Stood {
+            outcome: SolveOutcome::NothingToSolve,
+            residual: 0.0,
+            threshold,
+        });
+    }
+    // Already within the tolerance where it stands: no block takes a
+    // step, so nothing is worth sorting into blocks.
+    if standings.at_rest && standings.residual < threshold {
+        return Some(Stood {
+            outcome: SolveOutcome::Converged { iterations: 0 },
+            residual: standings.residual,
+            threshold,
+        });
+    }
+    None
+}
+
 /// What [`iterate_pieces`] answers where no piece iterates: nothing to
 /// solve, or every piece within the tolerance where it stands; `None`
 /// where some piece must iterate.
@@ -189,41 +253,16 @@ pub(crate) fn standing(
     pieces: impl Iterator<Item = Standing> + Clone,
     settings: Settings,
 ) -> Option<PiecesIteration> {
-    let tolerance = tolerance(settings);
-    let size = pieces.clone().fold(0.0_f64, |m, p| m.max(p.size));
-    let specs = pieces.clone().any(|p| p.specs);
-    let vars = pieces.clone().any(|p| p.vars);
     let count = pieces.clone().count();
-    let unchanged = || vec![None; count];
-    let met = || vec![false; count];
-    if !specs || !vars {
-        return Some(PiecesIteration {
-            values: unchanged(),
-            unmet: met(),
-            outcome: SolveOutcome::NothingToSolve,
-            iterations: 0,
-            residual: 0.0,
-            threshold: tolerance * size.max(1.0),
-        });
-    }
-
-    // Already within the tolerance where it stands: no block takes a
-    // step, so nothing is worth sorting into blocks.
-    if pieces.clone().all(|p| p.at_rest) {
-        let residual = pieces.fold(0.0_f64, |m, p| m.max(p.residual));
-        let threshold = tolerance * size.max(1.0);
-        if residual < threshold {
-            return Some(PiecesIteration {
-                values: unchanged(),
-                unmet: met(),
-                outcome: SolveOutcome::Converged { iterations: 0 },
-                iterations: 0,
-                residual,
-                threshold,
-            });
-        }
-    }
-    None
+    let stood = standing_of(Standings::of(pieces), settings)?;
+    Some(PiecesIteration {
+        values: vec![None; count],
+        unmet: vec![false; count],
+        outcome: stood.outcome,
+        iterations: 0,
+        residual: stood.residual,
+        threshold: stood.threshold,
+    })
 }
 
 /// The convergence tolerance `settings` ask for.

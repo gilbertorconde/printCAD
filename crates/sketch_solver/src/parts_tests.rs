@@ -227,8 +227,8 @@ fn solves_alike(
     let parted = Parted::of(&std::sync::Arc::new(problem.clone()), cache);
     let solved = parted.iterate(problem.settings);
     let mut got = Answer::new();
-    for ((_, sys), x) in parted.systems().zip(&solved.values) {
-        read(&mut got, sys, x.as_deref().unwrap_or(&sys.vars));
+    for (k, (_, sys)) in parted.systems().enumerate() {
+        read(&mut got, sys, solved.values.of(k).unwrap_or(&sys.vars));
     }
     assert_eq!(got, expected, "{what}: values");
     let outcome = |o: SolveOutcome| match o {
@@ -558,6 +558,14 @@ fn a_split_edited_by_a_list_of_changes_is_the_problem_split_afresh() {
             (theirs.outcome, theirs.iterations, theirs.residual.to_bits()),
             "step {step}"
         );
+        // The facts kept summed block by block as parts were replaced
+        // and added are those of every part summed afresh.
+        let mut afresh = super::Summary::default();
+        for entry in parts.parts.iter() {
+            afresh.add(&entry.facts);
+        }
+        assert_eq!(parts.summary, afresh, "step {step}");
+        assert_eq!(parts.parts.summary(), afresh, "step {step}");
         stamp = parts.stamp().expect("kept");
         problem = edited;
     }
