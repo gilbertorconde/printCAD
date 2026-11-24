@@ -17,7 +17,8 @@ use uuid::Uuid;
 use crate::SketchWorkbench;
 use crate::feature::DatumSupport;
 use crate::feature::SketchFeature;
-use crate::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+use crate::sketch::{GeometryElement, Line, Sketch, SketchPlane, Vec2D};
+use sketch_model::adding::{Adding, SketchIndex};
 
 mod constrain;
 mod draw;
@@ -166,6 +167,66 @@ fn editing(
         let mut feature = load(ctx, sketch_id)?;
         let answer = edit(&a, sketch_id, &mut feature, ctx)?;
         save(ctx, sketch_id, feature, answer)
+    }
+}
+
+/// What a command that only adds to the sketch it works in does: given
+/// the arguments and the sketch to add to, answering what it answers.
+type SketchAdd = fn(&Args, &mut Adding) -> CommandResult;
+
+/// The handler of a command that only adds to a sketch: [`editing`]'s,
+/// following only what `add` added. The sketch is taken from what reading
+/// its node keeps, with the [`SketchIndex`] kept beside it, and both are
+/// kept again for the next call. An error stores nothing.
+fn adding(
+    add: SketchAdd,
+) -> impl Fn(&CommandArgs, &mut WorkbenchRuntimeContext) -> CommandResult + Send + Sync {
+    move |args, ctx| {
+        let a = Args(args);
+        let sketch_id = FeatureId(a.id("sketch")?);
+        let node = (ctx.document.get_feature_meta(sketch_id))
+            .ok_or_else(|| CommandError::bad("sketch", "is not a feature of this document"))?;
+        let mut feature = match node.take_read::<SketchFeature>() {
+            Some(feature) => feature,
+            None => load(ctx, sketch_id)?,
+        };
+        let mut index = (node.take_beside::<SketchIndex>())
+            .filter(|index| index.sizes_match(&feature.sketch))
+            .unwrap_or_else(|| SketchIndex::of(&feature.sketch));
+        let sizes = (
+            feature.sketch.geometry.len(),
+            feature.sketch.constraints.len(),
+        );
+        let answer = add(&a, &mut Adding::new(&mut feature.sketch, &mut index));
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(why) => {
+                // What was added taken away again, the sketch is the one read.
+                feature.sketch.geometry.truncate(sizes.0);
+                feature.sketch.constraints.truncate(sizes.1);
+                node.keep_read(feature);
+                return Err(why);
+            }
+        };
+        if !index.plain() {
+            let mut before = feature.clone();
+            before.sketch.geometry.truncate(sizes.0);
+            before.sketch.constraints.truncate(sizes.1);
+            crate::solver::solve(&mut feature.sketch);
+            crate::placement::store_sketch_data(ctx.document, sketch_id, feature, Some(&before))
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            ctx.document.mark_feature_dirty(sketch_id);
+            return Ok(answer);
+        }
+        let solved = crate::solver::solve_added(&mut feature.sketch);
+        index.follow(&feature.sketch, &solved.written);
+        crate::placement::store_added(ctx.document, sketch_id, feature, sizes, &solved.written)
+            .map_err(|e| CommandError::failed(e.to_string()))?;
+        if let Some(node) = ctx.document.get_feature_meta(sketch_id) {
+            node.keep_beside(index);
+        }
+        ctx.document.mark_feature_dirty(sketch_id);
+        Ok(answer)
     }
 }
 
@@ -404,25 +465,16 @@ fn positive(a: &Args, name: &str) -> Result<f64, CommandError> {
     }
 }
 
-/// The point at `at`: one the sketch has there already, else a new one.
-fn point_at(sketch: &mut Sketch, at: Vec2D) -> Uuid {
-    let existing = sketch.geometry.iter().find_map(|g| match g {
-        GeometryElement::Point(p) if (p.position - at).to_glam().length() < 1e-5 => Some(p.id),
-        _ => None,
-    });
-    existing.unwrap_or_else(|| sketch.add_geometry(GeometryElement::Point(Point::new(at))))
-}
-
-fn line(sketch: &mut Sketch, from: Vec2D, to: Vec2D) -> Result<Uuid, CommandError> {
+fn line(sketch: &mut Adding, from: Vec2D, to: Vec2D) -> Result<Uuid, CommandError> {
     if (to - from).to_glam().length() < 1e-5 {
         return Err(CommandError::failed("a line needs two different ends"));
     }
-    let (a, b) = (point_at(sketch, from), point_at(sketch, to));
+    let (a, b) = (sketch.point_at(from), sketch.point_at(to));
     Ok(sketch.add_geometry(GeometryElement::Line(Line::new(a, b))))
 }
 
 fn polyline(
-    sketch: &mut Sketch,
+    sketch: &mut Adding,
     points: &[Vec2D],
     closed: bool,
 ) -> Result<Vec<String>, CommandError> {
@@ -598,7 +650,7 @@ fn save(
     answer: Value,
 ) -> CommandResult {
     crate::solver::solve(&mut feature.sketch);
-    crate::placement::store_sketch_data(ctx.document, id, feature)
+    crate::placement::store_sketch_data(ctx.document, id, feature, None)
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.mark_feature_dirty(id);
     Ok(answer)

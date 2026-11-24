@@ -10,12 +10,11 @@ use uuid::Uuid;
 
 use crate::sketch::{Arc, Circle, GeometryElement, Sketch, Vec2D};
 
-use super::editing;
-use super::{
-    draw, ids, ids_of, line, made_since, point_at, points, polyline, positive, sketch, vec,
-};
+use super::{adding, editing};
+use super::{draw, ids, ids_of, line, made_since, points, polyline, positive, sketch, vec};
 use crate::SketchWorkbench;
 use crate::feature::SketchFeature;
+use sketch_model::adding::Adding;
 
 /// These commands, each spec beside what runs it.
 pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
@@ -24,7 +23,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             .param("x", ParamKind::Number, "")
             .param("y", ParamKind::Number, "")
             .returns("the point's id"),
-        editing(point),
+        adding(point),
     );
     t.add_free(
         sketch(CommandSpec::new(
@@ -36,7 +35,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
         .param("x2", ParamKind::Number, "")
         .param("y2", ParamKind::Number, "")
         .returns("the line's id"),
-        editing(line_command),
+        adding(line_command),
     );
     t.add_free(
         sketch(CommandSpec::new(
@@ -51,7 +50,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "Join the last point to the first",
         )
         .returns("the lines' ids"),
-        editing(polyline_command),
+        adding(polyline_command),
     );
     t.add_free(
         sketch(CommandSpec::new(
@@ -64,7 +63,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
         .param("width", ParamKind::Number, "")
         .param("height", ParamKind::Number, "")
         .returns("the four lines' ids"),
-        editing(rect),
+        adding(rect),
     );
     t.add_free(
         sketch(CommandSpec::new("sketch.circle", "Add a circle"))
@@ -72,7 +71,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             .param("y", ParamKind::Number, "The centre")
             .param("radius", ParamKind::Number, "")
             .returns("the circle's id"),
-        editing(circle),
+        adding(circle),
     );
     t.add_free(
         sketch(CommandSpec::new(
@@ -89,7 +88,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
         )
         .param("end", ParamKind::Number, "Degrees from the sketch's X axis")
         .returns("the arc's id"),
-        editing(arc),
+        adding(arc),
     );
     t.add_free(
         sketch(CommandSpec::new(
@@ -213,49 +212,25 @@ pub(super) fn prose() -> &'static core_document::CommandProse {
     core_document::CommandProse::once(&PROSE, "draw.md", include_str!("draw.md"), &[])
 }
 
-fn point(
-    a: &Args,
-    _sketch_id: FeatureId,
-    feature: &mut SketchFeature,
-    _ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let sketch = &mut feature.sketch;
-    let p = point_at(sketch, vec(a.number("x")?, a.number("y")?));
+fn point(a: &Args, sketch: &mut Adding) -> CommandResult {
+    let p = sketch.point_at(vec(a.number("x")?, a.number("y")?));
     Ok(json!(p.to_string()))
 }
 
-fn line_command(
-    a: &Args,
-    _sketch_id: FeatureId,
-    feature: &mut SketchFeature,
-    _ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let sketch = &mut feature.sketch;
+fn line_command(a: &Args, sketch: &mut Adding) -> CommandResult {
     let from = vec(a.number("x1")?, a.number("y1")?);
     let to = vec(a.number("x2")?, a.number("y2")?);
     Ok(json!(line(sketch, from, to)?.to_string()))
 }
 
-fn polyline_command(
-    a: &Args,
-    _sketch_id: FeatureId,
-    feature: &mut SketchFeature,
-    _ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+fn polyline_command(a: &Args, sketch: &mut Adding) -> CommandResult {
     let args = a.0;
-    let sketch = &mut feature.sketch;
     let points = points(args.get("points"))?;
     let closed = a.opt_bool("closed")?.unwrap_or(false);
     Ok(json!(polyline(sketch, &points, closed)?))
 }
 
-fn rect(
-    a: &Args,
-    _sketch_id: FeatureId,
-    feature: &mut SketchFeature,
-    _ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let sketch = &mut feature.sketch;
+fn rect(a: &Args, sketch: &mut Adding) -> CommandResult {
     let (x, y) = (a.number("x")?, a.number("y")?);
     let (w, h) = (a.number("width")?, a.number("height")?);
     if w == 0.0 || h == 0.0 {
@@ -267,26 +242,14 @@ fn rect(
     Ok(json!(polyline(sketch, &corners, true)?))
 }
 
-fn circle(
-    a: &Args,
-    _sketch_id: FeatureId,
-    feature: &mut SketchFeature,
-    _ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let sketch = &mut feature.sketch;
+fn circle(a: &Args, sketch: &mut Adding) -> CommandResult {
     let radius = positive(a, "radius")?;
-    let centre = point_at(sketch, vec(a.number("x")?, a.number("y")?));
+    let centre = sketch.point_at(vec(a.number("x")?, a.number("y")?));
     let id = sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, radius)));
     Ok(json!(id.to_string()))
 }
 
-fn arc(
-    a: &Args,
-    _sketch_id: FeatureId,
-    feature: &mut SketchFeature,
-    _ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
-    let sketch = &mut feature.sketch;
+fn arc(a: &Args, sketch: &mut Adding) -> CommandResult {
     let radius = positive(a, "radius")?;
     let (x, y) = (a.number("x")?, a.number("y")?);
     let at = |deg: f64| {
@@ -294,9 +257,9 @@ fn arc(
         vec(x + radius * t.cos(), y + radius * t.sin())
     };
     let (start, end) = (a.number("start")?, a.number("end")?);
-    let centre = point_at(sketch, vec(x, y));
-    let s = point_at(sketch, at(start));
-    let e = point_at(sketch, at(end));
+    let centre = sketch.point_at(vec(x, y));
+    let s = sketch.point_at(at(start));
+    let e = sketch.point_at(at(end));
     let id = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, s, e, radius)));
     Ok(json!(id.to_string()))
 }

@@ -238,6 +238,42 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     }
 }
 
+/// What [`solve_added`] did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Added {
+    pub outcome: SolveOutcome,
+    /// The places of the elements the solve changed, ascending.
+    pub written: Vec<usize>,
+}
+
+/// [`solve`] of a sketch whose index says it is plain
+/// ([`crate::adding::SketchIndex::plain`]): no text, spline, ellipse,
+/// conic, group or measured points, so nothing is laid out after the solve
+/// and nothing but the solved values changes. The same answer, with the
+/// places of the elements it changed.
+pub fn solve_added(sketch: &mut Sketch) -> Added {
+    let prepared = Prepared::of(sketch);
+    let (iteration, values) = prepared.iterate(sketch.solver);
+    let mut written = Vec::new();
+    // With no ellipse or conic, no axes turn and no focus is placed: the
+    // answer stored is all that changes.
+    let changed = iteration.outcome != SolveOutcome::NothingToSolve
+        && store_answer(
+            sketch,
+            Answer::Parts(&prepared.parts, &values),
+            &mut Default::default(),
+            Some(&mut written),
+        )
+        .0;
+    finish(sketch, &iteration, changed, Some(prepared));
+    written.sort_unstable();
+    written.dedup();
+    Added {
+        outcome: iteration.outcome,
+        written,
+    }
+}
+
 #[cfg(test)]
 fn solve_system(
     sketch: &mut Sketch,
@@ -588,12 +624,39 @@ enum Answer<'a> {
 /// Write the solved variables back into the sketch geometry. Answers
 /// whether that changed the sketch.
 fn write_back(sketch: &mut Sketch, answer: Answer) -> bool {
-    let mut changed = false;
     let mut turned = std::collections::HashSet::new();
-    let derived: std::collections::HashSet<sketch_solver::problem::PointReference> = match answer {
+    let (changed, derived) = store_answer(sketch, answer, &mut turned, None);
+    turn_and_place(sketch, &derived, turned, changed)
+}
+
+/// Store a solve's answer in the elements, the places of those it changed
+/// listed in `written` where given. Answers whether it changed any, and
+/// the foci the solve left out. An ellipse whose axes traded places goes
+/// in `turned`.
+fn store_answer(
+    sketch: &mut Sketch,
+    answer: Answer,
+    turned: &mut std::collections::HashSet<Uuid>,
+    mut written: Option<&mut Vec<usize>>,
+) -> (
+    bool,
+    std::collections::HashSet<sketch_solver::problem::PointReference>,
+) {
+    let mut changed = false;
+    let mut store = |sketch: &mut Sketch, i: usize, sys: &System, x: &[f64]| {
+        let mut this = false;
+        write_element(&mut sketch.geometry[i], sys, x, &mut this, turned);
+        if this {
+            changed = true;
+            if let Some(written) = written.as_deref_mut() {
+                written.push(i);
+            }
+        }
+    };
+    let derived = match answer {
         Answer::Whole(sys, x) => {
-            for element in &mut sketch.geometry {
-                write_element(element, sys, x, &mut changed, &mut turned);
+            for i in 0..sketch.geometry.len() {
+                store(sketch, i, sys, x);
             }
             sys.derived_foci.iter().copied().collect()
         }
@@ -601,8 +664,8 @@ fn write_back(sketch: &mut Sketch, answer: Answer) -> bool {
         Answer::Parts(parted, values) if parted.len() == 1 => {
             let (_, sys) = parted.systems().next().expect("one part");
             let x = values[0].as_deref().unwrap_or(&sys.vars);
-            for element in &mut sketch.geometry {
-                write_element(element, sys, x, &mut changed, &mut turned);
+            for i in 0..sketch.geometry.len() {
+                store(sketch, i, sys, x);
             }
             sys.derived_foci.iter().copied().collect()
         }
@@ -624,15 +687,15 @@ fn write_back(sketch: &mut Sketch, answer: Answer) -> bool {
                         ItemReference::Curve(CurveReference::Curve(id)) => id.0,
                         _ => continue,
                     };
-                    if let Some(element) = sketch.get_geometry_mut(Uuid::from_u128(id)) {
-                        write_element(element, sys, x, &mut changed, &mut turned);
+                    if let Some(i) = sketch.geometry_index(Uuid::from_u128(id)) {
+                        store(sketch, i, sys, x);
                     }
                 }
             }
             derived
         }
     };
-    turn_and_place(sketch, &derived, turned, changed)
+    (changed, derived)
 }
 
 /// Store `element`'s solved variables, `x` the values of `sys`. An

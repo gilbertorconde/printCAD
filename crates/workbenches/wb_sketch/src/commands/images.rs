@@ -11,10 +11,11 @@ use uuid::Uuid;
 
 use crate::sketch::{Circle, GeometryElement, Sketch, Vec2D};
 
-use super::{add_sketch, editing, line, load, placing, point_at, reading, save, sketch, vec};
+use super::{add_sketch, editing, line, load, placing, reading, save, sketch, vec};
 use crate::SketchWorkbench;
 use crate::feature::SketchFeature;
 use crate::sketch::ReferenceImage;
+use sketch_model::adding::{Adding, SketchIndex};
 
 /// These commands, each spec beside what runs it.
 pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
@@ -312,10 +313,10 @@ fn bolt_circle(
         .iter()
         .map(|p| (p.y - centre.y).atan2(p.x - centre.x).to_degrees())
         .collect();
-    let c = point_at(&mut feature.sketch, centre);
-    let id = feature
-        .sketch
-        .add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
+    let mut index = SketchIndex::of(&feature.sketch);
+    let mut adding = Adding::new(&mut feature.sketch, &mut index);
+    let c = adding.point_at(centre);
+    let id = adding.add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
     feature.sketch.set_construction(id, true);
     let answer = json!({
         "element": id.to_string(),
@@ -805,7 +806,8 @@ pub(crate) fn fit_edge(
         }
     }
     let fitted = found.ok_or_else(|| CommandError::failed(why))?;
-    let sketch = &mut feature.sketch;
+    let mut index = SketchIndex::of(&feature.sketch);
+    let sketch = &mut Adding::new(&mut feature.sketch, &mut index);
     let answer = match fitted {
         Fit::Line {
             from,
@@ -823,7 +825,7 @@ pub(crate) fn fit_edge(
             sigma,
             points,
         } => {
-            let c = point_at(sketch, centre);
+            let c = sketch.point_at(centre);
             let id = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
             json!({"element": id.to_string(), "kind": "circle", "sigma": sigma, "points": points,
                    "dropped": dropped, "radius": radius})
