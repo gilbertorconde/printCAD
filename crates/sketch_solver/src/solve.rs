@@ -69,6 +69,22 @@ pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settin
         };
     }
 
+    let start = part_coincident_ends(sys);
+    // Already within the tolerance where it stands: no block takes a
+    // step, so nothing is worth sorting into blocks.
+    if start == sys.vars {
+        let residual = inf_norm(&eval_residuals(sys, &start));
+        let threshold = tolerance * var_scale(&start);
+        if residual < threshold {
+            return Iteration {
+                values: start,
+                outcome: SolveOutcome::Converged { iterations: 0 },
+                iterations: 0,
+                residual,
+                threshold,
+            };
+        }
+    }
     let owned;
     let blocks = match blocks {
         Some(blocks) => blocks,
@@ -77,7 +93,6 @@ pub(crate) fn iterate_in(sys: &System, blocks: Option<&Blocks>, settings: Settin
             &owned
         }
     };
-    let start = part_coincident_ends(sys);
     let direct = descend(sys, blocks, start.clone(), settings, tolerance, None);
     if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
         return direct;

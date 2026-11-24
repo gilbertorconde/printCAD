@@ -105,8 +105,9 @@ Internal hidden rows are counted separately below.
   within the tolerance takes no step and keeps its values exactly. The
   tolerance's scale is the whole system's at the start of a pass over the
   blocks; another pass follows when the values the blocks end on hold a
-  residual above the tolerance at their own scale. Rank and determined
-  variables are summed over the blocks,
+  residual above the tolerance at their own scale. A system already within
+  the tolerance where it stands is answered without sorting it into
+  blocks. Rank and determined variables are summed over the blocks,
   every pivot held to the whole matrix's threshold (its largest entry
   times the rank tolerance). A variable no equation reads has no column
   in any block: its step is zero and it is never determined.
