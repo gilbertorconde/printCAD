@@ -195,15 +195,61 @@ impl Block {
     }
 }
 
-/// The largest magnitude in the blocks, or `None` when it is zero or not
-/// finite (no rank to read).
-pub(crate) fn largest(jac: &[Matrix]) -> Option<f64> {
-    let max_abs = jac
-        .iter()
-        .flatten()
-        .flatten()
-        .fold(0.0_f64, |acc, v| acc.max(v.abs()));
-    (max_abs != 0.0 && max_abs.is_finite()).then_some(max_abs)
+/// A system's Jacobian by blocks at its values (with stacked points held
+/// apart parted, see [`crate::solve::part_coincident_ends`]), and its
+/// largest magnitude: what its rank and its determined variables are
+/// read from, against a threshold that may come from a larger whole.
+#[derive(Debug, Clone)]
+pub(crate) struct Differenced {
+    pub jac: Vec<Matrix>,
+    /// The largest magnitude in `jac`, zero for none.
+    pub largest: f64,
+}
+
+impl Differenced {
+    pub(crate) fn of(sys: &System, blocks: &Blocks) -> Self {
+        let jac = blocks.jacobian(sys, &crate::solve::part_coincident_ends(sys));
+        let largest = jac
+            .iter()
+            .flatten()
+            .flatten()
+            .fold(0.0_f64, |acc, v| acc.max(v.abs()));
+        Self { jac, largest }
+    }
+
+    /// The rank of the blocks, every pivot at or below `tol` taken for
+    /// zero.
+    pub(crate) fn rank(&self, tol: f64) -> usize {
+        (self.jac.iter())
+            .map(|m| crate::solve::rank_within(m.clone(), tol))
+            .sum()
+    }
+
+    /// For each movable variable (in `free`'s order), whether it is
+    /// determined, pivots held to `tol`; a variable no equation reads
+    /// never is.
+    pub(crate) fn determined(
+        &self,
+        blocks: &Blocks,
+        free: usize,
+        tol: f64,
+        rank_tolerance: f64,
+    ) -> Vec<bool> {
+        let mut out = vec![false; free];
+        for (block, m) in blocks.blocks.iter().zip(&self.jac) {
+            let held = crate::freedom::determined_within(m.clone(), tol, rank_tolerance);
+            for (&column, held) in block.columns.iter().zip(held) {
+                out[column] = held;
+            }
+        }
+        out
+    }
+}
+
+/// The pivot scale of a Jacobian whose largest magnitude is `largest`,
+/// or `None` when it is zero or not finite (no rank to read).
+pub(crate) fn scale_of(largest: f64) -> Option<f64> {
+    (largest != 0.0 && largest.is_finite()).then_some(largest)
 }
 
 /// The numerical rank of `sys`'s Jacobian at its values (with stacked
@@ -211,15 +257,11 @@ pub(crate) fn largest(jac: &[Matrix]) -> Option<f64> {
 /// the sum of its blocks' ranks, every pivot held to the whole matrix's
 /// threshold.
 pub fn rank(sys: &System, rank_tolerance: f64) -> usize {
-    let blocks = Blocks::of(sys);
-    let jac = blocks.jacobian(sys, &crate::solve::part_coincident_ends(sys));
-    let Some(max_abs) = largest(&jac) else {
+    let differenced = Differenced::of(sys, &Blocks::of(sys));
+    let Some(max_abs) = scale_of(differenced.largest) else {
         return 0;
     };
-    let tol = max_abs * rank_tolerance;
-    jac.into_iter()
-        .map(|m| crate::solve::rank_within(m, tol))
-        .sum()
+    differenced.rank(max_abs * rank_tolerance)
 }
 
 /// For each movable variable of `sys` (in `free`'s order), whether no
@@ -227,18 +269,16 @@ pub fn rank(sys: &System, rank_tolerance: f64) -> usize {
 /// variable no equation reads never is.
 pub fn determined(sys: &System, rank_tolerance: f64) -> Vec<bool> {
     let blocks = Blocks::of(sys);
-    let jac = blocks.jacobian(sys, &crate::solve::part_coincident_ends(sys));
-    let mut out = vec![false; sys.free.len()];
-    let Some(max_abs) = largest(&jac) else {
-        return out;
+    let differenced = Differenced::of(sys, &blocks);
+    let Some(max_abs) = scale_of(differenced.largest) else {
+        return vec![false; sys.free.len()];
     };
-    for (block, m) in blocks.blocks.iter().zip(jac) {
-        let held = crate::freedom::determined_within(m, max_abs * rank_tolerance, rank_tolerance);
-        for (&column, held) in block.columns.iter().zip(held) {
-            out[column] = held;
-        }
-    }
-    out
+    differenced.determined(
+        &blocks,
+        sys.free.len(),
+        max_abs * rank_tolerance,
+        rank_tolerance,
+    )
 }
 
 #[cfg(test)]

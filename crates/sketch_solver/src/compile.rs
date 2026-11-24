@@ -134,7 +134,7 @@ pub fn compile_system(
     exclude: Option<ConstraintId>,
     arcs_always: bool,
 ) -> System {
-    compile_counting(problem, exclude, arcs_always).0
+    compile_counting(problem, exclude, arcs_always).system
 }
 
 /// A problem's system compiled for rank (`arcs_always` set), which a
@@ -143,8 +143,8 @@ pub fn compile_system(
 pub struct RankSystem {
     pub system: System,
     /// The system compiled without `arcs_always` is this same one: some
-    /// constraint brings an equation, and the arcs' own equations join
-    /// either way.
+    /// constraint brings an equation, so the arcs' own equations join
+    /// either way, or no arc brings any.
     pub plain: bool,
 }
 
@@ -152,10 +152,10 @@ pub struct RankSystem {
 /// the plain compilation.
 #[doc(hidden)]
 pub fn compile_for_rank(problem: &Problem) -> RankSystem {
-    let (system, constrained) = compile_counting(problem, None, true);
+    let counted = compile_counting(problem, None, true);
     RankSystem {
-        system,
-        plain: constrained,
+        plain: counted.constrained || !counted.arcs,
+        system: counted.system,
     }
 }
 
@@ -164,16 +164,26 @@ pub fn compile_for_rank(problem: &Problem) -> RankSystem {
 /// system [`compile_for_rank`] makes: some constraint brings an equation.
 #[doc(hidden)]
 pub fn compile_plain(problem: &Problem) -> (System, bool) {
-    compile_counting(problem, None, false)
+    let counted = compile_counting(problem, None, false);
+    (counted.system, counted.constrained)
 }
 
-/// [`compile_system`], and whether the constraints brought any equation
-/// before the arcs' own: when they did, `arcs_always` changes nothing.
-fn compile_counting(
+/// A compiled system and what decided its arcs' own equations.
+pub(crate) struct Counted {
+    pub system: System,
+    /// The constraints brought an equation before the arcs' own: when
+    /// they did, `arcs_always` changes nothing.
+    pub constrained: bool,
+    /// Some arc brought its own equations.
+    pub arcs: bool,
+}
+
+/// [`compile_system`], and what decided its arcs' own equations.
+pub(crate) fn compile_counting(
     problem: &Problem,
     exclude: Option<ConstraintId>,
     arcs_always: bool,
-) -> (System, bool) {
+) -> Counted {
     let sketch = &Sketch::new(problem);
     let mut vars = Vec::new();
     let mut point_vars = IdMap::default();
@@ -1176,6 +1186,7 @@ fn compile_counting(
     // An arc a group holds keeps its ends on it with the rest of its shape.
     let rigid = rigid_curves(sketch, &skip);
     let constrained = !specs.is_empty();
+    let before_arcs = specs.len();
     if arcs_always || constrained {
         for element in &sketch.geometry {
             if let GeometryElement::Arc(arc) = element
@@ -1201,6 +1212,7 @@ fn compile_counting(
         }
     }
 
+    let arcs = specs.len() > before_arcs;
     vars.extend(aux);
     let implicit = conic_end_residuals(sketch, &point_var, &shape_vars, &rigid)
         .into_iter()
@@ -1234,7 +1246,11 @@ fn compile_counting(
         specs,
         residual_len,
     };
-    (system, constrained)
+    Counted {
+        system,
+        constrained,
+        arcs,
+    }
 }
 
 /// Fit points at their fixed parameters, so the interpolation that stores
