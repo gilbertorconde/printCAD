@@ -3999,8 +3999,8 @@ assert(math.abs(volume - (math.pi * 100 * 20 - math.pi * (100 - 64) * 4)) < 1e-3
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- `sections = {a, b, ...}` lists the sketches in order; given only `sketch`, the loft has that one section and fails at `pc.doc.rebuild()` (a loft needs at least two sections).
-- It goes in the first section's body; later sections may be sketches of other bodies. A sketch of a single point as the first or last section closes the loft to a tip.
+- `sections = {a, b, ...}` lists the sections in order: sketch ids, or flat faces of the body's solid, each `{point = {x, y, z}, normal = {x, y, z}}` in the body's own frame, mixed as needed. Given only `sketch`, the loft has that one section and fails at `pc.doc.rebuild()` (a loft needs at least two sections); given `sketch` and `sections`, the sketch goes first.
+- It goes in the first sketch's body; with faces only, it needs `body` (or a selected body). Later sketches may be of other bodies. A sketch of a single point as the first or last section closes the loft to a tip.
 - `ruled = true` joins the sections with straight walls; else the walls run smoothly through them. `closed = true` loops back to the first.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.subtractive_loft`, `pc.design.pipe`.
@@ -4034,8 +4034,8 @@ assert(#pc.doc.faces{body = body} == 6)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
-- `sections = {a, b, ...}` lists the sketches in order; given only `sketch`, the loft has that one section and fails at `pc.doc.rebuild()` (a loft needs at least two sections).
-- It goes in the first section's body; later sections may be sketches of other bodies. A sketch of a single point as the first or last section closes the loft to a tip.
+- `sections = {a, b, ...}` lists the sections in order: sketch ids, or flat faces of the body's solid, each `{point = {x, y, z}, normal = {x, y, z}}` in the body's own frame, mixed as needed. Given only `sketch`, the loft has that one section and fails at `pc.doc.rebuild()` (a loft needs at least two sections); given `sketch` and `sections`, the sketch goes first.
+- It goes in the first sketch's body; with faces only, it needs `body` (or a selected body). Later sketches may be of other bodies. A sketch of a single point as the first or last section closes the loft to a tip.
 - `ruled = true` joins the sections with straight walls; else the walls run smoothly through them. `closed = true` loops back to the first.
 - It is refused in a body with no solid feature yet.
 

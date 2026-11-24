@@ -204,12 +204,17 @@ impl DesignWorkbench {
                 if subtractive {
                     need_material(has_solid)?;
                 }
+                // Sections given whole (faces, say) need no sketch first.
+                let sections = match sketch {
+                    None if given.sections => Vec::new(),
+                    _ => vec![crate::feature::LoftSection::Feature(need_sketch(sketch)?)],
+                };
                 (
                     DesignFeature::Loft {
                         keep_inside: false,
                         refine: false,
                         boolean_tolerance: None,
-                        sections: vec![crate::feature::LoftSection::Feature(need_sketch(sketch)?)],
+                        sections,
                         ruled: false,
                         closed: false,
                         subtractive,

@@ -601,6 +601,9 @@ pub(crate) struct Given {
     pub scripted: bool,
     /// A pipe's path.
     pub spine: Option<FeatureId>,
+    /// A loft's sections come as an argument, so it starts with none of
+    /// its own rather than needing a sketch.
+    pub sections: bool,
 }
 
 impl Given {

@@ -5513,3 +5513,30 @@ fn a_bridge_layer_is_left_across_the_hole_under_its_counterbore() {
     let want = 30.0 * 20.0 * 6.0 - PI * 9.0 * 2.0 - PI * 1.7 * 1.7 * (6.0 - 2.2);
     assert_near(built.volume(), want, 1e-6, "the layer left");
 }
+
+/// A loft between two flat faces of the solid, one facing down: the top
+/// of a lower block and the bottom of an upper one, joined by a prism.
+#[test]
+#[ignore = "kernel: is_wire_closed refuses a reversed closed wire, a downward face's boundary (ogeom-rs#1340)"]
+fn a_loft_joins_a_face_facing_down_to_one_facing_up() {
+    use wb_design::LoftSection;
+    let (mut doc, body, sketch) = setup(10.0, 20.0);
+    doc.add_in(body, "Pad", pad(sketch, 5.0));
+    let upper = doc.add_in(body, "upper", rect_at(raised(15.0), 0.0, 0.0, 10.0, 20.0));
+    doc.add_in(body, "Pad2", pad(upper, 5.0));
+    let face = |z: f32, nz: f32| wb_design::FacePick {
+        point: [5.0, 10.0, z],
+        normal: [0.0, 0.0, nz],
+        name: 0,
+    };
+    doc.add_in(
+        body,
+        "Loft",
+        loft_of(vec![
+            LoftSection::Face(face(15.0, -1.0)),
+            LoftSection::Face(face(5.0, 1.0)),
+        ]),
+    );
+    let (volume, _, _) = built_body(&doc, body).unwrap();
+    assert!((volume - 4000.0).abs() < 1.0, "{volume}");
+}

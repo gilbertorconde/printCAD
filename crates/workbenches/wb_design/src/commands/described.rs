@@ -99,7 +99,7 @@ fn feature(doc: &mut Document, tool: &str, sketch: FeatureId, size: f64) -> Opti
     });
     let given = crate::Given {
         scripted: true,
-        spine: None,
+        ..Default::default()
     };
     DesignWorkbench::feature_for_tool(tool, None, &ctx, body, given)
         .ok()

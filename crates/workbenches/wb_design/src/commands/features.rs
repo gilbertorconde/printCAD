@@ -717,6 +717,8 @@ fn make(
             crate::Given {
                 scripted: true,
                 spine: a.opt_id("spine").ok().flatten().map(FeatureId),
+                sections: lofting
+                    && matches!(fields.get("sections"), Some(Value::Array(l)) if !l.is_empty()),
             },
             |feature| apply_fields(feature, &fields),
         )
